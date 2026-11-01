@@ -905,6 +905,7 @@ src/alerts/        operator events, notification sinks (Grok Routine), durable o
 scripts/           bootstrap-grok.mjs (dependency-installing entry point for npm run bootstrap:grok)
 .grok/skills/      Install Tour Core plus the seven Grok operator skills (SKILL.md)
 grok-template/     Tour Core Bot profile, context, routine, safe examples, integration notes, manifest
+property-core-template/  Property Core Bot: one Grok Bot that asks Tour Core or Cleaner Core, then follows that service's guide
 src/intent/        what a typed message means: intent schema, rule-based interpreter, optional language-model
                    interpreter behind a vendor-neutral interface
 src/visitor/       visitor session over the real engine (browser phone and real phones), typed-reply
