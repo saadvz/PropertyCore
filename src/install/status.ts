@@ -725,7 +725,8 @@ function alertsStatus(inst: Installation, propertyReady: boolean, client?: Repor
   }
   const changedAt = latest(inst.secrets.updatedAt("TOURCORE_GROK_ROUTINE_URL"), inst.secrets.updatedAt("TOURCORE_GROK_ROUTINE_KEY"));
   const test = step("OPERATOR_ALERTS", "TEST_OPERATOR_ALERTS", "GROK", "I'm sending a test update.", { tool: "test_operator_alerts" });
-  if (worker) {
+  // A polled task (ChatGPT, Muse) can't be woken, so connecting it is its test.
+  if (worker && !inst.sink().polled?.()) {
     // The shared service sends the test update when the routine connects, from this outbox, and retries
     // it. Its delivery is the passed test: there is no test tool or setup page on the shared service.
     const tests = inst.outbox.records().filter((r) => r.event.eventType === "installation.test");

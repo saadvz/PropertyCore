@@ -22,7 +22,7 @@ import type { TouringFront } from "../hosted/serviceTools";
 import type { OperatorServices } from "../operator/services";
 import { DeliveryError } from "../alerts/operatorEvents";
 import { sendHostText } from "../hosted/hostTexts";
-import { touringAlertsConnected, touringSinkFor } from "../hosted/touringAlerts";
+import { refreshTouringAlerts, touringSinkFor } from "../hosted/touringAlerts";
 import { buildTouringEnv, touringScratch } from "../hosted/touringEnv";
 import { standDownTouring, TOURING_LIVE_PATH, TOURING_STAND_DOWN_PATH, touringLiveWork } from "../hosted/touringLive";
 import { screenText } from "../hosted/crossService";
@@ -452,7 +452,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           handOver,
           start: async (tenant) => {
             const ready = supervisor.ensure(tenant);
-            supervisor.setAlerts(tenant.id, touringAlertsConnected(hostedCleanerService, tenant));
+            refreshTouringAlerts(hostedCleanerService, tenant);
             await ready;
             await handOver(tenant);
           },

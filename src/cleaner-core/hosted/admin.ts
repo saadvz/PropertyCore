@@ -4,7 +4,7 @@ import { rmSync } from "node:fs";
 import { parsePhone } from "../../core/phone";
 import { forgetLiveDesk } from "../liveDesk";
 import { switchService } from "../../hosted/service";
-import { touringAlertsConnected } from "../../hosted/touringAlerts";
+import { refreshTouringAlerts as tellTouringAlerts } from "../../hosted/touringAlerts";
 import { ADMIN_HEADERS, invitePage, loginPage, messagePage, tenantPage, tenantsPage, type TenantHealth } from "./adminPages";
 import { RegistryError, tenantFolder, type Tenant, type TenantService } from "./registry";
 import type { HostedCleaner } from "./router";
@@ -229,7 +229,7 @@ function prune(deps: AdminDeps): void {
 /** A touring process's publish waits on its alerts: tell it again after the chats that carry them change. */
 function refreshTouringAlerts(h: HostedCleaner, tenantId: string): void {
   const tenant = h.registry.get(tenantId);
-  if (tenant?.service === "touring") h.touring?.supervisor.setAlerts(tenantId, touringAlertsConnected(h, tenant));
+  if (tenant?.service === "touring") tellTouringAlerts(h, tenant);
 }
 
 async function createTenant(deps: AdminDeps, form: URLSearchParams, csrf: string, html: (status: number, body: string) => boolean): Promise<boolean> {

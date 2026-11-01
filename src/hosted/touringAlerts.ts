@@ -5,6 +5,8 @@ import { ClaudeRoutineFireSink, GrokRoutineWebhookSink, NoopOperatorNotification
 import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
 import { writeJsonAtomic } from "../storage/atomicWrite";
+import { ASSISTANT_PROFILES, type CleanerAssistant } from "../cleaner-core/assistant";
+import { UpdateFeedSink } from "./touringUpdates";
 
 /**
  * A touring tenant's landlord alerts. Each chat connected to the tenant saves its own routine through a
@@ -13,6 +15,8 @@ import { writeJsonAtomic } from "../storage/atomicWrite";
  */
 
 export const TOURING_ROUTINE_NAMES = ["TOURING_ROUTINE_URL", "TOURING_ROUTINE_KEY"] as const;
+/** A ChatGPT or Muse connection's "1": its recurring task is connected. Nothing secret. */
+export const TOURING_TASK_NAME = "TOURING_ROUTINE_TASK";
 export const TOURING_ALERT_UPLOAD_PREFIX = "/touring/alert-routine/";
 
 const UPLOAD_CODE = /^[A-Za-z0-9_-]{43}$/;
@@ -122,27 +126,31 @@ export function handleTouringAlertUpload(h: HostedCleaner, tenant: Tenant, code:
 }
 
 /** The chat whose routine gets the wake: the primary when it has one, else the most recent chat that does. */
-function routineConnection(h: HostedCleaner, tenant: Tenant): { grantId: string; assistant: Tenant["connections"][number]["assistant"]; url: string; key: string } | undefined {
-  const routine = (grantId: string) => {
+type Routine = { kind: "webhook"; url: string; key: string } | { kind: "task" };
+
+function routineConnection(h: HostedCleaner, tenant: Tenant): ({ grantId: string; assistant: Tenant["connections"][number]["assistant"] } & Routine) | undefined {
+  const routine = (grantId: string, assistant: CleanerAssistant): Routine | undefined => {
     const saved = h.secrets.connection(tenant.id, grantId);
-    return saved.TOURING_ROUTINE_URL && saved.TOURING_ROUTINE_KEY ? { url: saved.TOURING_ROUTINE_URL, key: saved.TOURING_ROUTINE_KEY } : undefined;
+    if (ASSISTANT_PROFILES[assistant].polledTask) return saved[TOURING_TASK_NAME] === "1" ? { kind: "task" } : undefined;
+    return saved.TOURING_ROUTINE_URL && saved.TOURING_ROUTINE_KEY ? { kind: "webhook", url: saved.TOURING_ROUTINE_URL, key: saved.TOURING_ROUTINE_KEY } : undefined;
   };
   const primary = h.registry.primary(tenant.id, (grantId) => h.grantLive(grantId));
-  const primaryRoutine = primary ? routine(primary.grantId) : undefined;
+  const primaryRoutine = primary ? routine(primary.grantId, primary.assistant) : undefined;
   if (primary && primaryRoutine) return { grantId: primary.grantId, assistant: primary.assistant, ...primaryRoutine };
   const live = [...tenant.connections].filter((c) => h.grantLive(c.grantId)).sort((a, b) => Date.parse(b.connectedAt) - Date.parse(a.connectedAt));
   for (const connection of live) {
-    const found = routine(connection.grantId);
+    const found = routine(connection.grantId, connection.assistant);
     if (found) return { grantId: connection.grantId, assistant: connection.assistant, ...found };
   }
   return undefined;
 }
 
-/** Where a touring tenant's events go. ChatGPT and Muse poll for alerts and aren't connected for touring yet. */
+/** Where a touring tenant's events go: a Grok or Claude routine's wake, or a ChatGPT or Muse task's list. */
 export function touringSinkFor(h: HostedCleaner, tenant: Tenant): OperatorNotificationSink {
   const current = h.registry.get(tenant.id) ?? tenant;
   const chosen = routineConnection(h, current);
   if (!chosen) return new NoopOperatorNotificationSink();
+  if (chosen.kind === "task") return new UpdateFeedSink(h, tenant.id);
   const settings = { url: () => chosen.url, key: () => chosen.key };
   const options = alertFetch ? { fetch: alertFetch } : {};
   if (chosen.assistant === "grok") return new GrokRoutineWebhookSink(settings, options);
@@ -152,4 +160,14 @@ export function touringSinkFor(h: HostedCleaner, tenant: Tenant): OperatorNotifi
 
 export function touringAlertsConnected(h: HostedCleaner, tenant: Tenant): boolean {
   return touringSinkFor(h, tenant).configured();
+}
+
+/** True when the chosen connection is a ChatGPT or Muse task. */
+export function touringAlertsPolled(h: HostedCleaner, tenant: Tenant): boolean {
+  return routineConnection(h, h.registry.get(tenant.id) ?? tenant)?.kind === "task";
+}
+
+/** Tells the tenant's touring process whether its updates are connected, and how. */
+export function refreshTouringAlerts(h: HostedCleaner, tenant: Tenant): void {
+  h.touring?.supervisor.setAlerts(tenant.id, touringAlertsConnected(h, tenant), touringAlertsPolled(h, tenant));
 }

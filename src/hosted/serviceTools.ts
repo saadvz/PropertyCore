@@ -1,12 +1,13 @@
 import { z } from "zod";
-import type { CleanerAssistant } from "../cleaner-core/assistant";
+import { ASSISTANT_PROFILES, type CleanerAssistant } from "../cleaner-core/assistant";
 import { tourCoreTenants } from "../cleaner-core/flag";
 import { scratchToolsOn } from "../cleaner-core/scratchQa";
 import type { Tenant, TenantService } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
-import { saveHostTexts, type HostTextChoice } from "./hostTexts";
+import { HOST_TEXT_CHOICES, hostTextsAsk, saveHostTexts, type HostTextChoice } from "./hostTexts";
 import { standDownService, switchService } from "./service";
-import { issueTouringAlertLink, TOURING_ALERT_LINK_MINUTES } from "./touringAlerts";
+import { issueTouringAlertLink, refreshTouringAlerts, TOURING_ALERT_LINK_MINUTES, TOURING_TASK_NAME } from "./touringAlerts";
+import { takeUpdates } from "./touringUpdates";
 import { touringScratch } from "./touringEnv";
 import { readScratchInbox, readScratchOutbox, sendScratchText } from "./touringScratch";
 import type { TouringInbox } from "./touringForward";
@@ -77,6 +78,14 @@ const SAVE_ALERT_ROUTINE: FrontTool = {
   input: z.object({}),
 };
 
+const GET_UPDATES: FrontTool = {
+  name: "get_updates",
+  title: "What's new on tours",
+  description:
+    "For a recurring task that checks on a schedule: returns the tour updates since this chat last checked, oldest first, each with a plain line, and marks them read. For anything urgent, call get_inbox for the details. Say nothing when the list is empty.",
+  input: z.object({}),
+};
+
 const SAVE_HOST_TEXTS: FrontTool = {
   name: "save_host_texts",
   title: "Text tour updates to the host",
@@ -100,11 +109,11 @@ const SCRATCH: FrontTool[] = [
 const BY_STATE: Record<ToolState, FrontTool[]> = {
   unset: [GET_STATE, CHOOSE],
   cleaning: [SWITCH, STAND_DOWN],
-  touring: [SAVE_ALERT_ROUTINE, SAVE_HOST_TEXTS, SWITCH, STAND_DOWN],
+  touring: [SAVE_ALERT_ROUTINE, SAVE_HOST_TEXTS, GET_UPDATES, SWITCH, STAND_DOWN],
 };
 
 /** Every name the front answers in some state. A call to one of them in another state is refused, never forwarded. */
-export const FRONT_TOOL_NAMES = new Set([GET_STATE, CHOOSE, SWITCH, STAND_DOWN, SAVE_ALERT_ROUTINE, SAVE_HOST_TEXTS, ...SCRATCH].map((tool) => tool.name));
+export const FRONT_TOOL_NAMES = new Set([GET_STATE, CHOOSE, SWITCH, STAND_DOWN, SAVE_ALERT_ROUTINE, SAVE_HOST_TEXTS, GET_UPDATES, ...SCRATCH].map((tool) => tool.name));
 
 /** True when a touring tenant gets the Scratch tools: the flag is on and its number is a 555 number. */
 export function scratchFor(h: HostedCleaner, tenant: Tenant): boolean {
@@ -216,6 +225,22 @@ export async function handleFrontTool(ctx: FrontContext, name: string, args: unk
     const saved = saveHostTexts(ctx.h, ctx.tenant, parsed.data as { which: HostTextChoice; phone?: string });
     return { text: saved.text, isError: !saved.ok };
   }
-  if (name === "save_alert_routine") return done({ uploadUrl: issueTouringAlertLink(ctx.h, ctx.tenant, ctx.caller.grantId), expiresInMinutes: TOURING_ALERT_LINK_MINUTES, next: ALERT_UPLOAD_NEXT });
+  if (name === "get_updates") return done({ updates: takeUpdates(ctx.h, ctx.tenant.id, ctx.caller.grantId) });
+  if (name === "save_alert_routine") {
+    const texts = hostTextsAsk(ctx.caller.assistant);
+    const ask = `Then ask the host "${texts.say}" as a choice card (${HOST_TEXT_CHOICES.map((c) => c.label).join(", ")}; suggest ${HOST_TEXT_CHOICES.find((c) => c.which === texts.suggested)!.label}) and call save_host_texts with their answer.`;
+    // A ChatGPT or Muse task can't be woken and holds no address or key: connecting it is the whole step.
+    if (ASSISTANT_PROFILES[ctx.caller.assistant].polledTask) {
+      ctx.h.secrets.setForConnection(ctx.tenant.id, ctx.caller.grantId, { [TOURING_TASK_NAME]: "1" });
+      refreshTouringAlerts(ctx.h, ctx.tenant);
+      return done({ connected: true, hostTexts: texts, next: `Tour updates are connected. Your task reads them with get_updates each time it runs. ${ask}` });
+    }
+    return done({
+      uploadUrl: issueTouringAlertLink(ctx.h, ctx.tenant, ctx.caller.grantId),
+      expiresInMinutes: TOURING_ALERT_LINK_MINUTES,
+      hostTexts: texts,
+      next: `${ALERT_UPLOAD_NEXT} Once it's connected: ${ask}`,
+    });
+  }
   return undefined;
 }

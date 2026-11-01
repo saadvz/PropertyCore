@@ -61,6 +61,7 @@ interface Running {
   failures: number;
   restarts: number[];
   alerts: boolean;
+  polled: boolean;
   retry?: { unref?(): void };
   waiting: (() => void)[];
 }
@@ -88,7 +89,7 @@ export class TouringSupervisor {
       current.tenant = tenant;
       return current.port !== undefined ? Promise.resolve() : new Promise((resolve) => current.waiting.push(resolve));
     }
-    const entry: Running = { tenant, key: "", startedAt: 0, failures: 0, restarts: [], alerts: false, waiting: [] };
+    const entry: Running = { tenant, key: "", startedAt: 0, failures: 0, restarts: [], alerts: false, polled: false, waiting: [] };
     this.running.set(tenant.id, entry);
     const ready = new Promise<void>((resolve) => entry.waiting.push(resolve));
     this.start(entry);
@@ -116,12 +117,13 @@ export class TouringSupervisor {
     return entry?.handle && entry.port !== undefined ? { port: entry.port, key: entry.key } : undefined;
   }
 
-  /** Whether the tenant's touring alert routine is connected. Sent now, and again after every restart. */
-  setAlerts(tenantId: string, connected: boolean): void {
+  /** Whether the tenant's touring alert routine is connected, and whether it's a polled task. Sent now, and again after every restart. */
+  setAlerts(tenantId: string, connected: boolean, polled = false): void {
     const entry = this.running.get(tenantId);
     if (!entry) return;
     entry.alerts = connected;
-    if (entry.port !== undefined) entry.handle?.send({ type: "alerts", connected });
+    entry.polled = polled;
+    if (entry.port !== undefined) entry.handle?.send({ type: "alerts", connected, polled });
   }
 
   health(tenantId: string): { up: boolean; restartsLastDay: number } {
@@ -151,7 +153,7 @@ export class TouringSupervisor {
       if (!current()) return;
       if (message.type === "ready") {
         entry.port = message.port;
-        if (entry.alerts) handle.send({ type: "alerts", connected: true });
+        if (entry.alerts) handle.send({ type: "alerts", connected: true, polled: entry.polled });
         for (const resolve of entry.waiting.splice(0)) resolve();
         this.opts.onReady?.(id);
       } else if (message.type === "log") {

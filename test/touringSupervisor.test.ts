@@ -210,11 +210,22 @@ describe("TouringSupervisor", () => {
     const h = harness();
     await h.startReady(lane);
     h.supervisor.setAlerts(lane.id, true);
-    expect(h.workers[0]!.sent).toContainEqual({ type: "alerts", connected: true });
+    expect(h.workers[0]!.sent).toContainEqual({ type: "alerts", connected: true, polled: false });
     h.workers[0]!.exit(1);
     h.advance(SECOND);
     h.workers[1]!.emit({ type: "ready", port: 40002 });
-    expect(h.workers[1]!.sent).toContainEqual({ type: "alerts", connected: true });
+    expect(h.workers[1]!.sent).toContainEqual({ type: "alerts", connected: true, polled: false });
+  });
+
+  it("says a ChatGPT or Muse task is polled, again after a restart", async () => {
+    const h = harness();
+    await h.startReady(lane);
+    h.supervisor.setAlerts(lane.id, true, true);
+    expect(h.workers[0]!.sent).toContainEqual({ type: "alerts", connected: true, polled: true });
+    h.workers[0]!.exit(1);
+    h.advance(SECOND);
+    h.workers[1]!.emit({ type: "ready", port: 40002 });
+    expect(h.workers[1]!.sent).toContainEqual({ type: "alerts", connected: true, polled: true });
   });
 
   it("prefixes a worker's log lines with its tenant", async () => {

@@ -29,7 +29,7 @@ import { isTenantId, tenantFolder, type Tenant, type TenantRegistry } from "./re
 import { screenText } from "../../hosted/crossService";
 import { handleTenantMcp } from "../../hosted/frontMcp";
 import type { TouringFront } from "../../hosted/serviceTools";
-import { handleTouringAlertUpload, TOURING_ALERT_LINK_HEADERS, TOURING_ALERT_LINK_PAGE, touringAlertsConnected, touringAlertUploadCode } from "../../hosted/touringAlerts";
+import { handleTouringAlertUpload, TOURING_ALERT_LINK_HEADERS, TOURING_ALERT_LINK_PAGE, refreshTouringAlerts, touringAlertUploadCode } from "../../hosted/touringAlerts";
 import { forwardTenantPath } from "../../hosted/touringForward";
 import { touringPublicRoute } from "../../hosted/workerRoutes";
 import { MCP_PATH } from "../../mcp/paths";
@@ -216,7 +216,7 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
     if (routineCode) {
       const read = await uploadBody(String(r.req.headers["content-type"] ?? ""), () => r.readCapped(ALERT_UPLOAD_MAX_BYTES));
       const result = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : handleTouringAlertUpload(h, tenant, routineCode, read.parsed);
-      if (result.status === 200) h.touring?.supervisor.setAlerts(tenant.id, touringAlertsConnected(h, tenant));
+      if (result.status === 200) refreshTouringAlerts(h, tenant);
       r.send(result.status, JSON_TYPE, JSON.stringify(result.body), result.status === 413 ? { Connection: "close" } : {});
       return true;
     }

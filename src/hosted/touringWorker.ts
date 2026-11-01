@@ -22,7 +22,8 @@ export async function startTouringWorker(): Promise<void> {
   const log = (line: string) => tell({ type: "log", line });
 
   let alertsConnected = false;
-  const relay = new RelaySink(tell, () => alertsConnected);
+  let alertsPolled = false;
+  const relay = new RelaySink(tell, () => alertsConnected, { polled: () => alertsPolled });
   const workspace = new PropertyWorkspace(process.env.TOURCORE_HOME);
   // A Scratch tenant's texts stay in a local outbox the shared service reads from this folder.
   if (process.env.TOURCORE_TOURING_SCRATCH === "1") resetLocalSmsOutbox(new LocalSmsOutbox(join(workspace.root, SCRATCH_OUTBOX_FILE)));
@@ -35,8 +36,10 @@ export async function startTouringWorker(): Promise<void> {
     if (message.type === "alerts") {
       const was = alertsConnected;
       alertsConnected = message.connected;
+      alertsPolled = message.polled;
       // Like Cleaner Core, a newly connected routine gets one test event, so the host sees it work.
-      if (!was && alertsConnected) {
+      // A polled task can't be woken, so it gets none.
+      if (!was && alertsConnected && !alertsPolled) {
         installation.outbox.enqueue(testEvent(new Date(installation.now())));
         void installation.outbox.drain().catch(() => undefined);
       }
