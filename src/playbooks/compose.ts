@@ -1,7 +1,7 @@
 import { BASELINE_FLAGGED, BASELINE_KEYS, BASELINE_TOOLS } from "./baseline";
 import { CHATGPT_FLAGGED, CHATGPT_KEYS, CHATGPT_TOOLS } from "./chatgpt";
 import { CLAUDE_FLAGGED, CLAUDE_FULL, CLAUDE_KEYS, CLAUDE_TOOLS } from "./claude";
-import { GROK_ALERTS, GROK_ALERTS_SAY, GROK_BACKUPS_FULL, GROK_BACKUPS_TOOLS, GROK_FLAGGED, GROK_FULL, GROK_KEYS_FULL, GROK_KEYS_TOOLS, GROK_TOOLS, GROK_WAKE } from "./grok";
+import { GROK_ALERTS, GROK_ALERTS_SAY, GROK_ALERTS_SHARED, GROK_BACKUPS_FULL, GROK_BACKUPS_TOOLS, GROK_FLAGGED, GROK_FULL, GROK_KEYS_FULL, GROK_KEYS_TOOLS, GROK_TOOLS, GROK_WAKE } from "./grok";
 import { selectPlaybook, type PlaybookSelection, type ReportedClient } from "./select";
 import { milestoneToolFor } from "./milestoneTool";
 import { RECONNECT_INSTRUCTIONS, SHARED_AFTER_PUBLISH, SHARED_FLAGGED_RULES, SHARED_IRREVERSIBLE, SHARED_STEPS, SHARED_VOICE, STEP_TITLES, stepAside, type StepId } from "./shared";
@@ -21,7 +21,12 @@ function profileIntro(selection: PlaybookSelection): string {
   return BASELINE_TOOLS;
 }
 
-function profileStep(selection: PlaybookSelection, step: StepId): string | undefined {
+/** Where the playbook is read. A touring host on the shared service connects tour updates through it. */
+export interface PlaybookPlace {
+  sharedService?: boolean;
+}
+
+function profileStep(selection: PlaybookSelection, step: StepId, place: PlaybookPlace): string | undefined {
   if (step === "texting-keys") {
     if (selection.id === "grok") return selection.mode === "full" ? GROK_KEYS_FULL : GROK_KEYS_TOOLS;
     if (selection.id === "claude") return CLAUDE_KEYS;
@@ -33,7 +38,7 @@ function profileStep(selection: PlaybookSelection, step: StepId): string | undef
   }
   if (step === "alerts-error") return RECONNECT_INSTRUCTIONS;
   if (step === "backups" && selection.id === "grok") return selection.mode === "full" ? GROK_BACKUPS_FULL : GROK_BACKUPS_TOOLS;
-  if (step === "alerts" && selection.id === "grok") return GROK_ALERTS;
+  if (step === "alerts" && selection.id === "grok") return place.sharedService ? GROK_ALERTS_SHARED : GROK_ALERTS;
   return undefined;
 }
 
@@ -73,10 +78,10 @@ export function spokenAsk(client: ReportedClient | undefined, step: StepId, ask?
   return SHARED_STEPS[step].ask;
 }
 
-export function renderPlaybook(client: ReportedClient | undefined, step: StepId, askOverride?: string): PlaybookText {
+export function renderPlaybook(client: ReportedClient | undefined, step: StepId, askOverride?: string, place: PlaybookPlace = {}): PlaybookText {
   const selection = selectPlaybook(client);
   const copy = SHARED_STEPS[step];
-  const extra = profileStep(selection, step);
+  const extra = profileStep(selection, step, place);
   const ask = spokenAsk(client, step, askOverride);
   const text = [
     SHARED_VOICE,

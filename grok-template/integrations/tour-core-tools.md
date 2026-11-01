@@ -28,7 +28,7 @@ The older tools are not on these connectors. A Tour Core tool that isn't on the 
 | `save_property` | change | Saves the property address, type, time zone, name, facts, help number, alert contact, building access, and entry instructions. A street with no state or ZIP leaves the time zone unset. Changing only the state still checks a ZIP already saved. A mismatch asks which to fix and saves nothing |
 | `save_units` | change | Adds, renames, or updates units and their leasing details. Say the `place`, never Main Home |
 | `save_doors_and_routes` | change | Saves doors and walking routes, or with preview true only shows the matched route |
-| `save_hours` | change | Saves touring days and hours from everyday words. Tours have to end later the same day. Tours must last 15 minutes to 4 hours, and starts must be 15 minutes to 8 hours apart |
+| `save_hours` | change | Saves touring days and hours from everyday words. Different days can have different hours (weekdays 9am-5pm, weekends 9am-8pm): one call per set of days. Once hours are saved, new days are added and the other days keep their hours; `replace` only when the host says to replace them all. Tours have to end later the same day. Tours must last 15 minutes to 4 hours, and starts must be 15 minutes to 8 hours apart |
 | `save_settings` | change | Saves the basic identity form (recommended) or no form, plus tour-update choices. No form asks first, because anyone who texts could book and get in without saying who they are |
 | `set_up_texting` | change | Sets up texting for this install (the provider, the line, and the check). The landlord chooses the provider here |
 | `run_checks` | change | Runs the readiness check and a practice tour, including the connection, door-access, and alert self-tests |

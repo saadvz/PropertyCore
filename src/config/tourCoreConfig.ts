@@ -163,10 +163,25 @@ export const PropertySchema = z.object({
   facts: ApprovedFacts,
 });
 
-export const TourHoursSchema = z.object({
+/** One set of days that share the same touring hours, like weekdays 9-5. */
+export const TourWindowSchema = z.object({
   days: z.array(z.enum(WEEKDAYS)),
   start: TimeOfDay,
   end: TimeOfDay,
+});
+
+export const TourHoursSchema = z.object({
+  /** Every day with tours. With `windows`, this is all of their days together. */
+  days: z.array(z.enum(WEEKDAYS)),
+  /** The first window's hours. Older files hold only this one window. */
+  start: TimeOfDay,
+  end: TimeOfDay,
+  /**
+   * Different hours on different days, like weekdays 9-5 and weekends 9-8.
+   * Absent (or one entry) means one window: `days` from `start` to `end`.
+   * A day sits in at most one window. Read it with `tourWindows`.
+   */
+  windows: z.array(TourWindowSchema).optional(),
   slotEveryMinutes: z.number().int(),
   tourLengthMinutes: z.number().int(),
   earlyArrivalMinutes: z.number().int(),
@@ -233,6 +248,7 @@ export type Unit = z.infer<typeof UnitSchema>;
 export type Route = z.infer<typeof RouteSchema>;
 export type Property = z.infer<typeof PropertySchema>;
 export type TourHours = z.infer<typeof TourHoursSchema>;
+export type TourWindow = z.infer<typeof TourWindowSchema>;
 
 /** Real visitor texting, including property files saved before the mode was renamed from "sendblue". */
 export function isLiveMessaging(mode: string | undefined): boolean {

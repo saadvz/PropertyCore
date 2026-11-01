@@ -1,6 +1,7 @@
 import { FIELD_WORDS, missingProfileFields, PROFILE_FIELDS, profileSummaryLine, type ProfileField } from "../config/unitProfile";
 import type { ConfigIssue, ConfigSection } from "../config/validateConfig";
 import { slotStartMinutes } from "../core/schedule";
+import { tourWindows } from "../core/tourWindows";
 import { formatClockTime, friendlyTimeZone, spokenClockTime } from "../core/timezone";
 import type { DryTourGroup, DryTourResult } from "./dryTour";
 import type { ReadinessResult } from "./readiness";
@@ -196,8 +197,16 @@ export function draftView(draft: SetupDraft) {
   });
 
   const hoursValid = !issues.some((i) => i.fix?.step === "hours");
+  const windows = tourWindows(th).map((w) => {
+    const label = `${describeDays(w.days)}, ${hoursRangeLabel(w.start, w.end)}`;
+    const toursPerDay = slotStartMinutes({ ...th, start: w.start, end: w.end }).length;
+    return { days: w.days, start: w.start, end: w.end, label, toursPerDay, summary: `${label}. That's up to ${toursPerDay} tour${toursPerDay === 1 ? "" : "s"} a day.` };
+  });
   const tourHours = {
     ...th,
+    windows,
+    /** Every window, "Mon-Fri, 9:00 AM-5:00 PM; Sat, Sun, 9:00 AM-8:00 PM". */
+    label: windows.map((w) => w.label).join("; "),
     daysLabel: describeDays(th.days),
     hoursLabel: hoursRangeLabel(th.start, th.end),
     lengthLabel: describeMinutes(th.tourLengthMinutes),
@@ -205,10 +214,9 @@ export function draftView(draft: SetupDraft) {
     earlyLabel: describeMinutes(th.earlyArrivalMinutes),
     valid: hoursValid,
     /** Only when the schedule is valid; an overlapping schedule has no honest count. */
-    toursPerDay: hoursValid ? slotStartMinutes(th).length : undefined,
-    summary: hoursValid
-      ? `${describeDays(th.days)}, ${hoursRangeLabel(th.start, th.end)}. That's up to ${slotStartMinutes(th).length} tours a day.`
-      : undefined,
+    toursPerDay: hoursValid ? Math.max(0, ...windows.map((w) => w.toursPerDay)) : undefined,
+    /** One sentence per window, so different weekend hours show up too. */
+    summary: hoursValid ? windows.map((w) => w.summary).join(" ") : undefined,
   };
 
   const property = {
@@ -243,8 +251,7 @@ export function draftView(draft: SetupDraft) {
       step: "hours" as SetupStep,
       title: "Tours",
       rows: [
-        tourHours.daysLabel,
-        tourHours.hoursLabel,
+        ...(windows.length > 1 ? windows.map((w) => w.label) : [tourHours.daysLabel, tourHours.hoursLabel]),
         `Each tour lasts ${tourHours.lengthLabel}, and a new one can start every ${tourHours.spacingLabel}`,
         `Visitors can get in up to ${tourHours.earlyLabel} early`,
       ],

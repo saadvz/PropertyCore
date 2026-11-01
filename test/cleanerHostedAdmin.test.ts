@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resetAdminSessions } from "../src/cleaner-core/hosted/admin";
@@ -47,11 +47,22 @@ function fakeTwilio(owned: Record<string, string> = { [LANE_LINE]: "PN1" }) {
 /** The page escapes apostrophes. */
 const html = (text: string) => text.replaceAll("'", "&#39;");
 
-async function start(options: { password?: string | null } = {}) {
+async function start(options: { password?: string | null; env?: NodeJS.ProcessEnv } = {}) {
   const password = options.password === null ? undefined : (options.password ?? PASSWORD);
-  open = await multiTenantApp({ env: password ? { CLEANER_CORE_ADMIN_PASSWORD: password } : {} });
+  open = await multiTenantApp({ env: { ...(password ? { CLEANER_CORE_ADMIN_PASSWORD: password } : {}), ...options.env } });
   return open;
 }
+
+/** A touring tenant whose touring process is running. */
+async function touringTenant(m: MultiTenantApp, label: string, number: string) {
+  const { tenant } = m.registry.create({ label, twilioNumber: number });
+  m.registry.setService(tenant.id, "touring");
+  await m.touring()!.start(m.registry.get(tenant.id)!);
+  return m.registry.get(tenant.id)!;
+}
+
+const TOURING = { env: { TOUR_CORE_TENANTS: "1" } };
+const SLOW = { timeout: 120_000 };
 
 /** Signs in and returns a browser-like client carrying the session cookie and the page's CSRF token. */
 async function signIn(m: MultiTenantApp) {
@@ -117,7 +128,8 @@ describe("the admin page", () => {
     expect(res.status).toBe(200);
     const code = /data-invite="([^"]+)"/.exec(res.html)?.[1];
     expect(code).toMatch(/^[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$/);
-    expect(res.html).toContain(`${BASE}/mcp/cleaner-core`);
+    // The shared address, not Cleaner Core's own: the host's chat picks the service.
+    expect(res.html).toContain(`Connector URL: <span class="code">${BASE}/mcp</span>`);
     expect(res.html).toContain("This code is shown once.");
     const tenant = m.registry.list()[0]!;
     expect(tenant).toMatchObject({ label: "Lane", twilioNumber: LANE_LINE });
@@ -236,5 +248,87 @@ describe("the admin page", () => {
     const { html } = await admin.page("/admin");
     expect(html).not.toContain("<script>x</script>");
     expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("shows each tenant's service and touring process", SLOW, async () => {
+    const m = await start(TOURING);
+    const admin = await signIn(m);
+    await touringTenant(m, "Mill", "+15555550170");
+    const court = m.registry.create({ label: "Court", twilioNumber: "+15555550160" }).tenant;
+    m.registry.setService(court.id, "cleaning");
+    m.registry.create({ label: "Lane", twilioNumber: LANE_LINE });
+    const list = (await admin.page("/admin")).html;
+    expect(list).toContain("<th>Service</th><th>Touring process</th>");
+    expect(list).toMatch(/Mill<\/a>.*<td>touring<\/td><td>up<\/td>/);
+    expect(list).toMatch(/Court<\/a>.*<td>cleaning<\/td><td>—<\/td>/);
+    expect(list).toMatch(/Lane<\/a>.*<td>not chosen<\/td><td>—<\/td>/);
+  });
+
+  it("shows a touring tenant's restarts and waiting texts on its page", SLOW, async () => {
+    const m = await start(TOURING);
+    const admin = await signIn(m);
+    const mill = await touringTenant(m, "Mill", "+15555550170");
+    const page = (await admin.page(`/admin/tenants/${mill.id}`)).html;
+    expect(page).toContain("Service: touring. Touring process: up. Restarts in the last day: 0. Texts waiting: 0.");
+  });
+
+  it("refuses a switch it can't check, and doesn't change the service", SLOW, async () => {
+    const m = await start(TOURING);
+    const admin = await signIn(m);
+    const mill = await touringTenant(m, "Mill", "+15555550170");
+    m.touring()!.supervisor.stop(mill.id);
+    const page = (await admin.page(`/admin/tenants/${mill.id}`)).html;
+    expect(page).toContain("Switch to cleaning");
+    expect(page).not.toContain("<select");
+    const refused = await admin.post(`/admin/tenants/${mill.id}/service`, { to: "cleaning" });
+    expect(refused.status).toBe(400);
+    expect(refused.html).toContain(html("Touring isn't answering right now. Try again in a minute."));
+    expect(m.registry.get(mill.id)?.service).toBe("touring");
+  });
+
+  it("force-switches, sends nothing, and records it", SLOW, async () => {
+    const m = await start(TOURING);
+    const admin = await signIn(m);
+    const mill = await touringTenant(m, "Mill", "+15555550170");
+    m.touring()!.supervisor.stop(mill.id);
+    const forced = await admin.post(`/admin/tenants/${mill.id}/service`, { to: "cleaning", force: "1" });
+    expect(forced.status).toBe(303);
+    expect(m.registry.get(mill.id)?.service).toBe("cleaning");
+    expect(m.sms.sent).toEqual([]);
+    const audit = readFileSync(join(tenantFolder(m.app.root, mill.id), "service-audit.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(audit.at(-1)).toMatchObject({ actor: "admin", from: "touring", to: "cleaning", forced: true });
+  });
+
+  it("leaves a new tenant's service to the host's chat: no form, and a post sets nothing", SLOW, async () => {
+    const m = await start(TOURING);
+    const admin = await signIn(m);
+    const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE_LINE });
+    const page = (await admin.page(`/admin/tenants/${tenant.id}`)).html;
+    expect(page).toContain("Not chosen yet.");
+    expect(page).not.toContain(`/admin/tenants/${tenant.id}/service`);
+    await admin.post(`/admin/tenants/${tenant.id}/service`, { to: "touring" });
+    expect(m.registry.get(tenant.id)?.service).toBeUndefined();
+    expect(m.touring()!.supervisor.target(tenant.id)).toBeUndefined();
+  });
+
+  it("stops a touring process when its tenant is turned off, and starts it when turned on", SLOW, async () => {
+    const m = await start(TOURING);
+    const admin = await signIn(m);
+    const mill = await touringTenant(m, "Mill", "+15555550170");
+    await admin.post(`/admin/tenants/${mill.id}/disable`, {});
+    expect(m.touring()!.supervisor.target(mill.id)).toBeUndefined();
+    await admin.post(`/admin/tenants/${mill.id}/enable`, {});
+    expect(m.touring()!.supervisor.target(mill.id)).toBeDefined();
+  });
+
+  it("stops a touring process before deleting its tenant", SLOW, async () => {
+    const m = await start(TOURING);
+    fakeTwilio({ "+15555550170": "PN7" });
+    const admin = await signIn(m);
+    const mill = await touringTenant(m, "Mill", "+15555550170");
+    expect((await admin.post(`/admin/tenants/${mill.id}/delete`, { confirm: "Mill" })).status).toBe(303);
+    expect(m.touring()!.supervisor.target(mill.id)).toBeUndefined();
+    expect(m.touring()!.supervisor.health(mill.id).up).toBe(false);
+    expect(existsSync(tenantFolder(m.app.root, mill.id))).toBe(false);
   });
 });

@@ -44,8 +44,9 @@ ${body}
 </html>
 `;
 
-export function consentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; label?: "Tour Core" | "Cleaner Core"; assistant?: CleanerAssistant; invite?: boolean }): string {
+export function consentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; label?: "Tour Core" | "Cleaner Core" | "Tour Core and Cleaner Core"; assistant?: CleanerAssistant; invite?: boolean }): string {
   if (p.label === "Cleaner Core") return cleanerConsentPage(p, ASSISTANT_PROFILES[p.assistant ?? "grok"].consent);
+  if (p.label === "Tour Core and Cleaner Core") return cleanerConsentPage(p, ASSISTANT_PROFILES[p.assistant ?? "grok"].consent, SHARED_WORDS);
   const requestId = escape(p.requestId);
   const decision = p.hosted
     ? `${p.firstClaim ? "<p>Approving this first connection will make this Grok connection the owner of this Tour Core demo.</p>" : ""}
@@ -82,8 +83,30 @@ export function consentPage(p: { requestId: string; matchCode: string; clientNam
   );
 }
 
-/** The same approval, worded for Cleaner Core. Its scope opens only /mcp/cleaner-core. */
-function cleanerConsentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; invite?: boolean }, who: ConsentWho): string {
+interface ConsentWords {
+  product: string;
+  asking: string;
+  can: string[];
+  cannot: string[];
+}
+
+const CLEANER_WORDS: ConsentWords = {
+  product: "Cleaner Core",
+  asking: "is asking to run your cleaning schedule.",
+  can: ["save your property, calendars, people and schedule", "read new bookings", "text your cleaner when you say so", "tell you what your cleaner says"],
+  cannot: ["read back your door code", "send the door code before you say the guests have left", "read Tour Core or its tours", "read provider secrets"],
+};
+
+/** The one address on the multi-tenant service: the host picks touring or cleaning after connecting. */
+const SHARED_WORDS: ConsentWords = {
+  product: "Tour Core and Cleaner Core",
+  asking: "is asking to run touring or cleaning on your number.",
+  can: ["set your number up for touring or cleaning", "save your properties, calendars, people and schedule", "text visitors or your cleaner as that service does", "tell you what they say"],
+  cannot: ["read back a door code", "reach another host's number or records", "read provider secrets"],
+};
+
+/** The same approval, worded for Cleaner Core, or for the shared address. */
+function cleanerConsentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; invite?: boolean }, who: ConsentWho, words: ConsentWords = CLEANER_WORDS): string {
   // A multi-tenant Cleaner Core: the invite code says whose Cleaner Core this connection joins.
   const invite = p.invite
     ? `<p><label for="oauth-invite">Invite code from Saad</label><br /><input id="oauth-invite" autocomplete="off" autocapitalize="characters" spellcheck="false" /></p>`
@@ -91,25 +114,20 @@ function cleanerConsentPage(p: { requestId: string; matchCode: string; clientNam
   const decision = p.hosted
     ? `${invite}
           <p><button type="button" class="primary" id="oauth-allow" data-code="${escape(p.matchCode)}">Allow</button></p>`
-    : `<p><strong>Approve on the Cleaner Core computer.</strong> Open <em>${who.connect}</em> there, check it shows this code, then choose Allow:</p>`;
+    : `<p><strong>Approve on the ${words.product} computer.</strong> Open <em>${who.connect}</em> there, check it shows this code, then choose Allow:</p>`;
+  const list = (items: string[]) => items.map((item) => `          <li>${item}</li>`).join("\n");
   return shell(
-    `Connect ${who.chat} to Cleaner Core`,
-    `        <h1>Connect ${who.chat} to Cleaner Core</h1>
-        <p><strong>${escape(p.clientName)}</strong> is asking to run your cleaning schedule.</p>
+    `Connect ${who.chat} to ${words.product}`,
+    `        <h1>Connect ${who.chat} to ${words.product}</h1>
+        <p><strong>${escape(p.clientName)}</strong> ${words.asking}</p>
         <p class="hint">After you decide, you'll be sent back to ${escape(p.redirectHost)}.</p>
         <p>It will be able to:</p>
         <ul>
-          <li>save your property, calendars, people and schedule</li>
-          <li>read new bookings</li>
-          <li>text your cleaner when you say so</li>
-          <li>tell you what your cleaner says</li>
+${list(words.can)}
         </ul>
         <p>It will <strong>not</strong> be able to:</p>
         <ul>
-          <li>read back your door code</li>
-          <li>send the door code before you say the guests have left</li>
-          <li>read Tour Core or its tours</li>
-          <li>read provider secrets</li>
+${list(words.cannot)}
         </ul>
         <div class="card highlight">
           ${decision}

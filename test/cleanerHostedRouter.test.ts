@@ -89,9 +89,12 @@ describe("routing on the multi-tenant service", () => {
     expect((await m.app.http("/cleaner-core/photos/abc")).status).toBe(404);
   });
 
-  it("is 404 for the Tour Core /mcp", async () => {
+  it("asks an unsigned call on the shared /mcp to sign in, and lists nothing", async () => {
     const { m } = await start();
-    expect((await m.app.rpc("/mcp", "tools/list")).status).toBe(404);
+    const res = await m.app.rpc("/mcp", "tools/list");
+    expect(res.status).toBe(401);
+    expect(String(res.headers["www-authenticate"])).toContain("Bearer");
+    expect(await res.text()).not.toContain("tools");
   });
 
   it("names the Grok primary in host texts while a Claude connection runs the setup", async () => {
@@ -133,6 +136,30 @@ describe("routing on the multi-tenant service", () => {
     expect(m.wakes.slice(seen).map((wake) => wake.url)).toEqual([CLAUDE_FIRE]);
   });
 
+  it("sends no cleaning alerts for a tenant that moved to touring", async () => {
+    const { m, court } = await start();
+    const courtToken = await m.join(court.id, "grok");
+    m.setWakeStatus(503);
+    expect((await m.tool(courtToken, "save_alert_routine", { url: GROK_HOOK, token: "court-routine-key" })).isError).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    m.setWakeStatus(200);
+    m.registry.setService(court.id, "touring");
+    at += 60 * 60_000;
+    const h = hostedCleaner({
+      registry: m.registry,
+      secrets: new TenantSecrets(m.app.root),
+      dataRoot: m.app.root,
+      origin: () => BASE,
+      baseEnv: () => m.app.inst.env(),
+      grantLive: (id) => Boolean(new OAuthGrantStore(m.app.inst.runtime).get(id)),
+      now: clock,
+      log: () => {},
+    });
+    const before = m.wakes.length;
+    await drainAllTenants(h);
+    expect(m.wakes.slice(before)).toEqual([]);
+  });
+
   it("keeps draining the other tenants when one tenant's desk throws", async () => {
     const { m, lane, court } = await start();
     const courtToken = await m.join(court.id, "grok");
@@ -140,6 +167,7 @@ describe("routing on the multi-tenant service", () => {
     expect((await m.tool(courtToken, "save_alert_routine", { url: GROK_HOOK, token: "court-routine-key" })).isError).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 20));
     m.setWakeStatus(200);
+    m.registry.setService(lane.id, "cleaning");
     mkdirSync(tenantFolder(m.app.root, lane.id), { recursive: true });
     writeFileSync(join(tenantFolder(m.app.root, lane.id), "cleaner-live.json"), "{ not json");
     const logs: string[] = [];

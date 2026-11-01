@@ -3,8 +3,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { rmSync } from "node:fs";
 import { parsePhone } from "../../core/phone";
 import { forgetLiveDesk } from "../liveDesk";
-import { ADMIN_HEADERS, invitePage, loginPage, messagePage, tenantPage, tenantsPage } from "./adminPages";
-import { RegistryError, tenantFolder, type Tenant } from "./registry";
+import { switchService } from "../../hosted/service";
+import { touringAlertsConnected } from "../../hosted/touringAlerts";
+import { ADMIN_HEADERS, invitePage, loginPage, messagePage, tenantPage, tenantsPage, type TenantHealth } from "./adminPages";
+import { RegistryError, tenantFolder, type Tenant, type TenantService } from "./registry";
 import type { HostedCleaner } from "./router";
 import { findIncomingNumber, pointSmsWebhook } from "./twilioNumbers";
 
@@ -138,11 +140,11 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
     if (!live) return path === "/admin" ? html(200, loginPage()) : redirect("/admin");
     if (path === "/admin") {
       prune(deps);
-      return html(200, tenantsPage(h.registry.list(), live.csrf));
+      return html(200, tenantsPage(h.registry.list(), live.csrf, undefined, (t) => healthOf(h, t)));
     }
     const tenant = tenantFrom(deps, path);
     if (!tenant || path !== `/admin/tenants/${tenant.id}`) return html(404, messagePage("Not found", "That page doesn't exist."));
-    return html(200, tenantPage(tenant, live.csrf));
+    return html(200, tenantPage(tenant, live.csrf, undefined, healthOf(h, tenant)));
   }
 
   if (method !== "POST") return html(405, messagePage("Not allowed", "That isn't something this page does."));
@@ -165,23 +167,35 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
     case "invite":
       return html(200, invitePage(tenant, h.registry.invite(tenant.id), connectorUrl(h)));
     case "primary":
-      if (!tenant.connections.some((c) => c.grantId === grantId)) return html(400, tenantPage(tenant, live.csrf, "That connection isn't on this tenant."));
+      if (!tenant.connections.some((c) => c.grantId === grantId)) return html(400, tenantPage(tenant, live.csrf, "That connection isn't on this tenant.", healthOf(h, tenant)));
       h.registry.setPrimary(tenant.id, grantId);
+      refreshTouringAlerts(h, tenant.id);
       return redirect(back);
     case "disconnect":
-      if (!tenant.connections.some((c) => c.grantId === grantId)) return html(400, tenantPage(tenant, live.csrf, "That connection isn't on this tenant."));
+      if (!tenant.connections.some((c) => c.grantId === grantId)) return html(400, tenantPage(tenant, live.csrf, "That connection isn't on this tenant.", healthOf(h, tenant)));
       deps.revokeGrant(grantId);
       h.secrets.deleteConnection(tenant.id, grantId);
       h.registry.disconnect(tenant.id, grantId);
+      refreshTouringAlerts(h, tenant.id);
       h.log(`Disconnected one connection from ${tenant.id}.`);
       return redirect(back);
     case "disable":
     case "enable":
       h.registry.setDisabled(tenant.id, verb === "disable");
+      // A touring tenant's process runs only while the tenant is on.
+      if (verb === "disable") h.touring?.supervisor.stop(tenant.id);
+      else if (tenant.service === "touring" && h.touring?.enabled()) await h.touring.start(h.registry.get(tenant.id)!);
       h.log(`Turned ${tenant.id} ${verb === "disable" ? "off" : "on"}.`);
       return redirect(back);
+    case "service": {
+      const to = form.get("to");
+      if (to !== "touring" && to !== "cleaning") return html(400, tenantPage(tenant, live.csrf, "Pick touring or cleaning.", healthOf(h, tenant)));
+      const reply = await setService(h, tenant, to, form.get("force") === "1");
+      if (reply) return html(400, tenantPage(h.registry.get(tenant.id) ?? tenant, live.csrf, reply, healthOf(h, tenant)));
+      return redirect(back);
+    }
     case "delete":
-      if ((form.get("confirm") ?? "") !== tenant.label) return html(400, tenantPage(tenant, live.csrf, "Type the label to delete."));
+      if ((form.get("confirm") ?? "") !== tenant.label) return html(400, tenantPage(tenant, live.csrf, "Type the label to delete.", healthOf(h, tenant)));
       await deleteTenant(deps, tenant);
       return redirect("/admin");
     default:
@@ -189,8 +203,9 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
   }
 }
 
+/** The one address every host connects to. Their chat picks touring or cleaning there. */
 function connectorUrl(h: HostedCleaner): string {
-  return `${h.origin() ?? ""}/mcp/cleaner-core`;
+  return `${h.origin() ?? ""}/mcp`;
 }
 
 function tenantFrom(deps: AdminDeps, path: string): Tenant | undefined {
@@ -206,8 +221,15 @@ function prune(deps: AdminDeps): void {
       if (live.has(connection.grantId)) continue;
       deps.h.secrets.deleteConnection(tenant.id, connection.grantId);
       deps.h.registry.disconnect(tenant.id, connection.grantId);
+      refreshTouringAlerts(deps.h, tenant.id);
     }
   }
+}
+
+/** A touring process's publish waits on its alerts: tell it again after the chats that carry them change. */
+function refreshTouringAlerts(h: HostedCleaner, tenantId: string): void {
+  const tenant = h.registry.get(tenantId);
+  if (tenant?.service === "touring") h.touring?.supervisor.setAlerts(tenantId, touringAlertsConnected(h, tenant));
 }
 
 async function createTenant(deps: AdminDeps, form: URLSearchParams, csrf: string, html: (status: number, body: string) => boolean): Promise<boolean> {
@@ -238,11 +260,32 @@ async function createTenant(deps: AdminDeps, form: URLSearchParams, csrf: string
   return html(200, invitePage(created.tenant, created.inviteCode, connectorUrl(h)));
 }
 
+/** The service column, the touring process, its restarts, and the texts waiting for it. Nothing secret. */
+function healthOf(h: HostedCleaner, tenant: Tenant): TenantHealth {
+  const service = tenant.service ?? "not chosen";
+  if (tenant.service !== "touring" || !h.touring) return { service, process: "—", restartsLastDay: 0, queuedTexts: 0 };
+  const health = h.touring.supervisor.health(tenant.id);
+  return { service, process: health.up ? "up" : "down", restartsLastDay: health.restartsLastDay, queuedTexts: h.touring.inbox.pending(tenant.id).length };
+}
+
+/**
+ * Saad's switch. A tenant with no service just gets one. Otherwise the same rules as the host's,
+ * without the host's yes (this form is the yes); force skips the live check and sends nothing.
+ * Returns the refusal, or undefined when it switched.
+ */
+async function setService(h: HostedCleaner, tenant: Tenant, to: TenantService, force: boolean): Promise<string | undefined> {
+  // The host's chat chooses the first service. The admin only switches one that's already chosen.
+  if (!tenant.service) return "The host hasn't chosen a service yet. Their chat picks it when it connects.";
+  const reply = await switchService({ h, tenant, actor: "admin", noteToolsChanged: () => {} }, { to, force });
+  return reply.isError ? reply.text : undefined;
+}
+
 async function deleteTenant(deps: AdminDeps, tenant: Tenant): Promise<void> {
   const { h } = deps;
   for (const connection of tenant.connections) deps.revokeGrant(connection.grantId);
-  // Off first, so no request or drain starts work on the folder while it goes.
+  // Off first, so no request or drain starts work on the folder while it goes, and no touring process writes to it.
   h.registry.setDisabled(tenant.id, true);
+  h.touring?.supervisor.stop(tenant.id);
   const env = h.baseEnv();
   const number = await findIncomingNumber(env, tenant.twilioNumber);
   if (number) await pointSmsWebhook(env, number.sid, "");

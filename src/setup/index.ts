@@ -24,6 +24,8 @@ export {
   removeDoor,
   setRoute,
   setTourHours,
+  describeTourWindows,
+  tourWindowRows,
   setVerificationPolicy,
   setServices,
   reviewSetup,

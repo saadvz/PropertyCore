@@ -590,6 +590,7 @@ Tour Core service's.
 | `TOURCORE_DEPLOYMENT_MODE` | `HOSTED_RAILWAY_P0` |
 | `TOURCORE_HOME` | `/data` |
 | `CLEANER_CORE_MULTI_TENANT` | `1` |
+| `TOUR_CORE_TENANTS` | `1` to offer touring, `0` for cleaning only |
 | `CLEANER_CORE_ENABLED` | `1` |
 | `CLEANER_CORE_ADMIN_PASSWORD` | Saad's admin password. Railway variables only |
 | `CLEANER_CORE_TWILIO_ACCOUNT_SID`, `CLEANER_CORE_TWILIO_AUTH_TOKEN` | The one Twilio account every tenant's number is on |
@@ -601,8 +602,15 @@ Do not set `CLEANER_CORE_TWILIO_PHONE_NUMBER`, `CLEANER_CORE_ASSISTANT`, or
 tenant, and a fixed token names no tenant.
 
 Adding a host: on `/admin`, create a tenant with its label and Twilio number,
-then send the host the invite code. They add the connector at
-`<service>/mcp/cleaner-core` and type the code on the page that opens.
+then send the host the invite code. They add the connector at `<service>/mcp`
+(or `<service>/mcp/cleaner-core` from a Cleaner Core template), type the code
+on the page that opens, and choose touring or cleaning.
+
+This shared service replaced the separate Tour Core service: touring tenants
+run on it, each in its own Tour Core process (`TENANT_WORKER`), when
+`TOUR_CORE_TENANTS` is on. `.railway/railway.ts` describes it. The single-owner
+Tour Core demo below still works for a service without
+`CLEANER_CORE_MULTI_TENANT`.
 
 ## Self-hosted
 

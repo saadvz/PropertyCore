@@ -22,7 +22,8 @@ export function resolveStorageModel(input: {
 }): StorageModel {
   const explicit = input.env.TOURCORE_STORAGE_MODEL?.trim().toUpperCase().replace(/-/g, "_");
   if (explicit === "DIRECT_GOOGLE_DRIVE") return "DIRECT_GOOGLE_DRIVE";
-  if (input.deploymentMode === "HOSTED_RAILWAY_P0") return "HOSTED_P0_VOLUME";
+  // A touring host on the shared service keeps its records on that service's volume, too.
+  if (input.deploymentMode === "HOSTED_RAILWAY_P0" || input.deploymentMode === "TENANT_WORKER") return "HOSTED_P0_VOLUME";
   if (input.manifestProvider === "GOOGLE_DRIVE") return "DIRECT_GOOGLE_DRIVE";
   return "LOCAL_DEMO";
 }

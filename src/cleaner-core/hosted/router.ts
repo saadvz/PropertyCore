@@ -18,6 +18,7 @@ import {
   handleCleanerMcpHttp,
   handleCleanerTwilioStatus,
   handleCleanerTwilioWebhook,
+  uploadBody,
   uploadPageOf,
 } from "../http";
 import { drainCleanerAlerts, liveDeskFor } from "../liveDesk";
@@ -25,6 +26,15 @@ import type { DeleteSecrets, SaveSecrets } from "../mcp";
 import { CLEANER_PHOTO_PREFIX, photoKey, servePhoto } from "../photos";
 import { handleCleanerUploadPage, isFormPost } from "../uploadPage";
 import { isTenantId, tenantFolder, type Tenant, type TenantRegistry } from "./registry";
+import { screenText } from "../../hosted/crossService";
+import { handleTenantMcp } from "../../hosted/frontMcp";
+import type { TouringFront } from "../../hosted/serviceTools";
+import { handleTouringAlertUpload, TOURING_ALERT_LINK_HEADERS, TOURING_ALERT_LINK_PAGE, touringAlertsConnected, touringAlertUploadCode } from "../../hosted/touringAlerts";
+import { forwardTenantPath } from "../../hosted/touringForward";
+import { touringPublicRoute } from "../../hosted/workerRoutes";
+import { MCP_PATH } from "../../mcp/paths";
+import { TWILIO_WEBHOOK_PATH } from "../../messaging/twilio/provider";
+import { formParams, verifyTwilioSignature } from "../../messaging/twilio/signature";
 import { buildTenantEnv, ROUTINE_NAMES } from "./tenantEnv";
 import type { TenantSecrets } from "./tenantSecrets";
 
@@ -46,6 +56,8 @@ export interface HostedCleaner {
   grantLive(grantId: string): boolean;
   now(): Date;
   log(line: string): void;
+  /** Touring tenants' processes and saved texts. Absent when the service runs no touring. */
+  touring?: TouringFront;
 }
 
 export function hostedCleaner(h: HostedCleaner): HostedCleaner {
@@ -62,7 +74,7 @@ export interface TenantContext {
 const ROUTINE = new Set<string>(ROUTINE_NAMES);
 const UNLINKED = "This connection isn't linked to a Cleaner Core account. Reconnect with an invite code from Saad.";
 const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
-const TOUR_CORE_PATHS = new Set(["/mcp", "/mcp/ops", "/mcp/qa"]);
+const TOUR_CORE_PATHS = new Set(["/mcp/ops", "/mcp/qa"]);
 const TENANT_PATH = /^\/t\/([^/]+)(\/.+)$/;
 
 export function splitTenantPath(pathname: string): { tenantId: string; rest: string } | undefined {
@@ -120,8 +132,8 @@ export interface HostedRequest {
   send(status: number, type: string, body: string, extra?: Record<string, string>): void;
   readRaw(): Promise<Buffer>;
   readCapped(max: number): Promise<Buffer | undefined>;
-  /** OAuth for /mcp/cleaner-core. Undefined after it answered the request itself. */
-  authenticate?(): Promise<AuthInfo | undefined>;
+  /** OAuth for one MCP address on this service. Undefined after it answered the request itself. */
+  authenticate?(path: string): Promise<AuthInfo | undefined>;
 }
 
 const JSON_TYPE = "application/json; charset=utf-8";
@@ -139,38 +151,8 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
 
   if (TOUR_CORE_PATHS.has(path)) return notFound();
 
-  if (path === CLEANER_MCP_PATH) {
-    if (!r.authenticate) {
-      r.send(503, JSON_TYPE, JSON.stringify({ error: { message: "The cleaning scheduler chat is off." } }));
-      return true;
-    }
-    const auth = await r.authenticate();
-    if (!auth) return true;
-    const extra = (auth.extra ?? {}) as { grantId?: string; tenantId?: string; assistant?: CleanerAssistant };
-    const tenant = extra.tenantId ? h.registry.get(extra.tenantId) : undefined;
-    if (!tenant || tenant.disabled || !extra.grantId || !extra.assistant) {
-      r.send(403, JSON_TYPE, JSON.stringify({ error: { message: UNLINKED } }));
-      return true;
-    }
-    const ctx = tenantContext(h, tenant);
-    const result = await handleCleanerMcpHttp({
-      method,
-      authorization: r.req.headers.authorization,
-      pinKeyHeader: r.req.headers["x-cleaner-core-pin-key"],
-      contentType: String(r.req.headers["content-type"] ?? ""),
-      readBody: r.readRaw,
-      env: ctx.env,
-      root: ctx.root,
-      now,
-      saveSecrets: ctx.saveSecrets,
-      deleteSecrets: ctx.deleteSecrets,
-      oauth: { authenticate: async () => true },
-      caller: { assistant: extra.assistant, connectionId: extra.grantId },
-    });
-    h.registry.touch(tenant.id);
-    promoteRoutineOwner(h, tenant.id);
-    if ("answered" in result) return true;
-    r.send(result.status, JSON_TYPE, result.body, result.headers);
+  if (path === MCP_PATH || path === CLEANER_MCP_PATH) {
+    await handleTenantMcp(h, r, path);
     return true;
   }
 
@@ -179,6 +161,24 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
     const tenant = h.registry.byNumber(formTo(rawBody));
     if (!tenant || tenant.disabled) {
       h.log(tenant ? `A text reached ${tenant.id}, which is turned off. Nothing was sent.` : "A text reached a number no Cleaner Core tenant uses. Nothing was sent.");
+      r.send(200, "text/xml", EMPTY_TWIML);
+      return true;
+    }
+    if (tenant.service && h.touring) {
+      // The shared token signs every tenant's texts. Checked first, so a forged STOP never changes an opt-out.
+      if (!signedByTwilio(h, r, rawBody, signed(path))) {
+        r.send(403, "text/plain", "Forbidden");
+        return true;
+      }
+      if ((await screenText(h, tenant, formParams(rawBody))) === "drop") {
+        h.registry.touch(tenant.id);
+        r.send(200, "text/xml", EMPTY_TWIML);
+        return true;
+      }
+    }
+    if (tenant.service === "touring") return touringText(h, r, tenant, rawBody, signed(path));
+    if (tenant.service !== "cleaning") {
+      h.log(`A text reached ${tenant.id}, which has no service yet. Nothing was sent.`);
       r.send(200, "text/xml", EMPTY_TWIML);
       return true;
     }
@@ -206,10 +206,62 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
   if (!scoped) return false;
   const tenant = h.registry.get(scoped.tenantId);
   if (!tenant || tenant.disabled) return notFound();
+  if (tenant.service === "touring") {
+    if (method === "POST" && scoped.rest === TWILIO_WEBHOOK_PATH) return touringText(h, r, tenant, await r.readRaw(), signed(path));
+    if (method === "GET" && touringAlertUploadCode(scoped.rest)) {
+      r.send(200, "text/html; charset=utf-8", TOURING_ALERT_LINK_PAGE, TOURING_ALERT_LINK_HEADERS);
+      return true;
+    }
+    const routineCode = method === "POST" ? touringAlertUploadCode(scoped.rest) : undefined;
+    if (routineCode) {
+      const read = await uploadBody(String(r.req.headers["content-type"] ?? ""), () => r.readCapped(ALERT_UPLOAD_MAX_BYTES));
+      const result = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : handleTouringAlertUpload(h, tenant, routineCode, read.parsed);
+      if (result.status === 200) h.touring?.supervisor.setAlerts(tenant.id, touringAlertsConnected(h, tenant));
+      r.send(result.status, JSON_TYPE, JSON.stringify(result.body), result.status === 413 ? { Connection: "close" } : {});
+      return true;
+    }
+    // Only the touring process's public routes. Never its connector, internal routes, or local webhook.
+    const target = h.touring?.supervisor.target(tenant.id);
+    if (!target || !touringPublicRoute(method, scoped.rest)) return notFound();
+    await forwardTenantPath(target, r, scoped.rest);
+    h.registry.touch(tenant.id);
+    return true;
+  }
+  if (tenant.service !== "cleaning") return notFound();
   const handled = await handleTenantPath(h, r, tenant, scoped.rest, signed(path), now);
   if (!handled) return notFound();
   h.registry.touch(tenant.id);
   promoteRoutineOwner(h, tenant.id);
+  return true;
+}
+
+/**
+ * A text or Twilio callback for a touring tenant. The signature is checked here, over the address
+ * Twilio used. The text is saved first and removed once the touring process took it; while the
+ * process is down it waits, and Twilio gets an empty reply either way.
+ */
+function signedByTwilio(h: HostedCleaner, r: HostedRequest, rawBody: Buffer, signedUrl: string | undefined): boolean {
+  const signature = r.req.headers["x-twilio-signature"];
+  return verifyTwilioSignature(h.touring?.authToken(), signedUrl, formParams(rawBody), Array.isArray(signature) ? signature[0] : signature).ok;
+}
+
+async function touringText(h: HostedCleaner, r: HostedRequest, tenant: Tenant, rawBody: Buffer, signedUrl: string | undefined): Promise<boolean> {
+  const touring = h.touring;
+  const authToken = touring?.authToken();
+  if (!touring || !authToken || !signedByTwilio(h, r, rawBody, signedUrl)) {
+    r.send(403, "text/plain", "Forbidden");
+    return true;
+  }
+  if ((await screenText(h, tenant, formParams(rawBody))) === "drop") {
+    r.send(200, "text/xml", EMPTY_TWIML);
+    return true;
+  }
+  // Saved first, then handed over behind any text already waiting, so texts keep their order.
+  const saved = touring.inbox.save(tenant.id, rawBody);
+  await touring.handOver(tenant);
+  if (touring.inbox.pending(tenant.id).includes(saved)) h.log(`A text for ${tenant.id} is waiting for its touring process.`);
+  h.registry.touch(tenant.id);
+  r.send(200, "text/xml", EMPTY_TWIML);
   return true;
 }
 
@@ -289,9 +341,9 @@ export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
 /** Delivers every enabled tenant's waiting wake-ups. One tenant's failure never stops the rest. */
 export async function drainAllTenants(h: HostedCleaner): Promise<void> {
   for (const listed of h.registry.list()) {
-    // Read again: a tenant deleted or turned off while this round runs is skipped.
+    // Read again: a tenant deleted, turned off, or moved off cleaning while this round runs is skipped.
     const tenant = h.registry.get(listed.id);
-    if (!tenant || tenant.disabled) continue;
+    if (!tenant || tenant.disabled || tenant.service !== "cleaning") continue;
     const ctx = tenantContext(h, tenant);
     try {
       await drainCleanerAlerts(ctx.root, ctx.env, () => h.now());

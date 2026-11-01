@@ -1,6 +1,7 @@
 import type { TourCoreConfig } from "../config/tourCoreConfig";
 import { normalize } from "../intent/normalize";
 import { slotsOn } from "./schedule";
+import { windowOn } from "./tourWindows";
 import { spokenTimes, type SpokenTime } from "./spokenTime";
 import { addDays, formatClockTime, formatDay, formatTime, formatWeekday, localDateOf, spokenClockTime, weekdayOf, zonedParts, zonedTimeToUtc, type LocalDate } from "./timezone";
 
@@ -35,19 +36,22 @@ export function placementOf(config: TourCoreConfig, start: Date): SlotPlacement 
   const tz = config.property.timezone;
   const day = localDateOf(start, tz);
   if (slotsOn(config, day).some((slot) => slot.start.getTime() === start.getTime())) return "ON_GRID";
-  if (!config.tourHours.days.includes(weekdayOf(day))) return "OUTSIDE_HOURS";
+  const hours = windowOn(config.tourHours, weekdayOf(day));
+  if (!hours) return "OUTSIDE_HOURS";
   const local = zonedParts(start, tz);
   const startMin = local.hour * 60 + local.minute;
-  const [openH = 0, openM = 0] = config.tourHours.start.split(":").map(Number);
-  const [closeH = 0, closeM = 0] = config.tourHours.end.split(":").map(Number);
+  const [openH = 0, openM = 0] = hours.start.split(":").map(Number);
+  const [closeH = 0, closeM = 0] = hours.end.split(":").map(Number);
   const open = openH * 60 + openM;
   const close = closeH * 60 + closeM;
   if (startMin >= open && startMin + config.tourHours.tourLengthMinutes <= close) return "INSIDE_HOURS";
   return "OUTSIDE_HOURS";
 }
 
-export function touringHoursLabel(config: TourCoreConfig): string {
-  const { start, end } = config.tourHours;
+/** The touring hours on the day of `at` (when it has tours), else the first window's. */
+export function touringHoursLabel(config: TourCoreConfig, at?: Date): string {
+  const onDay = at ? windowOn(config.tourHours, weekdayOf(localDateOf(at, config.property.timezone))) : undefined;
+  const { start, end } = onDay ?? config.tourHours;
   if (start === "23:59" || end === "23:59") return `${spokenClockTime(start)} to ${spokenClockTime(end)}`;
   return `${formatClockTime(start)}–${formatClockTime(end)}`;
 }

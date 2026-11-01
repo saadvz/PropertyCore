@@ -11,12 +11,15 @@
  *  HOSTED_RAILWAY_P0  one Tour Core service we run on Railway for the demo.
  *                     Landlords do not create Railway projects. Single-tenant:
  *                     Marketplace publication requires tenant isolation.
+ *  TENANT_WORKER      one touring host's Tour Core on the shared multi-tenant
+ *                     service: a private process the service starts, reached
+ *                     only on loopback with the key it was given.
  *
  * The mode changes how the installation is set up and reached, never a tour,
  * policy or access rule.
  */
 
-export const DEPLOYMENT_MODES = ["LOCAL_DEVELOPER", "GROK_MANAGED_P0", "SELF_HOSTED", "HOSTED_RAILWAY_P0"] as const;
+export const DEPLOYMENT_MODES = ["LOCAL_DEVELOPER", "GROK_MANAGED_P0", "SELF_HOSTED", "HOSTED_RAILWAY_P0", "TENANT_WORKER"] as const;
 export type DeploymentMode = (typeof DEPLOYMENT_MODES)[number];
 
 const ALIASES: Record<string, DeploymentMode> = {
@@ -32,6 +35,7 @@ const ALIASES: Record<string, DeploymentMode> = {
   hosted_railway: "HOSTED_RAILWAY_P0",
   railway: "HOSTED_RAILWAY_P0",
   hosted: "HOSTED_RAILWAY_P0",
+  tenant_worker: "TENANT_WORKER",
 };
 
 export type ParsedDeploymentMode = { mode: DeploymentMode } | { invalid: string };
@@ -62,6 +66,8 @@ export const DEPLOYMENT_MODE_LABELS: Record<DeploymentMode, string> = {
   GROK_MANAGED_P0: "Grok's cloud computer (demo)",
   SELF_HOSTED: "Self-hosted",
   HOSTED_RAILWAY_P0: "Hosted Railway demo (single-tenant)",
+  TENANT_WORKER: "Touring for one host on the shared service",
 };
 
 export const isHostedRailway = (mode: DeploymentMode) => mode === "HOSTED_RAILWAY_P0";
+export const isTenantWorker = (mode: DeploymentMode) => mode === "TENANT_WORKER";

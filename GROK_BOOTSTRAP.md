@@ -25,8 +25,9 @@ not store operational records on your computer. "Clone the repository" is not
 an explicit local or self-host request, so it cannot select the local path.
 Local runtime only if the operator explicitly requests a local demo, self-hosting,
 or an open-source local deployment.
-Approval shows a pairing code. The operator clicks Allow. The first approval
-claims this demo.
+Approval shows a pairing code and an invite code box. The operator types the
+invite code from Saad and clicks Allow. When Tour Core says the number isn't
+set up yet, call `choose_service` with `touring`.
 
 ## Open-source path
 

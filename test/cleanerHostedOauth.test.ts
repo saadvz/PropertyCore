@@ -122,11 +122,22 @@ describe("the invite code on the Allow page", () => {
     expect(plain).not.toContain('id="oauth-invite"');
   });
 
-  it("refuses a connection to the Tour Core resource", async () => {
+  it("refuses an Allow at the shared /mcp address without an invite code", async () => {
+    const { app } = await multiApp();
+    const clientId = await app.register("Grok");
+    const { html } = await pendingRequest(app, clientId, `${BASE}/mcp`, OPERATOR_SCOPE);
+    const { id, code } = app.pageParts(html);
+    expect((await app.approve(id, code)).status).not.toBe(200);
+  });
+
+  it("takes an invite code at the shared /mcp address too", async () => {
     const { app } = await multiApp();
     const clientId = await app.register("Grok");
     const { page } = await pendingRequest(app, clientId, `${BASE}/mcp`, OPERATOR_SCOPE);
-    expect(page.status).toBe(403);
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain("Connect your Grok Bot to Tour Core and Cleaner Core");
+    expect(html).toContain('id="oauth-invite"');
   });
 
   it("counts an expired grant as gone, not live", () => {

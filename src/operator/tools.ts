@@ -5,7 +5,7 @@ import { secretValues } from "../install/settings";
 import { HOSTED_ADMIN_TOOLS } from "../install/hostedAdminTools";
 import type { ReportedClient } from "../playbooks/select";
 import { INSTALLATION_TOOLS } from "../install/tools";
-import { MILESTONE_TOOLS, settingsSentence } from "./milestones";
+import { hoursAlreadyChosen, MILESTONE_TOOLS, settingsSentence } from "./milestones";
 import { installedMessaging } from "../install/status";
 import { addressConfirmQuestion, nextAddressPartQuestion, savedFullAddress } from "../setup/address";
 import { PROPERTY_TYPE_LABELS, PROPERTY_TYPES, SETUP_PROPERTY_TYPES, validateConfig } from "../config/tourCoreConfig";
@@ -22,8 +22,9 @@ import { checkMessaging, UnavailableModeError } from "../createTourCore";
 import type { MessagingLedger } from "../messaging/ledger";
 import { applySetupCommand } from "../setup/commands";
 import { draftView, readinessView, saveStateView } from "../setup/presenters";
-import { hoursRangeRefusal, reuseDaysRefusal, tourSpacingRefusal } from "../config/validateConfig";
-import { parseDays, parseMinutes, parseTimeOfDay, SAME_DAY_HOURS, tourHoursEndSameDay } from "../setup/parse";
+import { reuseDaysRefusal } from "../config/validateConfig";
+import { parseDays, parseMinutes, parseTimeOfDay } from "../setup/parse";
+import { planTourHours } from "./hoursPlan";
 import type { DryTourCheck, DryTourResult } from "../setup/dryTour";
 import type { ReadinessResult } from "../setup/readiness";
 import { condoNextQuestion, createPropertySetup, localTestModeSentence, modeSentence, operatorFacingPropertyName, OperatorTeamCopy, SetupInputError, tourableSpacesQuestion, visitorHelpLines, visitorHelpQuestion, type SetupDraft } from "../setup/setupActions";
@@ -250,7 +251,7 @@ function setupSnapshot(ctx: ToolContext, id: string) {
       ...(saved ? { paused: unitPausedFlag(saved.state, u.id) } : {}),
     })),
     doors: view.doors.map((d) => ({ doorId: d.id, name: d.name, kind: d.kindLabel, ...(d.unitName ? { forUnit: d.unitName } : {}) })),
-    tourHours: view.tourHours.summary ?? `${view.tourHours.daysLabel}, ${view.tourHours.hoursLabel}`,
+    tourHours: view.tourHours.summary ?? view.tourHours.label,
     tourLength: view.tourHours.lengthLabel,
     newTourEvery: view.tourHours.spacingLabel,
     earlyArrival: view.tourHours.earlyLabel,
@@ -889,12 +890,13 @@ export const OPERATOR_TOOLS: OperatorTool[] = [
     title: "Set tour hours",
     kind: "change",
     description:
-      'Sets tour hours from everyday words: days ("weekdays", "Mon-Sat", "every day"), start/end ("9am", "5 PM"), tour length, how often a new tour starts, early arrival ("10 minutes"). Only pass what the operator said; defaults stay visible. A new property starts at Monday–Friday, 9:00 AM–5:00 PM, 45-minute tours, hourly starts, and 10 minutes early. Tours have to end later the same day. Tours must last 15 minutes to 4 hours, and starts must be 15 minutes to 8 hours apart. Hours are structural: a published property goes back to draft until readiness, a practice tour, and publish. After those hours are published, open visitor conversations use them on the next inbound text.',
+      'Sets tour hours from everyday words: days ("weekdays", "Mon-Sat", "every day"), start/end ("9am", "5 PM"). Different days can have different hours (weekdays 9-5, weekends 9-8): one call per set of days. Once hours are saved, new days are added and the days not named keep their hours; pass replace only when the operator says to replace all the hours. Also tour length, how often a new tour starts, early arrival ("10 minutes"). Only pass what the operator said; defaults stay visible. A new property starts at Monday–Friday, 9:00 AM–5:00 PM, 45-minute tours, hourly starts, and 10 minutes early. Tours have to end later the same day. Tours must last 15 minutes to 4 hours, and starts must be 15 minutes to 8 hours apart. Hours are structural: a published property goes back to draft until readiness, a practice tour, and publish. After those hours are published, open visitor conversations use them on the next inbound text.',
     input: z.strictObject({
       property: Property,
       days: z.union([z.string().max(80), z.array(z.string().max(20)).max(7)]).optional(),
       start: z.string().max(20).optional(),
       end: z.string().max(20).optional(),
+      replace: z.boolean().optional().describe("True only when the operator says these hours replace all the saved ones."),
       tourLength: Duration.optional(),
       newTourEvery: Duration.optional(),
       earlyArrival: Duration.optional(),
@@ -902,22 +904,11 @@ export const OPERATOR_TOOLS: OperatorTool[] = [
     run: async (ctx, i) => {
       const { id, draft } = openDraft(ctx, i.property);
       const parsed = parseHours(i);
-      const start = typeof parsed.start === "string" ? parsed.start : draft.tourHours.start;
-      const end = typeof parsed.end === "string" ? parsed.end : draft.tourHours.end;
-      if (!tourHoursEndSameDay(start, end)) return { summary: SAME_DAY_HOURS, status: "blocked" };
-      const range = hoursRangeRefusal({
-        tourLengthMinutes: typeof parsed.tourLengthMinutes === "number" ? parsed.tourLengthMinutes : undefined,
-        slotEveryMinutes: typeof parsed.slotEveryMinutes === "number" ? parsed.slotEveryMinutes : undefined,
-      });
-      if (range) return { summary: range, status: "blocked" };
-      const spacing = tourSpacingRefusal({
-        ...draft.tourHours,
-        ...(typeof parsed.slotEveryMinutes === "number" ? { slotEveryMinutes: parsed.slotEveryMinutes } : {}),
-        ...(typeof parsed.tourLengthMinutes === "number" ? { tourLengthMinutes: parsed.tourLengthMinutes } : {}),
-        ...(typeof parsed.earlyArrivalMinutes === "number" ? { earlyArrivalMinutes: parsed.earlyArrivalMinutes } : {}),
-      });
-      if (spacing) return { summary: spacing, status: "blocked" };
-      const state = edit(ctx, id, draft, "setTourHours", parsed);
+      const plan = planTourHours(draft, parsed, !i.replace && hoursAlreadyChosen(ctx, id));
+      if ("blocked" in plan) return { summary: plan.blocked, status: "blocked" };
+      if ("ask" in plan) return { summary: plan.ask, status: "next" };
+      ctx.services.workspace.persistEdit(plan.next, ctx.now());
+      const state = setupState(ctx, id);
       ctx.services.workspace.noteTourHoursConfirmed(id, ctx.now().toISOString());
       const s = setupSnapshot(ctx, id);
       return { summary: s.tourHours, tourLength: s.tourLength, newTourEvery: s.newTourEvery, earlyArrival: s.earlyArrival, ...state };
@@ -1044,7 +1035,7 @@ export const OPERATOR_TOOLS: OperatorTool[] = [
         ...view.units.flatMap((u) => [operatorUnitName(draft.property, u.name), `  ${u.details.line.slice(u.details.line.indexOf(" \u2014 ") + 3)}`, `  Route: ${u.route ? u.route.doorNames.join(" \u2192 ") : "not set yet"}`]),
         ...(view.units.length ? [] : ["No tourable units yet"]),
         "",
-        `Tours: ${view.tourHours.summary ?? `${view.tourHours.daysLabel}, ${view.tourHours.hoursLabel}`}`,
+        `Tours: ${view.tourHours.summary ?? view.tourHours.label}`,
         `Verification: ${view.reviewCards.find((c) => c.step === "verification")!.rows[0]}`,
         ...modes.lines,
         ...visitorHelpLines(draft.operator),

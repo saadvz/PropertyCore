@@ -117,7 +117,7 @@ async function describeTimeRequest(services: OperatorServices, event: OperatorEv
     : `${who} is asking to tour ${unit} ${requested}.`;
   const note =
     placement === "OUTSIDE_HOURS"
-      ? ` ${requestedClock} is outside the property's normal ${touringHoursLabel(tour.config)} touring hours.`
+      ? ` ${requestedClock} is outside the property's normal ${touringHoursLabel(tour.config, requestedAt)} touring hours.`
       : placement === "ON_GRID"
         ? ""
         : ` ${requestedClock} isn't one of the regular tour times.`;

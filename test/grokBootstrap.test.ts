@@ -80,7 +80,7 @@ describe("fresh-bot bootstrap documentation", () => {
 });
 
 describe("hosted URL wins over a clone request", () => {
-  const HOSTED = "https://tourcore-production.up.railway.app";
+  const HOSTED = "https://tourcore-production-8b80.up.railway.app";
   const bootstrap = read(BOOTSTRAP);
   const skill = read(".grok/skills/install-tour-core/SKILL.md");
   const manual = read("docs/grok-manual-test.md");

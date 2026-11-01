@@ -92,7 +92,7 @@ export const SETUP_COMMANDS = {
     }
     return next;
   }),
-  setTourHours: command(TourHoursSchema.partial(), (d, i) => setTourHours(d, i)),
+  setTourHours: command(TourHoursSchema.partial().extend({ merge: z.boolean().optional() }), (d, i) => setTourHours(d, i)),
   setVerificationPolicy: command(
     z.object({
       mode: z.enum(["basic-form", "none"]).optional(),

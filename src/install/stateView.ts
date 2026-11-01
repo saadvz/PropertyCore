@@ -27,7 +27,8 @@ import { isCurrent, statusLabel } from "../setup/workspace";
 import { operatorUnitName } from "../visitor/identity";
 import { googleClientConfig } from "../storage/googleOAuth";
 import type { SettingName } from "./secretStore";
-import { isHostedRailway } from "./deployment";
+import { isHostedRailway, isTenantWorker } from "./deployment";
+import { activeFromNumber } from "../messaging/registry";
 import type { Installation } from "./installation";
 import { storageVolumeHealth } from "./persistentVolume";
 import { getInstallationStatus, installedMessaging, primaryProperty, type InstallationStatus, type InstallationStep } from "./status";
@@ -156,7 +157,8 @@ function presentNext(status: InstallationStatus): InstallationStep {
 }
 
 function stepFor(action: string, picture: Picture): StepId {
-  if (action === "START_RUNTIME" || action === "ESTABLISH_PUBLIC_ENDPOINT" || action === "CHECK_PUBLIC_ENDPOINT") return "starting";
+  // WAIT_FOR_HOST_NUMBER: a touring host on the shared service waits for the admin to add their number.
+  if (action === "START_RUNTIME" || action === "ESTABLISH_PUBLIC_ENDPOINT" || action === "CHECK_PUBLIC_ENDPOINT" || action === "WAIT_FOR_HOST_NUMBER") return "starting";
   if (action === "CONNECT_GROK" || action === "RECONNECT_GROK" || action === "FIX_GROK_CONNECTOR") return "connect";
   if (action === "CHOOSE_MESSAGING_PROVIDER") return "texting-choose";
   if (action === "CONNECT_VISITOR_MESSAGING" || action === "FIX_VISITOR_MESSAGING") return "texting-keys";
@@ -295,6 +297,12 @@ function textingLine(status: InstallationStatus): string {
   return textingSummary(component(status, "VISITOR_MESSAGING"));
 }
 
+/** The texting line, plus the number visitors text once texting works, so the host can always ask for it. */
+function textingOf(inst: Installation, status: InstallationStatus): { summary: string; number?: string } {
+  const number = component(status, "VISITOR_MESSAGING")?.state === "READY" ? activeFromNumber(inst) : undefined;
+  return { summary: textingLine(status), ...(number ? { number } : {}) };
+}
+
 function setupOf(services: OperatorServices, inst: Installation, picture: Picture, status: InstallationStatus) {
   if (!picture.id || !picture.draft) return undefined;
   const draft = picture.draft;
@@ -315,7 +323,7 @@ function setupOf(services: OperatorServices, inst: Installation, picture: Pictur
     })),
     doors: view.doors.map((door) => ({ name: door.name, kind: door.kindLabel })),
     routes: view.units.filter((unit) => unit.route).map((unit) => ({ unit: operatorUnitName(draft.property, unit.name), doors: unit.route!.doorNames })),
-    hours: view.tourHours.summary ?? `${view.tourHours.daysLabel}, ${view.tourHours.hoursLabel}`,
+    hours: view.tourHours.summary ?? view.tourHours.label,
     verification: view.reviewCards.find((card) => card.step === "verification")?.rows ?? [],
     texting: texting.label,
     alerts: alertsLine(status),
@@ -426,7 +434,7 @@ export function readState(input: StateReadInput, propertyId?: string): Record<st
   const alertsReconnect = !zoneBlock && next.component === "OPERATOR_ALERTS" && alerts?.state === "ERROR" && addressSaved;
   const step = alertsDegraded ? "alerts-degraded" : alertsReconnect ? "alerts-error" : focusStep(milestones, next.action, picture);
   const say = zoneBlock ? UNSET_ZONE_LINE : (inst && step === "backups" && driveNotSetUpLine(inst)) || sayFor(input.client, step, picture.draft);
-  const playbook = renderPlaybook(input.client, step, say);
+  const playbook = renderPlaybook(input.client, step, say, { sharedService: isTenantWorker(inst.deploymentMode()) });
   const copy = SHARED_STEPS[step];
   const setup = setupOf(input.services, inst, picture, status);
   return {
@@ -439,7 +447,7 @@ export function readState(input: StateReadInput, propertyId?: string): Record<st
     routes: setup?.routes ?? [],
     hours: setup?.hours ?? null,
     verification: setup?.verification ?? [],
-    texting: { summary: textingLine(status) },
+    texting: textingOf(inst, status),
     alerts: { summary: alertsLine(status) },
     health: { summary: healthLine(inst, status) },
     storage: { summary: storageLine(inst) },

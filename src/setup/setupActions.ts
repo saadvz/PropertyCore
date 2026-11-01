@@ -15,7 +15,9 @@ import {
 import { nextProfileQuestion, parseProfileValue, PROFILE_FIELDS, ProfileValueError, type ProfileField, type UnitProfile } from "../config/unitProfile";
 import { type ConfigIssue, type ConfigSection } from "../config/validateConfig";
 import { formatPhone, parsePhone } from "../core/phone";
-import { formatClockTime, friendlyTimeZone, WEEKDAYS, type Weekday } from "../core/timezone";
+import { formatClockTime, friendlyTimeZone, spokenClockTime, WEEKDAYS, type Weekday } from "../core/timezone";
+import { mergeTourWindow, tourWindows, withTourWindows } from "../core/tourWindows";
+import { describeTourDays } from "../operator/tourDayWords";
 import { isApartmentOrCondo, isSingleTourPlace, streetAndUnit, streetLine, unitLabel, visitorSubject } from "../visitor/identity";
 import { resolveTimeZone, SAME_DAY_HOURS, slugify, tourHoursEndSameDay, zoneForState } from "./parse";
 import { isLegacyVerification, verificationSummaryRows } from "./verification";
@@ -101,6 +103,11 @@ function doorAccessSentence(accessDemo: boolean): string {
 /** Local test texting plus the same door sentence modeSentence uses. */
 export function localTestModeSentence(accessDemo: boolean): string {
   return `${LOCAL_TEST_TEXTING} ${doorAccessSentence(accessDemo)}`;
+}
+
+/** The number visitors text, said once a property takes real texts. */
+export function visitorsTextLine(number: string): string {
+  return `Visitors text ${number} to book a tour.`;
 }
 
 export function modeSentence(textingLive: boolean, accessDemo: boolean): string {
@@ -782,18 +789,31 @@ function guidanceFor(draft: SetupDraft, unit: Unit, doorId: string, isLast: bool
 
 // ---------------------------------------------------------- hours, policies
 
-export function setTourHours(draft: SetupDraft, input: Partial<TourHours>): SetupDraft {
+/**
+ * Saves touring hours. By default the days and times given become the only
+ * window (the old one-window behaviour the setup page and CLI use). With
+ * `merge`, the days given get these hours and every other day keeps its own,
+ * so "add Saturday 9-8" leaves weekdays 9-5 alone.
+ */
+export function setTourHours(draft: SetupDraft, input: Partial<TourHours> & { merge?: boolean }): SetupDraft {
   const next = clone(draft);
   const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
-  if (input.days !== undefined) {
-    if (input.days.some((d) => !WEEKDAYS.includes(d))) throw new SetupInputError("TOUR_DAYS_UNREADABLE", "I didn't understand those days.");
-    next.tourHours.days = WEEKDAYS.filter((d) => input.days!.includes(d));
+  if (input.days !== undefined && input.days.some((d) => !WEEKDAYS.includes(d))) {
+    throw new SetupInputError("TOUR_DAYS_UNREADABLE", "I didn't understand those days.");
   }
   for (const key of ["start", "end"] as const) {
     const value = input[key];
-    if (value === undefined) continue;
-    if (!hhmm.test(value)) throw new SetupInputError("TOUR_TIME_UNREADABLE", "I didn't understand that time.");
-    next.tourHours[key] = value;
+    if (value !== undefined && !hhmm.test(value)) throw new SetupInputError("TOUR_TIME_UNREADABLE", "I didn't understand that time.");
+  }
+  if (input.windows !== undefined) {
+    for (const w of input.windows) {
+      if (w.days.some((d) => !WEEKDAYS.includes(d))) throw new SetupInputError("TOUR_DAYS_UNREADABLE", "I didn't understand those days.");
+      if (!hhmm.test(w.start) || !hhmm.test(w.end)) throw new SetupInputError("TOUR_TIME_UNREADABLE", "I didn't understand that time.");
+    }
+    next.tourHours = withTourWindows(next.tourHours, input.windows);
+  }
+  if (input.days !== undefined || input.start !== undefined || input.end !== undefined) {
+    next.tourHours = input.merge ? mergeHours(next.tourHours, input) : replaceHours(next.tourHours, input);
   }
   for (const key of ["slotEveryMinutes", "tourLengthMinutes", "earlyArrivalMinutes"] as const) {
     const value = input[key];
@@ -801,10 +821,52 @@ export function setTourHours(draft: SetupDraft, input: Partial<TourHours>): Setu
     if (!Number.isInteger(value)) throw new SetupInputError("TOUR_MINUTES_UNREADABLE", "Please use a whole number of minutes.");
     next.tourHours[key] = value;
   }
-  if (!tourHoursEndSameDay(next.tourHours.start, next.tourHours.end)) {
+  if (tourWindows(next.tourHours).some((w) => !tourHoursEndSameDay(w.start, w.end))) {
     throw new SetupInputError("TOUR_HOURS_BACKWARDS", SAME_DAY_HOURS);
   }
   return next;
+}
+
+/** One window from now on. Anything not given comes from the first window. */
+function replaceHours(hours: TourHours, input: Partial<TourHours>): TourHours {
+  return withTourWindows(hours, [{ days: input.days ?? hours.days, start: input.start ?? hours.start, end: input.end ?? hours.end }]);
+}
+
+/** The days given get these hours; other days keep theirs. */
+function mergeHours(hours: TourHours, input: Partial<TourHours>): TourHours {
+  const windows = tourWindows(hours);
+  if (input.days === undefined) {
+    // New times with no days: fine with one window, but which window when there are several?
+    if (windows.length > 1) throw new SetupInputError("TOUR_DAYS_NEEDED", `Which days are those hours for? Right now ${describeTourWindows(hours)}.`);
+    return replaceHours(hours, input);
+  }
+  let start = input.start;
+  let end = input.end;
+  if (start === undefined || end === undefined) {
+    // A missing time comes from the window those days already sit in. Days in
+    // different windows, or not open yet with several windows, need the host to say.
+    const homes = new Set(input.days.map((day) => windows.find((w) => w.days.includes(day))).filter((w) => w !== undefined));
+    const home = homes.size === 1 ? [...homes][0]! : homes.size === 0 && windows.length === 1 ? windows[0]! : undefined;
+    if (!home) throw new SetupInputError("TOUR_TIMES_NEEDED", `What hours should tours run on ${describeTourDays(input.days)}?`);
+    start ??= home.start;
+    end ??= home.end;
+  }
+  return mergeTourWindow(hours, { days: input.days, start, end });
+}
+
+/** Review rows: days, then hours, for one window; "Mon-Fri, 9:00 AM-5:00 PM" per window when there are several. */
+export function tourWindowRows(hours: TourHours): string[] {
+  const windows = tourWindows(hours);
+  if (windows.length <= 1) return [describeDays(hours.days), `${formatClockTime(hours.start)}-${formatClockTime(hours.end)}`];
+  return windows.map((w) => `${describeDays(w.days)}, ${formatClockTime(w.start)}-${formatClockTime(w.end)}`);
+}
+
+/** "Monday to Friday, 9 AM to 5 PM, and Saturday and Sunday, 9 AM to 8 PM" */
+export function describeTourWindows(hours: TourHours): string {
+  const parts = tourWindows(hours).map((w) => `${describeTourDays(w.days)}, ${spokenClockTime(w.start)} to ${spokenClockTime(w.end)}`);
+  if (parts.length <= 1) return parts[0] ?? "";
+  if (parts.length === 2) return `${parts[0]}, and ${parts[1]}`;
+  return `${parts.slice(0, -1).join("; ")}; and ${parts.at(-1)}`;
 }
 
 export function setVerificationPolicy(
@@ -888,8 +950,7 @@ export function reviewSetup(draft: SetupDraft): SetupReview {
       editSection: "hours",
       title: "TOUR HOURS",
       lines: [
-        describeDays(th.days),
-        `${formatClockTime(th.start)}-${formatClockTime(th.end)}`,
+        ...tourWindowRows(th),
         `Each tour lasts ${describeMinutes(th.tourLengthMinutes)}; a new tour can start every ${describeInterval(th.slotEveryMinutes)}`,
         `Visitors can get in up to ${describeMinutes(th.earlyArrivalMinutes)} early`,
       ],

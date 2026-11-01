@@ -1,6 +1,8 @@
 import { formatClockTime, isValidTimeZone } from "../core/timezone";
 import { parsePhone } from "../core/phone";
 import { minutesOfDay } from "../core/schedule";
+import { tourWindows } from "../core/tourWindows";
+import { describeTourDays } from "../operator/tourDayWords";
 import type { TourCoreConfig } from "./tourCoreConfig";
 
 export type ConfigSection = "property" | "hours" | "units" | "routes" | "verification" | "services";
@@ -131,18 +133,26 @@ export function semanticIssues(cfg: TourCoreConfig): ConfigIssue[] {
 
   // Tour hours and access windows
   const th = cfg.tourHours;
-  if (th.days.length === 0) add("hours", "TOUR_DAYS_MISSING", "Pick at least one day when people can tour.");
-  const start = minutesOfDay(th.start);
-  const end = minutesOfDay(th.end);
+  const windows = tourWindows(th);
+  if (windows.every((w) => w.days.length === 0)) add("hours", "TOUR_DAYS_MISSING", "Pick at least one day when people can tour.");
   const lengthOk = within(th.tourLengthMinutes, POLICY_LIMITS.tourLengthMinutes);
-  if (start >= end) {
-    add("hours", "TOUR_HOURS_BACKWARDS", `Tours need to end after they start. Right now they run from ${formatClockTime(th.start)} to ${formatClockTime(th.end)}.`);
-  }
   if (!lengthOk) add("hours", "TOUR_LENGTH_INVALID", TOUR_LENGTH_RANGE);
   if (!within(th.slotEveryMinutes, POLICY_LIMITS.slotEveryMinutes)) add("hours", "SLOT_SPACING_INVALID", SLOT_SPACING_RANGE);
   if (!within(th.earlyArrivalMinutes, POLICY_LIMITS.earlyArrivalMinutes)) add("hours", "EARLY_ARRIVAL_INVALID", "Early arrival should be between 0 and 60 minutes.");
-  if (start < end && lengthOk && end - start < th.tourLengthMinutes) {
-    add("hours", "TOUR_HOURS_TOO_SHORT", `The tour hours are too short to fit a ${th.tourLengthMinutes}-minute tour.`);
+  const seenDays = new Set<string>();
+  for (const w of windows) {
+    if (w.days.some((day) => seenDays.has(day))) add("hours", "TOUR_DAYS_REPEATED", "A day has two different sets of tour hours. Give each day one set of hours.");
+    w.days.forEach((day) => seenDays.add(day));
+    const start = minutesOfDay(w.start);
+    const end = minutesOfDay(w.end);
+    // With one window the sentence stays as it always read; with several it says which days.
+    const onDays = windows.length > 1 ? ` on ${describeTourDays(w.days)}` : "";
+    if (start >= end) {
+      add("hours", "TOUR_HOURS_BACKWARDS", `Tours need to end after they start. Right now they run from ${formatClockTime(w.start)} to ${formatClockTime(w.end)}${onDays}.`);
+    }
+    if (start < end && lengthOk && end - start < th.tourLengthMinutes) {
+      add("hours", "TOUR_HOURS_TOO_SHORT", `The tour hours${onDays} are too short to fit a ${th.tourLengthMinutes}-minute tour.`);
+    }
   }
   const visit = accessVisitMinutes(th);
   if (th.slotEveryMinutes > 0 && th.slotEveryMinutes < visit) {

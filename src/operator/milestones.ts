@@ -4,27 +4,29 @@ import { PROPERTY_TYPES } from "../config/tourCoreConfig";
 import { extractValues, parseBulkUnitDetails } from "../config/unitProfile";
 import { checkPublicEndpoint, testAccess, testOperatorAlerts, testVisitorMessaging } from "../install/checks";
 import { secureSetupLink } from "../install/tools";
+import { isTenantWorker } from "../install/deployment";
 import { getInstallationStatus, installedMessaging } from "../install/status";
 import { readState } from "../install/stateView";
 import { toE164 } from "../messaging/Messenger";
 import { usesLocalMessaging } from "../messaging/propertyScope";
 import { chooseMessagingProvider } from "../messaging/switchProvider";
-import { LOCAL_TEST_TEXTING, SetupInputError, createPropertySetup, localTestModeSentence, modeSentence } from "../setup/setupActions";
+import { LOCAL_TEST_TEXTING, SetupInputError, createPropertySetup, localTestModeSentence, modeSentence, visitorsTextLine } from "../setup/setupActions";
 import { applySetupCommand } from "../setup/commands";
 import { canonicalDoor, canonicalUnitName } from "../setup/normalizeDraft";
-import { spokenClockTime, type Weekday } from "../core/timezone";
 import { describeTourDays } from "./tourDayWords";
 import { applyZoneSwitchAnswer, commitZoneAnswer, fieldsToHold, guessedZoneName, heldZoneFields, holdZoneSwitchFields, mergedZoneDetails, rememberZoneSwitch, switchHoldReply, switchQuestionForOffer, zoneReply, zoneSwitchAnswer, zoneSwitchQuestion } from "./zoneCopy";
-import { hoursRangeRefusal, reuseDaysRefusal, tourSpacingRefusal } from "../config/validateConfig";
+import { reuseDaysRefusal } from "../config/validateConfig";
 import { addressConfirmQuestion, nextAddressPartQuestion, savedFullAddress } from "../setup/address";
 import { parseTourRef } from "./tours";
-import { parseDays, parseMinutes, parseTimeOfDay, SAME_DAY_HOURS, tourHoursEndSameDay } from "../setup/parse";
+import { parseDays, parseMinutes, parseTimeOfDay } from "../setup/parse";
 import { NO_FORM_QUESTION } from "../setup/verification";
 import { publishGuards, publishProperty, readinessForProperty, runPracticeTour, visitorTexting } from "./setupFlow";
 import { matchDoor, requireUnit, resolvePropertyId } from "./resolve";
 import { defaultMessagingMode, type OperatorServices } from "./services";
 import type { OperatorTool, ToolContext, ToolKind } from "./tools";
-import type { Door, TourCoreConfig, Unit } from "../config/tourCoreConfig";
+import type { Door, TourCoreConfig, TourHours, Unit } from "../config/tourCoreConfig";
+import { describeTourWindows } from "../setup/setupActions";
+import { planTourHours } from "./hoursPlan";
 
 /**
  * Milestone writes. Each one reports done, blocked, or next, plus the same
@@ -77,6 +79,9 @@ function propertyIdFrom(extra: Record<string, unknown>): string | undefined {
   }
   return undefined;
 }
+
+/** A touring host on the shared service publishes only once their alert routine is connected. */
+export const ALERTS_NEEDED = "Connect the touring alert routine first. Call save_alert_routine.";
 
 export function envelope(
   ctx: ToolContext,
@@ -450,12 +455,14 @@ export const MILESTONE_TOOLS: OperatorTool[] = [
     name: "save_hours",
     title: "Save touring hours",
     kind: "change",
-    description: "Saves touring days and hours from everyday words. Tours have to end later the same day. Tours must last 15 minutes to 4 hours, and starts must be 15 minutes to 8 hours apart.",
+    description:
+      'Saves touring days and hours from everyday words. Different days can have different hours, like weekdays 9am-5pm and weekends 9am-8pm: one call per set of days. Once hours are saved, new days are added and the days not named keep their hours ("add Saturday and Sunday 9 AM to 8 PM" keeps the weekdays). Pass replace only when the host says to replace all the hours. Tours have to end later the same day. Tours must last 15 minutes to 4 hours, and starts must be 15 minutes to 8 hours apart.',
     input: z.strictObject({
       property: Property,
       days: z.union([z.string().max(80), z.array(z.string().max(20)).max(7)]).optional(),
       start: z.string().max(20).optional(),
       end: z.string().max(20).optional(),
+      replace: z.boolean().optional().describe("True only when the host says these hours replace all the saved ones."),
       tourLength: Duration.optional(),
       newTourEvery: Duration.optional(),
       earlyArrival: Duration.optional(),
@@ -464,26 +471,15 @@ export const MILESTONE_TOOLS: OperatorTool[] = [
       const { id, draft } = open(ctx, i.property);
       const parsed = parseHours(i);
       if (!Object.keys(parsed).length) return envelope(ctx, id, "next", "What days and times can people tour?");
-      const start = typeof parsed.start === "string" ? parsed.start : draft.tourHours.start;
-      const end = typeof parsed.end === "string" ? parsed.end : draft.tourHours.end;
-      if (!tourHoursEndSameDay(start, end)) return envelope(ctx, id, "blocked", SAME_DAY_HOURS, { propertyId: id });
-      const range = hoursRangeRefusal({
-        tourLengthMinutes: typeof parsed.tourLengthMinutes === "number" ? parsed.tourLengthMinutes : undefined,
-        slotEveryMinutes: typeof parsed.slotEveryMinutes === "number" ? parsed.slotEveryMinutes : undefined,
-      });
-      if (range) return envelope(ctx, id, "blocked", range, { propertyId: id });
-      const spacing = tourSpacingRefusal({
-        ...draft.tourHours,
-        ...(typeof parsed.slotEveryMinutes === "number" ? { slotEveryMinutes: parsed.slotEveryMinutes } : {}),
-        ...(typeof parsed.tourLengthMinutes === "number" ? { tourLengthMinutes: parsed.tourLengthMinutes } : {}),
-        ...(typeof parsed.earlyArrivalMinutes === "number" ? { earlyArrivalMinutes: parsed.earlyArrivalMinutes } : {}),
-      });
-      if (spacing) return envelope(ctx, id, "blocked", spacing, { propertyId: id });
-      const next = applySetupCommand(draft, "setTourHours", parsed);
-      ctx.services.workspace.persistEdit(next, ctx.now());
+      // The starting weekday default was never the host's choice, so the first save replaces it.
+      const merge = !i.replace && hoursAlreadyChosen(ctx, id);
+      const plan = planTourHours(draft, parsed, merge);
+      if ("blocked" in plan) return envelope(ctx, id, "blocked", plan.blocked, { propertyId: id });
+      if ("ask" in plan) return envelope(ctx, id, "next", plan.ask, { propertyId: id });
+      ctx.services.workspace.persistEdit(plan.next, ctx.now());
       ctx.services.workspace.noteTourHoursConfirmed(id, ctx.now().toISOString());
       const hours = ctx.services.workspace.openDraft(id).draft.tourHours;
-      return envelope(ctx, id, "done", `Tours run ${describeTourDays(hours.days)}, ${spokenClock(hours.start)} to ${spokenClock(hours.end)}.`, { propertyId: id });
+      return envelope(ctx, id, "done", `Tours run ${describeTourWindows(hours)}.`, { propertyId: id });
     },
   }),
   tool({
@@ -610,6 +606,11 @@ export const MILESTONE_TOOLS: OperatorTool[] = [
       confirmationCode: z.string().max(20).optional().describe("Only after the operator explicitly said yes to the exact question this tool returned earlier."),
     }),
     run: async (ctx, i) => {
+      // On the shared service a touring host's alerts go through their own routine. Publishing waits for it.
+      const inst = ctx.installation;
+      if (inst && isTenantWorker(inst.deploymentMode()) && !inst.sink().configured()) {
+        return envelope(ctx, undefined, "blocked", ALERTS_NEEDED, { blockers: [ALERTS_NEEDED] }, "ALERTS_NEEDED");
+      }
       const ws = ctx.services.workspace;
       const services = servicesOf(ctx);
       const id = propertyIdOf(ctx, i.property);
@@ -639,7 +640,10 @@ export const MILESTONE_TOOLS: OperatorTool[] = [
       if (!result.published) {
         return envelope(ctx, id, "blocked", result.blockers[0]?.message ?? "It can't be published yet.", { propertyId: id, blockers: result.blockers.map((item) => item.message) }, result.blockers[0]?.code);
       }
-      return envelope(ctx, id, "done", `${config.property.name} is published for demo. ${sentence}`, { propertyId: id, published: true });
+      // The host needs the number to hand out; it is the one thing they can't look up anywhere else.
+      const line = texting.state === "connected" ? services.messagingLine?.() : undefined;
+      const number = line ? ` ${visitorsTextLine(line)}` : "";
+      return envelope(ctx, id, "done", `${config.property.name} is published for demo. ${sentence}${number}`, { propertyId: id, published: true, ...(line ? { textingNumber: line } : {}) });
     },
   }),
 ];
@@ -661,13 +665,18 @@ const TOUR_UPDATES_NOT_HERE = "I can't change tour updates from this chat. Whoev
 
 export { describeTourDays } from "./tourDayWords";
 
-function spokenClock(hhmm: string): string {
-  return spokenClockTime(hhmm);
+/** Hours-step sentence from the hours that are actually saved, every window. */
+export function hoursStepSay(hours: TourHours): string {
+  return `Tours run ${describeTourWindows(hours)}. Want to change that?`;
 }
 
-/** Hours-step sentence from the hours that are actually saved. */
-export function hoursStepSay(hours: { days: readonly Weekday[]; start: string; end: string }): string {
-  return `Tours run ${describeTourDays(hours.days)}, ${spokenClock(hours.start)} to ${spokenClock(hours.end)}. Want to change that?`;
+/** The host already picked hours (not just the starting default), so new days add to them. */
+export function hoursAlreadyChosen(ctx: ToolContext, id: string): boolean {
+  const ws = ctx.services.workspace;
+  if (ws.hoursWereConfirmed(id)) return true;
+  if (!ws.has(id)) return false;
+  const { state } = ws.load(id);
+  return state.status === "PUBLISHED_FOR_DEMO" || !!state.readiness?.passed || !!state.dryTour?.passed;
 }
 
 function joinList(parts: string[]): string {

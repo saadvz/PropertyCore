@@ -33,6 +33,26 @@ let lane: Side;
 let court: Side;
 let pinSends: { to: string; body: string }[];
 
+/**
+ * Saved files hold random-looking runs: UUIDs, hex hashes and ids, millisecond and second
+ * timestamps, and base64 keys, IVs and sealed pins. A 4-digit door code turns up inside one
+ * of those by chance now and then (a CI run once failed on runtime/oauth/grok-access.json).
+ * Those runs are blanked before the scan. Everything else in every file (desk files, logs,
+ * outboxes) is still checked with a plain substring match, so a code in any readable context
+ * ("pin":"4821", code 4821, ?code=4821, pin4821) still fails the test.
+ */
+function withoutRandomRuns(text: string): string {
+  return text
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, " ")
+    .replace(/[A-Za-z0-9+/]{16,}={0,2}/g, (run) => (/[A-Z]/.test(run) && /[a-z]/.test(run) && /\d/.test(run) ? " " : run))
+    .replace(/[0-9a-f]{16,}/g, " ")
+    .replace(/\d{10,}/g, " ");
+}
+
+function holdsPin(text: string, pin: string): boolean {
+  return withoutRandomRuns(text).includes(pin);
+}
+
 /** Setup through the door code upload link, then the cleaner's YES and the host's go-ahead. */
 async function setUp(side: Omit<Side, "token">, assistant: CleanerAssistant): Promise<Side> {
   const token = await m.join(side.tenant.id, assistant);
@@ -118,7 +138,22 @@ describe("hosted tenants gate", () => {
     expect(pinSends.filter((s) => s.body.includes(COURT.pin)).map((s) => s.to)).toEqual([COURT.cleanerPhone]);
     for (const file of filesUnder(m.app.root)) {
       const text = readFileSync(file, "utf8");
-      expect(text.includes(LANE.pin) || text.includes(COURT.pin), file).toBe(false);
+      expect(holdsPin(text, LANE.pin) || holdsPin(text, COURT.pin), file).toBe(false);
+    }
+  });
+
+  it("the saved-file scan still finds a readable door code and skips one only inside a random run", () => {
+    const pin = LANE.pin;
+    for (const leak of [`{"pin":"${pin}"}`, `door code ${pin}.`, `?code=${pin}&x=1`, `pin${pin}`, `code-${pin}-lane`, `"pinCode": ${pin}`]) {
+      expect(holdsPin(leak, pin), leak).toBe(true);
+    }
+    for (const noise of [
+      `"accessHash": "09a${pin}56855623595901a2ccbe5e5af1360511c6c6a21995a8f33982cfd92344"`,
+      `"id": "3e1e087c-${pin}-4e0a-93b5-a17a0d88fd46"`,
+      `"registeredAt": 179${pin}607173`,
+      `"iv": "BldRc${pin}G+/DiOh3"`,
+    ]) {
+      expect(holdsPin(noise, pin), noise).toBe(false);
     }
   });
 

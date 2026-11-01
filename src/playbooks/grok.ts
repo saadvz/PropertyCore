@@ -35,6 +35,15 @@ export const GROK_ALERTS = [
   "Do not say webhook, routine, event id, or secure link out loud.",
 ].join(" ");
 
+/** The same step for touring on the shared service, which keeps the routine itself. Cleaner Core's wording. */
+export const GROK_ALERTS_SHARED = [
+  "For you, not out loud: this is today's tour-updates step, plus the wake. Do not ask a second question.",
+  "If they say yes, call save_settings with their choice, then create the Tour Core Operator Updates routine yourself. Call save_alert_routine and, from your own cloud computer, post the routine's webhook address and key to the one-time link it gives. You made the routine, so you hold both. Only if you don't, collect them with your secure secret input card first.",
+  "Never send that link to the landlord or ask them to open a page. Never put the address or the key in chat or in a tool argument. A test note means it is done.",
+  "If they say no, record the skip. Skipping stays possible.",
+  "Do not say webhook, routine, event id, or secure link out loud.",
+].join(" ");
+
 export const GROK_WAKE_WITH_PLACE = "{name} asked to tour {place} at {time} on {day}. I can approve that time, offer another time, or decline it. Nothing goes to the visitor until you pick.";
 export const GROK_WAKE_NO_PLACE = "{name} asked for {time} on {day}. I can approve that time, offer another time, or decline it. Nothing goes to the visitor until you pick.";
 

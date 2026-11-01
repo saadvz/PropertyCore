@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cleanerMultiTenant } from "../src/cleaner-core/flag";
+import { cleanerMultiTenant, tourCoreTenants } from "../src/cleaner-core/flag";
 import { isTenantId, TenantRegistry, tenantFolder } from "../src/cleaner-core/hosted/registry";
 
 const DAY = 24 * 60 * 60_000;
@@ -111,5 +111,55 @@ describe("TenantRegistry", () => {
     expect(isTenantId("tnt_AAAAAAAAAA")).toBe(false);
     expect(isTenantId("../etc")).toBe(false);
     expect(reg.get("../etc")).toBeUndefined();
+  });
+});
+
+describe("tourCoreTenants", () => {
+  it("reads TOUR_CORE_TENANTS as on only for 1 or true", () => {
+    expect(tourCoreTenants({ TOUR_CORE_TENANTS: "1" })).toBe(true);
+    expect(tourCoreTenants({ TOUR_CORE_TENANTS: " true " })).toBe(true);
+    expect(tourCoreTenants({ TOUR_CORE_TENANTS: "yes" })).toBe(false);
+    expect(tourCoreTenants({})).toBe(false);
+  });
+});
+
+describe("a tenant's service", () => {
+  const lane = {
+    id: "tnt_lane000001",
+    label: "Lane",
+    twilioNumber: "+15555550150",
+    connections: [],
+    invites: [],
+    createdAt: "2026-10-01T00:00:00.000Z",
+  };
+
+  it("turns every tenant in a version-1 file into a cleaning tenant, once", () => {
+    writeFileSync(join(dir, "tenants.json"), JSON.stringify({ schemaVersion: 1, tenants: [lane] }));
+    expect(reg.get(lane.id)?.service).toBe("cleaning");
+    expect(JSON.parse(readFileSync(join(dir, "tenants.json"), "utf8")).schemaVersion).toBe(2);
+    expect(reg.list()[0]?.service).toBe("cleaning");
+  });
+
+  it("creates a new tenant with no service", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    expect(tenant.service).toBeUndefined();
+    expect(reg.get(tenant.id)?.service).toBeUndefined();
+  });
+
+  it("does not turn a new tenant in a version-2 file into a cleaning tenant", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    const again = new TenantRegistry(dir, () => new Date(at));
+    expect(again.get(tenant.id)?.service).toBeUndefined();
+  });
+
+  it("records a service change and when it happened", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    advance(MINUTE);
+    reg.setService(tenant.id, "touring");
+    expect(reg.get(tenant.id)).toMatchObject({ service: "touring", serviceChangedAt: new Date(at).toISOString() });
+  });
+
+  it("refuses a service change for an unknown tenant", () => {
+    expect(() => reg.setService("tnt_nobody0000", "touring")).toThrow("unknown-tenant");
   });
 });

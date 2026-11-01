@@ -9,10 +9,10 @@ import { installationAlertHealth } from "../alerts/alertHealth";
 import { describeUpdates, enabledUpdates } from "../alerts/preferences";
 import type { InstalledMessaging, OperatorServices } from "../operator/services";
 import { publishGuards, visitorTexting } from "../operator/setupFlow";
-import { LOCAL_TEST_TEXTING, localTestModeSentence, modeSentence } from "../setup/setupActions";
+import { LOCAL_TEST_TEXTING, localTestModeSentence, modeSentence, visitorsTextLine } from "../setup/setupActions";
 import { isCurrent, type PropertyWorkspace } from "../setup/workspace";
 import { probeRuntimeStore } from "../storage/runtimeStore";
-import { DEPLOYMENT_MODE_LABELS, type DeploymentMode } from "./deployment";
+import { DEPLOYMENT_MODE_LABELS, isTenantWorker, type DeploymentMode } from "./deployment";
 import type { Installation } from "./installation";
 import { activeFromNumber, createMessagingProvider, ensureMessagingSelection, MESSAGING_PROVIDER_CATALOG, selectionFromInstallation } from "../messaging/registry";
 
@@ -124,6 +124,7 @@ export type InstallationAction =
   | "TEST_VISITOR_MESSAGING"
   | "RECONNECT_VISITOR_MESSAGING"
   | "FIX_VISITOR_MESSAGING"
+  | "WAIT_FOR_HOST_NUMBER"
   | "CHECK_STORAGE"
   | "CONNECT_GOOGLE_DRIVE"
   | "CONFIRM_BACKUP_DESTINATION"
@@ -247,6 +248,16 @@ const ROUTINE_SETUP =
   "Then call get_secure_setup_url with step operator-alerts. Prefer Grok's secure secret input: ask for the webhook address and key securely and fill Tour Core's form yourself. They are not shown in chat and are not tool arguments. " +
   "If the routine panel lets you copy both values with copy buttons while they stay hidden on screen, you may paste those hidden values into the matching masked fields yourself, without reading or repeating them. " +
   "Hand the browser to the operator only when secure fill isn't available or a value is shown on screen. Never put the address or key in chat, tool arguments, files or commands.";
+
+/**
+ * The same routine on the shared service. The address and key go to the shared service, which keeps
+ * them per chat, through the one-time link save_alert_routine gives. Grok posts them itself.
+ */
+const TOURING_ROUTINE_SETUP =
+  `Create the Tour Core Operator Updates routine yourself (authenticated webhook trigger; instructions in ${ROUTINE_DOC}). ` +
+  "Then call save_alert_routine and do its next step: from your own cloud computer, post the routine's webhook address and key to the one-time link it gives. " +
+  "You made the routine, so you already hold both. Only if you don't, ask the host for them with Grok's secure secret input card. " +
+  "Never send the link to the host or ask them to open a page. Never put the address or key in chat or in a tool argument.";
 
 function component(c: InstallationComponent, state: ComponentState, summary: string, extra: Partial<ComponentStatus> = {}): ComponentStatus {
   return { component: c, label: COMPONENT_LABELS[c], state, requirement: REQUIREMENTS[c], summary, optionalActions: [], ...extra };
@@ -470,7 +481,9 @@ export function installedMessaging(inst: Installation, options?: { readOnly?: bo
   if (!selection.provider) return undefined;
   const provider = createMessagingProvider(selection.provider, { env: () => inst.env(), sendblue: () => inst.sendblueEnv() });
   if (!provider.validateConfiguration().ok) return undefined;
-  return { mode: "live", provider: selection.provider, ready: messagingStatus(inst, readOnly).state === "READY", requiredForPublish: inst.deploymentMode() === "GROK_MANAGED_P0" };
+  // A touring process texts on the host's number the shared service gave it; that number is its texting.
+  const status = isTenantWorker(inst.deploymentMode()) ? hostNumberStatus(inst) : messagingStatus(inst, readOnly);
+  return { mode: "live", provider: selection.provider, ready: status.state === "READY", requiredForPublish: inst.deploymentMode() === "GROK_MANAGED_P0" };
 }
 
 const DRIVE_INSTRUCTIONS =
@@ -546,6 +559,25 @@ function hostedVolumeStatus(inst: Installation, messagingReady: boolean, summary
       "Visitor texting is connected. Next I recommend Google Drive so I can keep portable backups and exports of your Tour Core records there.",
       { tool: "confirm_backup_destination", grokInstructions: HOSTED_BACKUP_INSTRUCTIONS },
     ),
+  });
+}
+
+// On the shared service the service gives each touring host its address, its sign-in, and its number.
+const SHARED_ENDPOINT = component("PUBLIC_ENDPOINT", "READY", "The shared service gives Tour Core its public address.");
+const SHARED_CONNECTOR = component("GROK_OPERATOR", "READY", "Connected through the shared service.");
+export const HOST_NUMBER_MISSING = "This host's texting number isn't set up yet. The service's admin adds it, and I'll pick it up from there.";
+
+/** The host's Twilio number, from the shared service. Nothing to choose and no keys to enter. */
+function hostNumberStatus(inst: Installation): ComponentStatus {
+  // A Scratch host on a 555 number texts through the local test outbox; that is its texting.
+  if (selectionFromInstallation(inst).provider === "local") return component("VISITOR_MESSAGING", "READY", "Texts stay in the Scratch test outbox.", { provider: "local" });
+  const provider = createMessagingProvider("twilio", { env: () => inst.env(), sendblue: () => inst.sendblueEnv() });
+  if (provider.validateConfiguration().ok) return component("VISITOR_MESSAGING", "READY", "Texting is on this host's number.", { provider: "twilio" });
+  return component("VISITOR_MESSAGING", "ERROR", HOST_NUMBER_MISSING, {
+    provider: "twilio",
+    next: step("VISITOR_MESSAGING", "WAIT_FOR_HOST_NUMBER", "GROK", HOST_NUMBER_MISSING, {
+      grokInstructions: "Do not ask for a number, a provider, or keys. Tell the host the admin is adding their number, then call get_state later.",
+    }),
   });
 }
 
@@ -660,18 +692,23 @@ function propertyStatus(services: OperatorServices, installed: InstalledMessagin
 
 function alertsStatus(inst: Installation, propertyReady: boolean, client?: ReportedClient): ComponentStatus {
   const env = inst.env();
-  const configured = !!env.TOURCORE_GROK_ROUTINE_URL?.trim() && !!env.TOURCORE_GROK_ROUTINE_KEY?.trim();
+  // A touring process on the shared service never holds the routine; the shared service says whether it's connected.
+  const worker = isTenantWorker(inst.deploymentMode());
+  const routineSetup = worker ? TOURING_ROUTINE_SETUP : ROUTINE_SETUP;
+  const configured = worker ? inst.sink().configured() : !!env.TOURCORE_GROK_ROUTINE_URL?.trim() && !!env.TOURCORE_GROK_ROUTINE_KEY?.trim();
   const state = inst.files.state();
   const skipped = state.skipped?.OPERATOR_ALERTS;
   const connect = (operatorMessage: string, action: InstallationAction = "CONNECT_OPERATOR_ALERTS", performedBy: PerformedBy = "OPERATOR_IN_SECURE_SETUP") =>
-    step("OPERATOR_ALERTS", action, performedBy, operatorMessage, { tool: "get_secure_setup_url", secureSetupStep: "operator-alerts", grokInstructions: ROUTINE_SETUP });
+    worker
+      ? step("OPERATOR_ALERTS", action, "GROK", operatorMessage, { tool: "save_alert_routine", grokInstructions: routineSetup })
+      : step("OPERATOR_ALERTS", action, performedBy, operatorMessage, { tool: "get_secure_setup_url", secureSetupStep: "operator-alerts", grokInstructions: routineSetup });
   const offerMessage = client ? spokenAsk(client, "alerts") : OPERATOR_MESSAGES.offerAlerts;
   const offer = step("OPERATOR_ALERTS", "OFFER_OPERATOR_ALERTS", "OPERATOR_DECISION", offerMessage, {
     tool: "set_notification_preferences",
     secureSetupStep: "operator-alerts",
     grokInstructions:
       `If they say yes: only if it helps, confirm the defaults ("${OPERATOR_MESSAGES.recommendUpdates}"), then call set_notification_preferences (preset recommended unless they chose otherwise). ` +
-      `Say "I'm setting up your tour updates." ${ROUTINE_SETUP} ` +
+      `Say "I'm setting up your tour updates." ${routineSetup} ` +
       "If they say no: call skip_optional_setup with component OPERATOR_ALERTS. Never say \"webhook\" or \"routine\" to the operator.",
   });
   const chosen = describeUpdates(enabledUpdates(state.operatorUpdates));
@@ -687,8 +724,23 @@ function alertsStatus(inst: Installation, propertyReady: boolean, client?: Repor
     return component("OPERATOR_ALERTS", "ACTION_REQUIRED", "Tour updates aren't turned on yet.", { provider: "GROK_ROUTINE", next: offer });
   }
   const changedAt = latest(inst.secrets.updatedAt("TOURCORE_GROK_ROUTINE_URL"), inst.secrets.updatedAt("TOURCORE_GROK_ROUTINE_KEY"));
-  const check = inst.files.state().operatorAlerts;
   const test = step("OPERATOR_ALERTS", "TEST_OPERATOR_ALERTS", "GROK", "I'm sending a test update.", { tool: "test_operator_alerts" });
+  if (worker) {
+    // The shared service sends the test update when the routine connects, from this outbox, and retries
+    // it. Its delivery is the passed test: there is no test tool or setup page on the shared service.
+    const tests = inst.outbox.records().filter((r) => r.event.eventType === "installation.test");
+    if (!tests.some((r) => r.status === "delivered")) {
+      return component("OPERATOR_ALERTS", "ACTION_REQUIRED", "Tour updates are connected. The test update is on its way.", {
+        provider: "GROK_ROUTINE",
+        next: step("OPERATOR_ALERTS", "TEST_OPERATOR_ALERTS", "GROK", "I'm checking that the test update reached you.", {
+          tool: "get_state",
+          grokInstructions:
+            "The test update goes out on its own and is retried until it gets through. Wait for its note, then call get_state again. Do not set up tour updates again, open a setup page, or ask for an address or a key.",
+        }),
+      });
+    }
+  }
+  const check = worker ? { ok: true, message: "", credentialsChangedAt: changedAt } : inst.files.state().operatorAlerts;
   const degradedNext = step("OPERATOR_ALERTS", "TEST_OPERATOR_ALERTS", "GROK", SHARED_STEPS["alerts-degraded"].ask, {
     tool: "test_operator_alerts",
     grokInstructions:
@@ -779,8 +831,11 @@ export function getInstallationStatus(inst: Installation, services: OperatorServ
   const deployment = inst.deployment();
   const mode = deployment.mode;
   const readOnly = options.readOnly === true;
-  const messaging = messagingStatus(inst, readOnly);
-  const infra = [runtimeStatus(options), endpointStatus(inst, mode), grokStatus(inst), messaging, storageStatus(inst, messaging.state === "READY", readOnly), accessStatus()];
+  const worker = isTenantWorker(mode);
+  const messaging = worker ? hostNumberStatus(inst) : messagingStatus(inst, readOnly);
+  const infra = worker
+    ? [runtimeStatus(options), SHARED_ENDPOINT, SHARED_CONNECTOR, messaging, storageStatus(inst, messaging.state === "READY", readOnly), accessStatus()]
+    : [runtimeStatus(options), endpointStatus(inst, mode), grokStatus(inst), messaging, storageStatus(inst, messaging.state === "READY", readOnly), accessStatus()];
   if (deployment.invalid) infra[0]!.technical = [...(infra[0]!.technical ?? []), `TOURCORE_DEPLOYMENT_MODE "${deployment.invalid}" isn't recognized; using ${mode}.`];
   const infrastructureReady = infra.every((c) => c.state === "READY");
   const installed = installedMessaging(inst, { readOnly });
@@ -801,7 +856,7 @@ export function getInstallationStatus(inst: Installation, services: OperatorServ
   const blocking = components.find((c) => c.state !== "READY" && c.next)?.next;
   const nextStep =
     blocking ??
-    anotherPropertyStep(operateMessage(textingState === "connected" ? "connected" : textingState === "test-mode" ? "test-mode" : "practice", alertsOn));
+    anotherPropertyStep(operateMessage(textingState === "connected" ? "connected" : textingState === "test-mode" ? "test-mode" : "practice", alertsOn, activeFromNumber(inst)));
   if (!blocking) {
     const property = components.find((c) => c.component === "PROPERTY");
     if (property) property.optionalActions = [...property.optionalActions, nextStep];
@@ -826,8 +881,11 @@ export function getInstallationStatus(inst: Installation, services: OperatorServ
 }
 
 /** What operating means today, per subsystem: texting can be live or test-mode while door access is still demo. */
-export function operateMessage(texting: "connected" | "test-mode" | "practice", alertsOn: boolean): string {
-  if (texting === "connected") return alertsOn ? OPERATOR_MESSAGES.operate : OPERATOR_MESSAGES.operateWithoutAlerts;
+export function operateMessage(texting: "connected" | "test-mode" | "practice", alertsOn: boolean, number?: string): string {
+  if (texting === "connected") {
+    const message = alertsOn ? OPERATOR_MESSAGES.operate : OPERATOR_MESSAGES.operateWithoutAlerts;
+    return number ? message.replace("Visitor texting is live.", `Visitor texting is live. ${visitorsTextLine(number)}`) : message;
+  }
   const modes = texting === "test-mode" ? localTestModeSentence(true) : modeSentence(false, true);
   return `Your property is published. ${modes} ${alertsOn ? "I'll keep you updated on your tours and let you know when something needs your attention." : "Ask me any time to show active tours or what needs your attention."}`;
 }

@@ -168,6 +168,27 @@ describe("messaging provider contract", () => {
 });
 
 describe("Twilio adapter", () => {
+  it("in a touring process, checks and keeps the shared service's incoming address, never its own", async () => {
+    const shared = "https://shared.up.railway.app/webhooks/twilio/cleaner-core";
+    const env = readTwilioEnv({
+      TOURCORE_DEPLOYMENT_MODE: "TENANT_WORKER",
+      TOURCORE_TWILIO_ACCOUNT_SID: TWILIO_SID,
+      TOURCORE_TWILIO_AUTH_TOKEN: TWILIO_TOKEN,
+      TOURCORE_TWILIO_PHONE_NUMBER: TWILIO_NUMBER,
+      PUBLIC_BASE_URL: "https://shared.up.railway.app/t/tnt_lane000001",
+      TOURCORE_TWILIO_INCOMING_URL: shared,
+    });
+    const pointed: string[] = [];
+    const client = { ...fakeTwilio(), findNumber: async () => ({ sid: "PN123", phoneNumber: TWILIO_NUMBER, smsUrl: shared }), setSmsUrl: async (_sid: string, url: string) => void pointed.push(url) };
+    const provider = new TwilioMessagingProvider({ env: () => env, client });
+    expect((await provider.check()).find((c) => c.id === "incoming")).toMatchObject({ ok: true });
+    const connected = await provider.connect({} as never);
+    expect(connected.webhook).toBe("already-registered");
+    expect(pointed).toEqual([]);
+    // Outside a touring process the setting means nothing.
+    expect(readTwilioEnv({ TOURCORE_TWILIO_INCOMING_URL: shared }).incomingUrl).toBeUndefined();
+  });
+
   const url = `${PUBLIC}/webhooks/twilio`;
   const fields = { MessageSid: "SM123", From: VISITOR, To: TWILIO_NUMBER, Body: "Hi", SmsStatus: "received" };
 

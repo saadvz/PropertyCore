@@ -410,7 +410,7 @@ describe("Install Tour Core skill", () => {
     expect(step.phase).toBe("OPERATE");
     expect(step.tool).toBe("create_property_setup");
     expect(step.operatorMessage).toBe(
-      "Your property is published. Visitor texting is live. Door access is still in demo mode, so no physical locks will open. I'll keep you updated on your tours and let you know when something needs your attention. Would you like to set up another property?",
+      "Your property is published. Visitor texting is live. Visitors text +15550109999 to book a tour. Door access is still in demo mode, so no physical locks will open. I'll keep you updated on your tours and let you know when something needs your attention. Would you like to set up another property?",
     );
     const seen = JSON.stringify(await tool("get_installation_status")) + JSON.stringify(first);
     for (const secret of [SB_KEY, SB_SECRET, ROUTINE_URL, ROUTINE_KEY]) expect(seen).not.toContain(secret);

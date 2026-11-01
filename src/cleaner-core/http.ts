@@ -142,7 +142,8 @@ export async function handleCleanerDoorCodeUpload(input: {
 }
 
 /** A JSON object body, or the refusal to send. */
-async function uploadBody(contentType: string, readBody: () => Promise<Buffer | undefined>): Promise<{ parsed: Record<string, unknown> } | { status: number; error: string }> {
+/** A JSON upload body, capped by `readBody`. Shared with the touring alert link on the multi-tenant service. */
+export async function uploadBody(contentType: string, readBody: () => Promise<Buffer | undefined>): Promise<{ parsed: Record<string, unknown> } | { status: number; error: string }> {
   if (!contentType.toLowerCase().startsWith("application/json")) return { status: 415, error: "Send JSON with Content-Type: application/json." };
   const raw = await readBody();
   if (!raw) return { status: 413, error: "That request is too large." };

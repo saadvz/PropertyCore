@@ -4,7 +4,8 @@ import { TERMINAL } from "../domain/stateMachine";
 import { intervalsOverlap, type TimeInterval } from "./customSlot";
 import { EXTENSION_MINUTES } from "./overstayCopy";
 import { bookedClockZone } from "./inProgressTour";
-import { isValidTimeZone, localDateOf, zonedTimeToUtc } from "./timezone";
+import { isValidTimeZone, localDateOf, weekdayOf, zonedTimeToUtc } from "./timezone";
+import { windowOn } from "./tourWindows";
 
 export const EXTENSION_MS = EXTENSION_MINUTES * 60_000;
 
@@ -38,7 +39,8 @@ export function occupantInterval(occupant: Occupant): TimeInterval {
 export function tourHoursEndOn(config: TourCoreConfig, at: Date, timeZone = config.property.timezone): Date {
   const tz = timeZone;
   const day = localDateOf(at, tz);
-  const [hour = 0, minute = 0] = config.tourHours.end.split(":").map(Number);
+  const close = windowOn(config.tourHours, weekdayOf(day))?.end ?? config.tourHours.end;
+  const [hour = 0, minute = 0] = close.split(":").map(Number);
   return zonedTimeToUtc({ ...day, hour, minute }, tz);
 }
 

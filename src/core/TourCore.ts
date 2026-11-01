@@ -843,7 +843,7 @@ export class TourCore {
     const offered = placement === "ON_GRID";
     if (!offered && !input.outsideTourHours && !input.customTime) throw new TourCoreError("SLOT_NOT_OFFERED", "That time isn't one of the property's tour times.");
     if ((input.customTime || !offered) && placement === "OUTSIDE_HOURS" && !input.outsideTourHours) {
-      throw new TourCoreError("OUTSIDE_TOUR_HOURS", `${this.time(start)} is outside the property's normal ${touringHoursLabel(config)} touring hours.`);
+      throw new TourCoreError("OUTSIDE_TOUR_HOURS", `${this.time(start)} is outside the property's normal ${touringHoursLabel(config, start)} touring hours.`);
     }
     const { windowStart, windowEnd } = tourWindow(config, start);
     if (windowEnd <= clock.now()) throw new TourCoreError("SLOT_PAST", "That tour time has already passed.");
@@ -942,7 +942,7 @@ export class TourCore {
     const { config, clock } = this.deps;
     const placement = placementOf(config, start);
     if (placement === "OUTSIDE_HOURS" && !options.outsideTourHours) {
-      throw new TourCoreError("OUTSIDE_TOUR_HOURS", `${this.time(start)} is outside the property's normal ${touringHoursLabel(config)} touring hours.`);
+      throw new TourCoreError("OUTSIDE_TOUR_HOURS", `${this.time(start)} is outside the property's normal ${touringHoursLabel(config, start)} touring hours.`);
     }
     const { windowStart, windowEnd } = tourWindow(config, start);
     if (windowEnd <= clock.now()) throw new TourCoreError("SLOT_PAST", "That tour time has already passed.");
@@ -1187,7 +1187,7 @@ export class TourCore {
       this.assertMovableRequest(current);
       const outside = placementOf(this.deps.config, new Date(request.requestedStartsAt)) === "OUTSIDE_HOURS";
       if (outside && !options.outsideTourHours) {
-        throw new TourCoreError("OUTSIDE_TOUR_HOURS", `${this.time(new Date(request.requestedStartsAt))} is outside the property's normal ${touringHoursLabel(this.deps.config)} touring hours.`);
+        throw new TourCoreError("OUTSIDE_TOUR_HOURS", `${this.time(new Date(request.requestedStartsAt))} is outside the property's normal ${touringHoursLabel(this.deps.config, new Date(request.requestedStartsAt))} touring hours.`);
       }
       const unconfirmed = current.status === "AWAITING_CONSENT" && !current.consentId;
       let reservation: Reservation;

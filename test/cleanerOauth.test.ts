@@ -106,7 +106,7 @@ describe("Cleaner Core OAuth on the multi-tenant service", () => {
     expect(scope).toBe(CLEANER_SCOPE);
     expect((await app.rpc("/mcp/cleaner-core", "tools/list", access)).status).toBe(200);
     const onTour = await app.rpc("/mcp", "tools/list", access);
-    expect(onTour.status).toBe(404);
+    expect([401, 403]).toContain(onTour.status);
     expect(await onTour.text()).not.toContain("tools");
     const log = app.logs.join("\n");
     expect(log).not.toContain(access);
@@ -153,11 +153,13 @@ describe("Cleaner Core OAuth on the multi-tenant service", () => {
     }
   });
 
-  it("refuses a Tour Core connection, and a fixed token", async () => {
+  it("asks for an invite at the shared /mcp address, and refuses a fixed token", async () => {
     const root = tempDir();
     const app = await hostedApp({}, { root, env: hostedEnv(root, { CLEANER_CORE_MULTI_TENANT: "1", CLEANER_CORE_MCP_TOKEN: FIXED_TOKEN }) });
     const clientId = await app.register("Grok");
-    expect((await app.authorize(clientId, pkce().challenge, `${BASE}/mcp`, OPERATOR_SCOPE)).status).toBe(403);
+    const page = await app.authorize(clientId, pkce().challenge, `${BASE}/mcp`, OPERATOR_SCOPE);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain('id="oauth-invite"');
     expect((await app.rpc("/mcp/cleaner-core", "tools/list", FIXED_TOKEN)).status).toBe(401);
   });
 });

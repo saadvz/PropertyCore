@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import type { ToParent, ToWorker } from "../hosted/ipc";
 
 /**
  * What Tour Core tells an operator notification channel (Operator Updates).
@@ -176,6 +177,55 @@ export class GrokRoutineWebhookSink implements OperatorNotificationSink {
     if (status === 401 || status === 403) throw new DeliveryError("The Grok Routine refused the connection details. Re-enter them on the secure setup page.", true);
     if (status === 404) throw new DeliveryError("The Grok Routine address wasn't found. Check it on the secure setup page.", true);
     throw new DeliveryError(`The Grok Routine didn't accept the update (status ${status}).`, status >= 500 || status === 429);
+  }
+}
+
+/**
+ * A touring process on the shared service: each event goes to the service over IPC, and the service
+ * delivers it through the tenant's routine. The process's own outbox keeps the event until the
+ * service answers that it was delivered, so a crash or a refused wake is retried as usual.
+ */
+export class RelaySink implements OperatorNotificationSink {
+  readonly kind = "GROK_ROUTINE" as const;
+  private readonly waiting = new Map<string, { resolve: () => void; reject: (err: DeliveryError) => void; timer: ReturnType<typeof setTimeout> }>();
+
+  constructor(
+    private readonly send: (message: ToParent) => void,
+    private readonly connected: () => boolean,
+    private readonly options: { timeoutMs?: number } = {},
+  ) {}
+
+  configured(): boolean {
+    return this.connected();
+  }
+
+  deliver(event: OperatorEvent): Promise<void> {
+    const id = randomUUID();
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.waiting.delete(id);
+        reject(new DeliveryError("The shared service didn't answer about this update.", true));
+      }, this.options.timeoutMs ?? 30_000);
+      timer.unref?.();
+      this.waiting.set(id, { resolve, reject, timer });
+      try {
+        this.send({ type: "event", id, event });
+      } catch {
+        clearTimeout(timer);
+        this.waiting.delete(id);
+        reject(new DeliveryError("The shared service can't be reached right now.", true));
+      }
+    });
+  }
+
+  /** The service's answer about one event. An answer for an event no longer waiting is ignored. */
+  ack(message: Extract<ToWorker, { type: "event-ack" }>): void {
+    const waiting = this.waiting.get(message.id);
+    if (!waiting) return;
+    this.waiting.delete(message.id);
+    clearTimeout(waiting.timer);
+    if (message.ok) waiting.resolve();
+    else waiting.reject(new DeliveryError(message.message, message.retryable));
   }
 }
 

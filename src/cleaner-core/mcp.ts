@@ -254,6 +254,9 @@ const SCRATCH_TOOL_LIST = [
 
 type ToolName = (typeof TOOLS)[number]["name"] | (typeof SCRATCH_TOOL_LIST)[number]["name"];
 
+/** Every tool Cleaner Core can list, Scratch ones included. The shared service uses it to tell a cleaning tool from a touring one. */
+export const CLEANER_TOOL_NAMES: readonly string[] = [...TOOLS, ...SCRATCH_TOOL_LIST].map((tool) => tool.name);
+
 function listedTools(scratchTools: boolean) {
   return scratchTools ? [...TOOLS, ...SCRATCH_TOOL_LIST] : [...TOOLS];
 }

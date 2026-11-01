@@ -33,7 +33,8 @@ export function closeHostedApps(): void {
 
 export function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "tourcore-cleaner-oauth-"));
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  // A touring process killed a moment ago may still be writing; removal retries briefly.
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   return dir;
 }
 
@@ -159,5 +160,5 @@ export async function hostedApp(extra: NodeJS.ProcessEnv = {}, existing?: { root
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: {} }),
     });
 
-  return { inst, root, env, logs, http, register, authorize, pageParts, approve, connect, refresh, rpc };
+  return { inst, root, env, logs, server, http, register, authorize, pageParts, approve, connect, refresh, rpc };
 }

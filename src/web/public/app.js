@@ -802,11 +802,14 @@ function hoursStep(data) {
     end.value = e;
   };
 
+  const pickedDays = () => boxes.filter((b) => b.cb.checked).map((b) => b.code);
+  const initial = { days: pickedDays().join(","), start: start.value, end: end.value };
   const save = action(async () => {
+    // Different hours on different days stay as they are unless the days or times here were changed.
+    const timesChanged = pickedDays().join(",") !== initial.days || start.value !== initial.start || end.value !== initial.end;
+    const keepWindows = (th.windows?.length ?? 0) > 1 && !timesChanged;
     const res = await command(id, "setTourHours", {
-      days: boxes.filter((b) => b.cb.checked).map((b) => b.code),
-      start: start.value,
-      end: end.value,
+      ...(keepWindows ? {} : { days: pickedDays(), start: start.value, end: end.value }),
       tourLengthMinutes: Number(length.value),
       slotEveryMinutes: Number(spacing.value),
       earlyArrivalMinutes: Number(early.value),
@@ -825,6 +828,9 @@ function hoursStep(data) {
       el("h1", {}, "When can people tour?"),
       el("p", { class: "lead" }, th.summary ? `Right now: ${th.summary}` : "This schedule needs a fix before any tours can be offered. See below."),
       issueList(view.issues.filter((i) => i.fix?.step === "hours"), id, "hours"),
+      (th.windows?.length ?? 0) > 1
+        ? el("p", { class: "hint" }, "Some days have different hours. Changing the days or times below sets one set of hours for the checked days.")
+        : null,
       el(
         "div",
         { class: "card" },

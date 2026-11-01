@@ -1,0 +1,21 @@
+# Tour Core safety gates
+
+These gates have to stay green before `TOUR_CORE_TENANTS` is turned on for a real touring host on the shared service. CI runs every proof: `npm test` for the test files, and `npm run test:eval` (inside `scripts/ci-check.sh`) for the client matrix. The design is `docs/superpowers/specs/2026-10-30-shared-service-touring-design.md`.
+
+A touring host's Tour Core runs as its own process on the shared service (`TENANT_WORKER`). It is today's Tour Core, so the touring gates below are the same code the client matrix proves, run again through the shared service where the service changes the path.
+
+What pauses a live touring host: the flag defaults off; door access is the demo adapter, so no real lock opens; a touring process sends no text unless `CLEANER_CORE_LIVE_SMS` is on and the number is allowed by `CLEANER_CORE_SMS_ALLOWLIST`; a Scratch tenant on a 555 number never calls Twilio.
+
+| Gate | What it holds | Proof |
+| --- | --- | --- |
+| Door access | The practice tour passes only when early arrival is denied, a door off the reserved route is turned away before anything unlocks, and a repeated request doesn't create a second access grant. It passes in a touring process. | `test/tourCoreSafetyGates.test.ts` "passes the practice tour…", `test/eval/clientMatrix.test.ts` |
+| Fair housing | A protected-group question becomes a landlord inbox item with no draft. The visitor gets the holding reply. | `test/tourCoreSafetyGates.test.ts` "puts a fair-housing question in front of the landlord…", `test/dayToDay.test.ts` "refuses a fair-housing item with no draft" |
+| STOP, HELP, injury | STOP wins over a booking text. A phone that texted STOP stays opted out of both services on the number until START or YES. HELP and an injury text always reach the service, from anyone, so its own HELP reply and 911 path still run. | `test/tourCoreSafetyGates.test.ts` "lets STOP win…", `test/crossService.test.ts` "always gives HELP and an injury text…", `test/stopReply.test.ts` |
+| No second copy | A text that waited while the touring process was down is handed over once. A restart and a repeat of the same Twilio message send nothing new. | `test/tourCoreSafetyGates.test.ts` "sends no second copy…", `test/touringForward.test.ts` "keeps a text the worker didn't take, and replays it once" |
+| Live texts | A touring process sends no Twilio text while live texts are off or the number isn't allowed. A Scratch tenant's texts stay in its outbox. | `test/touringWorkerEntry.test.ts` "texting from a touring process", `test/touringScratch.test.ts` "makes no Twilio call…" |
+| Private process | A touring process answers only on loopback, only with its key, and only the landlord connector, texting webhooks, visitor pages, and its internal routes. Its health check shows only what the public one shows. | `test/touringWorkerMode.test.ts` |
+| Hosted tenants | Two touring tenants and one cleaning tenant on one service. A text to one number, a grant at either address, a `/t/<id>/` prefix, a forwarded call, a process's settings, a touring alert, a switch, or a stand-down never reaches another tenant. | `test/sharedServiceTenants.test.ts`, `test/touringAlerts.test.ts` "keeps one tenant's routine away from another's events" |
+| Signatures | Twilio's signature is checked before a text is saved, screened, or forwarded, so a forged STOP or text changes nothing. | `test/crossService.test.ts` "rejects a forged STOP…", `test/sharedServiceRouting.test.ts` "refuses a touring text with a bad signature…" |
+| Switching | A number switches only when nothing on its service is live, after the host's yes, with no texts. Stand-down previews the exact texts first and never runs during a tour or a cleaning. A touring process that can't answer blocks the switch. | `test/serviceSwitching.test.ts`, `test/touringLive.test.ts`, `test/cleanerStandDown.test.ts` |
+| Inactive service | A cleaner, host, or past visitor of the service the number no longer runs gets no reply. The host is told once. The inactive service sends no alerts. | `test/crossService.test.ts`, `test/cleanerHostedRouter.test.ts` "sends no cleaning alerts for a tenant that moved to touring" |
+| Cleaner Core | Every gate in `docs/cleaner-core-safety-gates.md` stays green, unchanged. | `test/cleanerCoreStepG.test.ts` and that document's proofs |

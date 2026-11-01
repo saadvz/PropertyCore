@@ -55,7 +55,7 @@ export function endpointsFor(publicBaseUrl: string, mcpPath: string): OAuthEndpo
   return { issuer: origin, resource: `${origin}${mcpPath}`, resourceMetadataUrl: `${origin}/.well-known/oauth-protected-resource${mcpPath}` };
 }
 
-export type ResourceLabel = "Tour Core" | "Cleaner Core";
+export type ResourceLabel = "Tour Core" | "Cleaner Core" | "Tour Core and Cleaner Core";
 
 /** One protected MCP resource on this authorization server, with its own scope. */
 export interface OAuthResource {
@@ -350,7 +350,8 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
       hosted,
       firstClaim: hosted && !this.options.invites && !(this.options.hostedClaimed?.(ep.path) ?? false),
       label: ep.label,
-      ...(ep.label === "Cleaner Core" && this.options.invites
+      // On the multi-tenant service every address takes an invite code.
+      ...(this.options.invites
         ? { assistant: assistantForRedirect(request.redirectUri), invite: true }
         : ep.label === "Cleaner Core" && this.options.cleanerAssistant
           ? { assistant: this.options.cleanerAssistant() }
@@ -367,8 +368,8 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
     const request = this.requests.get(id);
     if (!request || request.status !== "pending") return false;
     if (!this.options.publicApproval?.(request.clientId, request.resourcePath)) return false;
-    // On a multi-tenant Cleaner Core, only an invite code says whose this connection is.
-    if (this.options.invites && request.label === "Cleaner Core") return false;
+    // On the multi-tenant service, only an invite code says whose this connection is.
+    if (this.options.invites) return false;
     if (!codesMatch(matchCodeGiven, request.matchCode)) return false;
     return this.decide(id, "approved");
   }
@@ -383,7 +384,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
     if (!invites) return refused;
     this.prune();
     const request = this.requests.get(id);
-    if (!request || request.status !== "pending" || request.label !== "Cleaner Core") return refused;
+    if (!request || request.status !== "pending") return refused;
     if (!codesMatch(matchCodeGiven, request.matchCode)) return refused;
     const claim = invites.claim(inviteCode);
     if ("refused" in claim) {

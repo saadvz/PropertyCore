@@ -5,6 +5,8 @@ import { providerConsentRecommendation } from "../consentPolicy";
 import type { MessagingCapabilities, MessagingCheck, MessagingConfigField, MessagingProvider, ProviderConnectContext, ProviderConnectResult, WebhookHttpRequest } from "../provider";
 import { twilioHttpClient, type TwilioClient } from "./client";
 import { formParams, verifyTwilioSignature } from "./signature";
+import { isAllowlisted, liveSmsOn } from "../../cleaner-core/liveSms";
+import { isTenantWorker, parseDeploymentMode } from "../../install/deployment";
 
 export const TWILIO_WEBHOOK_PATH = "/webhooks/twilio";
 
@@ -15,6 +17,10 @@ export interface TwilioEnv {
   fromNumberRaw?: string;
   publicBaseUrl?: string;
   publicBaseUrlRaw?: string;
+  /** Set only in a touring process on the shared service: whether this number may be texted now. */
+  mayText?: (to: string) => boolean;
+  /** Set only in a touring process on the shared service: the shared address its number's texts go to. */
+  incomingUrl?: string;
 }
 
 const CAPABILITIES: MessagingCapabilities = {
@@ -57,7 +63,13 @@ export function readTwilioEnv(env: NodeJS.ProcessEnv = process.env): TwilioEnv {
   const value = (k: string) => env[k]?.trim() || undefined;
   const fromRaw = value("TOURCORE_TWILIO_PHONE_NUMBER");
   const baseRaw = value("PUBLIC_BASE_URL");
+  // A touring process on the shared service texts only under that service's live switch and allowlist.
+  const worker = parseDeploymentMode(env.TOURCORE_DEPLOYMENT_MODE);
+  const inWorker = !!worker && "mode" in worker && isTenantWorker(worker.mode);
+  const incoming = inWorker ? publicBase(value("TOURCORE_TWILIO_INCOMING_URL")) : undefined;
   return {
+    ...(inWorker ? { mayText: (to: string) => liveSmsOn(env) && isAllowlisted(env, to) } : {}),
+    ...(incoming ? { incomingUrl: incoming } : {}),
     accountSid: value("TOURCORE_TWILIO_ACCOUNT_SID"),
     authToken: value("TOURCORE_TWILIO_AUTH_TOKEN"),
     fromNumberRaw: fromRaw,
@@ -68,6 +80,9 @@ export function readTwilioEnv(env: NodeJS.ProcessEnv = process.env): TwilioEnv {
 }
 
 export const twilioWebhookUrl = (env: TwilioEnv) => (env.publicBaseUrl ? `${env.publicBaseUrl}${TWILIO_WEBHOOK_PATH}` : undefined);
+
+/** Where the number's incoming texts should go: the shared service's address for a touring process, else this Tour Core's own. */
+const twilioIncomingUrl = (env: TwilioEnv) => env.incomingUrl ?? twilioWebhookUrl(env);
 
 function scrub(err: unknown, secrets: Array<string | undefined>, code: string, message: string): MessagingError {
   if (err instanceof MessagingError) {
@@ -217,6 +232,9 @@ export class TwilioMessagingProvider implements MessagingProvider {
     const to = toE164(message.to);
     if (!to) throw new MessagingError("INVALID_NUMBER", "That phone number doesn't look right.");
     const env = this.env();
+    if (env.mayText && !env.mayText(to)) {
+      return { provider: this.provider, channel: "SMS", status: "SUPPRESSED", sentAt, error: { code: "LIVE_TEXTS_OFF", message: "Live texts are off on this service, or this number isn't on its allowlist." } };
+    }
     const from = env.fromNumber;
     if (!from) throw new MessagingError("TWILIO_FROM_NUMBER_INVALID", "The messaging number isn't set up correctly.");
     const client = this.client();
@@ -290,7 +308,7 @@ export class TwilioMessagingProvider implements MessagingProvider {
       checks.push({ id: "line", label: "Messaging number", ok: false, code: "TWILIO_LINE_UNCHECKED", message: `The messaging number (${env.fromNumber}) can be checked once the Twilio account is connected.` });
     }
 
-    const url = twilioWebhookUrl(env);
+    const url = twilioIncomingUrl(env);
     let webhook: ProviderConnectResult["webhook"] = "not-attempted";
     if (!url) {
       checks.push({

@@ -49,6 +49,8 @@ const infraReady = (h: InstallHarness) => {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const next = (h: InstallHarness): Promise<any> => h.ok("get_next_installation_step");
+/** The message after publishing names the number visitors text. */
+const withNumber = (message: string) => message.replace("Visitor texting is live.", "Visitor texting is live. Visitors text +15550109999 to book a tour.");
 
 /** Everything the tools present as safe to say to the operator. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -213,7 +215,7 @@ describe("Tour Core owns the onboarding order", () => {
       performedBy: "OPERATOR_DECISION",
       tool: "create_property_setup",
       skill: "setup-property",
-      operatorMessage: `${OPERATOR_MESSAGES.operate} ${OPERATOR_MESSAGES.anotherProperty}`,
+      operatorMessage: `${withNumber(OPERATOR_MESSAGES.operate)} ${OPERATOR_MESSAGES.anotherProperty}`,
     });
     expect(done.summary).toBe("Your property is published.");
     expect(JSON.stringify(done.nextStep)).not.toMatch(/everything (runs|is) in demo/i);
@@ -238,7 +240,7 @@ describe("Tour Core owns the onboarding order", () => {
     await h.ok("run_readiness_check");
     await h.ok("run_dry_tour");
     await h.approve("publish_demo_property", {});
-    expect((await next(h)).operatorMessage).toBe(`${OPERATOR_MESSAGES.operateWithoutAlerts} ${OPERATOR_MESSAGES.anotherProperty}`);
+    expect((await next(h)).operatorMessage).toBe(`${withNumber(OPERATOR_MESSAGES.operateWithoutAlerts)} ${OPERATOR_MESSAGES.anotherProperty}`);
   });
 
   it("with one property already published, the next step starts another property and leaves the first published", async () => {
@@ -256,7 +258,7 @@ describe("Tour Core owns the onboarding order", () => {
       phase: "OPERATE",
       tool: "create_property_setup",
       skill: "setup-property",
-      operatorMessage: `${OPERATOR_MESSAGES.operate} ${OPERATOR_MESSAGES.anotherProperty}`,
+      operatorMessage: `${withNumber(OPERATOR_MESSAGES.operate)} ${OPERATOR_MESSAGES.anotherProperty}`,
     });
     const started = await h.ok("create_property_setup", { address: "145 Tenafly Road, Tenafly, NJ 07670", name: "145 Tenafly Road" });
     expect(started.status).toBe("created");

@@ -23,6 +23,9 @@ export interface TenantInvite {
   usedAt?: string;
 }
 
+/** Which service a tenant's number answers for. Unset until the host's chat chooses one. */
+export type TenantService = "cleaning" | "touring";
+
 export interface Tenant {
   id: string;
   label: string;
@@ -31,6 +34,8 @@ export interface Tenant {
   connections: TenantConnection[];
   invites: TenantInvite[];
   disabled?: boolean;
+  service?: TenantService;
+  serviceChangedAt?: string;
   createdAt: string;
   lastActivityAt?: string;
 }
@@ -45,7 +50,7 @@ export class RegistryError extends Error {
 }
 
 interface Doc {
-  schemaVersion: 1;
+  schemaVersion: 2;
   tenants: Tenant[];
 }
 
@@ -98,9 +103,15 @@ export class TenantRegistry {
   }
 
   private read(): Doc {
-    if (!existsSync(this.file)) return { schemaVersion: 1, tenants: [] };
-    const doc = JSON.parse(readFileSync(this.file, "utf8")) as Doc;
-    return { schemaVersion: 1, tenants: Array.isArray(doc.tenants) ? doc.tenants : [] };
+    if (!existsSync(this.file)) return { schemaVersion: 2, tenants: [] };
+    const raw = JSON.parse(readFileSync(this.file, "utf8")) as { schemaVersion?: number; tenants?: Tenant[] };
+    const doc: Doc = { schemaVersion: 2, tenants: Array.isArray(raw.tenants) ? raw.tenants : [] };
+    // Version 1 had only Cleaner Core, so every tenant in it is a cleaning tenant. Written back once.
+    if (raw.schemaVersion !== 2) {
+      for (const tenant of doc.tenants) tenant.service ??= "cleaning";
+      this.write(doc);
+    }
+    return doc;
   }
 
   private write(doc: Doc): void {
@@ -213,6 +224,13 @@ export class TenantRegistry {
     const chosen = tenant.connections.find((c) => c.grantId === tenant.primaryGrantId);
     if (chosen && isLive(chosen.grantId)) return chosen;
     return oldest(tenant.connections.filter((c) => isLive(c.grantId)));
+  }
+
+  setService(id: string, service: TenantService): void {
+    this.update(id, (tenant) => {
+      tenant.service = service;
+      tenant.serviceChangedAt = this.stamp();
+    });
   }
 
   setDisabled(id: string, disabled: boolean): void {

@@ -234,6 +234,7 @@ export type ReceiveReason =
   | "wrong-tenant"
   | "review"
   | "held"
+  | "stood-down"
   | "retry";
 
 /** What Cleaner Core did with an inbound text, for Grok to read beside the message. */
@@ -429,6 +430,12 @@ export interface CleanerCore {
    * resumes it. The cleaner gets one short hold line. A second pause sends nothing.
    */
   hostHold(id: string): Promise<ReceiveResult>;
+  /** Jobs that keep the number on cleaning: offered, confirmed, waiting on departure, cleared, or under way. */
+  liveJobs(): { id: string; checkoutDate: string; status: JobStatus }[];
+  /** The texts standing down would send: one canceled update per job someone was already told about. */
+  standDownTexts(): { jobId: string; to: "cleaner" | "host"; body: string }[];
+  /** Calls off every offered or confirmed job the host's stand-down covers, and sends each canceled update once. */
+  hostStandDown(id: string): Promise<ReceiveResult>;
   /**
    * Times every open turnover the host hasn't timed yet with the same checkout and check-in, in a
    * group setup. Turnovers that already have a host time keep it. Offers still go one at a time.
@@ -583,6 +590,11 @@ interface Announced {
   nextCheckInDate: string | null;
   checkInMinutes: number | null;
 }
+
+/** A job in one of these keeps the number on cleaning. */
+const LIVE_STATUSES = new Set<JobStatus>(["offered", "confirmed", "awaiting_departure", "cleared", "in_progress"]);
+/** What a stand-down calls off. A cleared or started cleaning is never called off: the stand-down waits for it. */
+const STAND_DOWN_STATUSES = new Set<JobStatus>(["offered", "confirmed", "awaiting_departure"]);
 
 interface Job {
   id: string;
@@ -941,6 +953,51 @@ class Engine implements CleanerCore {
       this.save();
       return { handled: true, reason: "held", sent: note ? [note] : [] };
     });
+  }
+
+  liveJobs(): { id: string; checkoutDate: string; status: JobStatus }[] {
+    return this.ordered()
+      .map((job) => ({ id: job.id, checkoutDate: job.checkoutDate, status: this.derive(job) }))
+      .filter((job) => LIVE_STATUSES.has(job.status));
+  }
+
+  standDownTexts(): { jobId: string; to: "cleaner" | "host"; body: string }[] {
+    if (!this.owner) return [];
+    const to = this.cleanerRecord() ? "cleaner" : "host";
+    return this.ordered()
+      .filter((job) => STAND_DOWN_STATUSES.has(this.derive(job)) && this.toldOwner(job.id))
+      .map((job) => ({ jobId: job.id, to, body: this.canceledBody(job) }));
+  }
+
+  async hostStandDown(id: string): Promise<ReceiveResult> {
+    return this.hostAction(id, "stand down the cleaning service", async () => {
+      this.inboundIds.push(id);
+      const called: Job[] = [];
+      // The same call-off as a stay leaving the calendar: no reminder, door code, or offer follows.
+      for (const job of this.jobsState) {
+        if (!STAND_DOWN_STATUSES.has(this.derive(job))) continue;
+        job.canceled = true;
+        job.version += 1;
+        this.tombstones.push({ uid: job.id, version: job.version, contentHash: job.contentHash });
+        this.dropClearance(job.id);
+        this.cancelUnsentPin(job.id);
+        this.cancelPendingReminders(job.id);
+        called.push(job);
+      }
+      const sent: CleanerText[] = [];
+      for (const job of called) {
+        const draft = this.noticeFor(job);
+        const text = draft ? await this.emit(draft) : null;
+        if (text) sent.push(text);
+      }
+      this.save();
+      return { handled: true, reason: "stood-down", sent };
+    });
+  }
+
+  private canceledBody(job: Job): string {
+    const when = formatWhen(zonedInstant(job.checkoutDate, "12:00", this.options.property.timeZone), this.options.property.timeZone);
+    return `Update: the cleaning at ${this.options.property.address} on ${when.day} is canceled, so no need to come. Reply STOP to opt out.`;
   }
 
   async hostRetry(id: string): Promise<ReceiveResult> {
@@ -2141,14 +2198,7 @@ class Engine implements CleanerCore {
       if (!this.toldOwner(job.id)) return null;
       const id = `cancel:${job.id}:v${job.version}`;
       if (this.delivery(id) === "sent") return null;
-      const when = formatWhen(zonedInstant(job.checkoutDate, "12:00", this.options.property.timeZone), this.options.property.timeZone);
-      return {
-        id,
-        jobId: job.id,
-        to: this.owner,
-        kind: "cancel-update",
-        body: `Update: the cleaning at ${this.options.property.address} on ${when.day} is canceled, so no need to come. Reply STOP to opt out.`,
-      };
+      return { id, jobId: job.id, to: this.owner, kind: "cancel-update", body: this.canceledBody(job) };
     }
     if (job.declined) return null;
     const checkout = this.latestFact(job.id, "checkout");

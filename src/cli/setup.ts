@@ -1,4 +1,5 @@
 import { formatAudit } from "../audit/audit";
+import { tourWindows } from "../core/tourWindows";
 import { formatClockTime, formatDay, friendlyTimeZone } from "../core/timezone";
 import {
   addDoor,
@@ -318,7 +319,7 @@ async function editHours(start: SetupDraft, editing: boolean): Promise<SetupDraf
   let draft = start;
   for (;;) {
     const th = draft.tourHours;
-    const current = `${describeDays(th.days)}, ${formatClockTime(th.start)} to ${formatClockTime(th.end)}`;
+    const current = tourWindows(th).map((w) => `${describeDays(w.days)}, ${formatClockTime(w.start)} to ${formatClockTime(w.end)}`).join("; ");
     io.say("");
     const preset = await io.choose("When can people tour?", [
       ...(editing ? [{ label: `Keep ${current}`, value: "keep" as const }] : []),

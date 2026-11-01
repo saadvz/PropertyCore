@@ -3,7 +3,7 @@
   "version": "0.5.0",
   "distribution": "team",
   "profile": "bot-profile.md",
-  "hostedTourCoreUrl": "https://tourcore-production.up.railway.app",
+  "hostedTourCoreUrl": "https://tourcore-production-8b80.up.railway.app",
   "repository": {
     "url": "https://github.com/saadvz/TourCore",
     "fallback": "TOURCORE_REPO_URL",
@@ -56,7 +56,7 @@
   "marketplace": {
     "ships": ["Bot instructions and profile", "the seven Tour Core skills", "the Tour Core Operator Updates routine definition", "integration references for the Tour Core tools"],
     "neverShips": ["installation webhook secrets", "Sendblue secrets", "Tour Core OAuth tokens", "Google OAuth tokens", "a Google account", "a Tour Core Drive folder id", "live property data"],
-    "activation": "A new user connects to the hosted Tour Core service named by hostedTourCoreUrl, approves the connection, and authorizes tour updates once. They do not create a Railway project. The open-source path remains for operators who run their own copy."
+    "activation": "A new user connects to the hosted service named by hostedTourCoreUrl (the one service for touring and cleaning), types the invite code from Saad on the Allow page, chooses touring, and authorizes tour updates once. They do not create a Railway project. The open-source path remains for operators who run their own copy."
   },
   "suggestedPrompts": ["Set up Tour Core", "Set up a property", "Run a practice tour", "Show active tours", "Show exceptions", "Export today's audit"],
   "neverIncluded": [

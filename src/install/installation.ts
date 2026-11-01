@@ -33,6 +33,8 @@ export interface InstallationOptions {
   log?: (line: string) => void;
   /** Tests inject a fake Drive. Production uses Google's HTTP API. */
   driveClient?: DriveClient;
+  /** Where operator events go instead of the Grok Routine. A touring process on the shared service relays them. */
+  notificationSink?: () => OperatorNotificationSink;
 }
 
 /**
@@ -138,6 +140,7 @@ export class Installation {
 
   /** Where operator events go: the Grok Routine once its address and key are set, otherwise nowhere yet. */
   sink(): OperatorNotificationSink {
+    if (this.options.notificationSink) return this.options.notificationSink();
     const env = () => this.env();
     const routine = new GrokRoutineWebhookSink(
       { url: () => env().TOURCORE_GROK_ROUTINE_URL?.trim() || undefined, key: () => env().TOURCORE_GROK_ROUTINE_KEY?.trim() || undefined },

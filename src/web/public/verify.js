@@ -4,7 +4,8 @@
 
 const root = document.getElementById("verify");
 const token = location.pathname.split("/").pop();
-const api = `/api/verify/${encodeURIComponent(token)}`;
+// Relative, so the page also works under a shared service's /t/<id>/ prefix.
+const api = `../api/verify/${encodeURIComponent(token)}`;
 
 function h(tag, attrs = {}, ...kids) {
   const node = document.createElement(tag);

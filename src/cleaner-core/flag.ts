@@ -15,3 +15,9 @@ export function cleanerMultiTenant(env: NodeJS.ProcessEnv = process.env): boolea
   const raw = env.CLEANER_CORE_MULTI_TENANT?.trim().toLowerCase();
   return raw === "1" || raw === "true";
 }
+
+/** Touring tenants on the multi-tenant service. Off unless TOUR_CORE_TENANTS is exactly "1" or "true". */
+export function tourCoreTenants(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.TOUR_CORE_TENANTS?.trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}

@@ -12,7 +12,7 @@ import { messagingKeyword, normalize } from "../intent";
 import { stripFiller } from "../intent/normalize";
 import { spokenTimes } from "../core/spokenTime";
 import { formatWhen, zonedInstant } from "./calendar";
-import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, type CleanerCore, type CleanerText, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
+import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
 import { groupChatEnabled } from "./flag";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
@@ -140,6 +140,17 @@ const RESET_ACTION = "cleaner-reset-property";
 const HOLD_ACTION = "cleaner-hold";
 const RESUME_ACTION = "cleaner-resume";
 const CLEANING_TARGET = "cleaning";
+const STAND_DOWN_ACTION = "cleaner-stand-down";
+const UNDER_WAY = "A cleaning is under way. Stand down after it's done.";
+const NOTHING_LIVE = "Nothing is live on cleaning, so there's nothing to stand down. You can switch now.";
+const STOOD_DOWN = "Cleaning is stood down. Nothing is live, so you can switch now.";
+const LIVE_WORDS: Partial<Record<JobStatus, string>> = {
+  offered: "offered",
+  confirmed: "confirmed",
+  awaiting_departure: "waiting for the guests to leave",
+  cleared: "cleared for the cleaner",
+  in_progress: "under way",
+};
 const ALREADY_HELD = "The cleaning is already on hold. Resume it with resume_job when the host says so.";
 const RESET_TARGET = "property";
 const RESET_GROUP_KEPT = "I couldn't remove the group text on Twilio, so nothing was reset. Try again in a few minutes.";
@@ -1784,6 +1795,72 @@ export class LiveDesk {
     this.syncHold();
     this.persist();
     return this.reply({ next: jobHoldLine(address), turns: this.turns() });
+  }
+
+  /** Every phone this setup saved: host, cleaner, observer, and contacts. Sends nothing. */
+  knownPhones(): Promise<string[]> {
+    return this.serial(async () => {
+      const raw = [this.file.host, this.file.cleaner, this.file.observer, ...(this.file.contacts ?? []).map((contact) => contact.phone)];
+      return raw.map((phone) => (phone ? parsePhone(phone) : undefined)).filter((phone): phone is string => !!phone);
+    });
+  }
+
+  /** A note for the host from the shared service, shown by check_now, with one wake-up. Nothing is texted. */
+  noteForHost(id: string, body: string): Promise<boolean> {
+    return this.serial(async () => {
+      this.resume();
+      const engine = this.engine;
+      if (!engine) return false;
+      const before = new Set(this.visibleNotes(engine).map((note) => note.id));
+      engine.keepHostNote(id, body);
+      this.queueNewAlerts(before);
+      return true;
+    });
+  }
+
+  /** What keeps this number on cleaning, for the shared service's switch. Sends nothing. */
+  liveWork(): Promise<{ live: string[]; inProgress: boolean }> {
+    return this.serial(async () => {
+      this.resume();
+      const jobs = this.engine?.liveJobs() ?? [];
+      return {
+        live: jobs.map((job) => `The cleaning for checkout on ${job.checkoutDate} is ${LIVE_WORDS[job.status] ?? job.status}.`),
+        inProgress: jobs.some((job) => job.status === "cleared" || job.status === "in_progress"),
+      };
+    });
+  }
+
+  /**
+   * Calls off what's live so the number can switch services, keeping the setup. The first call
+   * previews the exact texts and returns a code; the second, with the code after the host's yes,
+   * does it. Never while a cleaning is under way.
+   */
+  standDown(input: { confirmation?: string }): Promise<ToolReply> {
+    return this.serial(async () => {
+      this.resume();
+      const jobs = this.engine?.liveJobs() ?? [];
+      if (jobs.some((job) => job.status === "cleared" || job.status === "in_progress")) return this.fail(UNDER_WAY);
+      if (!this.engine || jobs.length === 0) return this.reply({ next: NOTHING_LIVE, texts: [] });
+      const cleaner = this.file.cleanerName ?? "your cleaner";
+      const texts = this.engine.standDownTexts().map((text) => ({ to: text.to === "cleaner" ? cleaner : "you", body: text.body }));
+      const fingerprint = createHash("sha256").update(`stand-down|${jobs.map((job) => `${job.id}:${job.status}`).join(",")}|${texts.map((t) => t.body).join("|")}`).digest("hex");
+      const code = input.confirmation?.trim() ?? "";
+      if (!code) {
+        const stops = jobs.map((job) => `- The cleaning for checkout on ${job.checkoutDate}.`).join("\n");
+        const goes = texts.length ? `These texts go out:\n${texts.map((t) => `- To ${t.to}: "${t.body}"`).join("\n")}` : "No texts go out.";
+        const next = `Stand down cleaning at ${this.file.address ?? "this property"}? This calls off:\n${stops}\n${goes}\nThe setup is kept. Reply yes to stand down.`;
+        return this.reply({ next, texts, confirmation: this.approvals.issue(STAND_DOWN_ACTION, CLEANING_TARGET, fingerprint, next) });
+      }
+      try {
+        this.approvals.redeem(code, STAND_DOWN_ACTION, CLEANING_TARGET, fingerprint);
+      } catch {
+        return this.fail(APPROVAL_STALE);
+      }
+      await this.engine.hostStandDown(`stand-down-${randomUUID()}`);
+      this.syncHold();
+      this.persist();
+      return this.reply({ next: STOOD_DOWN, texts });
+    });
   }
 
   /** Resumes a cleaning on hold, only on the host's yes, with the same preview and approval code as hold_job. */

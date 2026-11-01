@@ -224,7 +224,7 @@ export async function inspectTourTimeRequest(ctx: Ctx, tourTimeRequestId: string
     };
   }
   const note = view.outsideHours
-    ? `${formatTime(new Date(found.request.requestedStartsAt), found.tour.config.property.timezone)} is outside the property's normal ${touringHoursLabel(found.tour.config)} touring hours.`
+    ? `${formatTime(new Date(found.request.requestedStartsAt), found.tour.config.property.timezone)} is outside the property's normal ${touringHoursLabel(found.tour.config, new Date(found.request.requestedStartsAt))} touring hours.`
     : view.regularTime
       ? "That is one of the regular tour times."
       : "That isn't one of the regular tour times. Approving it doesn't change the regular schedule.";

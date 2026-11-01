@@ -1,4 +1,6 @@
 import { spokenClockTime, WEEKDAYS, type Weekday } from "../core/timezone";
+import { tourWindows } from "../core/tourWindows";
+import type { TourWindow } from "../config/tourCoreConfig";
 import { isGeneralTourHoursQuestion } from "../intent/tourHoursAsk";
 import { describeTourDays } from "../operator/tourDayWords";
 import { renderSms } from "../sms/templates";
@@ -68,12 +70,18 @@ export function tourHoursExamplePhrase(days: readonly Weekday[], today?: Weekday
 
 /** Visitor reply from the hours that are saved. Days and clocks use the same wording as the hours step. */
 export function tourHoursVisitorReply(
-  hours: { days: readonly Weekday[]; start: string; end: string },
+  hours: { days: readonly Weekday[]; start: string; end: string; windows?: readonly TourWindow[] },
   today?: Weekday,
 ): { templateId: string; body: string } {
+  // Several windows read "Monday to Friday, 9 AM to 5 PM, and Saturday and Sunday, 9 AM to 8 PM".
+  const windows = tourWindows(hours);
+  const spoken = (w: TourWindow) => `${spokenClockTime(w.start)} to ${spokenClockTime(w.end)}`;
+  const last = windows.at(-1)!;
+  const lead = windows.slice(0, -1).map((w) => `${describeTourDays(w.days)}, ${spoken(w)}`);
+  const joiner = windows.length > 2 ? "; " : ", ";
   return renderSms("tour-hours-which-day", {
-    days: describeTourDays(hours.days),
-    hours: `${spokenClockTime(hours.start)} to ${spokenClockTime(hours.end)}`,
+    days: lead.length ? `${lead.join("; ")}${joiner}and ${describeTourDays(last.days)}` : describeTourDays(last.days),
+    hours: spoken(last),
     examples: tourHoursExamplePhrase(hours.days, today),
   });
 }

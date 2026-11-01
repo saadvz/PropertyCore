@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
@@ -17,10 +17,22 @@ import { LOCAL_WEBHOOK_PATH } from "../messaging/local/provider";
 import { resetLocalSmsOutbox } from "../messaging/local/outbox";
 import { PHOTON_WEBHOOK_PATH } from "../messaging/photon/provider";
 import { readTwilioEnv, TWILIO_WEBHOOK_PATH } from "../messaging/twilio/provider";
-import { cleanerCoreEnabled, cleanerMultiTenant } from "../cleaner-core/flag";
+import { cleanerCoreEnabled, cleanerMultiTenant, tourCoreTenants } from "../cleaner-core/flag";
+import type { TouringFront } from "../hosted/serviceTools";
+import type { OperatorServices } from "../operator/services";
+import { DeliveryError } from "../alerts/operatorEvents";
+import { touringAlertsConnected, touringSinkFor } from "../hosted/touringAlerts";
+import { buildTouringEnv, touringScratch } from "../hosted/touringEnv";
+import { standDownTouring, TOURING_LIVE_PATH, TOURING_STAND_DOWN_PATH, touringLiveWork } from "../hosted/touringLive";
+import { screenText } from "../hosted/crossService";
+import { replayInbox, TouringInbox } from "../hosted/touringForward";
+import { recordScratchText } from "../hosted/touringScratch";
+import { formParams } from "../messaging/twilio/signature";
+import { forkTouringWorker, TouringSupervisor } from "../hosted/touringSupervisor";
 import { assistantProfile, cleanerAssistant, type CleanerAssistant } from "../cleaner-core/assistant";
 import { TenantRegistry, type InviteRefusal } from "../cleaner-core/hosted/registry";
-import { drainAllTenants, handleHostedCleaner, hostedCleaner, splitTenantPath } from "../cleaner-core/hosted/router";
+import { drainAllTenants, handleHostedCleaner, hostedCleaner, splitTenantPath, type HostedCleaner } from "../cleaner-core/hosted/router";
+import type { Tenant } from "../cleaner-core/hosted/registry";
 import { TenantSecrets } from "../cleaner-core/hosted/tenantSecrets";
 import { handleAdmin } from "../cleaner-core/hosted/admin";
 import { INVITE_REFUSALS } from "../mcp/oauth/pages";
@@ -50,7 +62,9 @@ import { adoptLegacyLine, MessagingConversations } from "../visitor/messagingRou
 import { VerificationLinks } from "../visitor/verificationLinks";
 import { OperatorUpdates } from "../alerts/operatorUpdates";
 import { HEALTH_PATH, publicHealth, runtimeHealth } from "../install/checks";
-import { isHostedRailway, resolveDeploymentMode } from "../install/deployment";
+import { isHostedRailway, isTenantWorker, parseDeploymentMode, resolveDeploymentMode } from "../install/deployment";
+import { WORKER_CLIENT_HEADER, WORKER_CLIENT_NAMES, WORKER_INTERNAL_HEADER, WORKER_KEY_HEADER } from "../hosted/ipc";
+import { touringPublicRoute } from "../hosted/workerRoutes";
 import { handleHostedApproval } from "../install/hostedApproval";
 import { HOSTED_OWNER_RESET, OAUTH_REQUEST_ID } from "../install/hostedOwner";
 import { RAILWAY_HEALTHCHECK_HOST, redactSecrets, startupLines, validateHostedConfig } from "../install/hostedRuntime";
@@ -143,6 +157,12 @@ export interface TourCoreServer extends Server {
     settled(): Promise<void>;
     storageReady: Promise<{ ok: boolean; summary: string }>;
     tickOverstay(): Promise<void>;
+    /** The operator services the tools use: workspace, tours, and texting. */
+    services: OperatorServices;
+    /** The multi-tenant service's touring processes and saved texts. */
+    touring?: TouringFront;
+    /** The multi-tenant service's front: tenants, secrets, and their services. */
+    hosted?: HostedCleaner;
   };
 }
 
@@ -151,6 +171,29 @@ const LOCAL_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
 const OAUTH_RESOURCE_PATHS = [MCP_PATH, CLEANER_MCP_PATH];
 
 export const operatorTokenFromEnv = () => process.env.TOURCORE_OPERATOR_TOKEN?.trim() || undefined;
+
+export { WORKER_KEY_HEADER };
+
+function workerKeyMatches(given: string | string[] | undefined, key: string | undefined): boolean {
+  const value = Array.isArray(given) ? given[0] : given;
+  if (!key || !value) return false;
+  const a = Buffer.from(value);
+  const b = Buffer.from(key);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * What a touring process answers, even with its key: its landlord connector, the texting webhooks,
+ * the public routes the shared service forwards, and the internal routes only the front calls (those
+ * also need the internal header, which the front never forwards from a caller). Never the operator
+ * app, setup pages, OAuth, or the ops and QA connectors: the shared service owns those.
+ */
+function workerRouteAllowed(method: string, path: string, internal: boolean): boolean {
+  if (path === MCP_PATH) return true;
+  if (method === "POST" && (path === TWILIO_WEBHOOK_PATH || path === LOCAL_WEBHOOK_PATH)) return true;
+  if ((method === "GET" && path === TOURING_LIVE_PATH) || (method === "POST" && path === TOURING_STAND_DOWN_PATH)) return internal;
+  return touringPublicRoute(method, path);
+}
 
 /**
  * What the public (tunnel) address may reach: the webhook, the identity form,
@@ -320,11 +363,14 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
   };
   const alerts = new OperatorUpdates({ services: api, outbox: installation.outbox, preferences: () => installation.files.state().operatorUpdates, log });
   installation.setRelevanceCheck((event) => alerts.stillRelevant(event));
-  const operatorToken = options.operatorToken ?? operatorTokenFromEnv;
-  const opsToken = options.opsToken ?? (() => installation.env().TOURCORE_OPS_TOKEN?.trim() || undefined);
-  const qaToken = options.qaToken ?? (() => installation.env().TOURCORE_QA_TOKEN?.trim() || undefined);
+  // A touring process on the shared service: the service signed the caller in, and the key is the bearer.
+  const workerMode = isTenantWorker(installation.deploymentMode());
+  const workerKey = () => installation.env().TOURCORE_WORKER_KEY?.trim() || undefined;
+  const operatorToken = workerMode ? workerKey : (options.operatorToken ?? operatorTokenFromEnv);
+  const opsToken = workerMode ? () => undefined : (options.opsToken ?? (() => installation.env().TOURCORE_OPS_TOKEN?.trim() || undefined));
+  const qaToken = workerMode ? () => undefined : (options.qaToken ?? (() => installation.env().TOURCORE_QA_TOKEN?.trim() || undefined));
   const toolSurface = options.toolSurface ?? "landlord";
-  const authMode = options.mcpAuth ?? (options.operatorToken ? "static" : mcpAuthModeFromEnv());
+  const authMode = workerMode ? "static" : (options.mcpAuth ?? (options.operatorToken ? "static" : mcpAuthModeFromEnv()));
   let server: Server;
   const approvalPage = () => `${tools.localUrl?.() ?? "http://localhost:4321"}/grok`;
   let lastApprovalWindow = 0;
@@ -342,7 +388,77 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
   // Hosted, Cleaner Core runs only as the multi-tenant service: a hosted desk with no tenants would be open to anyone.
   const cleanerOn = () => cleanerCoreEnabled(installation.env()) && (!hostedMode() || multiTenant());
   const tenants = new TenantRegistry(installation.root, () => options.now?.() ?? new Date());
+  const serviceOrigin = () => {
+    const base = installation.publicBaseUrl();
+    return base ? new URL(base).origin : undefined;
+  };
+  // Touring tenants on the multi-tenant service: one Tour Core process each, and the texts waiting for them.
+  const touringFront: TouringFront | undefined = cleanerMultiTenant(installation.env())
+    ? (() => {
+        const inbox = new TouringInbox(installation.root, () => options.now?.() ?? new Date());
+        const authToken = () => installation.env().CLEANER_CORE_TWILIO_AUTH_TOKEN?.trim() || undefined;
+        const supervisor = new TouringSupervisor({
+          spawn: forkTouringWorker,
+          env: (tenant, key) => buildTouringEnv({ base: installation.env(), tenant, dataRoot: installation.root, origin: serviceOrigin() ?? "", key, scratch: touringScratch(tenant) }),
+          // A touring process's landlord alert goes out through its tenant's routine; the answer tells its outbox whether to retry.
+          onEvent: async (tenantId, id, event) => {
+            const tenant = tenants.get(tenantId);
+            if (!tenant) return { type: "event-ack", id, ok: false, retryable: false, message: "This host is gone." };
+            try {
+              await touringSinkFor(hostedCleanerService, tenant).deliver(event);
+              return { type: "event-ack", id, ok: true };
+            } catch (err) {
+              return { type: "event-ack", id, ok: false, retryable: err instanceof DeliveryError ? err.retryable : true, message: err instanceof DeliveryError ? err.message : "The alert couldn't be delivered." };
+            }
+          },
+          log,
+          // Every time a process is ready, a crash restart included, the texts that waited go out.
+          onReady: (tenantId) => {
+            const tenant = tenants.get(tenantId);
+            if (tenant) void handOver(tenant).catch(() => undefined);
+          },
+          now: () => installation.now(),
+        });
+        // One hand-over at a time per tenant, oldest text first, each checked again against opt-outs.
+        const handing = new Map<string, Promise<void>>();
+        const handOver = (tenant: Tenant): Promise<void> => {
+          const run = async () => {
+            const target = supervisor.target(tenant.id);
+            const token = authToken();
+            if (!target || !token) return;
+            const current = tenants.get(tenant.id) ?? tenant;
+            if (current.service !== "touring") return;
+            await replayInbox(inbox, target, serviceOrigin() ?? "", tenant.id, token, {
+              scratch: touringScratch(current),
+              screen: async (raw) => (await screenText(hostedCleanerService, current, formParams(raw))) === "route",
+              taken: (raw) => {
+                const fields = formParams(raw);
+                if (touringScratch(current) && fields.Body !== undefined && !fields.MessageStatus) recordScratchText(hostedCleanerService, tenant.id, fields.From ?? "", fields.Body);
+              },
+            });
+          };
+          const next = (handing.get(tenant.id) ?? Promise.resolve()).then(run, run);
+          handing.set(tenant.id, next);
+          return next;
+        };
+        const front: TouringFront = {
+          supervisor,
+          inbox,
+          enabled: () => tourCoreTenants(installation.env()),
+          authToken,
+          handOver,
+          start: async (tenant) => {
+            const ready = supervisor.ensure(tenant);
+            supervisor.setAlerts(tenant.id, touringAlertsConnected(hostedCleanerService, tenant));
+            await ready;
+            await handOver(tenant);
+          },
+        };
+        return front;
+      })()
+    : undefined;
   const hostedCleanerService = hostedCleaner({
+    ...(touringFront ? { touring: touringFront } : {}),
     registry: tenants,
     secrets: new TenantSecrets(installation.root),
     dataRoot: installation.root,
@@ -364,7 +480,8 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
       ? new McpOAuth({
           runtime,
           resources: [
-            { path: MCP_PATH, scope: OPERATOR_SCOPE, label: "Tour Core" },
+            // On the multi-tenant service /mcp is the one address for both services.
+            { path: MCP_PATH, scope: OPERATOR_SCOPE, label: cleanerMultiTenant(installation.env()) ? "Tour Core and Cleaner Core" : "Tour Core" },
             { path: CLEANER_MCP_PATH, scope: CLEANER_SCOPE, label: "Cleaner Core", enabled: cleanerOn },
           ],
           endpoints: (path) => {
@@ -378,9 +495,9 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
               : undefined,
           now: options.authNow,
           fetchClientMetadata: options.fetchClientMetadata,
-          // The multi-tenant service runs Cleaner Core only. The hosted Tour Core demo has one owner, and no Cleaner Core.
+          // The multi-tenant service's invite code picks the tenant at either address. The hosted Tour Core demo has one owner, and no Cleaner Core.
           tenantPolicy: (clientId, resourcePath) => {
-            if (multiTenant()) return resourcePath === CLEANER_MCP_PATH ? { allowed: true } : { allowed: false, message: "This service runs Cleaner Core only." };
+            if (multiTenant()) return { allowed: true };
             if (!hostedMode()) return { allowed: true };
             if (resourcePath === CLEANER_MCP_PATH) return { allowed: false, message: CLEANER_NEEDS_MULTI_TENANT };
             return hostedTenantDecision(installation.files.state(), clientId);
@@ -468,6 +585,12 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     playbookClients.set(key, client);
     return client;
   };
+  // A touring process never sees the sign-in. The shared service, which checked the key, says which chat it is.
+  const clientFromWorker = (req: IncomingMessage): ReportedClient | undefined => {
+    const raw = req.headers[WORKER_CLIENT_HEADER];
+    const name = (Array.isArray(raw) ? raw[0] : raw)?.trim();
+    return name && Object.values(WORKER_CLIENT_NAMES).includes(name) ? { name } : undefined;
+  };
   const clientFromStoredOAuth = (clientId: string | undefined): ReportedClient | undefined => {
     if (!clientId || !oauth) return undefined;
     const name = oauth.store.clientName(clientId);
@@ -519,14 +642,19 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     const publicHost = publicBase ? new URL(publicBase).hostname.toLowerCase() : undefined;
     const url = new URL(req.url ?? "/", "http://localhost");
     const method = req.method ?? "GET";
-    const isLocal = LOCAL_HOSTS.includes(host);
+    // A touring process is reached only through the shared service, so nothing it gets is local.
+    const isLocal = !workerMode && LOCAL_HOSTS.includes(host);
     const hosted = hostedMode();
+    if (workerMode && (!workerKeyMatches(req.headers[WORKER_KEY_HEADER], workerKey()) || !workerRouteAllowed(method, url.pathname, workerKeyMatches(req.headers[WORKER_INTERNAL_HEADER], workerKey())))) {
+      return send(404, "text/plain", "Not found");
+    }
     const railwayHealth = host === RAILWAY_HEALTHCHECK_HOST && method === "GET" && url.pathname === HEALTH_PATH;
-    if (method === "GET" && url.pathname === HEALTH_PATH && (isLocal || railwayHealth || (publicHost && host === publicHost))) {
+    if (method === "GET" && url.pathname === HEALTH_PATH && (isLocal || workerMode || railwayHealth || (publicHost && host === publicHost))) {
       if (hosted && (!storageGate.settled || !storageGate.ok)) return send(503, "application/json; charset=utf-8", JSON.stringify({ ok: false, service: "tour-core" }));
+      // A touring process is reached through the shared service's public /t/<id>/ links, so it shows only public health.
       return send(200, "application/json; charset=utf-8", JSON.stringify(isLocal ? { ...publicHealth(installation), ...runtimeHealth(installation) } : publicHealth(installation)));
     }
-    if (!isLocal && !(publicHost && host === publicHost && publicRouteAllowed(method, url.pathname, !!oauth, hosted, assistantProfile(installation.env()).privatePages, multiTenant()))) {
+    if (!workerMode && !isLocal && !(publicHost && host === publicHost && publicRouteAllowed(method, url.pathname, !!oauth, hosted, assistantProfile(installation.env()).privatePages, multiTenant()))) {
       return send(isLocal || host === publicHost ? 404 : 403, "text/plain", isLocal || host === publicHost ? "Not found" : "Forbidden");
     }
 
@@ -560,6 +688,17 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
 
     await restored;
     try {
+      // The shared service asks a touring process what's live, and stands it down, before a switch.
+      if (workerMode && (url.pathname === TOURING_LIVE_PATH || url.pathname === TOURING_STAND_DOWN_PATH)) {
+        const json = "application/json; charset=utf-8";
+        const now = options.now?.() ?? new Date();
+        const work = await touringLiveWork(api, now);
+        if (url.pathname === TOURING_LIVE_PATH) return send(200, json, JSON.stringify(work));
+        if (work.inProgress) return send(409, json, JSON.stringify({ error: "in-progress" }));
+        const result = await standDownTouring(api, now);
+        await alertWork;
+        return send(200, json, JSON.stringify(result));
+      }
       if (method === "GET" && url.pathname === "/google/oauth/callback") {
         const result = await installation.records.completeCallback(url.searchParams);
         const page = `<!doctype html><meta name="referrer" content="no-referrer"><title>Tour Core</title><p>${result.ok ? "Google Drive is connected to Tour Core. You can return to the chat." : "Google Drive wasn't connected. Return to the chat and try again."}</p>`;
@@ -620,7 +759,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           send,
           readRaw: () => readRaw(req),
           readCapped: (max) => readCapped(req, max),
-          ...(oauth ? { authenticate: () => oauth.authenticate(req, res, CLEANER_MCP_PATH) } : {}),
+          ...(oauth ? { authenticate: (path: string) => oauth.authenticate(req, res, path) } : {}),
         });
         if (handled) return;
       } else if (hostedMode() && cleanerCoreEnabled(installation.env())) {
@@ -707,7 +846,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           if (incomingSession) responseSession = incomingSession;
         }
         const cached = playbookClients.get(key);
-        const storedClient = clientFromStoredOAuth(caller?.clientId);
+        const storedClient = workerMode ? clientFromWorker(req) : clientFromStoredOAuth(caller?.clientId);
         const knownPlaybook = (client?: ReportedClient) => !!client?.name?.trim() && selectPlaybook(client).id !== "baseline";
         // This initialize is the client in front of us. A stored OAuth name that
         // selects a playbook still wins over a baseline or nameless initialize.
@@ -985,7 +1124,14 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
       .catch(() => undefined);
   }, options.alertRetryMs ?? 15_000);
   retry.unref();
+  // Touring processes for every enabled touring tenant, each handed the texts that waited while it was down.
+  if (touringFront && touringFront.enabled()) {
+    void Promise.all(tenants.list().filter((t) => t.service === "touring" && !t.disabled).map((t) => touringFront.start(t))).catch((err) =>
+      log(`Couldn't start every touring process: ${err instanceof Error ? err.message : "unknown error"}`),
+    );
+  }
   server.on("close", () => {
+    touringFront?.supervisor.stopAll();
     clearInterval(retry);
     restoreSettings();
     restoreMessaging();
@@ -1004,6 +1150,8 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
       },
       storageReady,
       tickOverstay: () => conversations.tickOverstay(),
+      services: api,
+      ...(touringFront ? { touring: touringFront, hosted: hostedCleanerService } : {}),
     },
   });
 }
@@ -1103,7 +1251,12 @@ export async function startSetupServer(options: SetupServerOptions & { port?: nu
   throw new Error("No free port found for the setup app");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Bundled into dist/touringWorker.js too, where import.meta.url is that file: a touring process never starts this.
+const touringProcess = (() => {
+  const mode = parseDeploymentMode(process.env.TOURCORE_DEPLOYMENT_MODE);
+  return !!mode && "mode" in mode && isTenantWorker(mode.mode);
+})();
+if (!touringProcess && process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   loadLocalEnv();
   const args = process.argv.slice(2);
   if (args.includes("--check-storage")) {

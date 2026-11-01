@@ -1,4 +1,5 @@
 import type { TourCoreConfig } from "../config/tourCoreConfig";
+import { windowOn } from "./tourWindows";
 import { addDays, formatTime, localDateOf, weekdayOf, zonedTimeToUtc, type LocalDate } from "./timezone";
 
 export interface TourSlot {
@@ -22,7 +23,7 @@ export function minutesOfDay(hhmm: string): number {
   return h * 60 + m;
 }
 
-/** Minutes after local midnight at which tours may start. */
+/** Minutes after local midnight at which tours may start, for one window (`start` to `end`). */
 export function slotStartMinutes(tourHours: TourCoreConfig["tourHours"]): number[] {
   const start = minutesOfDay(tourHours.start);
   const end = minutesOfDay(tourHours.end);
@@ -35,8 +36,9 @@ export function slotStartMinutes(tourHours: TourCoreConfig["tourHours"]): number
 /** Tour start times on a property-local date, as absolute instants. */
 export function slotsOn(config: TourCoreConfig, day: LocalDate): TourSlot[] {
   const tz = config.property.timezone;
-  if (!config.tourHours.days.includes(weekdayOf(day))) return [];
-  return slotStartMinutes(config.tourHours).map((mins) => {
+  const hours = windowOn(config.tourHours, weekdayOf(day));
+  if (!hours) return [];
+  return slotStartMinutes({ ...config.tourHours, ...hours }).map((mins) => {
     const start = zonedTimeToUtc({ ...day, hour: Math.floor(mins / 60), minute: mins % 60 }, tz);
     return { start, label: formatTime(start, tz) };
   });
