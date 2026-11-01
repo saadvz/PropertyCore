@@ -24,6 +24,11 @@ This template doesn't replace [`grok-template/`](../grok-template/) or
 [`cleaner-template/`](../cleaner-template/). Those still set up one service
 each.
 
+The published team template: https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ
+
+The same bot for the other chats is in [`claude/`](claude/SETUP_GUIDE.md),
+[`chatgpt/`](chatgpt/SETUP_GUIDE.md), and [`muse/`](muse/SETUP_PROMPT.md).
+
 ## How a host starts
 
 Saad first adds the host as a tenant on

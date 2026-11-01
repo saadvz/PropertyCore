@@ -93,15 +93,24 @@ tenants became cleaning. A tenant's one number answers for its service only.
 Self-serve signup (a phone check in place of the invite code), copying backups
 off Railway, and a per-tenant SMS allowlist.
 
+Touring on every chat:
+
+- **Tour updates.** Grok posts its webhook routine from its computer. Claude's
+  host pastes a scheduled task's Fire URL and token on a private page. A
+  ChatGPT or Muse task connects with `save_alert_routine` and no arguments, and
+  reads new events with `get_updates`; touring's `get_state` warns once a
+  published host's task hasn't checked in for two and a half hours.
+- **Texts to the host.** On any chat the host can have urgent tour updates, or
+  all of them, texted to their own phone with `save_host_texts`. A text never
+  names a visitor. The host's own texts to the number never reach touring.
+- **Templates.** `property-core-template/` holds the Grok bot and its
+  `claude/`, `chatgpt/`, and `muse/` versions.
+
 Touring open tasks:
 
-- Claude touring support, checked live on a Scratch tenant.
-- ChatGPT touring support, checked live on a Scratch tenant (its alerts poll, so
-  touring publish waits until they're connected).
-- Muse touring support and a Muse touring setup script, checked live.
+- Live runs of touring on Claude, ChatGPT, and Muse on a Scratch tenant, Muse's
+  first.
 - A `verify-tourcore` skill, like `.cursor/skills/verify-cleanercore/`.
-- One Grok template for both services, in place of `grok-template/` and
-  `cleaner-template/`.
 - Touring in-process: bring Tour Core up to Cleaner Core's per-request standard,
   then retire the touring processes.
 - A second number per tenant, if both services should run at once.
