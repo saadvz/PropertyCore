@@ -21,6 +21,7 @@ import { cleanerCoreEnabled, cleanerMultiTenant, tourCoreTenants } from "../clea
 import type { TouringFront } from "../hosted/serviceTools";
 import type { OperatorServices } from "../operator/services";
 import { DeliveryError } from "../alerts/operatorEvents";
+import { sendHostText } from "../hosted/hostTexts";
 import { touringAlertsConnected, touringSinkFor } from "../hosted/touringAlerts";
 import { buildTouringEnv, touringScratch } from "../hosted/touringEnv";
 import { standDownTouring, TOURING_LIVE_PATH, TOURING_STAND_DOWN_PATH, touringLiveWork } from "../hosted/touringLive";
@@ -404,6 +405,8 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           onEvent: async (tenantId, id, event) => {
             const tenant = tenants.get(tenantId);
             if (!tenant) return { type: "event-ack", id, ok: false, retryable: false, message: "This host is gone." };
+            // The host's own phone hears its own way; that never decides whether the chat's update went out.
+            void sendHostText(hostedCleanerService, tenant, event);
             try {
               await touringSinkFor(hostedCleanerService, tenant).deliver(event);
               return { type: "event-ack", id, ok: true };

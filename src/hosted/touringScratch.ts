@@ -7,6 +7,7 @@ import { isScratchTestNumber } from "../cleaner-core/scratch";
 import { SCRATCH_NUMBER_REFUSAL, SCRATCH_TEST_WENT_THROUGH, SCRATCH_TEXT_NEEDED } from "../cleaner-core/scratchQa";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { screenText } from "./crossService";
+import { readScratchHostTexts } from "./hostTexts";
 import { deliverText } from "./touringForward";
 
 /**
@@ -36,7 +37,12 @@ export function readScratchInbox(h: HostedCleaner, tenantId: string): { from: st
   }
 }
 
+/** Touring's texts to visitors, then the service's texts to the host. */
 export function readScratchOutbox(h: HostedCleaner, tenantId: string): { to: string; text: string }[] {
+  return [...readVisitorOutbox(h, tenantId), ...readScratchHostTexts(h, tenantId)];
+}
+
+function readVisitorOutbox(h: HostedCleaner, tenantId: string): { to: string; text: string }[] {
   const file = join(tenantFolder(h.dataRoot, tenantId), "tour-core", SCRATCH_OUTBOX_FILE);
   if (!existsSync(file)) return [];
   try {

@@ -4,6 +4,7 @@ import { tourCoreTenants } from "../cleaner-core/flag";
 import { scratchToolsOn } from "../cleaner-core/scratchQa";
 import type { Tenant, TenantService } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
+import { saveHostTexts, type HostTextChoice } from "./hostTexts";
 import { standDownService, switchService } from "./service";
 import { issueTouringAlertLink, TOURING_ALERT_LINK_MINUTES } from "./touringAlerts";
 import { touringScratch } from "./touringEnv";
@@ -76,6 +77,14 @@ const SAVE_ALERT_ROUTINE: FrontTool = {
   input: z.object({}),
 };
 
+const SAVE_HOST_TEXTS: FrontTool = {
+  name: "save_host_texts",
+  title: "Text tour updates to the host",
+  description:
+    "Saves whether tour updates are also texted to the host's own phone: urgent only (a visitor asking for a time, or a problem), all of them, or none. Ask the host first, as a choice card. Takes the host's phone when they want texts.",
+  input: z.object({ which: z.enum(["urgent", "all", "off"]), phone: z.string().max(40).optional() }),
+};
+
 /** Scratch QA on a touring tenant's 555 number, named and worded like Cleaner Core's. */
 const SCRATCH: FrontTool[] = [
   { name: "read_inbox", title: "Read test texts in", description: "Lists test texts that came in to this Scratch number.", input: z.object({}) },
@@ -91,11 +100,11 @@ const SCRATCH: FrontTool[] = [
 const BY_STATE: Record<ToolState, FrontTool[]> = {
   unset: [GET_STATE, CHOOSE],
   cleaning: [SWITCH, STAND_DOWN],
-  touring: [SAVE_ALERT_ROUTINE, SWITCH, STAND_DOWN],
+  touring: [SAVE_ALERT_ROUTINE, SAVE_HOST_TEXTS, SWITCH, STAND_DOWN],
 };
 
 /** Every name the front answers in some state. A call to one of them in another state is refused, never forwarded. */
-export const FRONT_TOOL_NAMES = new Set([GET_STATE, CHOOSE, SWITCH, STAND_DOWN, SAVE_ALERT_ROUTINE, ...SCRATCH].map((tool) => tool.name));
+export const FRONT_TOOL_NAMES = new Set([GET_STATE, CHOOSE, SWITCH, STAND_DOWN, SAVE_ALERT_ROUTINE, SAVE_HOST_TEXTS, ...SCRATCH].map((tool) => tool.name));
 
 /** True when a touring tenant gets the Scratch tools: the flag is on and its number is a 555 number. */
 export function scratchFor(h: HostedCleaner, tenant: Tenant): boolean {
@@ -203,6 +212,10 @@ export async function handleFrontTool(ctx: FrontContext, name: string, args: unk
   }
   if (name === "read_inbox") return done({ texts: readScratchInbox(ctx.h, ctx.tenant.id) });
   if (name === "read_outbox") return done({ texts: readScratchOutbox(ctx.h, ctx.tenant.id) });
+  if (name === "save_host_texts") {
+    const saved = saveHostTexts(ctx.h, ctx.tenant, parsed.data as { which: HostTextChoice; phone?: string });
+    return { text: saved.text, isError: !saved.ok };
+  }
   if (name === "save_alert_routine") return done({ uploadUrl: issueTouringAlertLink(ctx.h, ctx.tenant, ctx.caller.grantId), expiresInMinutes: TOURING_ALERT_LINK_MINUTES, next: ALERT_UPLOAD_NEXT });
   return undefined;
 }
