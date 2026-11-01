@@ -1,6 +1,7 @@
 import { nextProfileQuestion } from "../config/unitProfile";
 import { spokenAsk } from "../playbooks/compose";
 import { RECONNECT_INSTRUCTIONS, SHARED_STEPS } from "../playbooks/shared";
+import { sharedAlertsStep, sharedPlatformOf } from "../playbooks/sharedAlerts";
 import type { ReportedClient } from "../playbooks/select";
 import { visitorHelpQuestion } from "../setup/setupActions";
 import { mcpAuthModeFromEnv } from "../mcp/authMode";
@@ -248,16 +249,6 @@ const ROUTINE_SETUP =
   "Then call get_secure_setup_url with step operator-alerts. Prefer Grok's secure secret input: ask for the webhook address and key securely and fill Tour Core's form yourself. They are not shown in chat and are not tool arguments. " +
   "If the routine panel lets you copy both values with copy buttons while they stay hidden on screen, you may paste those hidden values into the matching masked fields yourself, without reading or repeating them. " +
   "Hand the browser to the operator only when secure fill isn't available or a value is shown on screen. Never put the address or key in chat, tool arguments, files or commands.";
-
-/**
- * The same routine on the shared service. The address and key go to the shared service, which keeps
- * them per chat, through the one-time link save_alert_routine gives. Grok posts them itself.
- */
-const TOURING_ROUTINE_SETUP =
-  `Create the Tour Core Operator Updates routine yourself (authenticated webhook trigger; instructions in ${ROUTINE_DOC}). ` +
-  "Then call save_alert_routine and do its next step: from your own cloud computer, post the routine's webhook address and key to the one-time link it gives. " +
-  "You made the routine, so you already hold both. Only if you don't, ask the host for them with Grok's secure secret input card. " +
-  "Never send the link to the host or ask them to open a page. Never put the address or key in chat or in a tool argument.";
 
 function component(c: InstallationComponent, state: ComponentState, summary: string, extra: Partial<ComponentStatus> = {}): ComponentStatus {
   return { component: c, label: COMPONENT_LABELS[c], state, requirement: REQUIREMENTS[c], summary, optionalActions: [], ...extra };
@@ -694,7 +685,7 @@ function alertsStatus(inst: Installation, propertyReady: boolean, client?: Repor
   const env = inst.env();
   // A touring process on the shared service never holds the routine; the shared service says whether it's connected.
   const worker = isTenantWorker(inst.deploymentMode());
-  const routineSetup = worker ? TOURING_ROUTINE_SETUP : ROUTINE_SETUP;
+  const routineSetup = worker ? sharedAlertsStep(sharedPlatformOf(client)) : ROUTINE_SETUP;
   const configured = worker ? inst.sink().configured() : !!env.TOURCORE_GROK_ROUTINE_URL?.trim() && !!env.TOURCORE_GROK_ROUTINE_KEY?.trim();
   const state = inst.files.state();
   const skipped = state.skipped?.OPERATOR_ALERTS;

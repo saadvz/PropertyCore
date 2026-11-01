@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { renderPlaybook } from "../src/playbooks/compose";
+import { sharedPlatformOf, type SharedPlatform } from "../src/playbooks/sharedAlerts";
 import { PropertyWorkspace, runReadinessCheck } from "../src/setup";
 import { resetAdminSessions } from "../src/cleaner-core/hosted/admin";
 import { closeHostedApps } from "./cleanerOauthHarness";
@@ -112,6 +113,31 @@ describe("touring alerts", () => {
     expect(shared).toContain("Never send that link to the landlord");
     expect(shared).not.toContain("operator-alerts secure input");
     expect(renderPlaybook({ name: "Grok" }, "alerts").text).toContain("operator-alerts secure input");
+  });
+
+  it("words touring's alerts step for each chat on the shared service, always ending with the texts question", () => {
+    const step = (name: string, platform: SharedPlatform) => renderPlaybook({ name }, "alerts", undefined, { sharedService: true, platform }).text;
+    const claude = step("Claude", "claude");
+    expect(claude).toContain("API trigger");
+    expect(claude).toContain("private page");
+    expect(claude).not.toContain("cloud computer");
+    const chatgpt = step("ChatGPT", "chatgpt");
+    expect(chatgpt).toContain("save_alert_routine with no arguments");
+    expect(chatgpt).toContain("once an hour");
+    expect(step("Muse", "muse")).toContain("save_alert_routine with no arguments");
+    expect(step("Grok", "grok")).toContain("Never send that link to the landlord");
+    for (const platform of ["grok", "claude", "chatgpt", "muse"] as const) {
+      expect(step("x", platform), platform).toContain("Want tour updates texted to your phone too?");
+    }
+  });
+
+  it("knows each chat's platform from its name", () => {
+    expect(sharedPlatformOf({ name: "Grok" })).toBe("grok");
+    expect(sharedPlatformOf({ name: "cursor-vscode" })).toBe("grok");
+    expect(sharedPlatformOf({ name: "Claude" })).toBe("claude");
+    expect(sharedPlatformOf({ name: "ChatGPT" })).toBe("chatgpt");
+    expect(sharedPlatformOf({ name: "Muse" })).toBe("muse");
+    expect(sharedPlatformOf(undefined)).toBe("grok");
   });
 
   it("wakes the Grok routine with a test event, carrying no phone numbers", SLOW, async () => {

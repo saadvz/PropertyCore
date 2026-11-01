@@ -29,6 +29,7 @@ import { googleClientConfig } from "../storage/googleOAuth";
 import type { SettingName } from "./secretStore";
 import { isHostedRailway, isTenantWorker } from "./deployment";
 import { activeFromNumber } from "../messaging/registry";
+import { sharedPlatformOf } from "../playbooks/sharedAlerts";
 import type { Installation } from "./installation";
 import { storageVolumeHealth } from "./persistentVolume";
 import { getInstallationStatus, installedMessaging, primaryProperty, type InstallationStatus, type InstallationStep } from "./status";
@@ -410,7 +411,7 @@ function publishedMissingZone(workspace: PropertyWorkspace, onlyId?: string): bo
 export function readState(input: StateReadInput, propertyId?: string): Record<string, unknown> {
   const inst = input.installation;
   if (!inst) throw new SetupInputError("INSTALLATION_UNAVAILABLE", "Installation tools aren't available on this Tour Core.");
-  const status = getInstallationStatus(inst, input.services, { readOnly: true });
+  const status = getInstallationStatus(inst, input.services, { readOnly: true, ...(input.client ? { client: input.client } : {}) });
   const requested = propertyId?.trim() || undefined;
   const id = requested ?? primaryProperty(input.services.workspace)?.id;
   if (requested) {
@@ -434,7 +435,7 @@ export function readState(input: StateReadInput, propertyId?: string): Record<st
   const alertsReconnect = !zoneBlock && next.component === "OPERATOR_ALERTS" && alerts?.state === "ERROR" && addressSaved;
   const step = alertsDegraded ? "alerts-degraded" : alertsReconnect ? "alerts-error" : focusStep(milestones, next.action, picture);
   const say = zoneBlock ? UNSET_ZONE_LINE : (inst && step === "backups" && driveNotSetUpLine(inst)) || sayFor(input.client, step, picture.draft);
-  const playbook = renderPlaybook(input.client, step, say, { sharedService: isTenantWorker(inst.deploymentMode()) });
+  const playbook = renderPlaybook(input.client, step, say, { sharedService: isTenantWorker(inst.deploymentMode()), platform: sharedPlatformOf(input.client) });
   const copy = SHARED_STEPS[step];
   const setup = setupOf(input.services, inst, picture, status);
   return {
