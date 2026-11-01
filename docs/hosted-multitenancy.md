@@ -55,9 +55,12 @@ is gone, the oldest live connection stands in.
 ## Saad's admin page
 
 `/admin`, behind `CLEANER_CORE_ADMIN_PASSWORD`. Add a host and its Twilio number
-(the page points the number's webhook at this service), hand out invite codes,
-pick the primary, disconnect a chat, turn a tenant off, or delete it. The page
-never shows a door code, a calendar link, a routine key, or a cleaner's phone.
+(the page points the number's webhook at this service), hand out invite codes
+with the one connector address (`/mcp`), pick the primary, disconnect a chat,
+turn a tenant off, or delete it. The page sets no service: the host's chat
+picks it. Once it's chosen, the page can switch the number to the other
+service. The page never shows a door code, a calendar link, a routine key, or a
+cleaner's phone.
 
 ## Services
 

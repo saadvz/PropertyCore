@@ -203,8 +203,9 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
   }
 }
 
+/** The one address every host connects to. Their chat picks touring or cleaning there. */
 function connectorUrl(h: HostedCleaner): string {
-  return `${h.origin() ?? ""}/mcp/cleaner-core`;
+  return `${h.origin() ?? ""}/mcp`;
 }
 
 function tenantFrom(deps: AdminDeps, path: string): Tenant | undefined {
@@ -273,13 +274,8 @@ function healthOf(h: HostedCleaner, tenant: Tenant): TenantHealth {
  * Returns the refusal, or undefined when it switched.
  */
 async function setService(h: HostedCleaner, tenant: Tenant, to: TenantService, force: boolean): Promise<string | undefined> {
-  if (!tenant.service) {
-    if (to === "touring" && !h.touring?.enabled()) return "Touring isn't available on this service yet.";
-    h.registry.setService(tenant.id, to);
-    if (to === "touring") await h.touring!.start(h.registry.get(tenant.id)!);
-    h.log(`The admin set ${tenant.id} to ${to}.`);
-    return undefined;
-  }
+  // The host's chat chooses the first service. The admin only switches one that's already chosen.
+  if (!tenant.service) return "The host hasn't chosen a service yet. Their chat picks it when it connects.";
   const reply = await switchService({ h, tenant, actor: "admin", noteToolsChanged: () => {} }, { to, force });
   return reply.isError ? reply.text : undefined;
 }

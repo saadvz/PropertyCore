@@ -128,7 +128,8 @@ describe("the admin page", () => {
     expect(res.status).toBe(200);
     const code = /data-invite="([^"]+)"/.exec(res.html)?.[1];
     expect(code).toMatch(/^[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$/);
-    expect(res.html).toContain(`${BASE}/mcp/cleaner-core`);
+    // The shared address, not Cleaner Core's own: the host's chat picks the service.
+    expect(res.html).toContain(`Connector URL: <span class="code">${BASE}/mcp</span>`);
     expect(res.html).toContain("This code is shown once.");
     const tenant = m.registry.list()[0]!;
     expect(tenant).toMatchObject({ label: "Lane", twilioNumber: LANE_LINE });
@@ -276,6 +277,9 @@ describe("the admin page", () => {
     const admin = await signIn(m);
     const mill = await touringTenant(m, "Mill", "+15555550170");
     m.touring()!.supervisor.stop(mill.id);
+    const page = (await admin.page(`/admin/tenants/${mill.id}`)).html;
+    expect(page).toContain("Switch to cleaning");
+    expect(page).not.toContain("<select");
     const refused = await admin.post(`/admin/tenants/${mill.id}/service`, { to: "cleaning" });
     expect(refused.status).toBe(400);
     expect(refused.html).toContain(html("Touring isn't answering right now. Try again in a minute."));
@@ -295,13 +299,16 @@ describe("the admin page", () => {
     expect(audit.at(-1)).toMatchObject({ actor: "admin", from: "touring", to: "cleaning", forced: true });
   });
 
-  it("sets a service for a tenant that hasn't chosen one", SLOW, async () => {
+  it("leaves a new tenant's service to the host's chat: no form, and a post sets nothing", SLOW, async () => {
     const m = await start(TOURING);
     const admin = await signIn(m);
     const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE_LINE });
-    expect((await admin.post(`/admin/tenants/${tenant.id}/service`, { to: "touring" })).status).toBe(303);
-    expect(m.registry.get(tenant.id)?.service).toBe("touring");
-    expect(m.touring()!.supervisor.target(tenant.id)).toBeDefined();
+    const page = (await admin.page(`/admin/tenants/${tenant.id}`)).html;
+    expect(page).toContain("Not chosen yet.");
+    expect(page).not.toContain(`/admin/tenants/${tenant.id}/service`);
+    await admin.post(`/admin/tenants/${tenant.id}/service`, { to: "touring" });
+    expect(m.registry.get(tenant.id)?.service).toBeUndefined();
+    expect(m.touring()!.supervisor.target(tenant.id)).toBeUndefined();
   });
 
   it("stops a touring process when its tenant is turned off, and starts it when turned on", SLOW, async () => {

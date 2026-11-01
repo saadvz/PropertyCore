@@ -99,6 +99,22 @@ export function tenantsPage(tenants: Tenant[], csrf: string, error?: string, hea
   );
 }
 
+/**
+ * Nothing to set before the host chooses: their chat picks touring or cleaning when it connects to
+ * /mcp. After that, the admin can only switch the number to the other service.
+ */
+function serviceSection(t: Tenant, base: string, csrf: string): string {
+  if (!t.service) return "<p>Not chosen yet. The host's chat picks touring or cleaning when it connects with the invite code.</p>";
+  const other = t.service === "touring" ? "cleaning" : "touring";
+  return `<form method="post" action="${escape(`${base}/service`)}">
+        ${csrfField(csrf)}
+        <input type="hidden" name="to" value="${other}" />
+        <p>This number answers texts for ${t.service}. Switch it only if the host asks you to.</p>
+        <p><label><input type="checkbox" name="force" value="1" /> Force: switch even if something is live. Nothing is sent, and what was live stays frozen in the old service's setup.</label></p>
+        <p><button type="submit">Switch to ${other}</button></p>
+      </form>`;
+}
+
 export function tenantPage(t: Tenant, csrf: string, error?: string, health: TenantHealth = NO_HEALTH): string {
   const base = `/admin/tenants/${t.id}`;
   const connections = t.connections
@@ -115,12 +131,7 @@ export function tenantPage(t: Tenant, csrf: string, error?: string, health: Tena
       <p>Number: ${escape(t.twilioNumber)}. Status: ${t.disabled ? "off" : "on"}. Last activity: ${escape(t.lastActivityAt ?? "never")}.</p>
       <p>Service: ${escape(health.service)}. Touring process: ${escape(health.process)}. Restarts in the last day: ${health.restartsLastDay}. Texts waiting: ${health.queuedTexts}.</p>
       <h2>Service</h2>
-      <form method="post" action="${escape(`${base}/service`)}">
-        ${csrfField(csrf)}
-        <p><label for="to">Answer texts for</label><br /><select id="to" name="to"><option value="touring">touring</option><option value="cleaning">cleaning</option></select></p>
-        <p><label><input type="checkbox" name="force" value="1" /> Force: switch even if something is live. Nothing is sent, and what was live stays frozen in the old service's setup.</label></p>
-        <p><button type="submit">Set service</button></p>
-      </form>
+      ${serviceSection(t, base, csrf)}
       <h2>Connections</h2>
       <table>
         <tr><th>Chat</th><th>Connected</th><th></th><th></th></tr>
