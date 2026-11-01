@@ -5,7 +5,7 @@ import { ClaudeRoutineFireSink, GrokRoutineWebhookSink, NoopOperatorNotification
 import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
 import { writeJsonAtomic } from "../storage/atomicWrite";
-import { ASSISTANT_PROFILES, type CleanerAssistant } from "../cleaner-core/assistant";
+import { ASSISTANT_PROFILES, CLAUDE_FIRE_URL, type CleanerAssistant } from "../cleaner-core/assistant";
 import { formatWhen } from "../cleaner-core/calendar";
 import { PropertyWorkspace } from "../setup/workspace";
 import { lastCheckAt, UpdateFeedSink } from "./touringUpdates";
@@ -102,7 +102,70 @@ export const TOURING_ALERT_LINK_HEADERS: Record<string, string> = {
   "X-Frame-Options": "DENY",
 };
 
-type UploadReply ={ status: 200 | 400 | 404; body: { ok: boolean; message?: string; error?: string } };
+const CLAUDE_REFUSED = "Paste the Fire URL from the scheduled task's API trigger, and its token.";
+
+/** The chat that asked for an upload link, by its connection. */
+function uploadAssistant(h: HostedCleaner, tenant: Tenant, grantId: string): CleanerAssistant | undefined {
+  return (h.registry.get(tenant.id) ?? tenant).connections.find((c) => c.grantId === grantId)?.assistant;
+}
+
+/** The headers on the Claude form page: no framing, no referrer, and it posts only to itself. */
+const FORM_HEADERS: Record<string, string> = {
+  ...TOURING_ALERT_LINK_HEADERS,
+  "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+};
+
+/**
+ * What a browser sees on the link. A Claude chat's host gets the private form for the scheduled
+ * task's Fire URL and token; every other chat posts from its own computer, so its host is told to go back.
+ */
+export function touringAlertPage(h: HostedCleaner, tenant: Tenant, code: string, error?: string): { status: number; html: string; headers: Record<string, string> } {
+  const upload = readUploads(h, tenant.id).find((u) => u.hash === hash(code));
+  const open = !!upload && !upload.usedAt && Date.parse(upload.expiresAt) > h.now().getTime();
+  if (!open || uploadAssistant(h, tenant, upload!.grantId) !== "claude") return { status: 200, html: TOURING_ALERT_LINK_PAGE, headers: TOURING_ALERT_LINK_HEADERS };
+  return { status: error ? 400 : 200, html: claudeForm(error), headers: FORM_HEADERS };
+}
+
+const pageShell = (title: string, body: string) => `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>${title}</title>
+    <style>body{font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;line-height:1.5}label,input{display:block;width:100%}input{margin:.25rem 0 1rem;padding:.5rem}.error{color:#a00}</style>
+  </head>
+  <body>
+    <h1>${title}</h1>
+    ${body}
+  </body>
+</html>
+`;
+
+function claudeForm(error?: string): string {
+  return pageShell(
+    "Connect tour updates",
+    `<p>Paste the Fire URL and the token from the Tour Core scheduled task's API trigger. Tour Core uses them only to wake that task when something happens on a tour.</p>
+    ${error ? `<p class="error" role="alert">${error}</p>` : ""}
+    <form method="post">
+      <label for="url">Fire URL</label>
+      <input id="url" name="url" type="url" autocomplete="off" spellcheck="false" placeholder="https://api.anthropic.com/v1/claude_code/routines/…/fire" required>
+      <label for="token">Token</label>
+      <input id="token" name="token" type="password" autocomplete="off" spellcheck="false" required>
+      <button type="submit">Save</button>
+    </form>
+    <p>This private page works once and expires 30 minutes after Claude made it. Nothing you type is shown back to anyone, Claude included.</p>`,
+  );
+}
+
+/** The page after a form post: saved, gone, or the form again with why. */
+export function touringAlertFormReply(h: HostedCleaner, tenant: Tenant, code: string, result: UploadReply): { status: number; html: string; headers: Record<string, string> } {
+  if (result.status === 200) return { status: 200, html: pageShell("Saved", "<p>Tour updates are connected. You can close this page and go back to Claude.</p>"), headers: FORM_HEADERS };
+  if (result.status === 404) return { status: 404, html: pageShell("This link isn't valid anymore", "<p>It was already used, or it expired. Go back to Claude and ask for a new one.</p>"), headers: FORM_HEADERS };
+  return touringAlertPage(h, tenant, code, CLAUDE_REFUSED);
+}
+
+type UploadReply = { status: 200 | 400 | 404; body: { ok: boolean; message?: string; error?: string } };
 
 /** Saves the routine from the one-time link. The address and key are never repeated or logged. */
 export function handleTouringAlertUpload(h: HostedCleaner, tenant: Tenant, code: string, body: Record<string, unknown>): UploadReply {
@@ -120,6 +183,10 @@ export function handleTouringAlertUpload(h: HostedCleaner, tenant: Tenant, code:
     https = false;
   }
   if (!https || !key || key.length > MAX_KEY) return { status: 400, body: { ok: false, error: "That needs the routine's https webhook address and its key." } };
+  // A Claude chat wakes only a scheduled task's Fire URL, the one shape its sender speaks.
+  if (uploadAssistant(h, tenant, upload.grantId) === "claude" && (!CLAUDE_FIRE_URL.test(url) || key.length < 8)) {
+    return { status: 400, body: { ok: false, error: CLAUDE_REFUSED } };
+  }
   upload.usedAt = new Date(now).toISOString();
   writeUploads(h, tenant.id, uploads);
   h.secrets.setForConnection(tenant.id, upload.grantId, { TOURING_ROUTINE_URL: url, TOURING_ROUTINE_KEY: key });

@@ -29,7 +29,7 @@ import { isTenantId, tenantFolder, type Tenant, type TenantRegistry } from "./re
 import { screenText } from "../../hosted/crossService";
 import { handleTenantMcp } from "../../hosted/frontMcp";
 import type { TouringFront } from "../../hosted/serviceTools";
-import { handleTouringAlertUpload, TOURING_ALERT_LINK_HEADERS, TOURING_ALERT_LINK_PAGE, refreshTouringAlerts, touringAlertUploadCode } from "../../hosted/touringAlerts";
+import { handleTouringAlertUpload, refreshTouringAlerts, touringAlertFormReply, touringAlertPage, touringAlertUploadCode } from "../../hosted/touringAlerts";
 import { forwardTenantPath } from "../../hosted/touringForward";
 import { touringPublicRoute } from "../../hosted/workerRoutes";
 import { MCP_PATH } from "../../mcp/paths";
@@ -208,12 +208,23 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
   if (!tenant || tenant.disabled) return notFound();
   if (tenant.service === "touring") {
     if (method === "POST" && scoped.rest === TWILIO_WEBHOOK_PATH) return touringText(h, r, tenant, await r.readRaw(), signed(path));
-    if (method === "GET" && touringAlertUploadCode(scoped.rest)) {
-      r.send(200, "text/html; charset=utf-8", TOURING_ALERT_LINK_PAGE, TOURING_ALERT_LINK_HEADERS);
+    const routineCode = touringAlertUploadCode(scoped.rest);
+    if (routineCode && method === "GET") {
+      const page = touringAlertPage(h, tenant, routineCode);
+      r.send(page.status, "text/html; charset=utf-8", page.html, page.headers);
       return true;
     }
-    const routineCode = method === "POST" ? touringAlertUploadCode(scoped.rest) : undefined;
-    if (routineCode) {
+    // A Claude host's browser posts the private form.
+    if (routineCode && method === "POST" && isFormPost(String(r.req.headers["content-type"] ?? ""))) {
+      const raw = await r.readCapped(ALERT_UPLOAD_MAX_BYTES);
+      const form = Object.fromEntries(new URLSearchParams(raw?.toString("utf8") ?? ""));
+      const result = handleTouringAlertUpload(h, tenant, routineCode, form);
+      if (result.status === 200) refreshTouringAlerts(h, tenant);
+      const page = touringAlertFormReply(h, tenant, routineCode, result);
+      r.send(page.status, "text/html; charset=utf-8", page.html, page.headers);
+      return true;
+    }
+    if (routineCode && method === "POST") {
       const read = await uploadBody(String(r.req.headers["content-type"] ?? ""), () => r.readCapped(ALERT_UPLOAD_MAX_BYTES));
       const result = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : handleTouringAlertUpload(h, tenant, routineCode, read.parsed);
       if (result.status === 200) refreshTouringAlerts(h, tenant);
