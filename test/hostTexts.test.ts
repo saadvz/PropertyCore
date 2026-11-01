@@ -95,3 +95,40 @@ describe("sending host texts", () => {
     expect(outbox).toEqual([{ to: HOST, text: TIME_LINE }]);
   });
 });
+
+describe("the host texting their own number", () => {
+  const REPLY = "This is your Tour Core number. Open your chat to manage tours.";
+
+  async function withHost() {
+    const t = await touring();
+    await t.m.toolAt("/mcp", t.token, "save_host_texts", { which: "urgent", phone: HOST });
+    return t;
+  }
+  const outbox = async (m: MultiTenantApp, token: string) => ((await m.toolAt("/mcp", token, "read_outbox")).structured?.texts ?? []) as { to: string; text: string }[];
+
+  it("never reaches touring, and gets one reply", SLOW, async () => {
+    const { m, token } = await withHost();
+    await m.text(LANE, HOST, "Hi", "SMhost1");
+    await m.text(LANE, HOST, "Hello?", "SMhost2");
+    expect(m.app.logs.join("\n")).not.toMatch(/SMhost[12]/);
+    expect((await outbox(m, token)).filter((t) => t.to === HOST)).toEqual([{ to: HOST, text: REPLY }]);
+  });
+
+  it("turns host texts off with STOP and back on with START", SLOW, async () => {
+    const { m, tenant, token } = await withHost();
+    await m.text(LANE, HOST, "STOP", "SMhost3");
+    await sendHostText(m.hosted(), tenant, timeRequest("ttr_00000000000a"));
+    expect((await outbox(m, token)).filter((t) => t.text !== REPLY)).toEqual([]);
+    await m.text(LANE, HOST, "START", "SMhost4");
+    await sendHostText(m.hosted(), tenant, timeRequest("ttr_00000000000b"));
+    expect((await outbox(m, token)).filter((t) => t.text !== REPLY)).toEqual([{ to: HOST, text: TIME_LINE }]);
+  });
+
+  it("still hands HELP to touring", SLOW, async () => {
+    const { m, tenant } = await withHost();
+    await m.text(LANE, HOST, "HELP", "SMhost5");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(m.touring()!.inbox.pending(tenant.id)).toEqual([]);
+    expect(m.app.logs.join("\n")).toContain("SMhost5");
+  });
+});
