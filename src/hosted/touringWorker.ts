@@ -35,11 +35,12 @@ export async function startTouringWorker(): Promise<void> {
     if (message.type === "event-ack") return relay.ack(message);
     if (message.type === "alerts") {
       const was = alertsConnected;
+      const wasPolled = alertsPolled;
       alertsConnected = message.connected;
       alertsPolled = message.polled;
       // Like Cleaner Core, a newly connected routine gets one test event, so the host sees it work.
-      // A polled task can't be woken, so it gets none.
-      if (!was && alertsConnected && !alertsPolled) {
+      // A polled task can't be woken, so it gets none; moving from one to a routine counts as new.
+      if (alertsConnected && !alertsPolled && (!was || wasPolled)) {
         installation.outbox.enqueue(testEvent(new Date(installation.now())));
         void installation.outbox.drain().catch(() => undefined);
       }

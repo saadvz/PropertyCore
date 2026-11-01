@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { renderPlaybook } from "../src/playbooks/compose";
-import { sharedPlatformOf, type SharedPlatform } from "../src/playbooks/sharedAlerts";
+import { sharedPlatformOf, touringRoutineSetup, type SharedPlatform } from "../src/playbooks/sharedAlerts";
 import { PropertyWorkspace, runReadinessCheck } from "../src/setup";
 import { resetAdminSessions } from "../src/cleaner-core/hosted/admin";
 import { closeHostedApps } from "./cleanerOauthHarness";
@@ -131,6 +131,16 @@ describe("touring alerts", () => {
     }
   });
 
+  it("keeps Grok's setup instructions as they were, plus the texts question, with no yes-or-no framing", () => {
+    const grok = touringRoutineSetup("grok");
+    expect(grok).toContain("grok-template/routines/operator-updates.md");
+    expect(grok).not.toContain("If they say yes");
+    for (const platform of ["grok", "claude", "chatgpt", "muse"] as const) {
+      expect(touringRoutineSetup(platform), platform).toContain("Want tour updates texted to your phone too?");
+      expect(touringRoutineSetup(platform), platform).not.toContain("If they say");
+    }
+  });
+
   it("knows each chat's platform from its name", () => {
     expect(sharedPlatformOf({ name: "Grok" })).toBe("grok");
     expect(sharedPlatformOf({ name: "cursor-vscode" })).toBe("grok");
@@ -226,6 +236,18 @@ describe("touring alerts", () => {
       const reply = await m.toolAt("/mcp", token, "save_alert_routine");
       return new URL(String(reply.structured?.uploadUrl)).pathname;
     }
+
+    it("tells Claude to send the host the link, never to collect the values itself", SLOW, async () => {
+      const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
+      const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+      const token = await m.joinAt(tenant.id, "claude", "/mcp");
+      await m.toolAt("/mcp", token, "choose_service", { service: "touring" });
+      const next = String((await m.toolAt("/mcp", token, "save_alert_routine")).structured?.next);
+      expect(next).toContain("Send the host this link");
+      expect(next).not.toContain("Never send uploadUrl");
+      expect(next).not.toContain("secure secret input");
+      expect(next).not.toContain("cloud computer");
+    });
 
     it("shows a private form for the Fire URL and token, and saves them without showing them back", SLOW, async () => {
       const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));

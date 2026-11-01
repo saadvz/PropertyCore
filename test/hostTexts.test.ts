@@ -1,6 +1,8 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { testEvent, timeRequestedEvent, tourEvent } from "../src/alerts/operatorEvents";
-import type { Tenant } from "../src/cleaner-core/hosted/registry";
+import { tenantFolder, type Tenant } from "../src/cleaner-core/hosted/registry";
 import { hostTextBody, saveHostTexts, sendHostText } from "../src/hosted/hostTexts";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
@@ -122,6 +124,20 @@ describe("the host texting their own number", () => {
     await m.text(LANE, HOST, "START", "SMhost4");
     await sendHostText(m.hosted(), tenant, timeRequest("ttr_00000000000b"));
     expect((await outbox(m, token)).filter((t) => t.text !== REPLY)).toEqual([{ to: HOST, text: TIME_LINE }]);
+  });
+
+  it("sends no reply to a host phone that texted STOP", SLOW, async () => {
+    const { m, token } = await withHost();
+    await m.text(LANE, HOST, "STOP", "SMhost6");
+    await m.text(LANE, HOST, "hi", "SMhost7");
+    expect(await outbox(m, token)).toEqual([]);
+  });
+
+  it("never throws when a host text can't be saved, so the service stays up", SLOW, async () => {
+    const { m, tenant } = await withHost();
+    // The Scratch outbox can't be written: its path is a folder.
+    mkdirSync(join(tenantFolder(m.app.root, tenant.id), "scratch-host-texts.json"), { recursive: true });
+    await expect(sendHostText(m.hosted(), tenant, timeRequest("ttr_00000000000c"))).resolves.toBeUndefined();
   });
 
   it("still hands HELP to touring", SLOW, async () => {

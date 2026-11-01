@@ -146,6 +146,10 @@ const UNSET_CLEANING_ONLY = "This number isn't set up yet. It can run cleaning: 
 const ALERT_UPLOAD_NEXT =
   'From your own cloud computer, POST JSON {"url": "<webhook address>", "key": "<webhook key>"} to uploadUrl with Content-Type: application/json, using the address and key of the routine you made. If you don\'t hold them, ask the host for them with your secure secret input card first. Never send uploadUrl to the host, and never put the address or key in chat or in a tool argument. Then call get_state.';
 
+/** Claude's: the host opens the link and types the values on the private page. */
+const CLAUDE_UPLOAD_NEXT =
+  "Send the host this link. They paste the scheduled task's Fire URL and token on that private page. Never ask for either in chat or put them in a tool argument. Then call get_state.";
+
 /** The initialize instructions for a tenant that hasn't chosen yet. */
 export const UNSET_INSTRUCTIONS =
   `As soon as you're connected, without waiting for the host to ask, ask exactly "${SERVICE_QUESTION}" with two buttons: "${SERVICE_CHOICES[0].label}" and "${SERVICE_CHOICES[1].label}". Do nothing else first. Then call choose_service with their pick.`;
@@ -228,18 +232,20 @@ export async function handleFrontTool(ctx: FrontContext, name: string, args: unk
   if (name === "get_updates") return done({ updates: takeUpdates(ctx.h, ctx.tenant.id, ctx.caller.grantId) });
   if (name === "save_alert_routine") {
     const texts = hostTextsAsk(ctx.caller.assistant);
-    const ask = `Then ask the host "${texts.say}" as a choice card (${HOST_TEXT_CHOICES.map((c) => c.label).join(", ")}; suggest ${HOST_TEXT_CHOICES.find((c) => c.which === texts.suggested)!.label}) and call save_host_texts with their answer.`;
+    const ask = `ask the host "${texts.say}" as a choice card (${HOST_TEXT_CHOICES.map((c) => c.label).join(", ")}; suggest ${HOST_TEXT_CHOICES.find((c) => c.which === texts.suggested)!.label}) and call save_host_texts with their answer.`;
     // A ChatGPT or Muse task can't be woken and holds no address or key: connecting it is the whole step.
     if (ASSISTANT_PROFILES[ctx.caller.assistant].polledTask) {
       ctx.h.secrets.setForConnection(ctx.tenant.id, ctx.caller.grantId, { [TOURING_TASK_NAME]: "1" });
       refreshTouringAlerts(ctx.h, ctx.tenant);
-      return done({ connected: true, hostTexts: texts, next: `Tour updates are connected. Your task reads them with get_updates each time it runs. ${ask}` });
+      return done({ connected: true, hostTexts: texts, next: `Tour updates are connected. Your task reads them with get_updates each time it runs. Then ${ask}` });
     }
+    // Claude has no secure card: its host pastes the Fire URL and token on the private page themselves.
+    const post = ctx.caller.assistant === "claude" ? CLAUDE_UPLOAD_NEXT : ALERT_UPLOAD_NEXT;
     return done({
       uploadUrl: issueTouringAlertLink(ctx.h, ctx.tenant, ctx.caller.grantId),
       expiresInMinutes: TOURING_ALERT_LINK_MINUTES,
       hostTexts: texts,
-      next: `${ALERT_UPLOAD_NEXT} Once it's connected: ${ask}`,
+      next: `${post} Once it's connected, ${ask}`,
     });
   }
   return undefined;

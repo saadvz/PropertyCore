@@ -41,6 +41,32 @@ const SETUP: Record<SharedPlatform, string[]> = {
   ],
 };
 
+/**
+ * The same step as the touring process's own next-step instructions: the host already said yes, so
+ * only what to do. Grok's is the wording it always had, plus the texts question.
+ */
+const ACTION: Record<SharedPlatform, string> = {
+  grok:
+    "Create the Tour Core Operator Updates routine yourself (authenticated webhook trigger; instructions in grok-template/routines/operator-updates.md). " +
+    "Then call save_alert_routine and do its next step: from your own cloud computer, post the routine's webhook address and key to the one-time link it gives. " +
+    "You made the routine, so you already hold both. Only if you don't, ask the host for them with Grok's secure secret input card. " +
+    "Never send the link to the host or ask them to open a page. Never put the address or key in chat or in a tool argument.",
+  claude:
+    "Help the host make a Claude scheduled task named Tour Core Updates with an API trigger, using the prompt in the Property Core template's Claude touring task doc. " +
+    "Then call save_alert_routine and send the host the link it gives: they paste the task's Fire URL and token on that private page. Never ask for either in chat or put them in a tool argument.",
+  chatgpt:
+    "Create a recurring task that runs every hour, using the prompt in the Property Core template's ChatGPT touring task doc, and tell the host ChatGPT checks at most once an hour. " +
+    "Then call save_alert_routine with no arguments. Nothing secret is saved.",
+  muse:
+    "Create a recurring task, as often as the host likes, using the prompt in the Property Core template's Muse touring task reference. " +
+    "Then call save_alert_routine with no arguments. Nothing secret is saved.",
+};
+
+/** The touring process's next-step instructions for connecting tour updates in this chat. */
+export function touringRoutineSetup(platform: SharedPlatform): string {
+  return `${ACTION[platform]} ${TEXTS}`;
+}
+
 /** The tour-updates step for this chat on the shared service. */
 export function sharedAlertsStep(platform: SharedPlatform): string {
   return [OPEN, ...SETUP[platform], TEXTS, ...CLOSE].join(" ");

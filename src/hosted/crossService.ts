@@ -153,7 +153,8 @@ export async function screenText(h: HostedCleaner, tenant: Tenant, fields: Recor
     return host ? "drop" : "route";
   }
   if (host) {
-    await replyToHost(h, tenant, from);
+    // A host phone that texted STOP gets nothing back, not even this one reply.
+    if (!optOuts.stopped(tenant.id, from)) await replyToHost(h, tenant, from);
     return "drop";
   }
   if (optOuts.stopped(tenant.id, from)) {

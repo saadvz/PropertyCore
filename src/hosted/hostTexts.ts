@@ -104,7 +104,7 @@ export function saveHostTexts(h: HostedCleaner, tenant: Tenant, input: { which: 
   return { ok: true, text: input.which === "off" ? "No tour updates will be texted to the host." : input.which === "all" ? "Every tour update will be texted to the host too." : "Urgent tour updates will be texted to the host too." };
 }
 
-/** One text to the host, through the live gates, or into a Scratch tenant's test outbox. Never throws. */
+/** One text to the host, through the live gates, or into a Scratch tenant's test outbox. A failed save throws. */
 export async function textHost(h: HostedCleaner, tenant: Tenant, to: string, body: string, options: { scratch?: boolean } = {}): Promise<void> {
   if (options.scratch ?? touringScratch(tenant)) {
     writeJsonAtomic(scratchFile(h, tenant.id), { texts: [...readScratchHostTexts(h, tenant.id), { to, text: body }] });
@@ -122,14 +122,18 @@ export async function textHost(h: HostedCleaner, tenant: Tenant, to: string, bod
   h.log(`${tenant.id}: a host text didn't go out.`);
 }
 
-/** Texts the host about this event when their choice covers it, once per event. Never throws. */
+/** Texts the host about this event when their choice covers it, once per event. Never throws: it runs beside every tour event. */
 export async function sendHostText(h: HostedCleaner, tenant: Tenant, event: OperatorEvent, options: { scratch?: boolean } = {}): Promise<void> {
-  const texts = readHostTexts(h, tenant.id);
-  const body = hostTextBody(event.eventType, texts.which);
-  if (!body || !texts.phone || texts.texted.includes(event.eventId)) return;
-  if (new TenantOptOuts(h.dataRoot).stopped(tenant.id, texts.phone)) return;
-  writeHostTexts(h, tenant.id, { ...texts, texted: [...texts.texted, event.eventId] });
-  await textHost(h, tenant, texts.phone, body, options);
+  try {
+    const texts = readHostTexts(h, tenant.id);
+    const body = hostTextBody(event.eventType, texts.which);
+    if (!body || !texts.phone || texts.texted.includes(event.eventId)) return;
+    if (new TenantOptOuts(h.dataRoot).stopped(tenant.id, texts.phone)) return;
+    writeHostTexts(h, tenant.id, { ...texts, texted: [...texts.texted, event.eventId] });
+    await textHost(h, tenant, texts.phone, body, options);
+  } catch {
+    h.log(`${tenant.id}: a host text didn't go out.`);
+  }
 }
 
 /** A Scratch tenant's host texts, for read_outbox. */

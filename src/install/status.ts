@@ -1,7 +1,7 @@
 import { nextProfileQuestion } from "../config/unitProfile";
 import { spokenAsk } from "../playbooks/compose";
 import { RECONNECT_INSTRUCTIONS, SHARED_STEPS } from "../playbooks/shared";
-import { sharedAlertsStep, sharedPlatformOf } from "../playbooks/sharedAlerts";
+import { sharedPlatformOf, touringRoutineSetup } from "../playbooks/sharedAlerts";
 import type { ReportedClient } from "../playbooks/select";
 import { visitorHelpQuestion } from "../setup/setupActions";
 import { mcpAuthModeFromEnv } from "../mcp/authMode";
@@ -685,7 +685,7 @@ function alertsStatus(inst: Installation, propertyReady: boolean, client?: Repor
   const env = inst.env();
   // A touring process on the shared service never holds the routine; the shared service says whether it's connected.
   const worker = isTenantWorker(inst.deploymentMode());
-  const routineSetup = worker ? sharedAlertsStep(sharedPlatformOf(client)) : ROUTINE_SETUP;
+  const routineSetup = worker ? touringRoutineSetup(sharedPlatformOf(client)) : ROUTINE_SETUP;
   const configured = worker ? inst.sink().configured() : !!env.TOURCORE_GROK_ROUTINE_URL?.trim() && !!env.TOURCORE_GROK_ROUTINE_KEY?.trim();
   const state = inst.files.state();
   const skipped = state.skipped?.OPERATOR_ALERTS;
