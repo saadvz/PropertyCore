@@ -15,8 +15,9 @@ updates, one hourly scheduled task.
 
 Turn on **Developer Mode**, then add a custom connector named **Property Core**
 with the address `https://tourcore-production-8b80.up.railway.app/mcp`. When
-the approval page opens, type your invite code and click Allow. This one
-connector serves both services.
+the approval page opens, type your invite code, pick **Tour Core** or
+**Cleaner Core**, and click Allow. Picking there means your first chat already
+has the right tools. This one connector serves both services.
 
 ## Step 2: Pick a service
 

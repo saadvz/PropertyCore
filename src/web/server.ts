@@ -22,6 +22,7 @@ import type { TouringFront } from "../hosted/serviceTools";
 import type { OperatorServices } from "../operator/services";
 import { DeliveryError } from "../alerts/operatorEvents";
 import { sendHostText } from "../hosted/hostTexts";
+import type { ServicePick } from "../hosted/serviceChoice";
 import { refreshTouringAlerts, touringSinkFor } from "../hosted/touringAlerts";
 import { buildTouringEnv, touringScratch } from "../hosted/touringEnv";
 import { standDownTouring, TOURING_LIVE_PATH, TOURING_STAND_DOWN_PATH, touringLiveWork } from "../hosted/touringLive";
@@ -518,6 +519,15 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
                   connected: (tenantId: string, grantId: string, assistant: CleanerAssistant) =>
                     tenants.connect(tenantId, { grantId, assistant, connectedAt: (options.now?.() ?? new Date()).toISOString() }),
                   refusal: (reason: InviteRefusal) => INVITE_REFUSALS[reason],
+                  offersPick: () => tourCoreTenants(installation.env()) && !!touringFront,
+                  // The host's pick on the Allow page sets a new number's service before its chat lists any tools.
+                  choose: (tenantId: string, service: ServicePick) => {
+                    const tenant = tenants.get(tenantId);
+                    if (!tenant || tenant.service) return;
+                    tenants.setService(tenantId, service);
+                    log(`${tenantId} chose ${service} on the Allow page.`);
+                    if (service === "touring") void touringFront?.start(tenants.get(tenantId)!).catch(() => undefined);
+                  },
                 },
               }
             : {}),

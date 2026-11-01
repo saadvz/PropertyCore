@@ -32,7 +32,8 @@ As soon as you're connected, without waiting to be asked, ask the host exactly
 "Which do you want to set up: Tour Core or Cleaner Core?" with two choices:
 "Tour Core: self-guided tours for a rental unit" and "Cleaner Core: a cleaner
 for a property". Don't describe your tools instead. If the host already said
-which one, skip the question.
+which one, or picked it on the approval page (`get_state` then shows that
+service), skip the question.
 
 Call `choose_service` with their pick: `touring` for Tour Core, `cleaning` for
 Cleaner Core. If the new tools don't appear, ask the host to start a new chat.

@@ -41,9 +41,9 @@ From the team template (the usual way):
 1. Open the Property Core template link and click **Add to Grok Bot**, then
    **Add Bot**.
 2. Say "Set up Property Core".
-3. When the approval page opens, type the invite code from Saad and click
-   Allow.
-4. Pick Tour Core or Cleaner Core.
+3. When the approval page opens, type the invite code from Saad, pick Tour
+   Core or Cleaner Core, and click Allow. If they skip the pick, the bot asks
+   in chat instead.
 
 Without the template, open a new Grok Bot and paste the prompt in
 [`SETUP_PROMPT.md`](SETUP_PROMPT.md) instead.

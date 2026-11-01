@@ -241,7 +241,7 @@ export class McpOAuth {
       }
       const matchCode = typeof req.body?.matchCode === "string" ? req.body.matchCode : "";
       if (typeof req.body?.inviteCode === "string") {
-        const result = provider.approveWithInvite(String(req.params.id), matchCode, req.body.inviteCode);
+        const result = provider.approveWithInvite(String(req.params.id), matchCode, req.body.inviteCode, req.body.service);
         if (!result.ok) {
           res.status(403).set("Cache-Control", "no-store").json({ ok: false, error: { message: result.message } });
           return;

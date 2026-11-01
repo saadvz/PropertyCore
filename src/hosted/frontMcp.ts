@@ -162,7 +162,18 @@ function withNotices(body: string, notices: string[], warn?: (state: Record<stri
 }
 
 /** The touring process for this tenant, once it has seen this connection's initialize. */
+/** How long a call waits for a touring process that is still starting. */
+const STARTING_WAIT_MS = 30_000;
+
 async function touringTarget(h: HostedCleaner, tenantId: string, caller: TouringCaller, isInitialize = false): Promise<WorkerTarget | undefined> {
+  // A process still starting (the service was just picked, or it's restarting) is waited for, so a
+  // chat's first tool list is never empty: Claude and ChatGPT keep the list a chat started with.
+  if (!h.touring?.supervisor.target(tenantId)) {
+    const tenant = h.registry.get(tenantId);
+    if (h.touring && tenant?.service === "touring" && !tenant.disabled) {
+      await Promise.race([h.touring.start(tenant).catch(() => undefined), new Promise((resolve) => setTimeout(resolve, STARTING_WAIT_MS).unref())]);
+    }
+  }
   const target = h.touring?.supervisor.target(tenantId);
   if (!target) return undefined;
   const seen = `${target.key}|${caller.grantId}`;

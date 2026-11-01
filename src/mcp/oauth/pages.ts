@@ -5,6 +5,7 @@
  */
 import { ASSISTANT_PROFILES, type CleanerAssistant, type ConsentWho } from "../../cleaner-core/assistant";
 import type { InviteRefusal } from "../../cleaner-core/hosted/registry";
+import { SERVICE_CHOICES } from "../../hosted/serviceChoice";
 
 /** What the multi-tenant Cleaner Core's Allow page says when an invite code is refused. */
 export const INVITE_REFUSALS: Record<InviteRefusal, string> = {
@@ -44,7 +45,7 @@ ${body}
 </html>
 `;
 
-export function consentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; label?: "Tour Core" | "Cleaner Core" | "Tour Core and Cleaner Core"; assistant?: CleanerAssistant; invite?: boolean }): string {
+export function consentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; label?: "Tour Core" | "Cleaner Core" | "Tour Core and Cleaner Core"; assistant?: CleanerAssistant; invite?: boolean; services?: boolean }): string {
   if (p.label === "Cleaner Core") return cleanerConsentPage(p, ASSISTANT_PROFILES[p.assistant ?? "grok"].consent);
   if (p.label === "Tour Core and Cleaner Core") return cleanerConsentPage(p, ASSISTANT_PROFILES[p.assistant ?? "grok"].consent, SHARED_WORDS);
   const requestId = escape(p.requestId);
@@ -106,10 +107,17 @@ const SHARED_WORDS: ConsentWords = {
 };
 
 /** The same approval, worded for Cleaner Core, or for the shared address. */
-function cleanerConsentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; invite?: boolean }, who: ConsentWho, words: ConsentWords = CLEANER_WORDS): string {
+function cleanerConsentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; invite?: boolean; services?: boolean }, who: ConsentWho, words: ConsentWords = CLEANER_WORDS): string {
   // A multi-tenant Cleaner Core: the invite code says whose Cleaner Core this connection joins.
+  // On the shared address the host also picks the number's service here, so the chat's first tools are that service's.
+  const services = p.services
+    ? `<fieldset id="oauth-services"><legend>What do you want to set up?</legend>
+${SERVICE_CHOICES.map((choice) => `            <p><label><input type="radio" name="oauth-service" value="${choice.service}" /> ${escape(choice.label)}</label></p>`).join("\n")}
+            <p class="hint">If your number is already set up, it stays as it is.</p>
+          </fieldset>`
+    : "";
   const invite = p.invite
-    ? `<p><label for="oauth-invite">Invite code from Saad</label><br /><input id="oauth-invite" autocomplete="off" autocapitalize="characters" spellcheck="false" /></p>`
+    ? `<p><label for="oauth-invite">Invite code from Saad</label><br /><input id="oauth-invite" autocomplete="off" autocapitalize="characters" spellcheck="false" /></p>${services}`
     : "";
   const decision = p.hosted
     ? `${invite}

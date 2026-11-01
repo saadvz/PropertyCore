@@ -34,12 +34,8 @@ interface FrontTool {
 
 const Service = z.enum(["touring", "cleaning"]);
 
-/** The one question a host gets on connecting, and its choices, so the chat can show them as buttons. */
-export const SERVICE_QUESTION = "Which do you want to set up: Tour Core or Cleaner Core?";
-export const SERVICE_CHOICES = [
-  { label: "Tour Core: self-guided tours for a rental unit", service: "touring" },
-  { label: "Cleaner Core: a cleaner for a property", service: "cleaning" },
-] as const;
+import { SERVICE_CHOICES, SERVICE_QUESTION } from "./serviceChoice";
+export { SERVICE_CHOICES, SERVICE_QUESTION };
 
 /** Said in the tool descriptions too, so a chat that reads only its tool list still asks the question. */
 const ASK_ON_CONNECT = `Right after connecting, before anything else, ask the host exactly "${SERVICE_QUESTION}" with two buttons: "${SERVICE_CHOICES[0].label}" and "${SERVICE_CHOICES[1].label}". Don't describe what you can do instead.`;

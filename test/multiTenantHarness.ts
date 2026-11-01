@@ -74,12 +74,13 @@ export async function multiTenantApp(options: { now?: () => Date; env?: NodeJS.P
   };
 
   /** Connects one chat at an address on the service: /mcp/cleaner-core (the default) or the shared /mcp. */
-  const joinAt = async (tenantId: string, assistant: CleanerAssistant, path: "/mcp" | "/mcp/cleaner-core") => {
+  /** `service` is the pick on the shared address's Allow page. */
+  const joinAt = async (tenantId: string, assistant: CleanerAssistant, path: "/mcp" | "/mcp/cleaner-core", service?: "touring" | "cleaning") => {
     const redirect = REDIRECTS[assistant];
     const clientId = await app.register(assistant, redirect);
     const inviteCode = registry.invite(tenantId);
     const resource = `${BASE}${path}`;
-    const { access } = await app.connect(clientId, resource, path === "/mcp" ? OPERATOR_SCOPE : CLEANER_SCOPE, resource, { inviteCode, redirect });
+    const { access } = await app.connect(clientId, resource, path === "/mcp" ? OPERATOR_SCOPE : CLEANER_SCOPE, resource, { inviteCode, redirect, ...(service ? { service } : {}) });
     return access;
   };
 

@@ -122,17 +122,21 @@ export async function hostedApp(extra: NodeJS.ProcessEnv = {}, existing?: { root
   const pageParts = (html: string) => ({ id: /data-request="([^"]+)"/.exec(html)![1]!, code: /class="match-code">([^<]+)/.exec(html)![1]! });
 
   /** `inviteCode` is the multi-tenant service's invite field on the Allow page. */
-  const approve = (id: string, code: string, headers: Record<string, string> = {}, inviteCode?: string) =>
-    http(`/oauth/requests/${id}/approve`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ matchCode: code, ...(inviteCode !== undefined ? { inviteCode } : {}) }) });
+  const approve = (id: string, code: string, headers: Record<string, string> = {}, inviteCode?: string, service?: string) =>
+    http(`/oauth/requests/${id}/approve`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ matchCode: code, ...(inviteCode !== undefined ? { inviteCode } : {}), ...(service !== undefined ? { service } : {}) }),
+    });
 
   /** The whole dance for one resource. Returns the access token. */
-  const connect = async (clientId: string, resource: string, scope: string, tokenResource = resource, options: { inviteCode?: string; redirect?: string } = {}) => {
+  const connect = async (clientId: string, resource: string, scope: string, tokenResource = resource, options: { inviteCode?: string; redirect?: string; service?: string } = {}) => {
     const { verifier, challenge } = pkce();
     const redirect = options.redirect ?? REDIRECT;
     const page = await authorize(clientId, challenge, resource, scope, "state-1", redirect);
     expect(page.status).toBe(200);
     const { id, code } = pageParts(await page.text());
-    expect((await approve(id, code, {}, options.inviteCode)).status).toBe(200);
+    expect((await approve(id, code, {}, options.inviteCode, options.service)).status).toBe(200);
     const back = await http(`/oauth/requests/${id}/continue`);
     expect(back.status).toBe(302);
     const location = new URL(back.headers.location!);
