@@ -32,16 +32,26 @@ interface FrontTool {
 
 const Service = z.enum(["touring", "cleaning"]);
 
+/** The one question a host gets on connecting, and its choices, so the chat can show them as buttons. */
+export const SERVICE_QUESTION = "Which do you want to set up: Tour Core or Cleaner Core?";
+export const SERVICE_CHOICES = [
+  { label: "Tour Core: self-guided tours for a rental unit", service: "touring" },
+  { label: "Cleaner Core: a cleaner for a property", service: "cleaning" },
+] as const;
+
+/** Said in the tool descriptions too, so a chat that reads only its tool list still asks the question. */
+const ASK_ON_CONNECT = `Right after connecting, before anything else, ask the host exactly "${SERVICE_QUESTION}" with two buttons: "${SERVICE_CHOICES[0].label}" and "${SERVICE_CHOICES[1].label}". Don't describe what you can do instead.`;
+
 const GET_STATE: FrontTool = {
   name: "get_state",
   title: "What's next",
-  description: "Call this as soon as you're connected, before the host asks anything. Gives the one question to ask the host, with its choices: tours for a rental unit, or a cleaner for a property. Then call choose_service with their answer.",
+  description: `${ASK_ON_CONNECT} This gives that question and its choices. Then call choose_service with their answer.`,
   input: z.object({}),
 };
 const CHOOSE: FrontTool = {
   name: "choose_service",
   title: "Choose a service",
-  description: "Sets this number up for touring or cleaning, after the host chooses. It answers for that service only until the host asks to switch.",
+  description: `${ASK_ON_CONNECT} Call this with their pick: touring for Tour Core, cleaning for Cleaner Core. The number answers for that service only until the host asks to switch.`,
   input: z.object({ service: Service }),
 };
 const SWITCH: FrontTool = {
@@ -112,12 +122,6 @@ export const CHOSEN_LINE = (service: TenantService) => `Set up for ${service}. Y
 const UNSET_BOTH =
   "This number isn't set up yet. Ask the host the question in say right away, with the two choices as buttons. Touring: visitors text this number to book a self-guided tour of a rental unit. Cleaning: turnover cleanings from the host's booking calendar. Then call choose_service with the service they picked.";
 
-/** The one question a host gets on connecting, and its choices, so the chat can show them as buttons. */
-export const SERVICE_QUESTION = "What do you want to set up?";
-export const SERVICE_CHOICES = [
-  { label: "Tours for a rental unit", service: "touring" },
-  { label: "A cleaner for a property", service: "cleaning" },
-] as const;
 const UNSET_CLEANING_ONLY = "This number isn't set up yet. It can run cleaning: turnover cleanings from the host's booking calendar. Call choose_service with cleaning.";
 
 /** Like Cleaner Core's: Grok posts the routine it made from its own computer. The host never opens the link. */
@@ -126,7 +130,7 @@ const ALERT_UPLOAD_NEXT =
 
 /** The initialize instructions for a tenant that hasn't chosen yet. */
 export const UNSET_INSTRUCTIONS =
-  "As soon as you're connected, without waiting for the host to ask, call get_state and ask its question with its choices as buttons. Do nothing else first.";
+  `As soon as you're connected, without waiting for the host to ask, ask exactly "${SERVICE_QUESTION}" with two buttons: "${SERVICE_CHOICES[0].label}" and "${SERVICE_CHOICES[1].label}". Do nothing else first. Then call choose_service with their pick.`;
 
 /** What the shared service holds for touring tenants. Absent until the service runs touring at all. */
 export interface TouringFront {

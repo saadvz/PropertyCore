@@ -180,8 +180,8 @@ and call `get_state`. An old Tour Core connection left over from
 before is an exception: remove it and connect again the same way.
 
 On the hosted service, when `get_state` says this number isn't set up yet,
-ask its `say` question right away, with its `choices` as buttons (tours for a
-rental unit, or a cleaner for a property). If the operator already said they
+ask its `say` question right away, with its `choices` as buttons (Tour Core
+for self-guided tours of a rental unit, or Cleaner Core for a cleaner). If the operator already said they
 want tours, skip the question. Call `choose_service` with their pick, then
 call `get_state` again. If the new tools don't appear, ask the operator to
 start a new chat.

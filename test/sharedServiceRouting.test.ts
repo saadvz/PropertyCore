@@ -33,11 +33,18 @@ describe("one address, tools by service", () => {
     expect(await m.toolNames("/mcp", token)).toEqual(["choose_service", "get_state"]);
     const state = await m.toolAt("/mcp", token, "get_state");
     // One question with two choices, so the chat can offer them as buttons the moment it connects.
-    expect(state.structured?.say).toBe("What do you want to set up?");
+    expect(state.structured?.say).toBe("Which do you want to set up: Tour Core or Cleaner Core?");
     expect(state.structured?.choices).toEqual([
-      { label: "Tours for a rental unit", service: "touring" },
-      { label: "A cleaner for a property", service: "cleaning" },
+      { label: "Tour Core: self-guided tours for a rental unit", service: "touring" },
+      { label: "Cleaner Core: a cleaner for a property", service: "cleaning" },
     ]);
+    // A chat that only reads its tool list still gets the question and both choices.
+    const listed = await m.rpcAt("/mcp", token, "tools/list", {});
+    const tools = (listed.json.result as { tools: { name: string; description: string }[] }).tools;
+    for (const tool of tools) {
+      expect(tool.description, tool.name).toContain('ask the host exactly "Which do you want to set up: Tour Core or Cleaner Core?"');
+      expect(tool.description, tool.name).toContain("Cleaner Core: a cleaner for a property");
+    }
   });
 
   it("answers initialize for a tenant with no service, asking the question as soon as it connects", async () => {
@@ -45,7 +52,7 @@ describe("one address, tools by service", () => {
     const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
     const token = await m.joinAt(tenant.id, "grok", "/mcp");
     const init = await m.rpcAt("/mcp", token, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "Grok", version: "1" } });
-    expect(JSON.stringify(init.json.result)).toContain("As soon as you're connected, without waiting for the host to ask, call get_state");
+    expect(JSON.stringify(init.json.result)).toContain("As soon as you're connected, without waiting for the host to ask, ask exactly");
   });
 
   it("turns a tenant into a touring tenant and lists Tour Core's tools", SLOW, async () => {
