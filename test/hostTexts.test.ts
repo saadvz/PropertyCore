@@ -56,13 +56,13 @@ describe("save_host_texts", () => {
     expect((await save({ which: "urgent", phone: LANE })).isError).toBe(true);
     expect((await save({ which: "urgent", phone: "call me" })).isError).toBe(true);
     expect((await save({ which: "urgent" })).isError).toBe(true);
-    expect((await save({ which: "urgent", phone: "+12025550300" })).isError).toBe(true);
+    expect((await save({ which: "urgent", phone: "+10000000000" })).isError).toBe(true);
     expect((await save({ which: "off" })).isError).toBe(false);
   });
 
   it("refuses a 555 phone for a host whose number is real", SLOW, async () => {
     const { m, tenant } = await touring();
-    const live: Tenant = { ...tenant, twilioNumber: "+12025550200" };
+    const live: Tenant = { ...tenant, twilioNumber: "+10000000000" };
     expect(saveHostTexts(m.hosted(), live, { which: "urgent", phone: HOST }).ok).toBe(false);
   });
 });

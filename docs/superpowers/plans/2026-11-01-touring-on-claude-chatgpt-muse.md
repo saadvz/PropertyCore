@@ -58,7 +58,7 @@
 - [ ] **Step 1: Write the failing tests** in `test/hostTexts.test.ts`:
   - `hostTextBody`: `tour.time_requested` + `urgent` gives the time-request line; `tour.booked` + `urgent` is `undefined`; `tour.booked` + `all` is `Tour Core: a tour was booked.`; `installation.test` and `cleaning.update` are `undefined` for every choice; any event + `off` is `undefined`.
   - `save_host_texts` through `/mcp` on a touring tenant (`+15555550150`, Scratch): `{ which: "urgent", phone: "+15555550151" }` is ok; the tenant's own number is refused; a non-phone is refused; `which: "urgent"` with no phone is refused; `which: "off"` with no phone is ok.
-  - On a Scratch tenant, a 555 host phone is accepted and a `+12025550123` phone is refused. The live-tenant 555 refusal is unit-tested by calling `saveHostTexts` with a tenant object whose number isn't Scratch and a 555 phone.
+  - On a Scratch tenant, a 555 host phone is accepted and a `+10000000000` phone is refused. The live-tenant 555 refusal is unit-tested by calling `saveHostTexts` with a tenant object whose number isn't Scratch and a 555 phone.
   - `sendHostText` with `scratch: false`, env `CLEANER_CORE_LIVE_SMS=1` and `CLEANER_CORE_SMS_ALLOWLIST=+15555550151`, choice `urgent`: a time request sends one text through `m.sms` with the exact copy. A booking sends none. The same `eventId` twice sends once. The body never contains `+1555`.
   - On a Scratch tenant, a time request lands in `read_outbox` as `{ to: "+15555550151", text: <time-request line> }`, and `m.sms.sent` stays empty.
 
