@@ -1,7 +1,11 @@
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { testEvent, timeRequestedEvent } from "../src/alerts/operatorEvents";
 import type { CleanerAssistant } from "../src/cleaner-core/assistant";
+import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { touringSinkFor } from "../src/hosted/touringAlerts";
+import { PropertyWorkspace, runReadinessCheck } from "../src/setup";
+import { hillsideConfig, publishForVisitors } from "./liveApp";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 
@@ -86,5 +90,42 @@ describe("a Grok chat", () => {
     const reply = await m.toolAt("/mcp", token, "save_alert_routine");
     expect(String(reply.structured?.uploadUrl)).toMatch(/\/touring\/alert-routine\//);
     expect(String(reply.structured?.next)).toContain("Want tour updates texted to your phone too?");
+  });
+});
+
+describe("a task that stops checking in", () => {
+  const WARNING = /^Your Tour Core task hasn't checked in since .+ at .+\. Turn it back on in your chat's scheduled tasks\.$/;
+
+  /** A touring tenant with a published property, joined by `assistant`, on a clock the test moves. */
+  async function published(assistant: CleanerAssistant) {
+    let clock = Date.parse("2026-11-01T15:00:00.000Z");
+    const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" }, now: () => new Date(clock) }));
+    const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+    m.registry.setService(tenant.id, "touring");
+    const ws = new PropertyWorkspace(join(tenantFolder(m.app.root, tenant.id), "tour-core"));
+    const { config } = ws.save({ ...hillsideConfig(), messagingProvider: "local" });
+    ws.recordReadiness(config.property.id, await runReadinessCheck(config, { now: new Date(), installed: { provider: "local" } }));
+    publishForVisitors(ws, config.property.id, new Date());
+    await m.touring()!.start(m.registry.get(tenant.id)!);
+    const token = await m.joinAt(tenant.id, assistant, "/mcp");
+    const warning = async () => (await m.toolAt("/mcp", token, "get_state")).structured?.warning as string | undefined;
+    return { m, token, warning, advance: (ms: number) => void (clock += ms) };
+  }
+
+  it("is warned about after two and a half hours with no check, on ChatGPT", SLOW, async () => {
+    const { m, token, warning, advance } = await published("chatgpt");
+    await m.toolAt("/mcp", token, "save_alert_routine");
+    await m.toolAt("/mcp", token, "get_updates");
+    advance(2 * 3_600_000);
+    expect(await warning()).toBeUndefined();
+    advance(3_600_000);
+    expect(await warning()).toMatch(WARNING);
+  });
+
+  it("never comes up for a Grok chat", SLOW, async () => {
+    const { m, token, warning, advance } = await published("grok");
+    await m.toolAt("/mcp", token, "get_updates");
+    advance(5 * 3_600_000);
+    expect(await warning()).toBeUndefined();
   });
 });

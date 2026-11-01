@@ -6,7 +6,9 @@ import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { ASSISTANT_PROFILES, type CleanerAssistant } from "../cleaner-core/assistant";
-import { UpdateFeedSink } from "./touringUpdates";
+import { formatWhen } from "../cleaner-core/calendar";
+import { PropertyWorkspace } from "../setup/workspace";
+import { lastCheckAt, UpdateFeedSink } from "./touringUpdates";
 
 /**
  * A touring tenant's landlord alerts. Each chat connected to the tenant saves its own routine through a
@@ -165,6 +167,32 @@ export function touringAlertsConnected(h: HostedCleaner, tenant: Tenant): boolea
 /** True when the chosen connection is a ChatGPT or Muse task. */
 export function touringAlertsPolled(h: HostedCleaner, tenant: Tenant): boolean {
   return routineConnection(h, h.registry.get(tenant.id) ?? tenant)?.kind === "task";
+}
+
+/** Longer than one missed hourly run, as Cleaner Core waits. */
+const TASK_GAP_MS = 2.5 * 3_600_000;
+
+/**
+ * The warning when the chosen chat's recurring task hasn't called get_updates for too long, once a
+ * property is published. The task can pause itself, and nothing else would tell the host.
+ */
+export function taskWarning(h: HostedCleaner, tenant: Tenant, published: boolean): string | undefined {
+  const chosen = routineConnection(h, h.registry.get(tenant.id) ?? tenant);
+  if (!published || chosen?.kind !== "task") return undefined;
+  const last = lastCheckAt(h, tenant.id, chosen.grantId);
+  if (!last || h.now().getTime() - Date.parse(last) <= TASK_GAP_MS) return undefined;
+  const when = formatWhen(last, touringTimeZone(h, tenant.id));
+  return `Your Tour Core task hasn't checked in since ${when.day} at ${when.time}. Turn it back on in your chat's scheduled tasks.`;
+}
+
+/** The time zone of the tenant's first property, for saying a time. UTC when there's none. */
+function touringTimeZone(h: HostedCleaner, tenantId: string): string {
+  try {
+    const ws = new PropertyWorkspace(join(tenantFolder(h.dataRoot, tenantId), "tour-core"));
+    return ws.list().map(({ config }) => config.property.timezone).find(Boolean) ?? "UTC";
+  } catch {
+    return "UTC";
+  }
 }
 
 /** Tells the tenant's touring process whether its updates are connected, and how. */
