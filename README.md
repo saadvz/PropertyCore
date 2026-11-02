@@ -433,13 +433,17 @@ visitor text ─► interpreter ─► typed intent (ARRIVAL, AT_UNIT "Unit 101"
   - `TOURCORE_INTENT_MODEL_URL`: any OpenAI-compatible API. For Gemini, `https://generativelanguage.googleapis.com/v1beta/openai`.
   - `TOURCORE_INTENT_MODEL_KEY`: the API key. It lives only in the environment, never in a log, reply, chat, or the repo.
   - `TOURCORE_INTENT_MODEL`: the model name, for example a Gemini Flash or Flash-Lite version.
-  - `TOURCORE_INTENT_MODEL_TIMEOUT_MS` (optional): how long to wait before the rules' answer stands.
+  - `TOURCORE_INTENT_MODEL_TIMEOUT_MS` (optional): how long each model call may take before the rules' answer stands.
+    The default and the most it can be is 6000 (6 seconds). A question can make two calls, so a reply can take
+    about 12 seconds in the worst case.
+  - `TOURCORE_INTENT_MODEL_REASONING_EFFORT` (optional): sent as `reasoning_effort`. Thinking models such as Gemini
+    Flash use up their reply budget thinking, and their answers get cut off. Set the lowest level the model accepts.
 
   Its reply must match a strict schema and may only name intents, units, doors and times Tour Core offered; anything
   else is discarded. A fact pick is a number from the approved list, sent word for word; a number not on the list
   counts as none, and the question goes to the landlord. Nothing the model writes is sent to the visitor. It never
   sees a visitor's phone number or name. If it's slow or down, the rules' answer stands, and without the variables
-  everything runs on the rules alone. On the shared service each touring process gets these four values.
+  everything runs on the rules alone. On the shared service each touring process gets these five values.
   `npm run eval:visitor-model` runs the visitor scenario catalog against the configured model and prints PASS or FAIL
   per text; it is a local check, never run in CI.
 - **Asking instead of guessing.** Anything that leads toward a door needs high confidence. Below that, or when a
