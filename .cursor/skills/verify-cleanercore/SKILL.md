@@ -113,6 +113,12 @@ The step G safety gates are one script. It overwrites the fixed directory `evide
 .cursor/skills/verify-cleanercore/scripts/prove-step-g.sh
 ```
 
+Payments are one desk drive: setup with $85 to the made-up Venmo username `scratch-cleaner`, DONE, the checklist YES, `check_now`'s `payDue`, and `mark_paid`. It exits non-zero unless the pay link is exact and no payment step sent a text. It never opens Venmo; opening a link on a phone is a manual check, stopped before Pay:
+
+```
+npx tsx .cursor/skills/verify-cleanercore/scripts/prove-payments.ts .cursor/skills/verify-cleanercore/evidence/payments/payments.json
+```
+
 ## Evidence
 
 Write one directory per turnover or safety run:
