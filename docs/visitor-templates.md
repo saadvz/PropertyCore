@@ -4,7 +4,7 @@ Every outbound visitor text uses one of these ids. `{slot}` is filled before sen
 
 Text from the landlord or from a model reaches a visitor only as `approved-answer` or `approved-answer-closing`, and only after they approve a flagged question (`resolve_issue`). A no-draft flag never gets a draft. `approved-profile-fact` repeats a fact they already saved.
 
-214 message templates. 7 channel prompts.
+217 message templates. 7 channel prompts.
 
 ## Messages
 
@@ -166,6 +166,30 @@ I can't check that right now. Please try again in a little while.
 
 ```
 Here's what the {team} shared: {fact}
+```
+
+### tour-length
+
+From the tour length set at setup.
+
+```
+Tours are about {minutes} minutes.
+```
+
+### tour-id-form
+
+ID question, identity form on.
+
+```
+You'll fill out a short form with your name, email, and phone before your tour. No ID is needed at the door.
+```
+
+### tour-id-none
+
+ID question, no identity form.
+
+```
+No ID or form is needed for this tour.
 ```
 
 ### approved-profile-fact

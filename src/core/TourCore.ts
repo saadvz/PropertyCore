@@ -302,6 +302,7 @@ export const TOUR_ENDED_REPLY = "This tour has ended. Text HI any time to start 
 /** One visitor text for an unanswered question. Photo and ended-tour variants replace the short photo line. */
 /** Saved profile facts are explicit. Other approved facts match `shared-fact`. */
 function answerTemplateId(facts: ApprovedFact[]): string | undefined {
+  if (facts.length === 1 && facts[0]!.templateId) return facts[0]!.templateId;
   return facts.length > 0 && facts.every((fact) => fact.profileField) ? "approved-profile-fact" : undefined;
 }
 

@@ -116,6 +116,12 @@ describe("booked", () => {
     await scenario("booked", ["Can we do Thursday instead?"], { reply: /Thursday/, landlord: false });
   });
 
+  it("11. answers tour length and ID from settings", SLOW, async () => {
+    await scenario("booked", ["How long does the tour take?"], { reply: "Tours are about 45 minutes.", landlord: false });
+    await scenario("booked", ["Do I need ID?"], { reply: "You'll fill out a short form with your name, email, and phone before your tour. No ID is needed at the door.", landlord: false });
+    await scenario("unbooked", ["Do I need to bring ID?"], { reply: /No ID is needed at the door/, landlord: false });
+  });
+
   it("11. answers bringing someone from the facts sheet", SLOW, () => scenario("booked", ["Can I bring someone?"], { reply: FACTS.guests, landlord: false }, withFacts()));
 
   it("10. confirms, then cancels", SLOW, () => scenario("booked", ["Cancel my tour"], { reply: /cancel/i, landlord: false }));
