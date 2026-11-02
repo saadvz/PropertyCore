@@ -12,6 +12,7 @@ import {
   VisitorDenialCopy,
   visitorCancelConfirm,
   visitorCancelKeptFor,
+  visitorBookingConfirmed,
   type InboundMeta,
 } from "../core/TourCore";
 import { cannotCancelRunningOfferLater, cannotCancelRunningTour, laterCancelConfirm } from "../core/availabilityCopy";
@@ -611,6 +612,8 @@ export async function handleVisitorText(
     /* after the tour ends, HI continues the held booking with booked-for then consent */
   } else if (inbound.kind !== "door" && (await handleCancelIntent(turn))) {
     /* cancel-by-text: confirm, YES, or NO; or stop when nothing is booked */
+  } else if (await handleOpenTimesIntent(turn)) {
+    /* "what times do you have?": the open tour times, then back to the step */
   } else if (await resumeClearedScheduling(turn)) {
     /* the text after an unbooked cancel starts scheduling again */
   } else if (firstMessage) {
@@ -1059,6 +1062,37 @@ async function offerCancelConfirm(turn: Turn): Promise<void> {
  * Booked-tour cancel-by-text. Confirm first; never send the unanswered-
  * question fallback for a clear cancel ask.
  */
+const WEEKDAY_NAMES: Record<string, string> = { SUN: "Sunday", MON: "Monday", TUE: "Tuesday", WED: "Wednesday", THU: "Thursday", FRI: "Friday", SAT: "Saturday" };
+
+/**
+ * The open tour times: the next few days with openings, or the named weekday's times. A booked
+ * visitor's tour stays as it is. Afterwards the visitor is back on the step they were on.
+ */
+async function handleOpenTimesIntent(turn: Turn): Promise<boolean> {
+  const { session, intent } = turn;
+  if (intent.type !== "ASK_OPEN_TIMES" || !turn.confident) return false;
+  const days = await session.core.availableDates(intent.weekday ? 14 : 3);
+  const named = intent.weekday ? days.filter((d) => d.label.startsWith(WEEKDAY_NAMES[intent.weekday!]!)).slice(0, 1) : [];
+  // A named day with nothing open falls back to the next open days.
+  const shown = intent.weekday && named.length ? named : days.slice(0, 3);
+  const lines: string[] = [];
+  for (const day of shown) {
+    const [year, month, date] = day.date.split("-").map(Number) as [number, number, number];
+    const slots = await session.core.availableSlots({ year, month, day: date });
+    if (slots.length) lines.push(`${day.label}: ${slots.map((s) => s.label).join(", ")}`);
+  }
+  const booked = visitorBookingConfirmed(await session.reservation());
+  const times = lines.join("\n");
+  const sms = !lines.length
+    ? renderSms("open-times-none")
+    : intent.weekday && !named.length
+      ? renderSms("open-times-other-day", { day: WEEKDAY_NAMES[intent.weekday], times })
+      : renderSms(booked ? "open-times-booked" : "open-times", { times });
+  await session.reply(sms.body, undefined, { templateId: sms.templateId });
+  if (!booked) await resumeStep(session, turn.stage, turn.awaiting, { repeatLiveMenu: true });
+  return true;
+}
+
 async function handleCancelIntent(turn: Turn): Promise<boolean> {
   const { session, intent } = turn;
   const text = turn.said.text ?? "";

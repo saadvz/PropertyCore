@@ -4,7 +4,7 @@ Every outbound visitor text uses one of these ids. `{slot}` is filled before sen
 
 Text from the landlord or from a model reaches a visitor only as `approved-answer` or `approved-answer-closing`, and only after they approve a flagged question (`resolve_issue`). A no-draft flag never gets a draft. `approved-profile-fact` repeats a fact they already saved.
 
-204 message templates. 7 channel prompts.
+208 message templates. 7 channel prompts.
 
 ## Messages
 
@@ -72,6 +72,40 @@ I can't open photos yet. I'll pass your question to the {team}, and they'll repl
 
 ```
 This tour has ended. Text HI any time to start a new one.
+```
+
+### open-times
+
+{times} is one line per day: the day, then its open times. Never the unit's move-in availability.
+
+```
+Here are the open tour times:
+{times}
+```
+
+### open-times-booked
+
+A booked visitor asked. Their booking is not changed.
+
+```
+Here are the open tour times:
+{times}
+Your tour stays as it is. To move it, say which day and time you'd like.
+```
+
+### open-times-other-day
+
+The named weekday has no open times.
+
+```
+Nothing is open {day}. Here are the next open times:
+{times}
+```
+
+### open-times-none
+
+```
+Nothing is open for tours right now.
 ```
 
 ### storage-unavailable

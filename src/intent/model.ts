@@ -48,6 +48,11 @@ export const TourIntentSchema = z.discriminatedUnion("type", [
     /** They asked for a day that could not be resolved ("the 45th", "next month"). */
     unclear: z.boolean().optional(),
   }),
+  /** "What times do you have?": the open tour times, for one weekday when named. Never the unit's move-in availability. */
+  z.object({
+    type: z.literal("ASK_OPEN_TIMES"),
+    weekday: z.enum(["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]).optional(),
+  }),
   z.object({ type: z.literal("ACCEPT_PROPOSED_TIME") }),
   z.object({ type: z.literal("DECLINE_PROPOSED_TIME") }),
   z.object({ type: z.literal("CONSENT_YES") }),
