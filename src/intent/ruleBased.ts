@@ -551,6 +551,21 @@ export function isRescheduleAsk(text: string): boolean {
   return /\binstead\b/.test(t) && /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|day|time)\b/.test(t);
 }
 
+/** "When is my tour?", "what time is my tour again?". */
+export function isMyTourAsk(text: string): boolean {
+  const t = text.toLowerCase();
+  return /\b(when|what time|what day)\b[^.?!]*\bmy (tour|appointment|showing|visit|booking)\b/.test(t) || /\bmy (tour|appointment) (time|details|info)\b/.test(t);
+}
+
+/** "Where is it?", "what's the address?", "how do I get there?". Not "where is unit 1A" on a tour. */
+export function isDirectionsAsk(text: string): boolean {
+  const t = text.toLowerCase().replace(/['\u2019]/g, "");
+  return (
+    /\bwhat(s| is) the (address|location)\b|\bwhere (is it|is the (property|place|house|building)|are you located|is this)\b|\b(directions|how do i get there|how to get there)\b/.test(t) ||
+    /^\s*(address|location)\s*\??\s*$/.test(t)
+  );
+}
+
 /** The weekday an open-times ask names, if any. */
 function openTimesDay(t: string): { weekday?: "SUN" | "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" } {
   const named = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|thurs|thur|tues|mon|tue|wed|thu|fri|sat|sun)\b/.exec(t);
@@ -696,6 +711,8 @@ function readByRules(ctx: InterpretContext): IntentInterpretation {
     if (isCancelTourAsk(raw)) return result({ type: "CONFIRM_CANCEL_TOUR" }, 0.95);
   }
   if ((ctx.hasCancelableTour || ctx.hasRunningTour) && isCancelTourAsk(raw)) return result({ type: "CANCEL_TOUR" }, 0.95);
+  if (isMyTourAsk(t)) return result({ type: "ASK_MY_TOUR" }, 0.9);
+  if (!ctx.hasRunningTour && isDirectionsAsk(t)) return result({ type: "ASK_DIRECTIONS" }, 0.9);
   if (ctx.hasCancelableTour && isRescheduleAsk(t)) return result({ type: "RESCHEDULE_TOUR", ...openTimesDay(t) }, 0.9);
   // On the day and time menus the day-pick rules already list times; a general hours ask keeps the saved-hours reply.
   if (ctx.step !== "choose-date" && ctx.step !== "choose-time" && !isGeneralTourHoursQuestion(raw) && isOpenTimesAsk(t)) {

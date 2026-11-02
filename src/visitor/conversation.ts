@@ -17,6 +17,7 @@ import {
 } from "../core/TourCore";
 import { cannotCancelRunningOfferLater, cannotCancelRunningTour, laterCancelConfirm } from "../core/availabilityCopy";
 import { CANCEL_OPT_OUT, renderSms, visitorTeamName } from "../sms/templates";
+import { propertyDirectionsUrl } from "../core/mapsLink";
 import { namedCancelFocus } from "./cancelTarget";
 import { awaitingLatestYesNo, doorAskSupersedesCancel } from "./latestQuestion";
 import { DOOR_AFTER_T, isLeavingTour, T5_NO_OFFER_BARE_YES } from "../core/overstayCopy";
@@ -612,6 +613,8 @@ export async function handleVisitorText(
     /* after the tour ends, HI continues the held booking with booked-for then consent */
   } else if (inbound.kind !== "door" && (await handleCancelIntent(turn))) {
     /* cancel-by-text: confirm, YES, or NO; or stop when nothing is booked */
+  } else if (await handleMyTourOrDirections(turn)) {
+    /* "when is my tour?" and "where is it?", answered from the booking and the address */
   } else if (await handleRescheduleIntent(turn)) {
     /* "can I change the time?": the open times, then a pick moves the booking */
   } else if (await handleOpenTimesIntent(turn)) {
@@ -1064,6 +1067,29 @@ async function offerCancelConfirm(turn: Turn): Promise<void> {
  * Booked-tour cancel-by-text. Confirm first; never send the unanswered-
  * question fallback for a clear cancel ask.
  */
+/** "When is my tour?" from the booking; "where is it?" with the address and the directions link. */
+async function handleMyTourOrDirections(turn: Turn): Promise<boolean> {
+  const { session, intent } = turn;
+  if ((intent.type !== "ASK_MY_TOUR" && intent.type !== "ASK_DIRECTIONS") || !turn.confident) return false;
+  const property = session.config.property;
+  const send = async (sms: { templateId: string; body: string }) => session.reply(sms.body, undefined, { templateId: sms.templateId });
+  if (intent.type === "ASK_MY_TOUR") {
+    const r = await session.reservation();
+    if (!visitorBookingConfirmed(r) || !r?.slotStart || !r.windowStart || !r.windowEnd) {
+      await send(renderSms("no-tour-booked"));
+      return true;
+    }
+    const tz = property.timezone;
+    const start = new Date(r.slotStart);
+    await send(renderSms("my-tour", { time: formatTime(start, tz), day: formatDay(start, tz), start: formatTime(new Date(r.windowStart), tz), end: formatTime(new Date(r.windowEnd), tz), address: property.address }));
+    return true;
+  }
+  await send(renderSms("property-address", { address: property.address }));
+  const url = propertyDirectionsUrl(property);
+  if (url) await send(renderSms("tour-directions", { url }));
+  return true;
+}
+
 /** The times a booked visitor can move to, for one weekday when named, at most six. */
 async function rescheduleChoices(session: VisitorDemoSession, weekday?: string): Promise<{ start: Date; line: string }[]> {
   const tz = session.config.property.timezone;

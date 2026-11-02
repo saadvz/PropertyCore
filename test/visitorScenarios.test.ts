@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { isOpenTimesAsk } from "../src/intent/ruleBased";
-import { at, liveApp, type LiveApp } from "./liveApp";
+import type { TourCoreConfig } from "../src/config/tourCoreConfig";
+import { at, hillsideConfig, liveApp, type LiveApp } from "./liveApp";
 import { reachedLandlord } from "./visitorScenarioKit";
 
 /**
@@ -16,8 +17,15 @@ afterEach(() => cleanups.splice(0).forEach((c) => c()));
 
 type Setup = "unbooked" | "booked";
 
+/** The demo property with a full, confirmed address, so it has a directions link. */
+function addressed(): TourCoreConfig {
+  const config = hillsideConfig();
+  config.property = { ...config.property, canonicalAddress: { street: "100 Alfred Way", city: "Brooklyn", state: "NY", postalCode: "11201", formatted: "100 Alfred Way, Brooklyn, NY 11201" }, addressConfirmed: true };
+  return config;
+}
+
 async function ready(setup: Setup): Promise<LiveApp> {
-  const app = await liveApp({ cleanups });
+  const app = await liveApp({ cleanups, config: addressed() });
   if (setup === "booked") await app.book();
   else await app.optInSms();
   return app;
@@ -59,6 +67,11 @@ describe("before booking", () => {
     await scenario("unbooked", ["Is there parking?"], { reply: /Street parking only/, landlord: false });
   });
 
+  it("6. gives the address and directions before booking", SLOW, async () => {
+    await scenario("unbooked", ["Where is it?"], { reply: /100 Alfred Way[\s\S]*google\.com\/maps/, landlord: false });
+    await scenario("unbooked", ["What's the address?"], { reply: /100 Alfred Way[\s\S]*google\.com\/maps/, landlord: false });
+  });
+
   it("7. sends a question no fact covers to the landlord", SLOW, () => scenario("unbooked", ["Is there a gym?"], { landlord: true }));
 });
 
@@ -66,6 +79,13 @@ describe("booked", () => {
   it("2b. lists open times for a booked visitor without touching the booking", SLOW, async () => {
     const { app } = await scenario("booked", ["Ok what times are available?"], { reply: /\d{1,2}:\d{2} (AM|PM)/, not: /available now/i, landlord: false });
     expect((await app.text("When is my tour?")).join("\n")).not.toMatch(/cancel/i);
+  });
+
+  it("6b. gives the address and directions after booking", SLOW, () => scenario("booked", ["What's the address?"], { reply: /100 Alfred Way[\s\S]*google\.com\/maps/, landlord: false }));
+
+  it("8. repeats a booked visitor's tour time and door window", SLOW, async () => {
+    await scenario("booked", ["When is my tour?"], { reply: /2:00 PM[\s\S]*1:50 PM/, landlord: false });
+    await scenario("booked", ["What time is my tour again?"], { reply: /2:00 PM/, landlord: false });
   });
 
   it("9. offers open times to move a booked tour, without the landlord", SLOW, async () => {

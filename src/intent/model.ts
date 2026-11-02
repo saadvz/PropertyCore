@@ -58,6 +58,10 @@ export const TourIntentSchema = z.discriminatedUnion("type", [
     type: z.literal("RESCHEDULE_TOUR"),
     weekday: z.enum(["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]).optional(),
   }),
+  /** "When is my tour?": the booked day, time, door window, and address. */
+  z.object({ type: z.literal("ASK_MY_TOUR") }),
+  /** "Where is it?", "what's the address?": the address and a directions link. */
+  z.object({ type: z.literal("ASK_DIRECTIONS") }),
   z.object({ type: z.literal("ACCEPT_PROPOSED_TIME") }),
   z.object({ type: z.literal("DECLINE_PROPOSED_TIME") }),
   z.object({ type: z.literal("CONSENT_YES") }),
