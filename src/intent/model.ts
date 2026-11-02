@@ -193,6 +193,11 @@ export interface IntentInterpreter {
   /** Short label for developer details, e.g. "rules" or "rules + grok-4". */
   readonly description: string;
   interpret(context: InterpretContext): Promise<IntentInterpretation>;
+  /**
+   * Present only when a language model is configured. Picks the one approved fact that answers a
+   * property question, as a 0-based index, or undefined for none. Never writes a reply.
+   */
+  pickFact?(question: string, facts: string[], options?: { name?: string }): Promise<number | undefined>;
 }
 
 /** Intents that lead toward a door opening. */

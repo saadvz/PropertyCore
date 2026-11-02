@@ -695,6 +695,12 @@ export class VisitorDemoSession {
    * conversation's own step changes. `unitId` overrides the unit context (the
    * visitor just said which unit they meant).
    */
+  /**
+   * The current turn's fact picker, set by the conversation only when a language model is configured.
+   * Not saved with the session.
+   */
+  factPicker?: (question: string, facts: string[], options?: { name?: string }) => Promise<number | undefined>;
+
   async askQuestion(question: string, options: { meta?: InboundMeta; unitId?: string; alreadyRecorded?: boolean; unknownReply?: string; answerSuffix?: string } = {}): Promise<QuestionOutcome> {
     const r = await this.reservation();
     const out = await this.core.answerPropertyQuestion({
@@ -707,6 +713,7 @@ export class VisitorDemoSession {
       recordInbound: !options.alreadyRecorded,
       ...(options.unknownReply ? { unknownReply: options.unknownReply } : {}),
       ...(options.answerSuffix ? { answerSuffix: options.answerSuffix } : {}),
+      ...(this.factPicker ? { pickFact: this.factPicker } : {}),
     });
     await this.syncReplies();
     return { outcome: out.outcome, ...(out.units ? { units: out.units } : {}), ...(out.fairHousing ? { fairHousing: true } : {}) };

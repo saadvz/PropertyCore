@@ -567,7 +567,7 @@ export function isDirectionsAsk(text: string): boolean {
 }
 
 /** The weekday an open-times ask names, if any. */
-function openTimesDay(t: string): { weekday?: "SUN" | "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" } {
+export function openTimesDay(t: string): { weekday?: "SUN" | "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" } {
   const named = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|thurs|thur|tues|mon|tue|wed|thu|fri|sat|sun)\b/.exec(t);
   const day = named ? WEEKDAY_TOKEN[named[1]!] : undefined;
   return day ? { weekday: day } : {};

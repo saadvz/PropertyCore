@@ -6,6 +6,9 @@ import { CLEANER_TWILIO_PATH } from "../cleaner-core/twilioHook";
 /** Cleaner Core names a touring process still needs: the service-wide live switch, allowlist, and Scratch flag. */
 const SHARED_CLEANER_NAMES = new Set(["CLEANER_CORE_LIVE_SMS", "CLEANER_CORE_SMS_ALLOWLIST", "CLEANER_CORE_SCRATCH_TOOLS"]);
 
+/** The optional visitor-text model settings: the same for every touring process. The key lives only in the service's environment. */
+const MODEL_SETTINGS = new Set(["TOURCORE_INTENT_MODEL_URL", "TOURCORE_INTENT_MODEL_KEY", "TOURCORE_INTENT_MODEL", "TOURCORE_INTENT_MODEL_TIMEOUT_MS"]);
+
 /**
  * A touring process's environment: the service's environment with every Tour Core setting, every
  * Cleaner Core secret, and every per-tenant value taken out, then this tenant's folder, number,
@@ -16,7 +19,7 @@ export function buildTouringEnv(input: { base: NodeJS.ProcessEnv; tenant: Tenant
   const env: NodeJS.ProcessEnv = {};
   const dropped = new Set<string>(PER_TENANT_NAMES);
   for (const [name, value] of Object.entries(base)) {
-    if (dropped.has(name) || name.startsWith("TOURCORE_")) continue;
+    if (dropped.has(name) || (name.startsWith("TOURCORE_") && !MODEL_SETTINGS.has(name))) continue;
     if (name.startsWith("CLEANER_CORE_") && !SHARED_CLEANER_NAMES.has(name)) continue;
     env[name] = value;
   }

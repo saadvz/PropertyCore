@@ -26,6 +26,16 @@ export class LayeredIntentInterpreter implements IntentInterpreter {
     return this.semantic ? `rules + ${this.semantic.description}` : "rules";
   }
 
+  /** Only with a model: the semantic interpreter's fact pick. Undefined (none) on any failure. */
+  async pickFact(question: string, facts: string[], options: { name?: string } = {}): Promise<number | undefined> {
+    if (!this.semantic?.pickFact) return undefined;
+    try {
+      return await this.semantic.pickFact(question, facts, options);
+    } catch {
+      return undefined;
+    }
+  }
+
   get hasSemantic(): boolean {
     return !!this.semantic;
   }

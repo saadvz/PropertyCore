@@ -44,7 +44,7 @@ export function hillsideConfig(): TourCoreConfig {
  * Sendblue fake) to start a second process on the same records.
  */
 export async function liveApp(
-  options: { root?: string; clock?: { t: number }; net?: ReturnType<typeof fakeNetwork>; fake?: ReturnType<typeof fakeSendblue>; config?: TourCoreConfig; routine?: boolean; cleanups: Array<() => void>; slotLockBarrier?: import("../src/core/TourCore").TourCoreDeps["slotLockBarrier"] },
+  options: { root?: string; clock?: { t: number }; net?: ReturnType<typeof fakeNetwork>; fake?: ReturnType<typeof fakeSendblue>; config?: TourCoreConfig; routine?: boolean; interpreter?: import("../src/intent").IntentInterpreter; cleanups: Array<() => void>; slotLockBarrier?: import("../src/core/TourCore").TourCoreDeps["slotLockBarrier"] },
 ) {
   const fresh = !options.root;
   const root = options.root ?? mkdtempSync(join(tmpdir(), "tourcore-live-"));
@@ -63,7 +63,7 @@ export async function liveApp(
   if (fresh && options.routine !== false) installation.secrets.set({ TOURCORE_GROK_ROUTINE_URL: ROUTINE_URL, TOURCORE_GROK_ROUTINE_KEY: ROUTINE_KEY });
   const visitors = new VisitorDemoRegistry();
   const server: TourCoreServer = createSetupServer({
-    toolSurface: "all", workspace: ws, installation, visitors, now: () => new Date(clock.t), realNow: () => clock.t, operatorToken: () => TOKEN, log: () => {}, alertRetryMs: 3_600_000, ...(options.slotLockBarrier ? { slotLockBarrier: options.slotLockBarrier } : {}) });
+    toolSurface: "all", workspace: ws, installation, visitors, now: () => new Date(clock.t), realNow: () => clock.t, operatorToken: () => TOKEN, log: () => {}, alertRetryMs: 3_600_000, ...(options.slotLockBarrier ? { slotLockBarrier: options.slotLockBarrier } : {}), ...(options.interpreter ? { interpreter: options.interpreter } : {}) });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as { port: number }).port;
   let closed = false;

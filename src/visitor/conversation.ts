@@ -471,6 +471,7 @@ export async function handleVisitorText(
   interpreter: IntentInterpreter = rulesOnly,
 ): Promise<IntentInterpretation | undefined> {
   const said: Said = { text, meta };
+  session.factPicker = interpreter.pickFact ? (question, facts, options) => interpreter.pickFact!(question, facts, options) : undefined;
   const firstMessage = !session.visitor;
   if (firstMessage) session.identify(from);
 

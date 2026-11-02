@@ -4,6 +4,9 @@ import { isoDate, parseIsoDate } from "../core/schedule";
 import { formatDay, formatTime } from "../core/timezone";
 import { addInboundModelMs, intentModelTimeoutMs } from "../messaging/inboundTiming";
 import { renderSms, visitorTeamName } from "../sms/templates";
+import { pickFact, redactForModel } from "./factPick";
+import { normalize } from "./normalize";
+import { openTimesDay } from "./ruleBased";
 import { HelpProblemSchema, type StepAwaiting, type ConversationStep, type IntentInterpretation, type IntentInterpreter, type InterpretContext, type TourIntent } from "./model";
 
 /**
@@ -38,6 +41,10 @@ const MODEL_INTENTS = [
   "FOLLOW_UP_YES",
   "FOLLOW_UP_NO",
   "CANCEL_TOUR",
+  "RESCHEDULE_TOUR",
+  "ASK_OPEN_TIMES",
+  "ASK_MY_TOUR",
+  "ASK_DIRECTIONS",
   "UNKNOWN",
 ] as const;
 
@@ -77,6 +84,10 @@ Intents:
 - ASK_MORE_TIME: asks for more time or 10 more minutes on the current tour.
 - FOLLOW_UP_YES / FOLLOW_UP_NO: answers the follow-up question in lastAsked.
 - CANCEL_TOUR: wants to cancel a booked tour. "Can we cancel the tour?", "I want to cancel", "cancel", "I can't make it", "call off the tour" are CANCEL_TOUR, not a property question. A cancellation-policy question stays ASK_PROPERTY_QUESTION.
+- RESCHEDULE_TOUR: has a booked tour and wants a different day or time ("can I change the time?", "push it back", "can we do Thursday instead?"). Not a cancellation.
+- ASK_OPEN_TIMES: asks which tour times or days are open ("what times do you have?", "any openings Saturday?"). Not when a unit is available to move in; that stays ASK_PROPERTY_QUESTION.
+- ASK_MY_TOUR: asks when their own booked tour is ("when is my tour?", "what time was I booked for?").
+- ASK_DIRECTIONS: asks for the address or how to get there ("where is it?", "what's the address?").
 - START_INQUIRY: a greeting, or wants to start booking.
 - UNKNOWN: anything else, or when unsure.
 
@@ -158,6 +169,10 @@ function toIntent(reply: z.infer<typeof ModelReplySchema>, ctx: InterpretContext
     case "ASK_PROPERTY_QUESTION":
       // The visitor's own words go to the approved-facts lookup, not a paraphrase.
       return { type: "ASK_PROPERTY_QUESTION", question: ctx.message.trim().slice(0, 300) || "?" };
+    case "RESCHEDULE_TOUR":
+    case "ASK_OPEN_TIMES":
+      // The day comes from the visitor's own words, never the model.
+      return { type: reply.intent, ...openTimesDay(normalize(ctx.message)) };
     case "REQUEST_HELP":
       return reply.problem ? { type: "REQUEST_HELP", problem: reply.problem } : { type: "REQUEST_HELP" };
     default:
@@ -187,6 +202,10 @@ export class LLMIntentInterpreter implements IntentInterpreter {
     this.description = `semantic (${model.name})`;
   }
 
+  pickFact(question: string, facts: string[], options: { name?: string } = {}): Promise<number | undefined> {
+    return pickFact(this.model, question, facts, { timeoutMs: this.options.timeoutMs, ...options });
+  }
+
   async interpret(ctx: InterpretContext): Promise<IntentInterpretation> {
     const rejected: IntentInterpretation = { intent: { type: "UNKNOWN" }, confidence: 0, interpreter: "semantic", clarificationNeeded: false };
     const user = JSON.stringify({
@@ -198,7 +217,7 @@ export class LLMIntentInterpreter implements IntentInterpreter {
       remainingStops: ctx.remainingStops.map((s) => s.doorName),
       doors: ctx.doors.map((d) => d.doorName),
       ...(ctx.today ? { today: isoDate(ctx.today) } : {}),
-      message: ctx.message.slice(0, 500),
+      message: redactForModel(ctx.message.slice(0, 500)),
     });
     const started = Date.now();
     let text = "";
