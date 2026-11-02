@@ -40,6 +40,21 @@ export { SERVICE_CHOICES, SERVICE_QUESTION };
 /** Said in the tool descriptions too, so a chat that reads only its tool list still asks the question. */
 const ASK_ON_CONNECT = `Right after connecting, before anything else, ask the host exactly "${SERVICE_QUESTION}" with two buttons: "${SERVICE_CHOICES[0].label}" and "${SERVICE_CHOICES[1].label}". Don't describe what you can do instead.`;
 
+/** The same tools where touring is off: a new number can only run cleaning. */
+const ASK_CLEANING_ONLY = "This number runs Cleaner Core: turnover cleanings from the host's booking calendar. Don't ask the host to pick a service.";
+const GET_STATE_CLEANING: FrontTool = {
+  name: "get_state",
+  title: "What's next",
+  description: `${ASK_CLEANING_ONLY} Call this first, then choose_service with cleaning.`,
+  input: z.object({}),
+};
+const CHOOSE_CLEANING: FrontTool = {
+  name: "choose_service",
+  title: "Choose a service",
+  description: `${ASK_CLEANING_ONLY} Call this with cleaning, then start a new chat if Cleaner Core's tools don't appear.`,
+  input: z.object({ service: Service }),
+};
+
 const GET_STATE: FrontTool = {
   name: "get_state",
   title: "What's next",
@@ -121,8 +136,9 @@ export function frontToolsFor(state: ToolState, scratch = false): FrontTool[] {
 }
 
 /** The front tools as tools/list shows them. */
-export function listedFrontTools(state: ToolState, scratch = false): Record<string, unknown>[] {
-  return frontToolsFor(state, scratch).map((tool) => {
+export function listedFrontTools(state: ToolState, scratch = false, cleaningOnly = false): Record<string, unknown>[] {
+  const tools = state === "unset" && cleaningOnly ? [GET_STATE_CLEANING, CHOOSE_CLEANING] : frontToolsFor(state, scratch);
+  return tools.map((tool) => {
     const { $schema: _schema, ...inputSchema } = z.toJSONSchema(tool.input) as Record<string, unknown>;
     return { name: tool.name, title: tool.title, description: tool.description, inputSchema };
   });
@@ -159,6 +175,10 @@ export const CLAUDE_TASK_PROMPT = [
 /** The initialize instructions for a tenant that hasn't chosen yet. */
 export const UNSET_INSTRUCTIONS =
   `As soon as you're connected, without waiting for the host to ask, ask exactly "${SERVICE_QUESTION}" with two buttons: "${SERVICE_CHOICES[0].label}" and "${SERVICE_CHOICES[1].label}". Do nothing else first. Then call choose_service with their pick.`;
+
+/** The initialize instructions for a tenant that hasn't chosen yet, where touring is off. */
+export const UNSET_CLEANING_INSTRUCTIONS =
+  "This number runs Cleaner Core: turnover cleanings from the host's booking calendar. Don't ask the host to pick a service. As soon as you're connected, call choose_service with cleaning, then follow get_state.";
 
 /** What the shared service holds for touring tenants. Absent until the service runs touring at all. */
 export interface TouringFront {

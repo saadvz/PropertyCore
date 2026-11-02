@@ -870,6 +870,18 @@ export class LiveDesk {
     return /\bdoor code\b/i.test(text) && /\b\d{4,8}\b/.test(text);
   }
 
+  /**
+   * The number already runs cleaning (the host picked it on the shared address or its Allow page, or
+   * connected at the cleaning address), so setup never asks touring or cleaning again.
+   */
+  chooseCleaning(): Promise<void> {
+    return this.serial(async () => {
+      if (this.file.choice) return;
+      this.file.choice = "cleaners";
+      this.persist();
+    });
+  }
+
   getState(choice?: "tours" | "cleaners"): Promise<ToolReply> {
     return this.serial(async () => this.getStateNow(choice));
   }

@@ -1,12 +1,14 @@
 import type { CleanerAssistant } from "../cleaner-core/assistant";
 import { handleCleanerMcpHttp } from "../cleaner-core/http";
+import { liveDeskFor } from "../cleaner-core/liveDesk";
+import { tourCoreTenants } from "../cleaner-core/flag";
 import { CLEANER_MCP_PATH, CLEANER_TOOL_NAMES } from "../cleaner-core/mcp";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import { promoteRoutineOwner, tenantContext, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
 import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
 import { OPERATOR_TOOL_NAMES } from "../operator/tools";
 import { ServiceNotices } from "./crossService";
-import { FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsFor, UNSET_INSTRUCTIONS, wrongServiceLine, type FrontReply, type ToolState } from "./serviceTools";
+import { FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsFor, UNSET_CLEANING_INSTRUCTIONS, UNSET_INSTRUCTIONS, wrongServiceLine, type FrontReply, type ToolState } from "./serviceTools";
 import { taskWarning } from "./touringAlerts";
 import { callWorkerMcp, forwardMcp, type WorkerTarget } from "./touringForward";
 
@@ -89,15 +91,17 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
   }
   if (message?.method === "initialize") initializes.set(caller.grantId, raw);
 
+  // While touring is off here, a new number can only run cleaning, so nothing offers Tour Core.
+  const cleaningOnly = !(tourCoreTenants(h.baseEnv()) && !!h.touring);
   if (state === "unset") {
     if (!message) return r.send(400, JSON_TYPE, rpcError(null, -32600, "That isn't a valid request."));
     if (message.id === undefined) return r.send(202, JSON_TYPE, "");
     if (message.method === "initialize") {
       const version = typeof message.params?.protocolVersion === "string" ? message.params.protocolVersion : "2025-03-26";
-      return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "tour-core-shared", title: "Tour Core and Cleaner Core", version: "0.1.0" }, instructions: UNSET_INSTRUCTIONS }));
+      return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "tour-core-shared", title: "Tour Core and Cleaner Core", version: "0.1.0" }, instructions: cleaningOnly ? UNSET_CLEANING_INSTRUCTIONS : UNSET_INSTRUCTIONS }));
     }
     if (message.method === "ping") return r.send(200, JSON_TYPE, rpcResult(message.id, {}));
-    if (message.method === "tools/list") return r.send(200, JSON_TYPE, rpcResult(message.id, { tools: listedFrontTools("unset") }));
+    if (message.method === "tools/list") return r.send(200, JSON_TYPE, rpcResult(message.id, { tools: listedFrontTools("unset", false, cleaningOnly) }));
     if (message.method !== "tools/call") return r.send(200, JSON_TYPE, rpcError(message.id, -32601, "I don't support that."));
   }
 
@@ -209,6 +213,8 @@ async function touringCall(h: HostedCleaner, tenantId: string, caller: TouringCa
 /** Cleaner Core's desk for this tenant, exactly as the cleaning address always answered. */
 async function cleaningCall(h: HostedCleaner, tenant: Tenant, caller: { grantId: string; assistant: CleanerAssistant }, raw: Buffer, r: HostedRequest): Promise<{ status: number; body: string; headers?: Record<string, string> } | undefined> {
   const ctx = tenantContext(h, tenant);
+  // The tenant's service is cleaning, so Cleaner Core's own setup doesn't ask touring or cleaning again.
+  await liveDeskFor(ctx.root, ctx.env, () => h.now()).chooseCleaning();
   const result = await handleCleanerMcpHttp({
     method: r.method,
     authorization: r.req.headers.authorization,
