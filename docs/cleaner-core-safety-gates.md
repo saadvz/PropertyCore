@@ -21,6 +21,9 @@ What pauses live activation: the flag defaults off; CI fails when a configured s
 | STOP, HELP, injury | STOP and HELP still win. Hurt, injury, blood, and fall phrases from the cleaner and the observer, in a group and one-to-one, use the 911 path once. | `evidence/step-g/stop-help-injury` |
 | Fetch limits | A calendar link must be public https. Private addresses and redirects are refused. | `test/cleanerCoreStepG.test.ts` |
 | Older proofs | Step D, step E, and step F proofs still pass. | `evidence/step-g/regression-step-d.txt` and the step E and step F lines |
+| Pay link | Money is offered only to the saved, landlord-approved Venmo username. No cleaner text changes it. The note has no address and no door code; a username holding the door code isn't saved, and a link that would hold the code is withheld. | `test/cleanerPayDesk.test.ts`, `test/cleanerPayments.test.ts` |
+| Owed once | Replay, restart, and a second check never add a second owed record. `mark_paid` is idempotent and needs `confirmed: true`. No payment path texts anyone. | `test/cleanerPayDesk.test.ts` |
+| Checklist YES | Only the cleaner's YES, only while the question waits, finishes a checklist job. STOP, HELP, and injury still win. | `test/cleanerChecklistYes.test.ts` |
 | Secret scan | Configured scratch codes are absent from new files, test logs, and evidence. | `scripts/scan-cleaner-secrets.mjs` inside `scripts/ci-check.sh` |
 
 Audit rows on a watched turn record actor, source, version, reason, and time. Review texts go out through the same consent-checked send path as every other job text. Injury texts still use the single 911 path from step F.

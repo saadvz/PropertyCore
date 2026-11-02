@@ -23,7 +23,7 @@ const ZONE = "America/New_York";
 const FIRE_URL = "https://api.anthropic.com/v1/claude_code/routines/trig_01MADEUPTESTTRIGGER/fire";
 const FIRE_TOKEN = "made-up-claude-routine-token-for-tests";
 /** The Grok deployment's initialize instructions, byte for byte, as they were before Claude. */
-const GROK_INSTRUCTIONS_SHA256 = "658e58d77bd1df15f8b02bb8c9b4b94bf4493a278dd33c7ea0f370e2dfa7fa09";
+const GROK_INSTRUCTIONS_SHA256 = "38912ee86f75a69108891b2126ef95a3420fa943754bdebdced561d6802b07e3";
 
 const read = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 

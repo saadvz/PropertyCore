@@ -91,7 +91,7 @@ describe("Muse template", () => {
   it("runs the recurring task with no host's yes and no browser beyond the photos", () => {
     const prompt = taskPrompt();
     expect(prompt).toMatch(/this prompt is never their yes/);
-    expect(prompt).toMatch(/Call confirm_times, mark_guests_left, retry_send, send_message, hold_job, or resume_job only after the host replies yes in this conversation\./);
+    expect(prompt).toMatch(/Call confirm_times, mark_guests_left, mark_paid, retry_send, send_message, hold_job, or resume_job only after the host replies yes in this conversation\./);
     expect(prompt).toMatch(/Never call activate, run_checks, reset_property, or any save_ tool other than save_arrival from this run\./);
     expect(prompt).toMatch(/Never use your browser in this run except to open photo links\./);
     expect(prompt).toMatch(/Never pause, edit, or cancel this recurring task/);

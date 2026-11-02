@@ -72,13 +72,20 @@ routine runs, it wakes once, and `check_now` returns all of them.
    yes in chat.
 7. If the reply has `completed`, call `get_job_photos`, look at the photos, and
    compare them with the checklist. Summarize the cleaning in your own words.
+   If the reply has `payDue`, add one line per item after the summary: ask
+   the host to pay the cleaner that amount for that cleaning, with `link`
+   exactly as returned, and to tell you when they've paid. With `payInVenmo`
+   there is no link: ask them to pay in Venmo themselves. A `reminder` above 0
+   says it still shows unpaid. Only the host's own "paid" in chat marks it
+   paid, with `mark_paid`. Never build or change a Venmo link, and never send
+   a pay link to the cleaner.
 8. If the reply has `needsTimes`, ask the host for the checkout time and the
    next check-in time, then call `confirm_times` with each as 24-hour HH:MM.
 9. Never show a door code, an id, or the webhook payload.
 
 ## Connecting it
 
-After the preferences and before the review, `get_state` asks for the two
+After the preferences and the Payments step, and before the review, `get_state` asks for the two
 routines. Then:
 
 1. Grok creates this routine with an authenticated webhook trigger and the

@@ -41,7 +41,7 @@ A new optional setup step, **Payments**, after Preferences and before the routin
 
 **Live setups** are not walked back through setup. A landlord who is already live turns payments on by asking ("help me pay Maria"), which calls `save_payments`. The summary in `get_state` gains one line: `Payments: $85 per cleaning to @maria-cleans.` or `Payments: off.`
 
-**Storage.** In the property's `cleaner-live.json` (one per landlord on hosted Cleaner Core, already covered by backup and restore):
+**Storage.** In the property's `cleaner-live.json` (one per landlord on hosted Cleaner Core, on the same persistent disk as the door-code seal and preferences; the SQLite backup covers the engine's job store, not this file):
 
 ```
 payments: { on: boolean, rateCents?: number, venmo?: string, onSince?: string, savedAt?: string }
@@ -83,7 +83,7 @@ pay: { [jobId]: { amountCents, venmo, owedAt, reminders: 0, lastShownAt?, paidAt
 
 - The amount and username are copied when the job becomes owed. A later rate or username change does not touch it.
 - A job whose `doneAt` is earlier than `payments.onSince` is never owed. No back pay. A rate or username change does not move `onSince`.
-- A record is created once per job id. Replay, restart, and restore find it and add nothing.
+- A record is created once per job id. Replay, restart, and a later check find it and add nothing.
 
 **The link.** Only `payments.ts` builds it:
 
@@ -141,7 +141,7 @@ payDue: [{ job: "2026-10-30", cleaner: "Maria", amount: "$85.00", link, reminder
 - `src/cleaner-core/assistant.ts`: the same lines for Grok, Claude, ChatGPT, and Muse, since `get_state` and `check_now` are shared. `mark_paid` joins the list of calls a scheduled run may make only after the host replies yes. The pinned copies in `claude-template/`, `chatgpt-template/`, and `muse-template/` follow.
 - `docs/cleaner-core-safety-gates.md`: three rows.
   - **Pay link.** Money is offered only to the saved, landlord-approved username. No cleaner text changes it. The note has no address and no door code.
-  - **Owed once.** Replay, restart, and restore never add a second owed record, and `mark_paid` is idempotent.
+  - **Owed once.** Replay, restart, and a later check never add a second owed record, and `mark_paid` is idempotent.
   - **Checklist YES.** Only the cleaner's YES, only while the question waits.
 - `AGENTS.md`: agents may not edit it directly, so a separate pull request proposes a new safety rule for QA bot's review: "An agent moves no money and marks nothing paid without the landlord's yes. Tests use made-up Venmo usernames and amounts."
 
@@ -170,7 +170,7 @@ Test-first. Only Scratch 555 numbers, made-up usernames such as `@scratch-cleane
   - `payDue` with `completed`, then reminders 1, 2, 3, then not returned; the unpaid line stays in `get_state`.
   - `mark_paid`: refused without `confirmed: true`, idempotent, `how: other` saved.
   - `get_pay_link`: a new amount within bounds; over $1,000, a paid job, and a job that isn't owed are refused.
-  - `reset_property` removes payments. Backup and restore keep owed and paid without a second record.
+  - `reset_property` removes payments. A restart keeps owed and paid without a second record.
   - No payment path adds anything to the outbox.
 - `test/cleanerHostedTenants.test.ts`: two tenants never see each other's pay settings or records.
 
