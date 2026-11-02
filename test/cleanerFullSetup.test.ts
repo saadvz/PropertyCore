@@ -182,8 +182,12 @@ describe("Cleaner Core full setup: the diagram order", () => {
 
     const preferences = await call(wired, "save_preferences", PREFERENCES);
     expect(preferences.isError).toBe(false);
+    // The optional Payments step comes next.
+    expect(askStep(preferences.structured)).toBe("payments");
+    const payments = await call(wired, "save_payments", { on: false });
+    expect(payments.isError).toBe(false);
     // The routines come before the review, and activate waits for them.
-    expect(String(preferences.structured?.next)).toMatch(/^Create the Cleaner Core Check and Cleaner Core Alerts routines\./);
+    expect(String(payments.structured?.next)).toMatch(/^Create the Cleaner Core Check and Cleaner Core Alerts routines\./);
     expect((await state(wired)).setup).toBeUndefined();
     expect((await call(wired, "activate")).isError).toBe(true);
     expect((await call(wired, "save_alert_routine", ROUTINE)).isError).toBe(false);
@@ -242,6 +246,8 @@ describe("Cleaner Core full setup: the diagram order", () => {
     expect((await call(wired, "save_door_code", { code: DOOR_CODE })).isError).toBe(false);
     expect(askStep((await state(wired)))).toBe("preferences");
     expect((await call(wired, "save_preferences", {})).isError).toBe(false);
+    expect(askStep(await state(wired))).toBe("payments");
+    expect((await call(wired, "save_payments", { on: false })).isError).toBe(false);
     expect((await call(wired, "save_alert_routine", ROUTINE)).isError).toBe(false);
     const review = await state(wired);
     expect(review.next).toBe(REVIEW_NEXT);
@@ -2092,6 +2098,7 @@ describe("Cleaner Core full diagram", () => {
     await say("save_schedule", { firstText: "days-after-check-in", firstTextDays: 1, reminder: "days-before-checkout", reminderDays: 1, reminderTime: "18:00" });
     await say("save_door_code", { code: DOOR_CODE, lockLocation: LOCK });
     await say("save_preferences", PREFERENCES);
+    await say("save_payments", { on: false });
     await safe("2 setup");
 
     // 3. The alert routine, before the review, with a stubbed webhook. A Grok Bot's secure card can't

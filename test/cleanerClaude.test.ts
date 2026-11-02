@@ -262,6 +262,7 @@ describe("Claude's scheduled task comes before Activate", () => {
     await toDoorCode(wired);
     await call(wired, "save_door_code", { code: DOOR_CODE, lockLocation: "front door keypad" });
     await call(wired, "save_preferences", {});
+    await call(wired, "save_payments", { on: false });
     const state = (await call(wired, "get_state")).structured ?? {};
     expect(state.next).toBe(CLAUDE_DESK_WORDING.routineAsk);
     expect(state.routine).toEqual(JSON.parse(JSON.stringify(CLAUDE_TASK)));

@@ -12,12 +12,13 @@ import { messagingKeyword, normalize } from "../intent";
 import { stripFiller } from "../intent/normalize";
 import { spokenTimes } from "../core/spokenTime";
 import { formatWhen, zonedInstant } from "./calendar";
+import { dollarsText, payCents, venmoProfileLink, venmoUsername, type PaymentSettings } from "./payments";
 import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
 import { groupChatEnabled } from "./flag";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
 import { calendarUrlAllowed, readPublicCalendar, type CalendarFetch } from "./fetchLimits";
-import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, type SetupAsk } from "./setupAsk";
+import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, PAYMENTS_STEP, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, type SetupAsk } from "./setupAsk";
 import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jobHoldLine, optedOutCodeLine, resumeNote } from "./cleanerTexts";
 import { isInjuryReport } from "./injury";
 import { GroupNotConfirmed } from "./groupThread";
@@ -137,6 +138,9 @@ const DOOR_CODE_QUESTION = "You added other people to the group. Should the door
 const TOO_MANY = "That's a lot of messages this hour. Try again later.";
 /** The approval action for a property reset. It is bound to this property's group, so a changed group voids it. */
 const RESET_ACTION = "cleaner-reset-property";
+const PAYMENTS_ACTION = "cleaner-payments";
+const RATE_HELP = "Tell me the pay per cleaning, from $1 to $1,000.";
+const VENMO_HELP = "Tell me the cleaner's Venmo username, like @maria-cleans. A phone number or email won't work.";
 const HOLD_ACTION = "cleaner-hold";
 const RESUME_ACTION = "cleaner-resume";
 const CLEANING_TARGET = "cleaning";
@@ -346,6 +350,8 @@ interface LiveFile {
   schedule?: Schedule;
   /** Set once the host saved cleaning preferences or said there are none. */
   preferences?: Preferences;
+  /** Set once the host answered the Payments step, or turned payments on later. */
+  payments?: PaymentSettings;
   /** Legacy single link from save_calendar_link. It reads as one calendar named Guesty Lite. */
   calendarLink?: string;
   /** Saved calendar links in dedupe order, after the legacy link. Each one is the source `ical:<slug>`. */
@@ -1276,6 +1282,43 @@ export class LiveDesk {
    * Saves the cleaning preferences. A field left out keeps what was saved, and `{}` the first time
    * means there are none, which still moves setup on to the review.
    */
+  /**
+   * Saves whether to help pay the cleaner, the pay per cleaning, and the cleaner's Venmo username.
+   * Turning it on needs the host's approval, bound to that exact username and amount. Never moves money.
+   */
+  savePayments(input: { on?: boolean; rate?: number; venmo?: string; confirmation?: string }): Promise<ToolReply> {
+    return this.serial(async () => this.savePaymentsNow(input));
+  }
+
+  private savePaymentsNow(input: { on?: boolean; rate?: number; venmo?: string; confirmation?: string }): ToolReply {
+    const now = this.now().toISOString();
+    if (input.on === false) {
+      this.file.payments = { on: false, savedAt: now };
+      this.persist();
+      return this.setupReply({ saved: "Payments are off." });
+    }
+    const cents = typeof input.rate === "number" ? payCents(input.rate) : undefined;
+    if (cents === undefined) return this.fail(RATE_HELP);
+    const venmo = typeof input.venmo === "string" ? venmoUsername(input.venmo) : undefined;
+    if (!venmo) return this.fail(VENMO_HELP);
+    const fingerprint = createHash("sha256").update(`${venmo}|${cents}`).digest("hex");
+    const code = input.confirmation?.trim() ?? "";
+    if (!code) {
+      const question = `Save ${dollarsText(cents)} per cleaning to @${venmo}?`;
+      return this.reply({ profile: venmoProfileLink(venmo), question, confirmation: this.approvals.issue(PAYMENTS_ACTION, "payments", fingerprint, question) });
+    }
+    try {
+      this.approvals.redeem(code, PAYMENTS_ACTION, "payments", fingerprint);
+    } catch {
+      return this.fail(APPROVAL_STALE);
+    }
+    const saved = this.file.payments;
+    const onSince = saved?.on && saved.onSince ? saved.onSince : now;
+    this.file.payments = { on: true, rateCents: cents, venmo, onSince, savedAt: now };
+    this.persist();
+    return this.setupReply({ saved: `Saved. After each cleaning I'll offer a Venmo link for ${dollarsText(cents)}.` });
+  }
+
   savePreferences(input: { checklist?: string[]; photosRequired?: boolean; supplyNotes?: boolean; instructions?: string }, pinKey?: Buffer): Promise<ToolReply> {
     return this.serial(async () => this.savePreferencesNow(input, pinKey));
   }
@@ -2414,6 +2457,10 @@ export class LiveDesk {
       const any = preferences.checklist.length > 0 || preferences.photosRequired || preferences.supplyNotes || Boolean(preferences.instructions);
       done.push(any ? "Preferences saved." : "No cleaning preferences.");
     }
+    const payments = this.file.payments;
+    if (payments) {
+      done.push(payments.on && payments.rateCents && payments.venmo ? `Payments: ${dollarsText(payments.rateCents)} per cleaning to @${payments.venmo}.` : "Payments: off.");
+    }
     if (this.file.texting) done.push("Texting saved.");
     if (this.file.texting && this.groupOn()) done.push(this.groupLine());
     if (this.file.checked) done.push("Checks finished.");
@@ -2431,6 +2478,7 @@ export class LiveDesk {
     else if (!this.file.schedule && !this.file.texting) ask = SCHEDULE_STEP;
     else if (!this.codeSaved()) ask = DOOR_CODE_STEP;
     else if (!this.file.texting && !preferences) ask = PREFERENCES_STEP;
+    else if (!this.file.texting && !this.file.payments) ask = PAYMENTS_STEP;
     if (ask) next = askNext(ask.tool);
     // The routines come before the review, so the cleaner's first reply already wakes Grok.
     else if (!this.file.texting && !this.routineReady()) next = this.words().routineAsk;
