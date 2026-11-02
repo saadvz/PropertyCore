@@ -292,7 +292,10 @@ building-door control for an apartment or condo), each unit's bedrooms,
 bathrooms, rent and availability, "Which door do visitors come in through?"
 when they control a building entrance, "When can people tour?", "How
 carefully do you want to verify visitors?", then Tour Core's optional question
-about a visitor help number (they can skip it). Never show field names and never
+about a visitor help number (they can skip it), then the property facts
+questions Tour Core returns one at a time (how to apply, fees, lease, move-in,
+bringing someone, rules, the area, anything else). Save each answer word for
+word with `save_facts`; each can be skipped. Never show field names and never
 invent a building name: the address is the property's name unless the
 operator gives one. An apartment or condo is named as street plus unit.
 

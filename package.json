@@ -37,6 +37,7 @@
     "eval:baseline": "tsx src/eval/cli.ts",
     "eval:rebaseline": "tsx src/eval/cli.ts rebaseline",
     "eval:live": "tsx src/eval/cli.ts live",
+    "eval:visitor-model": "tsx src/eval/visitorModel.ts",
     "typecheck": "tsc --noEmit",
     "check:storage": "tsx src/install/checkStorageCli.ts"
   },

@@ -31,8 +31,9 @@ skill, which tells Claude how to run setup.
 In a new chat, say "Set up Property Core". Claude asks "Which do you want to
 set up: Tour Core or Cleaner Core?" Pick one.
 
-- **Tour Core:** Claude walks you through your property, hours, and tour
-  updates. For tour updates, make the scheduled task in
+- **Tour Core:** Claude walks you through your property, hours, the
+  property facts visitors ask about (how to apply, fees, lease, and more; each
+  can be skipped), and tour updates. For tour updates, make the scheduled task in
   [`routines/tour-core-task.md`](routines/tour-core-task.md).
 - **Cleaner Core:** Claude follows the Cleaner Core guide in
   [`claude-template/SETUP_GUIDE.md`](../../claude-template/SETUP_GUIDE.md)

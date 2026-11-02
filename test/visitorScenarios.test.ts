@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { RuleBasedIntentInterpreter } from "../src/intent";
 import { isOpenTimesAsk } from "../src/intent/ruleBased";
 import type { TourCoreConfig } from "../src/config/tourCoreConfig";
 import { factFor } from "../src/setup/factsSheet";
 import { at, hillsideConfig, liveApp, type LiveApp } from "./liveApp";
+import { CATALOG, catalogContext } from "./visitorScenarios.data";
 import { reachedLandlord } from "./visitorScenarioKit";
 
 /**
@@ -161,5 +163,17 @@ describe("the open-times rule", () => {
     expect(isOpenTimesAsk("is unit 1a available?")).toBe(false);
     expect(isOpenTimesAsk("when is it available to move in?")).toBe(false);
     expect(isOpenTimesAsk("can i change the time for the tour?")).toBe(false);
+  });
+});
+
+describe("the catalog data", () => {
+  it("is read by the built-in rules as each entry's intent, with no model", async () => {
+    const rules = new RuleBasedIntentInterpreter();
+    for (const entry of CATALOG) expect((await rules.interpret(catalogContext(entry))).intent.type, `${entry.row}: ${entry.text}`).toBe(entry.intent);
+  });
+
+  it("holds every text the catalog scenarios send", () => {
+    const texts = new Set(CATALOG.map((entry) => entry.text));
+    for (const text of ["What times do you have?", "Can I change the time for the tour?", "When is my tour?", "What's the address?", "How do I apply?", "Do I need ID?"]) expect(texts.has(text), text).toBe(true);
   });
 });

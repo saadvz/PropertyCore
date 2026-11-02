@@ -426,10 +426,20 @@ visitor text ─► interpreter ─► typed intent (ARRIVAL, AT_UNIT "Unit 101"
   window, route, holds and Durin health are checked by Tour Core's policy exactly as before.
 - **Rules first** (`src/intent/ruleBased.ts`): menu numbers, keywords, and the common ways people say "I'm here",
   "I'm at 101", "I'm done", "yes please", or that they want to cancel a booked tour. No network call.
-- **Optional language model** (`src/intent/llm.ts`) for texts the rules can't place. Set the three
-  `TOURCORE_INTENT_MODEL_*` values in `.env` (any OpenAI-compatible API: xAI Grok, OpenAI, Anthropic's compatibility
-  endpoint). Its reply must match a strict schema and may only name units, doors and times Tour Core offered; anything
-  else is discarded. Nothing it writes is sent to the visitor. If it's slow or down, the rules' answer stands.
+- **Optional language model** (`src/intent/llm.ts`, `src/intent/factPick.ts`) for texts the rules can't place, and
+  for picking which approved fact answers a property question keywords missed. Set, in Railway or `.env`:
+  - `TOURCORE_INTENT_MODEL_URL`: any OpenAI-compatible API. For Gemini, `https://generativelanguage.googleapis.com/v1beta/openai`.
+  - `TOURCORE_INTENT_MODEL_KEY`: the API key. It lives only in the environment, never in a log, reply, chat, or the repo.
+  - `TOURCORE_INTENT_MODEL`: the model name, for example a Gemini Flash or Flash-Lite version.
+  - `TOURCORE_INTENT_MODEL_TIMEOUT_MS` (optional): how long to wait before the rules' answer stands.
+
+  Its reply must match a strict schema and may only name intents, units, doors and times Tour Core offered; anything
+  else is discarded. A fact pick is a number from the approved list, sent word for word; a number not on the list
+  counts as none, and the question goes to the landlord. Nothing the model writes is sent to the visitor. It never
+  sees a visitor's phone number or name. If it's slow or down, the rules' answer stands, and without the variables
+  everything runs on the rules alone. On the shared service each touring process gets these four values.
+  `npm run eval:visitor-model` runs the visitor scenario catalog against the configured model and prints PASS or FAIL
+  per text; it is a local check, never run in CI.
 - **Asking instead of guessing.** Anything that leads toward a door needs high confidence. Below that, or when a
   reference fits more than one door, Tour Core asks ("Are you at the property now?", "Which door are you at: Hallway
   Door or Unit 101?") and a plain "yes" or "2" answers it.

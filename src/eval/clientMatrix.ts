@@ -272,8 +272,8 @@ function gatesFor(row: Omit<MatrixRow, "gates">): Record<string, boolean> {
   const hostedNames = names(row.hostedTools);
   const samePlaybook = playbookVersionMatches(row.playbook, row.expected);
   return {
-    "landlord tools": landlordNames.length === 21 && landlordNames.join() === [...LANDLORD_CORE_TOOLS].join() && !landlordNames.includes("reset_hosted_demo") && !landlordNames.includes("inject_local_sms"),
-    "hosted owner tools": hostedNames.length === 22 && hostedNames.join() === [...LANDLORD_CORE_TOOLS, HOSTED_OWNER_TOOL].join(),
+    "landlord tools": landlordNames.length === 22 && landlordNames.join() === [...LANDLORD_CORE_TOOLS].join() && !landlordNames.includes("reset_hosted_demo") && !landlordNames.includes("inject_local_sms"),
+    "hosted owner tools": hostedNames.length === 23 && hostedNames.join() === [...LANDLORD_CORE_TOOLS, HOSTED_OWNER_TOOL].join(),
     "qa tools": names(row.qaTools).length === 15 && names(row.qaTools).join() === [...QA_TOOL_NAMES].join(),
     "ops tools": names(row.opsTools).length === 13 && names(row.opsTools).join() === [...OPS_TOOL_NAMES].join(),
     "foreign tool refused": row.foreignRefusal === connectorRefusal("landlord"),

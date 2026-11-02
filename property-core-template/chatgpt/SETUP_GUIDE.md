@@ -34,7 +34,9 @@ even when a service's guide names it.
 ## Step 3: Run the chosen service
 
 - **Tour Core:** ChatGPT calls `get_state` and walks you through your
-  property, hours, and tour updates, one question at a time. For tour
+  property, hours, the property facts visitors ask about (how to apply,
+  fees, lease, and more; each can be skipped), and tour updates, one question
+  at a time. For tour
   updates, it makes the hourly task in
   [`routines/tour-core-task.md`](routines/tour-core-task.md).
 - **Cleaner Core:** follow the Cleaner Core guide in
