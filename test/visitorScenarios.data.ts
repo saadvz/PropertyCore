@@ -14,6 +14,8 @@ export interface CatalogEntry {
   setup: CatalogSetup;
   text: string;
   intent: IntentType;
+  /** The rules file this as a property question; only the model's second read gets it right. */
+  modelOnly?: true;
 }
 
 export const CATALOG: readonly CatalogEntry[] = [
@@ -38,6 +40,11 @@ export const CATALOG: readonly CatalogEntry[] = [
   { row: "11", setup: "booked", text: "Do I need ID?", intent: "ASK_PROPERTY_QUESTION" },
   { row: "11", setup: "booked", text: "Can I bring someone?", intent: "ASK_PROPERTY_QUESTION" },
   { row: "16", setup: "booked", text: "How do I apply?", intent: "ASK_PROPERTY_QUESTION" },
+  { row: "9", setup: "booked", text: "something came up, any way we could shuffle to later in the week?", intent: "RESCHEDULE_TOUR", modelOnly: true },
+  { row: "9", setup: "booked", text: "can we bump things a couple days", intent: "RESCHEDULE_TOUR", modelOnly: true },
+  { row: "9", setup: "booked", text: "my plans changed, is there a later slot?", intent: "RESCHEDULE_TOUR", modelOnly: true },
+  { row: "8", setup: "booked", text: "remind me when I'm coming by?", intent: "ASK_MY_TOUR", modelOnly: true },
+  { row: "6", setup: "booked", text: "where do I head to?", intent: "ASK_DIRECTIONS", modelOnly: true },
 ];
 
 /** What the interpreter knows about the demo property at that point: two units, booked or not. */

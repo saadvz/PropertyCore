@@ -584,7 +584,14 @@ export async function handleVisitorText(
     }
   }
 
-  let interpretation = await interpreter.interpret(await contextFor(session, text, stage, awaiting));
+  const context = await contextFor(session, text, stage, awaiting);
+  let interpretation = await interpreter.interpret(context);
+  // The rules file unrecognized questions as property questions. When nothing on file answers this one,
+  // the model gets a second read: it may be tour logistics the rules didn't recognize.
+  if (interpreter.reclassify && interpretation.intent.type === "ASK_PROPERTY_QUESTION" && interpretation.interpreter === "rules" && !session.core.questionIsSettled(interpretation.intent.question, (await session.reservation())?.unitId)) {
+    const second = await interpreter.reclassify(context);
+    if (second) interpretation = second;
+  }
   if (inbound.kind === "door") {
     const doorIntent = onTourDoorIntent(text, inbound.doors);
     if (doorIntent) interpretation = { intent: doorIntent, confidence: 1, interpreter: "rules", clarificationNeeded: false };

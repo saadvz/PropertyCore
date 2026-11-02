@@ -200,6 +200,8 @@ export interface IntentInterpreter {
    * property question, as a 0-based index, or undefined for none. Never writes a reply.
    */
   pickFact?(question: string, facts: string[], options?: { name?: string }): Promise<number | undefined>;
+  /** Present only when a language model is configured: a second read of a text the rules filed as a property question. */
+  reclassify?(context: InterpretContext): Promise<IntentInterpretation | undefined>;
 }
 
 /** Intents that lead toward a door opening. */

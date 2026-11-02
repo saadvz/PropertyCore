@@ -169,7 +169,7 @@ describe("the open-times rule", () => {
 describe("the catalog data", () => {
   it("is read by the built-in rules as each entry's intent, with no model", async () => {
     const rules = new RuleBasedIntentInterpreter();
-    for (const entry of CATALOG) expect((await rules.interpret(catalogContext(entry))).intent.type, `${entry.row}: ${entry.text}`).toBe(entry.intent);
+    for (const entry of CATALOG.filter((e) => !e.modelOnly)) expect((await rules.interpret(catalogContext(entry))).intent.type, `${entry.row}: ${entry.text}`).toBe(entry.intent);
   });
 
   it("holds every text the catalog scenarios send", () => {

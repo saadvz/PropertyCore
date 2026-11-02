@@ -426,8 +426,10 @@ visitor text ─► interpreter ─► typed intent (ARRIVAL, AT_UNIT "Unit 101"
   window, route, holds and Durin health are checked by Tour Core's policy exactly as before.
 - **Rules first** (`src/intent/ruleBased.ts`): menu numbers, keywords, and the common ways people say "I'm here",
   "I'm at 101", "I'm done", "yes please", or that they want to cancel a booked tour. No network call.
-- **Optional language model** (`src/intent/llm.ts`, `src/intent/factPick.ts`) for texts the rules can't place, and
-  for picking which approved fact answers a property question keywords missed. Set, in Railway or `.env`:
+- **Optional language model** (`src/intent/llm.ts`, `src/intent/factPick.ts`) for texts the rules can't place, for a
+  second read of a question nothing on file answers (it may be moving the tour, open times, the visitor's booking, or
+  directions, in words the rules don't know), and for picking which approved fact answers a property question
+  keywords missed. Set, in Railway or `.env`:
   - `TOURCORE_INTENT_MODEL_URL`: any OpenAI-compatible API. For Gemini, `https://generativelanguage.googleapis.com/v1beta/openai`.
   - `TOURCORE_INTENT_MODEL_KEY`: the API key. It lives only in the environment, never in a log, reply, chat, or the repo.
   - `TOURCORE_INTENT_MODEL`: the model name, for example a Gemini Flash or Flash-Lite version.

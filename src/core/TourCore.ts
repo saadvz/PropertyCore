@@ -1379,6 +1379,18 @@ export class TourCore {
     }
   }
 
+  /**
+   * True when something on file settles this question without a model: an approved fact or setup
+   * detail, a which-unit ask, the saved tour hours, or a fair-housing question (which only the landlord
+   * answers). Sends nothing.
+   */
+  questionIsSettled(question: string, unitId?: string): boolean {
+    const asked = question.trim().slice(0, 300);
+    if (!asked || isGeneralTourHoursQuestion(asked)) return true;
+    const resolved = resolveQuestion(this.approvedContent(), asked, { selectedUnitId: unitId });
+    return resolved.kind !== "unknown" || !!resolved.fairHousing;
+  }
+
   async answerPropertyQuestion(input: {
     phone: string;
     question: string;

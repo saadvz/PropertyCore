@@ -8,6 +8,9 @@ import { CATALOG, catalogContext } from "../../test/visitorScenarios.data";
  * exits 0. It prints the model's name and nothing secret. Run it locally, never in CI.
  */
 
+/** Questions the demo property answers from setup details, so touring never asks the model about them. */
+const SETTLED = new Set(["How much is 1A?", "Is there parking?", "How long does the tour take?", "Do I need ID?"]);
+
 async function main(): Promise<void> {
   const model = intentModelFromEnv(process.env);
   if (!model) {
@@ -22,7 +25,11 @@ async function main(): Promise<void> {
   let modelPass = 0;
   for (const entry of CATALOG) {
     const ctx = catalogContext(entry);
-    const both = (await layered.interpret(ctx)).intent.type;
+    // The same two reads touring makes: rules (then the model when they're unsure), then the model's
+    // second read of an unrecognized property question. The catalog's property has no facts here.
+    let read = await layered.interpret(ctx);
+    if (read.intent.type === "ASK_PROPERTY_QUESTION" && read.interpreter === "rules" && !SETTLED.has(entry.text)) read = (await layered.reclassify(ctx)) ?? read;
+    const both = read.intent.type;
     let alone: string;
     try {
       alone = (await semantic.interpret(ctx)).intent.type;
