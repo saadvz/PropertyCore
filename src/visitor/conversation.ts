@@ -612,6 +612,8 @@ export async function handleVisitorText(
     /* after the tour ends, HI continues the held booking with booked-for then consent */
   } else if (inbound.kind !== "door" && (await handleCancelIntent(turn))) {
     /* cancel-by-text: confirm, YES, or NO; or stop when nothing is booked */
+  } else if (await handleRescheduleIntent(turn)) {
+    /* "can I change the time?": the open times, then a pick moves the booking */
   } else if (await handleOpenTimesIntent(turn)) {
     /* "what times do you have?": the open tour times, then back to the step */
   } else if (await resumeClearedScheduling(turn)) {
@@ -1062,6 +1064,58 @@ async function offerCancelConfirm(turn: Turn): Promise<void> {
  * Booked-tour cancel-by-text. Confirm first; never send the unanswered-
  * question fallback for a clear cancel ask.
  */
+/** The times a booked visitor can move to, for one weekday when named, at most six. */
+async function rescheduleChoices(session: VisitorDemoSession, weekday?: string): Promise<{ start: Date; line: string }[]> {
+  const tz = session.config.property.timezone;
+  const slots = await session.rescheduleOptions();
+  const named = weekday ? slots.filter((s) => formatDay(s.start, tz).startsWith(WEEKDAY_NAMES[weekday]!)) : [];
+  return (named.length ? named : slots).slice(0, 6).map((s) => ({ start: s.start, line: `${formatDay(s.start, tz)} at ${s.label}` }));
+}
+
+function numbered(choices: { line: string }[]): string {
+  return choices.map((c, i) => `${i + 1}) ${c.line}`).join("\n");
+}
+
+/** Offers the times, and waits for the visitor's pick. */
+async function offerReschedule(turn: Turn, template: "reschedule-offer" | "reschedule-taken", weekday?: string): Promise<void> {
+  const { session } = turn;
+  const choices = await rescheduleChoices(session, weekday);
+  if (!choices.length) {
+    const sms = renderSms("reschedule-none");
+    await session.reply(sms.body, undefined, { templateId: sms.templateId });
+    return;
+  }
+  const sms = renderSms(template, { options: numbered(choices) });
+  await session.reply(sms.body, undefined, { templateId: sms.templateId });
+  session.expect(await session.stage(), { kind: "reschedule-pick", slots: choices.map((c) => c.start.toISOString()) });
+}
+
+/**
+ * A booked visitor moving their tour: "can I change the time?" offers the open times, and a number picks
+ * one. The booking moves only once the new time is taken; a time someone just took offers the rest.
+ */
+async function handleRescheduleIntent(turn: Turn): Promise<boolean> {
+  const { session, intent, awaiting } = turn;
+  if (awaiting?.kind === "reschedule-pick") {
+    const n = Number(/^\s*#?\s*(\d{1,2})\s*[.)]?\s*$/.exec(turn.said.text ?? "")?.[1]);
+    const picked = Number.isInteger(n) ? awaiting.slots[n - 1] : undefined;
+    if (picked) {
+      let changed = false;
+      try {
+        ({ changed } = await session.reschedule(picked, { notice: "moved" }));
+      } catch {
+        changed = false;
+      }
+      if (!changed) await offerReschedule(turn, "reschedule-taken");
+      return true;
+    }
+  }
+  if (intent.type !== "RESCHEDULE_TOUR" || !turn.confident) return false;
+  if (!visitorBookingConfirmed(await session.reservation())) return false;
+  await offerReschedule(turn, "reschedule-offer", intent.weekday);
+  return true;
+}
+
 const WEEKDAY_NAMES: Record<string, string> = { SUN: "Sunday", MON: "Monday", TUE: "Tuesday", WED: "Wednesday", THU: "Thursday", FRI: "Friday", SAT: "Saturday" };
 
 /**

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { isOpenTimesAsk } from "../src/intent/ruleBased";
 import { at, liveApp, type LiveApp } from "./liveApp";
+import { reachedLandlord } from "./visitorScenarioKit";
 
 /**
  * The visitor scenario catalog: the basic things a visitor texts, at each point in the flow, and what
@@ -12,14 +13,6 @@ import { at, liveApp, type LiveApp } from "./liveApp";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => cleanups.splice(0).forEach((c) => c()));
-
-/** What reached the landlord: a flagged question or a time request. */
-export function reachedLandlord(app: LiveApp): string[] {
-  return app
-    .outbox()
-    .map((r) => r.event.eventType)
-    .filter((type) => type === "exception.created" || type === "tour.time_requested");
-}
 
 type Setup = "unbooked" | "booked";
 
@@ -73,6 +66,11 @@ describe("booked", () => {
   it("2b. lists open times for a booked visitor without touching the booking", SLOW, async () => {
     const { app } = await scenario("booked", ["Ok what times are available?"], { reply: /\d{1,2}:\d{2} (AM|PM)/, not: /available now/i, landlord: false });
     expect((await app.text("When is my tour?")).join("\n")).not.toMatch(/cancel/i);
+  });
+
+  it("9. offers open times to move a booked tour, without the landlord", SLOW, async () => {
+    await scenario("booked", ["Can I change the time for the tour?"], { reply: /Reply with the number/, landlord: false });
+    await scenario("booked", ["Can we do Thursday instead?"], { reply: /Thursday/, landlord: false });
   });
 
   it("10. confirms, then cancels", SLOW, () => scenario("booked", ["Cancel my tour"], { reply: /cancel/i, landlord: false }));

@@ -539,6 +539,18 @@ export function isOpenTimesAsk(text: string): boolean {
   return /\b(times?|slots?|openings?)\b/.test(t) && /\b(what|which|any|available|open|free|have|got|left|other)\b/.test(t);
 }
 
+/**
+ * A booked visitor asking to move their tour without naming a clock time: "can I change the time?",
+ * "can we do Thursday instead?". A named time keeps going through the custom-time rules.
+ */
+export function isRescheduleAsk(text: string): boolean {
+  const t = text.toLowerCase();
+  if (/\b\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)\b|\b\d{1,2}:\d{2}\b|\bnoon\b/.test(t)) return false;
+  if (/\b(change|move|reschedule|switch|push|bump)\b/.test(t) && /\b(time|tour|appointment|booking|it|day|date|showing)\b/.test(t)) return true;
+  if (/\b(different|another|other|new)\s+(time|day|date)\b/.test(t)) return true;
+  return /\binstead\b/.test(t) && /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|day|time)\b/.test(t);
+}
+
 /** The weekday an open-times ask names, if any. */
 function openTimesDay(t: string): { weekday?: "SUN" | "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" } {
   const named = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|thurs|thur|tues|mon|tue|wed|thu|fri|sat|sun)\b/.exec(t);
@@ -684,6 +696,7 @@ function readByRules(ctx: InterpretContext): IntentInterpretation {
     if (isCancelTourAsk(raw)) return result({ type: "CONFIRM_CANCEL_TOUR" }, 0.95);
   }
   if ((ctx.hasCancelableTour || ctx.hasRunningTour) && isCancelTourAsk(raw)) return result({ type: "CANCEL_TOUR" }, 0.95);
+  if (ctx.hasCancelableTour && isRescheduleAsk(t)) return result({ type: "RESCHEDULE_TOUR", ...openTimesDay(t) }, 0.9);
   // On the day and time menus the day-pick rules already list times; a general hours ask keeps the saved-hours reply.
   if (ctx.step !== "choose-date" && ctx.step !== "choose-time" && !isGeneralTourHoursQuestion(raw) && isOpenTimesAsk(t)) {
     return result({ type: "ASK_OPEN_TIMES", ...openTimesDay(t) }, 0.9);

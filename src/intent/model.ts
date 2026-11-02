@@ -53,6 +53,11 @@ export const TourIntentSchema = z.discriminatedUnion("type", [
     type: z.literal("ASK_OPEN_TIMES"),
     weekday: z.enum(["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]).optional(),
   }),
+  /** A booked visitor wants a different time, without naming one: "can I change the time?", "Thursday instead?". */
+  z.object({
+    type: z.literal("RESCHEDULE_TOUR"),
+    weekday: z.enum(["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]).optional(),
+  }),
   z.object({ type: z.literal("ACCEPT_PROPOSED_TIME") }),
   z.object({ type: z.literal("DECLINE_PROPOSED_TIME") }),
   z.object({ type: z.literal("CONSENT_YES") }),
@@ -129,6 +134,8 @@ export interface StopRef {
 /** A tour-step confirmation Tour Core is waiting on, so a bare "yes" or "2" has a meaning. */
 export type StepAwaiting =
   | { kind: "confirm-arrival" }
+  /** The visitor was offered these start times (ISO) to move their booked tour to. */
+  | { kind: "reschedule-pick"; slots: string[] }
   | { kind: "confirm-stop"; stop: StopRef }
   | { kind: "choose-stop"; stops: StopRef[] }
   | { kind: "confirm-finish" }
