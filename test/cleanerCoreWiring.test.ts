@@ -641,6 +641,32 @@ describe("Cleaner Core live wiring", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("ignores a door code that only shows up inside Node's (node:<pid>) prefix", () => {
+    const code = ["7", "3", "9", "1"].join("");
+    const dir = mkdtempSync(join(tmpdir(), "cleaner-secret-pid-"));
+    try {
+      writeFileSync(join(dir, "saved.json"), `${JSON.stringify({ pin: code })}\n`);
+      const warning = "ExperimentalWarning: SQLite is an experimental feature and might change at any time";
+      writeFileSync(join(dir, "test-default.log"), `(node:${code}) ${warning}\n(node:1${code}2) ${warning}\nTests 1 passed\n`);
+      const pidOnly = spawnSync(process.execPath, ["scripts/scan-cleaner-secrets.mjs", dir], { encoding: "utf8" });
+      expect(pidOnly.stderr).toBe("");
+      expect(pidOnly.status).toBe(0);
+      expect(pidOnly.stdout).not.toContain(code);
+
+      writeFileSync(join(dir, "test-default.log"), `(node:${code}) ${warning}\ntexted +15555550100: code ${code}\n`);
+      const leaked = spawnSync(process.execPath, ["scripts/scan-cleaner-secrets.mjs", dir], { encoding: "utf8" });
+      expect(leaked.status).not.toBe(0);
+      expect(leaked.stderr).toMatch(/secret scan found a saved door code in:[\s\S]*test-default\.log/);
+      expect(leaked.stderr).not.toContain(code);
+
+      writeFileSync(join(dir, "test-default.log"), `(node:4242) node:${code} ${warning}\n`);
+      const outsidePrefix = spawnSync(process.execPath, ["scripts/scan-cleaner-secrets.mjs", dir], { encoding: "utf8" });
+      expect(outsidePrefix.status).not.toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 async function throughSchedule(wired: WiredApp, tag: string): Promise<void> {
