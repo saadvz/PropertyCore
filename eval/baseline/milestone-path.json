@@ -56,8 +56,8 @@
   {
     "tool": "save_hours",
     "status": "done",
-    "milestone": "Practice tour",
-    "next": "run_checks",
+    "milestone": "Hours",
+    "next": "save_facts",
     "message": "Tours run Monday to Friday, 9 AM to 5 PM."
   },
   {

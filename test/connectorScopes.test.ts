@@ -79,7 +79,7 @@ function toolsFrom(json: unknown): Array<{ name: string; description?: string }>
 }
 
 describe("connector scopes", () => {
-  it("lists 21 landlord tools on a self-host static token, and refuses QA and ops tools", async () => {
+  it("lists 22 landlord tools on a self-host static token, and refuses QA and ops tools", async () => {
     const root = mkdtempSync(join(tmpdir(), "tourcore-scope-"));
     cleanups.push(() => rmSync(root, { recursive: true, force: true }));
     const server = createSetupServer({

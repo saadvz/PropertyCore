@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { SERVICE_CHOICES, SERVICE_QUESTION } from "../src/hosted/serviceTools";
+import { CLAUDE_TASK_PROMPT, SERVICE_CHOICES, SERVICE_QUESTION } from "../src/hosted/serviceTools";
 
 /** The Property Core Grok Bot template: one bot for both services, consistent with the service and free of secrets. */
 
@@ -67,11 +67,75 @@ describe("Property Core template", () => {
   });
 
   it("holds no phone number, key, token, or door code", () => {
-    for (const file of readdirSync(TEMPLATE)) {
-      const text = read(join(TEMPLATE, file));
+    for (const file of filesUnder(TEMPLATE)) {
+      const text = read(file);
       expect(text, file).not.toMatch(/\+1\d{10}|\(\d{3}\)\s*\d{3}-\d{4}/);
       expect(text, file).not.toMatch(/Bearer\s+[A-Za-z0-9._-]{12,}|AC[0-9a-f]{32}|sk-[A-Za-z0-9]{12,}/);
       expect(text, file).not.toMatch(/door code (?:is|:)\s*\d/i);
     }
+  });
+});
+
+/** Every file under a folder, for the secrets scan. */
+function filesUnder(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? filesUnder(join(dir, entry.name)) : [join(dir, entry.name)]));
+}
+
+describe.each(["claude", "chatgpt", "muse"] as const)("Property Core for %s", (platform) => {
+  const dir = join(TEMPLATE, platform);
+  interface PlatformManifest {
+    hostedPropertyCoreUrl: string;
+    instructions: string;
+    integrations: { type: string; url?: string }[];
+    routines: { name: string; service: string; doc: string }[];
+    [key: string]: unknown;
+  }
+  const m = () => json(join(dir, "template.json")) as unknown as PlatformManifest;
+  const touringTask = () => read(join(dir, m().routines.find((r) => r.service === "touring")!.doc));
+
+  it("names only files that exist", () => {
+    const paths = [m().instructions, ...m().routines.map((r) => r.doc), ...["readme", "setupGuide", "setupPrompt", "plugin", "skill"].flatMap((k) => (typeof m()[k] === "string" ? [m()[k] as string] : []))];
+    for (const path of paths) expect(existsSync(join(dir, path)), path).toBe(true);
+  });
+
+  it("connects once, at /mcp on the same service", () => {
+    expect(m().hostedPropertyCoreUrl).toBe(manifest().hostedPropertyCoreUrl);
+    expect(m().integrations.filter((i) => i.type === "custom-connector").map((i) => i.url)).toEqual(["hostedPropertyCoreUrl/mcp"]);
+  });
+
+  it("asks the service's question with its choices, and never connects /mcp/cleaner-core", () => {
+    const text = read(join(dir, m().instructions)).replace(/\s+/g, " ");
+    expect(text).toContain(`ask the host exactly "${SERVICE_QUESTION}"`);
+    for (const choice of SERVICE_CHOICES) expect(text).toContain(`"${choice.label}"`);
+    expect(text).toMatch(/[Nn]ever connect to `\/mcp\/cleaner-core`/);
+  });
+
+  it("has a touring task that reads its updates and asks about host texts", () => {
+    const task = touringTask().replace(/\s+/g, " ");
+    if (platform === "claude") {
+      expect(task).toContain("API trigger");
+      expect(task).toContain("Fire URL");
+      // The same prompt save_alert_routine hands Claude, line for line.
+      for (const line of CLAUDE_TASK_PROMPT.split("\n")) expect(task).toContain(line);
+    } else {
+      expect(task).toContain("get_updates");
+      expect(task).toContain("get_inbox");
+      expect(task).toContain("save_alert_routine with no arguments");
+    }
+    expect(task).toContain("Want tour updates texted to your phone too?");
+  });
+
+  it("holds no phone number, key, token, or door code", () => {
+    for (const path of filesUnder(dir)) {
+      const text = read(path);
+      expect(text, path).not.toMatch(/\+1\d{10}|\(\d{3}\)\s*\d{3}-\d{4}/);
+      expect(text, path).not.toMatch(/Bearer\s+[A-Za-z0-9._-]{12,}|AC[0-9a-f]{32}|sk-[A-Za-z0-9]{12,}/);
+    }
+  });
+});
+
+describe("the Grok Property Core template", () => {
+  it("records its published team template link", () => {
+    expect(json(join(TEMPLATE, "template.json")).templateLink).toBe("https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ");
   });
 });

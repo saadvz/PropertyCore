@@ -39,7 +39,7 @@ Add these only where that work should be possible. Each is off until its secret 
 - Ops: `PUBLIC_BASE_URL/mcp/ops` with bearer `TOURCORE_OPS_TOKEN` (storage recovery and runtime health).
 - QA: `PUBLIC_BASE_URL/mcp/qa` with bearer `TOURCORE_QA_TOKEN` (local test texts, demo storage, and the live checks below).
 
-`/mcp` shows the 21 tools, plus `reset_hosted_demo` for the hosted owner. A Tour Core tool that isn't on the landlord list is refused with "That's no longer something I can do from this chat. Disconnect and reconnect Tour Core so I'm working from the current list, then ask me again." A name that isn't a Tour Core tool at all gets `There's no Tour Core tool called "${name}".` The ops and QA connectors keep "The ops connector can't run that tool." and "The QA connector can't run that tool." Each connector advertises `tools.listChanged` and, after the client's `notifications/initialized`, sends `notifications/tools/list_changed` on the SSE stream so a client that still has the old tool list can re-fetch it. `/mcp/qa`'s `get_installation_status` adds `technical.commit` (the full deploy SHA, or `unknown`). That field is not on the landlord connector. A request to `/mcp/ops` or `/mcp/qa` with no token is refused. The QA test tools stay on `/mcp/qa`, including `inject_local_sms` (leave `property` out for the shared line), `read_local_outbox`, and `use_local_demo_storage`.
+`/mcp` shows the 22 tools, plus `reset_hosted_demo` for the hosted owner. A Tour Core tool that isn't on the landlord list is refused with "That's no longer something I can do from this chat. Disconnect and reconnect Tour Core so I'm working from the current list, then ask me again." A name that isn't a Tour Core tool at all gets `There's no Tour Core tool called "${name}".` The ops and QA connectors keep "The ops connector can't run that tool." and "The QA connector can't run that tool." Each connector advertises `tools.listChanged` and, after the client's `notifications/initialized`, sends `notifications/tools/list_changed` on the SSE stream so a client that still has the old tool list can re-fetch it. `/mcp/qa`'s `get_installation_status` adds `technical.commit` (the full deploy SHA, or `unknown`). That field is not on the landlord connector. A request to `/mcp/ops` or `/mcp/qa` with no token is refused. The QA test tools stay on `/mcp/qa`, including `inject_local_sms` (leave `property` out for the shared line), `read_local_outbox`, and `use_local_demo_storage`.
 
 <!-- connector: qa -->
 These checks stay callable on the QA connector. The landlord connector uses the tool after the dash for the same check. `test_operator_alerts`, `run_dry_tour`, and `get_installation_status` stay on the QA connector. `run_checks` stops when the connection isn't ready, so it cannot stand in for an alert test or a practice tour on its own.
@@ -426,10 +426,22 @@ visitor text ─► interpreter ─► typed intent (ARRIVAL, AT_UNIT "Unit 101"
   window, route, holds and Durin health are checked by Tour Core's policy exactly as before.
 - **Rules first** (`src/intent/ruleBased.ts`): menu numbers, keywords, and the common ways people say "I'm here",
   "I'm at 101", "I'm done", "yes please", or that they want to cancel a booked tour. No network call.
-- **Optional language model** (`src/intent/llm.ts`) for texts the rules can't place. Set the three
-  `TOURCORE_INTENT_MODEL_*` values in `.env` (any OpenAI-compatible API: xAI Grok, OpenAI, Anthropic's compatibility
-  endpoint). Its reply must match a strict schema and may only name units, doors and times Tour Core offered; anything
-  else is discarded. Nothing it writes is sent to the visitor. If it's slow or down, the rules' answer stands.
+- **Optional language model** (`src/intent/llm.ts`, `src/intent/factPick.ts`) for texts the rules can't place, for a
+  second read of a question nothing on file answers (it may be moving the tour, open times, the visitor's booking, or
+  directions, in words the rules don't know), and for picking which approved fact answers a property question
+  keywords missed. Set, in Railway or `.env`:
+  - `TOURCORE_INTENT_MODEL_URL`: any OpenAI-compatible API. For Gemini, `https://generativelanguage.googleapis.com/v1beta/openai`.
+  - `TOURCORE_INTENT_MODEL_KEY`: the API key. It lives only in the environment, never in a log, reply, chat, or the repo.
+  - `TOURCORE_INTENT_MODEL`: the model name, for example a Gemini Flash or Flash-Lite version.
+  - `TOURCORE_INTENT_MODEL_TIMEOUT_MS` (optional): how long to wait before the rules' answer stands.
+
+  Its reply must match a strict schema and may only name intents, units, doors and times Tour Core offered; anything
+  else is discarded. A fact pick is a number from the approved list, sent word for word; a number not on the list
+  counts as none, and the question goes to the landlord. Nothing the model writes is sent to the visitor. It never
+  sees a visitor's phone number or name. If it's slow or down, the rules' answer stands, and without the variables
+  everything runs on the rules alone. On the shared service each touring process gets these four values.
+  `npm run eval:visitor-model` runs the visitor scenario catalog against the configured model and prints PASS or FAIL
+  per text; it is a local check, never run in CI.
 - **Asking instead of guessing.** Anything that leads toward a door needs high confidence. Below that, or when a
   reference fits more than one door, Tour Core asks ("Are you at the property now?", "Which door are you at: Hallway
   Door or Unit 101?") and a plain "yes" or "2" answers it.
@@ -905,7 +917,8 @@ src/alerts/        operator events, notification sinks (Grok Routine), durable o
 scripts/           bootstrap-grok.mjs (dependency-installing entry point for npm run bootstrap:grok)
 .grok/skills/      Install Tour Core plus the seven Grok operator skills (SKILL.md)
 grok-template/     Tour Core Bot profile, context, routine, safe examples, integration notes, manifest
-property-core-template/  Property Core Bot: one Grok Bot that asks Tour Core or Cleaner Core, then follows that service's guide
+property-core-template/  Property Core: one bot that asks Tour Core or Cleaner Core, then follows that service's guide. Grok at the root;
+                   claude/, chatgpt/, and muse/ for the other chats
 src/intent/        what a typed message means: intent schema, rule-based interpreter, optional language-model
                    interpreter behind a vendor-neutral interface
 src/visitor/       visitor session over the real engine (browser phone and real phones), typed-reply

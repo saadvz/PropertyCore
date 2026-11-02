@@ -1,3 +1,4 @@
+import { FACT_QUESTIONS, FACT_TOPICS } from "../src/setup/factsSheet";
 import { afterEach, describe, expect, it } from "vitest";
 import { exceptionCreatedEvent } from "../src/alerts/operatorEvents";
 import { describeUpdates, RECOMMENDED_UPDATES } from "../src/alerts/preferences";
@@ -181,7 +182,7 @@ describe("operator alert recovery", () => {
     let fresh = await h.ok("get_state");
     expect(fresh.nextStep.say).not.toBe(RECONNECT_SAY);
     expect(fresh.playbook.text).not.toContain("I'll send you a secure link to reconnect them");
-    for (let i = 0; i < 6 && fresh.nextStep.say !== GROK_ALERTS_SAY; i++) {
+    for (let i = 0; i < 16 && fresh.nextStep.say !== GROK_ALERTS_SAY; i++) {
       const say = String(fresh.nextStep.say);
       const id = (fresh.setup as { propertyId?: string } | undefined)?.propertyId;
       const property = id ? { property: id } : {};
@@ -189,6 +190,7 @@ describe("operator alert recovery", () => {
       else if (/did i get that right/i.test(say)) await h.ok("save_property", { ...property, confirmAddress: true });
       else if (/what state/i.test(say)) await h.ok("save_property", { ...property, state: "NY" });
       else if (/what city/i.test(say)) await h.ok("save_property", { ...property, city: "Brooklyn" });
+      else if (FACT_TOPICS.some((t) => FACT_QUESTIONS[t] === say)) await h.ok("save_facts", { ...property, topic: FACT_TOPICS.find((t) => FACT_QUESTIONS[t] === say)!, skip: true });
       else break;
       fresh = await h.ok("get_state");
     }
@@ -293,7 +295,7 @@ describe("operator alert recovery", () => {
     h.inst.files.writeState({ ...h.inst.files.state(), storage: { mode: "LOCAL_DEMO", phase: "READY", chosenAt: new Date(h.now()).toISOString() } });
     await h.setUpAlfredWay();
     let state = await h.ok("get_state");
-    for (let i = 0; i < 6 && state.nextStep.say !== GROK_ALERTS_SAY; i++) {
+    for (let i = 0; i < 16 && state.nextStep.say !== GROK_ALERTS_SAY; i++) {
       const say = String(state.nextStep.say);
       const propertyId = (state.setup as { propertyId?: string } | undefined)?.propertyId;
       const property = propertyId ? { property: propertyId } : {};
@@ -301,6 +303,7 @@ describe("operator alert recovery", () => {
       else if (/did i get that right/i.test(say)) await h.ok("save_property", { ...property, confirmAddress: true });
       else if (/what state/i.test(say)) await h.ok("save_property", { ...property, state: "NY" });
       else if (/what city/i.test(say)) await h.ok("save_property", { ...property, city: "Brooklyn" });
+      else if (FACT_TOPICS.some((t) => FACT_QUESTIONS[t] === say)) await h.ok("save_facts", { ...property, topic: FACT_TOPICS.find((t) => FACT_QUESTIONS[t] === say)!, skip: true });
       else break;
       state = await h.ok("get_state");
     }

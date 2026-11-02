@@ -1,0 +1,50 @@
+{
+  "name": "Property Core for Claude",
+  "version": "0.1.0",
+  "setupGuide": "SETUP_GUIDE.md",
+  "instructions": "plugin/skills/property-core/SKILL.md",
+  "skill": "plugin/skills/property-core/SKILL.md",
+  "plugin": "plugin",
+  "hostedPropertyCoreUrl": "https://tourcore-production-8b80.up.railway.app",
+  "repository": {
+    "url": "https://github.com/saadvz/TourCore",
+    "note": "Claude never clones or runs anything. The skill and the connector's own instructions carry the guide."
+  },
+  "integrations": [
+    {
+      "name": "Property Core",
+      "type": "custom-connector",
+      "url": "hostedPropertyCoreUrl/mcp",
+      "auth": "OAuth 2.1 discovered from the hosted service. The host types the invite code from Saad on the approval page and clicks Allow. One connector serves both services.",
+      "where": "claude.ai Settings → Connectors → Add custom connector. Never add it a second way."
+    }
+  ],
+  "routines": [
+    {
+      "name": "Tour Core Updates",
+      "service": "touring",
+      "doc": "routines/tour-core-task.md",
+      "where": "https://claude.ai/code/routines",
+      "triggers": ["api"],
+      "credentialsTravelWithTemplate": false
+    },
+    {
+      "name": "Cleaner Core",
+      "service": "cleaning",
+      "doc": "../../claude-template/routines/cleaner-core-task.md",
+      "where": "https://claude.ai/code/routines",
+      "triggers": ["schedule (hourly)", "api"],
+      "credentialsTravelWithTemplate": false
+    }
+  ],
+  "secretsGoTo": "The service's private page behind each one-time link. Never chat, never a tool argument.",
+  "suggestedPrompts": ["Set up Property Core", "Set up tours for a rental unit", "Set up a cleaner for my property", "What's next?"],
+  "neverIncluded": [
+    "the scheduled task's Fire URL or token",
+    "connector or OAuth tokens",
+    "Twilio account details or keys",
+    "host, cleaner, visitor, or contact phone numbers",
+    "a door code",
+    "live tour, booking, cleaning, message, or photo records"
+  ]
+}

@@ -48,6 +48,20 @@ export const TourIntentSchema = z.discriminatedUnion("type", [
     /** They asked for a day that could not be resolved ("the 45th", "next month"). */
     unclear: z.boolean().optional(),
   }),
+  /** "What times do you have?": the open tour times, for one weekday when named. Never the unit's move-in availability. */
+  z.object({
+    type: z.literal("ASK_OPEN_TIMES"),
+    weekday: z.enum(["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]).optional(),
+  }),
+  /** A booked visitor wants a different time, without naming one: "can I change the time?", "Thursday instead?". */
+  z.object({
+    type: z.literal("RESCHEDULE_TOUR"),
+    weekday: z.enum(["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]).optional(),
+  }),
+  /** "When is my tour?": the booked day, time, door window, and address. */
+  z.object({ type: z.literal("ASK_MY_TOUR") }),
+  /** "Where is it?", "what's the address?": the address and a directions link. */
+  z.object({ type: z.literal("ASK_DIRECTIONS") }),
   z.object({ type: z.literal("ACCEPT_PROPOSED_TIME") }),
   z.object({ type: z.literal("DECLINE_PROPOSED_TIME") }),
   z.object({ type: z.literal("CONSENT_YES") }),
@@ -124,6 +138,8 @@ export interface StopRef {
 /** A tour-step confirmation Tour Core is waiting on, so a bare "yes" or "2" has a meaning. */
 export type StepAwaiting =
   | { kind: "confirm-arrival" }
+  /** The visitor was offered these start times (ISO) to move their booked tour to. */
+  | { kind: "reschedule-pick"; slots: string[] }
   | { kind: "confirm-stop"; stop: StopRef }
   | { kind: "choose-stop"; stops: StopRef[] }
   | { kind: "confirm-finish" }
@@ -171,12 +187,21 @@ export interface InterpretContext {
   hasCancelableTour?: boolean;
   /** On-site now: touring, operator hold, or door-system problem. */
   hasRunningTour?: boolean;
+  /** The visitor's known name, only so it can be removed before anything goes to a model. */
+  visitorName?: string;
 }
 
 export interface IntentInterpreter {
   /** Short label for developer details, e.g. "rules" or "rules + grok-4". */
   readonly description: string;
   interpret(context: InterpretContext): Promise<IntentInterpretation>;
+  /**
+   * Present only when a language model is configured. Picks the one approved fact that answers a
+   * property question, as a 0-based index, or undefined for none. Never writes a reply.
+   */
+  pickFact?(question: string, facts: string[], options?: { name?: string }): Promise<number | undefined>;
+  /** Present only when a language model is configured: a second read of a text the rules filed as a property question. */
+  reclassify?(context: InterpretContext): Promise<IntentInterpretation | undefined>;
 }
 
 /** Intents that lead toward a door opening. */

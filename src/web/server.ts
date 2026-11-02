@@ -21,7 +21,8 @@ import { cleanerCoreEnabled, cleanerMultiTenant, tourCoreTenants } from "../clea
 import type { TouringFront } from "../hosted/serviceTools";
 import type { OperatorServices } from "../operator/services";
 import { DeliveryError } from "../alerts/operatorEvents";
-import { touringAlertsConnected, touringSinkFor } from "../hosted/touringAlerts";
+import type { ServicePick } from "../hosted/serviceChoice";
+import { deliverTouringEvent, refreshTouringAlerts } from "../hosted/touringAlerts";
 import { buildTouringEnv, touringScratch } from "../hosted/touringEnv";
 import { standDownTouring, TOURING_LIVE_PATH, TOURING_STAND_DOWN_PATH, touringLiveWork } from "../hosted/touringLive";
 import { screenText } from "../hosted/crossService";
@@ -405,7 +406,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
             const tenant = tenants.get(tenantId);
             if (!tenant) return { type: "event-ack", id, ok: false, retryable: false, message: "This host is gone." };
             try {
-              await touringSinkFor(hostedCleanerService, tenant).deliver(event);
+              await deliverTouringEvent(hostedCleanerService, tenant, event);
               return { type: "event-ack", id, ok: true };
             } catch (err) {
               return { type: "event-ack", id, ok: false, retryable: err instanceof DeliveryError ? err.retryable : true, message: err instanceof DeliveryError ? err.message : "The alert couldn't be delivered." };
@@ -449,7 +450,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           handOver,
           start: async (tenant) => {
             const ready = supervisor.ensure(tenant);
-            supervisor.setAlerts(tenant.id, touringAlertsConnected(hostedCleanerService, tenant));
+            refreshTouringAlerts(hostedCleanerService, tenant);
             await ready;
             await handOver(tenant);
           },
@@ -515,6 +516,15 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
                   connected: (tenantId: string, grantId: string, assistant: CleanerAssistant) =>
                     tenants.connect(tenantId, { grantId, assistant, connectedAt: (options.now?.() ?? new Date()).toISOString() }),
                   refusal: (reason: InviteRefusal) => INVITE_REFUSALS[reason],
+                  offersPick: () => tourCoreTenants(installation.env()) && !!touringFront,
+                  // The host's pick on the Allow page sets a new number's service before its chat lists any tools.
+                  choose: (tenantId: string, service: ServicePick) => {
+                    const tenant = tenants.get(tenantId);
+                    if (!tenant || tenant.service) return;
+                    tenants.setService(tenantId, service);
+                    log(`${tenantId} chose ${service} on the Allow page.`);
+                    if (service === "touring") void touringFront?.start(tenants.get(tenantId)!).catch(() => undefined);
+                  },
                 },
               }
             : {}),

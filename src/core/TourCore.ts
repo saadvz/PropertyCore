@@ -302,6 +302,7 @@ export const TOUR_ENDED_REPLY = "This tour has ended. Text HI any time to start 
 /** One visitor text for an unanswered question. Photo and ended-tour variants replace the short photo line. */
 /** Saved profile facts are explicit. Other approved facts match `shared-fact`. */
 function answerTemplateId(facts: ApprovedFact[]): string | undefined {
+  if (facts.length === 1 && facts[0]!.templateId) return facts[0]!.templateId;
   return facts.length > 0 && facts.every((fact) => fact.profileField) ? "approved-profile-fact" : undefined;
 }
 
@@ -1357,6 +1358,39 @@ export class TourCore {
    * `recordInbound: false` when the visitor's words were already stored
    * (e.g. the reply naming the unit for an earlier question).
    */
+  /**
+   * The model's pick among the approved written facts (property-wide, plus the unit in context), sent
+   * word for word. Generated unit details are left out: keyword matching already covers them. Any
+   * failure is none, and the question goes to the landlord as before.
+   */
+  private async pickApprovedFact(
+    pick: (question: string, facts: string[], options?: { name?: string }) => Promise<number | undefined>,
+    asked: string,
+    unitId: string | undefined,
+    visitorName: string | undefined,
+  ): Promise<ApprovedFact | undefined> {
+    const candidates = approvedFacts(this.approvedContent(), unitId).filter((fact) => !fact.profileField && (fact.scope === "property" || fact.unitId === unitId) && fact.text.trim());
+    if (!candidates.length) return undefined;
+    try {
+      const index = await pick(asked, candidates.map((fact) => fact.text), visitorName && visitorName !== UNNAMED_VISITOR ? { name: visitorName } : {});
+      return index === undefined ? undefined : candidates[index];
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * True when something on file settles this question without a model: an approved fact or setup
+   * detail, a which-unit ask, the saved tour hours, or a fair-housing question (which only the landlord
+   * answers). Sends nothing.
+   */
+  questionIsSettled(question: string, unitId?: string): boolean {
+    const asked = question.trim().slice(0, 300);
+    if (!asked || isGeneralTourHoursQuestion(asked)) return true;
+    const resolved = resolveQuestion(this.approvedContent(), asked, { selectedUnitId: unitId });
+    return resolved.kind !== "unknown" || !!resolved.fairHousing;
+  }
+
   async answerPropertyQuestion(input: {
     phone: string;
     question: string;
@@ -1370,6 +1404,8 @@ export class TourCore {
     answerSuffix?: string;
     /** Unit the visitor just picked from "Which unit do you mean?". */
     pickedUnitId?: string;
+    /** Only with a language model: picks one approved fact by index for a question keywords missed. */
+    pickFact?: (question: string, facts: string[], options?: { name?: string }) => Promise<number | undefined>;
   }): Promise<{ outcome: "answered" | "unknown" | "which-unit"; facts: ApprovedFact[]; unitId?: string; units?: string[]; fairHousing?: boolean }> {
     const phone = normalizePhone(input.phone);
     const read = this.deps.storageRead?.() ?? "live";
@@ -1428,6 +1464,13 @@ export class TourCore {
     if (resolved.kind === "unknown" && resolved.fairHousing) {
       await this.replyFairHousing({ phone, reservationId: reservation?.id, prospectId: prospect?.id, asked, reservation, who: prospect && prospect.name !== UNNAMED_VISITOR ? prospect.name : formatPhone(phone), about: !reservation && (resolved.unitId ? this.deps.config.units.find((u) => u.id === resolved.unitId) : undefined) ? ` about ${visitorSubject(this.deps.config.property, this.deps.config.units.find((u) => u.id === resolved.unitId)!.name)}` : "" });
       return { outcome: "unknown", facts: [], fairHousing: true, ...(resolved.unitId ? { unitId: resolved.unitId } : {}) };
+    }
+    const picked = input.pickFact ? await this.pickApprovedFact(input.pickFact, asked, resolved.unitId, prospect?.name) : undefined;
+    if (picked) {
+      await this.record("QUESTION_ANSWERED", { ...base, detail: asked });
+      const body = withAnswerSuffix(approvedAnswerText([picked], this.teamName()), input.answerSuffix);
+      await this.sendConversationText({ phone, body, reservationId: reservation?.id, templateId: answerTemplateId([picked]) });
+      return { outcome: "answered", facts: [picked], ...(resolved.unitId ? { unitId: resolved.unitId } : {}) };
     }
     await this.record("QUESTION_UNANSWERED", { ...base, detail: asked });
     await this.sendConversationText({ phone, body: input.unknownReply ?? unknownAnswerReply({ team: this.teamName() }), reservationId: reservation?.id });

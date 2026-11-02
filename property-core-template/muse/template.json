@@ -1,0 +1,48 @@
+{
+  "name": "Property Core for Muse",
+  "version": "0.1.0",
+  "status": "draft: needs a live run on Muse before a host uses it",
+  "setupPrompt": "SETUP_PROMPT.md",
+  "instructions": "skills/property-core/SKILL.md",
+  "skill": "skills/property-core/SKILL.md",
+  "hostedPropertyCoreUrl": "https://tourcore-production-8b80.up.railway.app",
+  "repository": {
+    "url": "https://github.com/saadvz/TourCore",
+    "skill": "property-core-template/muse/skills/property-core",
+    "note": "Muse clones the repository on its cloud computer only to read and save the skill. It never runs anything from the clone."
+  },
+  "integrations": [
+    {
+      "name": "Property Core",
+      "type": "custom-connector",
+      "url": "hostedPropertyCoreUrl/mcp",
+      "transport": "remote streamable HTTP",
+      "auth": "OAuth 2.1 discovered from the hosted service. The host types the invite code from Saad on the approval page and clicks Allow. Muse cannot approve itself. One connector serves both services.",
+      "where": "Muse creates it from the chat. Fallback: Settings → Connectors → Add custom connector."
+    }
+  ],
+  "routines": [
+    {
+      "name": "Tour Core",
+      "service": "touring",
+      "doc": "skills/property-core/references/tour-core-task.md",
+      "schedule": "as often as the host sets",
+      "credentialsTravelWithTemplate": false
+    },
+    {
+      "name": "Cleaner Core",
+      "service": "cleaning",
+      "doc": "../../muse-template/skills/cleaner-core/references/cleaner-core-task.md",
+      "schedule": "as often as the host sets",
+      "credentialsTravelWithTemplate": false
+    }
+  ],
+  "suggestedPrompts": ["Set up Property Core", "Set up tours for a rental unit", "Set up a cleaner for my property", "What's next?"],
+  "neverIncluded": [
+    "connector or OAuth tokens",
+    "Twilio account details or keys",
+    "host, cleaner, visitor, or contact phone numbers",
+    "a door code",
+    "live tour, booking, cleaning, message, or photo records"
+  ]
+}

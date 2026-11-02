@@ -12,10 +12,12 @@ import {
   VisitorDenialCopy,
   visitorCancelConfirm,
   visitorCancelKeptFor,
+  visitorBookingConfirmed,
   type InboundMeta,
 } from "../core/TourCore";
 import { cannotCancelRunningOfferLater, cannotCancelRunningTour, laterCancelConfirm } from "../core/availabilityCopy";
 import { CANCEL_OPT_OUT, renderSms, visitorTeamName } from "../sms/templates";
+import { propertyDirectionsUrl } from "../core/mapsLink";
 import { namedCancelFocus } from "./cancelTarget";
 import { awaitingLatestYesNo, doorAskSupersedesCancel } from "./latestQuestion";
 import { DOOR_AFTER_T, isLeavingTour, T5_NO_OFFER_BARE_YES } from "../core/overstayCopy";
@@ -357,6 +359,7 @@ async function contextFor(session: VisitorDemoSession, message: string, step: Vi
     doors: session.config.doors.map((d) => stopRef(session, d.id)),
     hasCancelableTour: await session.hasCancelableTour(),
     hasRunningTour: !!r && isRunningReservation(r.status),
+    ...(session.visitor?.name ? { visitorName: session.visitor.name } : {}),
   };
 }
 
@@ -469,6 +472,7 @@ export async function handleVisitorText(
   interpreter: IntentInterpreter = rulesOnly,
 ): Promise<IntentInterpretation | undefined> {
   const said: Said = { text, meta };
+  session.factPicker = interpreter.pickFact ? (question, facts, options) => interpreter.pickFact!(question, facts, options) : undefined;
   const firstMessage = !session.visitor;
   if (firstMessage) session.identify(from);
 
@@ -580,7 +584,14 @@ export async function handleVisitorText(
     }
   }
 
-  let interpretation = await interpreter.interpret(await contextFor(session, text, stage, awaiting));
+  const context = await contextFor(session, text, stage, awaiting);
+  let interpretation = await interpreter.interpret(context);
+  // The rules file unrecognized questions as property questions. When nothing on file answers this one,
+  // the model gets a second read: it may be tour logistics the rules didn't recognize.
+  if (interpreter.reclassify && interpretation.intent.type === "ASK_PROPERTY_QUESTION" && interpretation.interpreter === "rules" && !session.core.questionIsSettled(interpretation.intent.question, (await session.reservation())?.unitId)) {
+    const second = await interpreter.reclassify(context);
+    if (second) interpretation = second;
+  }
   if (inbound.kind === "door") {
     const doorIntent = onTourDoorIntent(text, inbound.doors);
     if (doorIntent) interpretation = { intent: doorIntent, confidence: 1, interpreter: "rules", clarificationNeeded: false };
@@ -611,6 +622,12 @@ export async function handleVisitorText(
     /* after the tour ends, HI continues the held booking with booked-for then consent */
   } else if (inbound.kind !== "door" && (await handleCancelIntent(turn))) {
     /* cancel-by-text: confirm, YES, or NO; or stop when nothing is booked */
+  } else if (await handleMyTourOrDirections(turn)) {
+    /* "when is my tour?" and "where is it?", answered from the booking and the address */
+  } else if (await handleRescheduleIntent(turn)) {
+    /* "can I change the time?": the open times, then a pick moves the booking */
+  } else if (await handleOpenTimesIntent(turn)) {
+    /* "what times do you have?": the open tour times, then back to the step */
   } else if (await resumeClearedScheduling(turn)) {
     /* the text after an unbooked cancel starts scheduling again */
   } else if (firstMessage) {
@@ -1059,6 +1076,121 @@ async function offerCancelConfirm(turn: Turn): Promise<void> {
  * Booked-tour cancel-by-text. Confirm first; never send the unanswered-
  * question fallback for a clear cancel ask.
  */
+/** A booked tour the visitor can ask about or move: confirmed, or waiting only on the identity form. */
+function hasBookedTour(r: { status: string; consentId?: string; slotStart?: string } | undefined): boolean {
+  return visitorBookingConfirmed(r) || (!!r?.slotStart && r.status === "AWAITING_VERIFICATION");
+}
+
+/** "When is my tour?" from the booking; "where is it?" with the address and the directions link. */
+async function handleMyTourOrDirections(turn: Turn): Promise<boolean> {
+  const { session, intent } = turn;
+  if ((intent.type !== "ASK_MY_TOUR" && intent.type !== "ASK_DIRECTIONS") || !turn.confident) return false;
+  await session.recordText(turn.said);
+  const property = session.config.property;
+  const send = async (sms: { templateId: string; body: string }) => session.reply(sms.body, undefined, { templateId: sms.templateId });
+  if (intent.type === "ASK_MY_TOUR") {
+    const r = await session.reservation();
+    if (!hasBookedTour(r) || !r?.slotStart || !r.windowStart || !r.windowEnd) {
+      await send(renderSms("no-tour-booked"));
+      return true;
+    }
+    const tz = property.timezone;
+    const start = new Date(r.slotStart);
+    await send(renderSms("my-tour", { time: formatTime(start, tz), day: formatDay(start, tz), start: formatTime(new Date(r.windowStart), tz), end: formatTime(new Date(r.windowEnd), tz), address: property.address }));
+    return true;
+  }
+  await send(renderSms("property-address", { address: property.address }));
+  const url = propertyDirectionsUrl(property);
+  if (url) await send(renderSms("tour-directions", { url }));
+  return true;
+}
+
+/** The times a booked visitor can move to, for one weekday when named, at most six. */
+async function rescheduleChoices(session: VisitorDemoSession, weekday?: string): Promise<{ start: Date; line: string }[]> {
+  const tz = session.config.property.timezone;
+  const slots = await session.rescheduleOptions();
+  const named = weekday ? slots.filter((s) => formatDay(s.start, tz).startsWith(WEEKDAY_NAMES[weekday]!)) : [];
+  return (named.length ? named : slots).slice(0, 6).map((s) => ({ start: s.start, line: `${formatDay(s.start, tz)} at ${s.label}` }));
+}
+
+function numbered(choices: { line: string }[]): string {
+  return choices.map((c, i) => `${i + 1}) ${c.line}`).join("\n");
+}
+
+/** Offers the times, and waits for the visitor's pick. */
+async function offerReschedule(turn: Turn, template: "reschedule-offer" | "reschedule-taken", weekday?: string): Promise<void> {
+  const { session } = turn;
+  const choices = await rescheduleChoices(session, weekday);
+  if (!choices.length) {
+    const sms = renderSms("reschedule-none");
+    await session.reply(sms.body, undefined, { templateId: sms.templateId });
+    return;
+  }
+  const sms = renderSms(template, { options: numbered(choices) });
+  await session.reply(sms.body, undefined, { templateId: sms.templateId });
+  session.expect(await session.stage(), { kind: "reschedule-pick", slots: choices.map((c) => c.start.toISOString()) });
+}
+
+/**
+ * A booked visitor moving their tour: "can I change the time?" offers the open times, and a number picks
+ * one. The booking moves only once the new time is taken; a time someone just took offers the rest.
+ */
+async function handleRescheduleIntent(turn: Turn): Promise<boolean> {
+  const { session, intent, awaiting } = turn;
+  if (awaiting?.kind === "reschedule-pick") {
+    const n = Number(/^\s*#?\s*(\d{1,2})\s*[.)]?\s*$/.exec(turn.said.text ?? "")?.[1]);
+    const picked = Number.isInteger(n) ? awaiting.slots[n - 1] : undefined;
+    if (picked) {
+      await session.recordText(turn.said);
+      let changed = false;
+      try {
+        ({ changed } = await session.reschedule(picked, { notice: "moved" }));
+      } catch {
+        changed = false;
+      }
+      if (!changed) await offerReschedule(turn, "reschedule-taken");
+      return true;
+    }
+  }
+  if (intent.type !== "RESCHEDULE_TOUR" || !turn.confident) return false;
+  if (!hasBookedTour(await session.reservation())) return false;
+  await session.recordText(turn.said);
+  await offerReschedule(turn, "reschedule-offer", intent.weekday);
+  return true;
+}
+
+const WEEKDAY_NAMES: Record<string, string> = { SUN: "Sunday", MON: "Monday", TUE: "Tuesday", WED: "Wednesday", THU: "Thursday", FRI: "Friday", SAT: "Saturday" };
+
+/**
+ * The open tour times: the next few days with openings, or the named weekday's times. A booked
+ * visitor's tour stays as it is. Afterwards the visitor is back on the step they were on.
+ */
+async function handleOpenTimesIntent(turn: Turn): Promise<boolean> {
+  const { session, intent } = turn;
+  if (intent.type !== "ASK_OPEN_TIMES" || !turn.confident) return false;
+  await session.recordText(turn.said);
+  const days = await session.core.availableDates(intent.weekday ? 14 : 3);
+  const named = intent.weekday ? days.filter((d) => d.label.startsWith(WEEKDAY_NAMES[intent.weekday!]!)).slice(0, 1) : [];
+  // A named day with nothing open falls back to the next open days.
+  const shown = intent.weekday && named.length ? named : days.slice(0, 3);
+  const lines: string[] = [];
+  for (const day of shown) {
+    const [year, month, date] = day.date.split("-").map(Number) as [number, number, number];
+    const slots = await session.core.availableSlots({ year, month, day: date });
+    if (slots.length) lines.push(`${day.label}: ${slots.map((s) => s.label).join(", ")}`);
+  }
+  const booked = visitorBookingConfirmed(await session.reservation());
+  const times = lines.join("\n");
+  const sms = !lines.length
+    ? renderSms("open-times-none")
+    : intent.weekday && !named.length
+      ? renderSms("open-times-other-day", { day: WEEKDAY_NAMES[intent.weekday], times })
+      : renderSms(booked ? "open-times-booked" : "open-times", { times });
+  await session.reply(sms.body, undefined, { templateId: sms.templateId });
+  if (!booked) await resumeStep(session, turn.stage, turn.awaiting, { repeatLiveMenu: true });
+  return true;
+}
+
 async function handleCancelIntent(turn: Turn): Promise<boolean> {
   const { session, intent } = turn;
   const text = turn.said.text ?? "";

@@ -6,7 +6,8 @@ import { TourCoreConfigShape, type TourCoreConfig } from "./tourCoreConfig";
 /**
  * The one place that decides which setup changes affect safety.
  *
- * APPROVED CONTENT is what visitors are told: property facts, unit
+ * APPROVED CONTENT is what visitors are told: property facts (and which
+ * facts-sheet topics were asked), unit
  * descriptions, unit facts, the unit profile (bedrooms, bathrooms, rent,
  * availability, square footage, amenities, ...), route directions/stop
  * wording, and the optional visitor help number (the number stuck visitors
@@ -29,7 +30,7 @@ export function structuralView(config: TourCoreConfig): unknown {
   return {
     ...c,
     operator: { name: c.operator.name, contact: c.operator.contact },
-    property: { ...c.property, facts: undefined, entryInstructionsDecided: undefined, timezoneConfirmed: undefined, zoneSwitchOffer: undefined },
+    property: { ...c.property, facts: undefined, factsAsked: undefined, entryInstructionsDecided: undefined, timezoneConfirmed: undefined, zoneSwitchOffer: undefined },
     units: c.units.map((u) => ({ ...u, summary: undefined, facts: undefined, profile: undefined, entryInstructions: undefined })),
     routes: c.routes.map((r) => ({ ...r, directions: undefined, stops: r.stops.map((s) => ({ doorId: s.doorId })) })),
   };

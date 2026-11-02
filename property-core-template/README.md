@@ -24,6 +24,11 @@ This template doesn't replace [`grok-template/`](../grok-template/) or
 [`cleaner-template/`](../cleaner-template/). Those still set up one service
 each.
 
+The published team template: https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ
+
+The same bot for the other chats is in [`claude/`](claude/SETUP_GUIDE.md),
+[`chatgpt/`](chatgpt/SETUP_GUIDE.md), and [`muse/`](muse/SETUP_PROMPT.md).
+
 ## How a host starts
 
 Saad first adds the host as a tenant on
@@ -36,9 +41,9 @@ From the team template (the usual way):
 1. Open the Property Core template link and click **Add to Grok Bot**, then
    **Add Bot**.
 2. Say "Set up Property Core".
-3. When the approval page opens, type the invite code from Saad and click
-   Allow.
-4. Pick Tour Core or Cleaner Core.
+3. When the approval page opens, type the invite code from Saad, pick Tour
+   Core or Cleaner Core, and click Allow. If they skip the pick, the bot asks
+   in chat instead.
 
 Without the template, open a new Grok Bot and paste the prompt in
 [`SETUP_PROMPT.md`](SETUP_PROMPT.md) instead.

@@ -141,10 +141,10 @@ describe("MCP instructions", () => {
 
 describe("MCP annotations", () => {
   it("marks reads, the five destructive tools, and explicit non-destructive writes", () => {
-    expect(OPERATOR_TOOLS).toHaveLength(102);
+    expect(OPERATOR_TOOLS).toHaveLength(103);
     expect(OPERATOR_TOOLS.some((tool) => tool.name === "get_state")).toBe(true);
     const listed = mcpToolList();
-    expect(listed).toHaveLength(102);
+    expect(listed).toHaveLength(103);
     for (const tool of [...OPERATOR_TOOLS, ...HOSTED_ADMIN_TOOLS]) {
       const hints = annotationsFor(tool);
       expect(hints.openWorldHint).toBe(false);
@@ -267,7 +267,7 @@ describe("realistic initialize messages", () => {
     }
     expect(new Set(pictures.map((item) => JSON.stringify(item))).size).toBe(1);
     expect(new Set(lists.map((item) => JSON.stringify(item))).size).toBe(1);
-    expect(lists[0]).toHaveLength(102);
+    expect(lists[0]).toHaveLength(103);
   });
 });
 

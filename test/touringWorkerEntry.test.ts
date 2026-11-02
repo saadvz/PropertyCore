@@ -78,10 +78,18 @@ describe("the touring process entry", () => {
 
   it("sends a test alert to the parent once alerts are connected", { timeout: 30_000 }, async () => {
     const w = await forkWorker();
-    w.send({ type: "alerts", connected: true });
+    w.send({ type: "alerts", connected: true, polled: false });
     const event = await w.nextMessage("event");
     expect(event.event.eventType).toBe("installation.test");
     w.send({ type: "event-ack", id: event.id, ok: true });
+  });
+
+  it("sends the test alert when updates move from a polled task to a webhook", { timeout: 30_000 }, async () => {
+    const w = await forkWorker();
+    w.send({ type: "alerts", connected: true, polled: true });
+    w.send({ type: "alerts", connected: true, polled: false });
+    const event = await w.nextMessage("event");
+    expect(event.event.eventType).toBe("installation.test");
   });
 
   it("exits when the shared service goes away", { timeout: 30_000 }, async () => {

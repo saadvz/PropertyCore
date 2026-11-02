@@ -1,0 +1,44 @@
+{
+  "name": "Property Core for ChatGPT",
+  "version": "0.1.0",
+  "setupGuide": "SETUP_GUIDE.md",
+  "instructions": "SETUP_GUIDE.md",
+  "hostedPropertyCoreUrl": "https://tourcore-production-8b80.up.railway.app",
+  "repository": {
+    "url": "https://github.com/saadvz/TourCore",
+    "note": "ChatGPT never clones or runs anything. The connector's own instructions carry the guide."
+  },
+  "integrations": [
+    {
+      "name": "Property Core",
+      "type": "custom-connector",
+      "url": "hostedPropertyCoreUrl/mcp",
+      "auth": "OAuth 2.1 discovered from the hosted service. The host types the invite code from Saad on the approval page and clicks Allow. One connector serves both services.",
+      "where": "ChatGPT Settings → Apps → Developer Mode → Create. Never add it a second way."
+    }
+  ],
+  "routines": [
+    {
+      "name": "Tour Core",
+      "service": "touring",
+      "doc": "routines/tour-core-task.md",
+      "schedule": "hourly",
+      "credentialsTravelWithTemplate": false
+    },
+    {
+      "name": "Cleaner Core",
+      "service": "cleaning",
+      "doc": "../../chatgpt-template/routines/cleaner-core-task.md",
+      "schedule": "hourly",
+      "credentialsTravelWithTemplate": false
+    }
+  ],
+  "suggestedPrompts": ["Set up Property Core", "Set up tours for a rental unit", "Set up a cleaner for my property", "What's next?"],
+  "neverIncluded": [
+    "connector or OAuth tokens",
+    "Twilio account details or keys",
+    "host, cleaner, visitor, or contact phone numbers",
+    "a door code",
+    "live tour, booking, cleaning, message, or photo records"
+  ]
+}

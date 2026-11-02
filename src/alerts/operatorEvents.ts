@@ -121,6 +121,8 @@ export interface OperatorNotificationSink {
   readonly kind: "NONE" | "GROK_ROUTINE" | "CLAUDE_ROUTINE" | "CHATGPT_TASK";
   /** Whether this sink has what it needs to deliver. */
   configured(): boolean;
+  /** True for a task that checks on a schedule: nothing can wake it, so connecting is its test. */
+  polled?(): boolean;
   /** Resolves once the receiver accepted the event; throws DeliveryError otherwise. */
   deliver(event: OperatorEvent): Promise<void>;
 }
@@ -192,11 +194,15 @@ export class RelaySink implements OperatorNotificationSink {
   constructor(
     private readonly send: (message: ToParent) => void,
     private readonly connected: () => boolean,
-    private readonly options: { timeoutMs?: number } = {},
+    private readonly options: { timeoutMs?: number; polled?: () => boolean } = {},
   ) {}
 
   configured(): boolean {
     return this.connected();
+  }
+
+  polled(): boolean {
+    return this.options.polled?.() ?? false;
   }
 
   deliver(event: OperatorEvent): Promise<void> {

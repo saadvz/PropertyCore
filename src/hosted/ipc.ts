@@ -31,4 +31,5 @@ export type ToParent =
 export type ToWorker =
   | { type: "event-ack"; id: string; ok: true }
   | { type: "event-ack"; id: string; ok: false; retryable: boolean; message: string }
-  | { type: "alerts"; connected: boolean };
+  /** polled: the chat's task checks on a schedule (ChatGPT, Muse), so nothing wakes it and there is no test update. */
+  | { type: "alerts"; connected: boolean; polled: boolean };

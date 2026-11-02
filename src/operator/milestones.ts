@@ -27,6 +27,8 @@ import type { OperatorTool, ToolContext, ToolKind } from "./tools";
 import type { Door, TourCoreConfig, TourHours, Unit } from "../config/tourCoreConfig";
 import { describeTourWindows } from "../setup/setupActions";
 import { planTourHours } from "./hoursPlan";
+import { FACT_QUESTIONS, FACT_TOPICS, FAIR_HOUSING_FACT_REFUSAL, factFor, isTopicFact, nextFactTopic, splitFreeText } from "../setup/factsSheet";
+import { isFairHousingStatement } from "../core/fairHousing";
 
 /**
  * Milestone writes. Each one reports done, blocked, or next, plus the same
@@ -65,6 +67,7 @@ const PROPERTY_SETUP_STEPS = new Set([
   "units-route",
   "hours",
   "hours-help",
+  "facts",
   "readiness",
   "practice",
   "publish",
@@ -82,6 +85,8 @@ function propertyIdFrom(extra: Record<string, unknown>): string | undefined {
 
 /** A touring host on the shared service publishes only once their alert routine is connected. */
 export const ALERTS_NEEDED = "Connect the touring alert routine first. Call save_alert_routine.";
+/** save_settings' connect step on the shared service, which keeps each chat's routine itself. */
+const ALERTS_ON_SHARED_SERVICE = "Tour updates connect through save_alert_routine on this service. Call it now and follow its next step. There is no setup page to open.";
 
 export function envelope(
   ctx: ToolContext,
@@ -483,6 +488,52 @@ export const MILESTONE_TOOLS: OperatorTool[] = [
     },
   }),
   tool({
+    name: "save_facts",
+    title: "Save property facts",
+    kind: "change",
+    description:
+      "Saves one facts-sheet answer, word for word, as an approved fact visitors can be told: how to apply, fees and deposit, lease length, what's due at move-in, bringing someone on the tour, building rules, the area, or anything else. Answering replaces that topic's fact. other adds one fact per line or sentence. skip records that the host skipped the question. remove deletes that topic's fact. A line saying who should live there is refused and not saved. nextQuestion is the next unasked question, if any. Works during setup and anytime after.",
+    input: z.strictObject({
+      property: Property,
+      topic: z.enum(FACT_TOPICS),
+      text: z.string().max(1000).optional(),
+      skip: z.boolean().optional().describe("True when the host skips this question."),
+      remove: z.boolean().optional().describe("True to delete this topic's saved fact."),
+    }),
+    run: async (ctx, i) => {
+      const { id, draft } = open(ctx, i.property);
+      const asked = (topics: readonly string[]) => [...new Set([...(draft.property.factsAsked ?? []), ...topics])] as typeof draft.property.factsAsked;
+      const facts = draft.property.facts;
+      let nextFacts = facts;
+      let refused: string[] = [];
+      let message: string;
+      if (i.remove) {
+        nextFacts = i.topic === "other" ? facts : facts.filter((fact) => !isTopicFact(i.topic, fact));
+        message = nextFacts.length === facts.length ? "There was nothing saved for that." : "Removed.";
+      } else if (i.skip) {
+        message = "Skipped.";
+      } else {
+        const text = i.text?.trim();
+        if (!text) return envelope(ctx, id, "next", FACT_QUESTIONS[i.topic], { propertyId: id });
+        const lines = i.topic === "other" ? splitFreeText(text) : [text];
+        refused = lines.filter(isFairHousingStatement);
+        const kept = lines.filter((line) => !isFairHousingStatement(line));
+        if (!kept.length) return envelope(ctx, id, "blocked", FAIR_HOUSING_FACT_REFUSAL, { propertyId: id }, "FAIR_HOUSING");
+        nextFacts = i.topic === "other" ? [...facts, ...kept.filter((line) => !facts.includes(line))] : [...facts.filter((fact) => !isTopicFact(i.topic, fact)), factFor(i.topic, kept[0]!)];
+        message = refused.length ? `Saved the rest. ${FAIR_HOUSING_FACT_REFUSAL}` : "Saved.";
+      }
+      const next = { ...draft, property: { ...draft.property, facts: nextFacts, factsAsked: i.remove ? draft.property.factsAsked : asked([i.topic]) } };
+      ctx.services.workspace.persistEdit(next, ctx.now());
+      const upNext = nextFactTopic(next.property);
+      return envelope(ctx, id, "done", message, {
+        propertyId: id,
+        facts: nextFacts,
+        ...(refused.length ? { refused } : {}),
+        ...(upNext ? { nextQuestion: FACT_QUESTIONS[upNext] } : { nextQuestion: null }),
+      });
+    },
+  }),
+  tool({
     name: "save_settings",
     title: "Save optional settings",
     kind: "change",
@@ -548,6 +599,8 @@ export const MILESTONE_TOOLS: OperatorTool[] = [
       }
       if (i.connectAlerts) {
         if (!inst) return envelope(ctx, opened?.id, "blocked", TOUR_UPDATES_NOT_HERE, {}, "INSTALLATION_UNAVAILABLE");
+        // On the shared service there's no setup page on this computer: the service connects updates itself.
+        if (isTenantWorker(inst.deploymentMode())) return envelope(ctx, opened?.id, "next", ALERTS_ON_SHARED_SERVICE, { tool: "save_alert_routine" });
         return envelope(ctx, opened?.id, "next", "Want me to tell you when someone books, starts, or finishes a tour, and when something needs you?", {
           secureSetup: secureSetupLink(inst, ctx.localUrl?.(), "operator-alerts"),
         });

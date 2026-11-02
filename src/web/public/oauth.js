@@ -9,6 +9,8 @@ const deny = document.getElementById("oauth-deny");
 const allow = document.getElementById("oauth-allow");
 // A multi-tenant Cleaner Core asks for the invite code from Saad.
 const invite = document.getElementById("oauth-invite");
+// The shared address's service pick, when the page offers one. None picked: the chat asks instead.
+const picked = () => document.querySelector('input[name="oauth-service"]:checked')?.value;
 const base = `/oauth/requests/${encodeURIComponent(status.dataset.request)}`;
 let finished = false;
 
@@ -47,7 +49,7 @@ if (allow) {
     const res = await fetch(`${base}/approve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ matchCode: allow.dataset.code || "", ...(invite ? { inviteCode: invite.value } : {}) }),
+      body: JSON.stringify({ matchCode: allow.dataset.code || "", ...(invite ? { inviteCode: invite.value } : {}), ...(picked() ? { service: picked() } : {}) }),
     }).catch(() => null);
     if (!res || !res.ok) {
       const said = invite && res ? await res.json().then((body) => body?.error?.message).catch(() => undefined) : undefined;

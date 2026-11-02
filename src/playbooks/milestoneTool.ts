@@ -26,6 +26,8 @@ export function milestoneToolFor(step: StepId): string {
       return "save_doors_and_routes";
     case "hours":
       return "save_hours";
+    case "facts":
+      return "save_facts";
     case "alerts":
       return "save_settings";
     case "readiness":

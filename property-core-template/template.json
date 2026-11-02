@@ -5,6 +5,7 @@
   "profile": "bot-profile.md",
   "setupPrompt": "SETUP_PROMPT.md",
   "readme": "README.md",
+  "templateLink": "https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ",
   "hostedPropertyCoreUrl": "https://tourcore-production-8b80.up.railway.app",
   "repository": {
     "url": "https://github.com/saadvz/TourCore",

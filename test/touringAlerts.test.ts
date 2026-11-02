@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { renderPlaybook } from "../src/playbooks/compose";
+import { sharedPlatformOf, touringRoutineSetup, type SharedPlatform } from "../src/playbooks/sharedAlerts";
 import { PropertyWorkspace, runReadinessCheck } from "../src/setup";
 import { resetAdminSessions } from "../src/cleaner-core/hosted/admin";
 import { closeHostedApps } from "./cleanerOauthHarness";
@@ -114,6 +115,41 @@ describe("touring alerts", () => {
     expect(renderPlaybook({ name: "Grok" }, "alerts").text).toContain("operator-alerts secure input");
   });
 
+  it("words touring's alerts step for each chat on the shared service, always ending with the texts question", () => {
+    const step = (name: string, platform: SharedPlatform) => renderPlaybook({ name }, "alerts", undefined, { sharedService: true, platform }).text;
+    const claude = step("Claude", "claude");
+    expect(claude).toContain("API trigger");
+    expect(claude).toContain("private page");
+    expect(claude).not.toContain("cloud computer");
+    const chatgpt = step("ChatGPT", "chatgpt");
+    expect(chatgpt).toContain("save_alert_routine with no arguments");
+    expect(chatgpt).toContain("once an hour");
+    expect(step("Muse", "muse")).toContain("save_alert_routine with no arguments");
+    expect(step("Grok", "grok")).toContain("Never send that link to the landlord");
+    for (const platform of ["grok", "claude", "chatgpt", "muse"] as const) {
+      expect(step("x", platform), platform).toContain("Want tour updates texted to your phone too?");
+    }
+  });
+
+  it("keeps Grok's setup instructions as they were, plus the texts question, with no yes-or-no framing", () => {
+    const grok = touringRoutineSetup("grok");
+    expect(grok).toContain("grok-template/routines/operator-updates.md");
+    expect(grok).not.toContain("If they say yes");
+    for (const platform of ["grok", "claude", "chatgpt", "muse"] as const) {
+      expect(touringRoutineSetup(platform), platform).toContain("Want tour updates texted to your phone too?");
+      expect(touringRoutineSetup(platform), platform).not.toContain("If they say");
+    }
+  });
+
+  it("knows each chat's platform from its name", () => {
+    expect(sharedPlatformOf({ name: "Grok" })).toBe("grok");
+    expect(sharedPlatformOf({ name: "cursor-vscode" })).toBe("grok");
+    expect(sharedPlatformOf({ name: "Claude" })).toBe("claude");
+    expect(sharedPlatformOf({ name: "ChatGPT" })).toBe("chatgpt");
+    expect(sharedPlatformOf({ name: "Muse" })).toBe("muse");
+    expect(sharedPlatformOf(undefined)).toBe("grok");
+  });
+
   it("wakes the Grok routine with a test event, carrying no phone numbers", SLOW, async () => {
     const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
     const { token } = await touringTenant(m, "Lane", LANE);
@@ -186,5 +222,68 @@ describe("touring alerts", () => {
     const grantId = m.registry.get(tenant.id)!.connections[0]!.grantId;
     await m.app.http(`/admin/tenants/${tenant.id}/disconnect`, { method: "POST", headers: { "content-type": form, cookie }, body: new URLSearchParams({ csrf, grantId }).toString() });
     expect((await m.toolAt("/mcp", other, "publish", { property: "Hillside" })).text).toContain("Connect the touring alert routine first.");
+  });
+
+  describe("on Claude", () => {
+    const FIRE = "https://api.anthropic.com/v1/claude_code/routines/r1/fire";
+    const TOKEN = "claude-token-0123456789";
+    const FORM = "application/x-www-form-urlencoded";
+
+    async function claudeLink(m: MultiTenantApp) {
+      const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+      const token = await m.joinAt(tenant.id, "claude", "/mcp");
+      await m.toolAt("/mcp", token, "choose_service", { service: "touring" });
+      const reply = await m.toolAt("/mcp", token, "save_alert_routine");
+      return new URL(String(reply.structured?.uploadUrl)).pathname;
+    }
+
+    it("tells Claude to send the host the link, never to collect the values itself", SLOW, async () => {
+      const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
+      const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+      const token = await m.joinAt(tenant.id, "claude", "/mcp");
+      await m.toolAt("/mcp", token, "choose_service", { service: "touring" });
+      const reply = (await m.toolAt("/mcp", token, "save_alert_routine")).structured!;
+      const next = String(reply.next);
+      expect(next).toContain("Send the host this link");
+      // Claude's own scheduled-task tool makes tasks that can't take an API trigger: the host makes this one.
+      expect(next).toContain("Don't create the task with your own scheduled-task tool");
+      expect(next).toContain("Set up manually");
+      expect(next).toContain("API");
+      expect(String(reply.taskPrompt)).toContain("call get_inbox");
+      expect(reply.taskName).toBe("Tour Core Updates");
+      expect(next).not.toContain("Never send uploadUrl");
+      expect(next).not.toContain("secure secret input");
+      expect(next).not.toContain("cloud computer");
+    });
+
+    it("shows a private form for the Fire URL and token, and saves them without showing them back", SLOW, async () => {
+      const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
+      const path = await claudeLink(m);
+      const page = await (await m.app.http(path)).text();
+      expect(page).toContain('name="url"');
+      expect(page).toContain('name="token"');
+      const saved = await m.app.http(path, { method: "POST", headers: { "content-type": FORM }, body: new URLSearchParams({ url: FIRE, token: TOKEN }).toString() });
+      expect(saved.status).toBe(200);
+      const html = await saved.text();
+      expect(html).toContain("Saved");
+      expect(html).not.toContain(TOKEN);
+      expect(html).not.toContain(FIRE);
+      await waitFor(() => m.wakes.length > 0);
+      expect(m.wakes[0]!.url).toBe(FIRE);
+    });
+
+    it("refuses a Fire URL that isn't Claude's, shows the form again without it, and saves nothing", SLOW, async () => {
+      const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
+      const path = await claudeLink(m);
+      const refused = await m.app.http(path, { method: "POST", headers: { "content-type": FORM }, body: new URLSearchParams({ url: "https://evil.example/fire", token: TOKEN }).toString() });
+      expect(refused.status).toBe(400);
+      const html = await refused.text();
+      expect(html).toContain('name="url"');
+      expect(html).not.toContain("evil.example");
+      expect(html).not.toContain(TOKEN);
+      // The link still works: nothing was saved.
+      const saved = await m.app.http(path, { method: "POST", headers: { "content-type": FORM }, body: new URLSearchParams({ url: FIRE, token: TOKEN }).toString() });
+      expect(saved.status).toBe(200);
+    });
   });
 });

@@ -14,6 +14,8 @@ export interface ApprovedFact {
   source: "operator";
   /** Set when the sentence was generated from a structured unit value (bedrooms, rent, ...), never invented. */
   profileField?: ProfileField;
+  /** Set on a built-in tour-logistics answer (tour length, ID): a full sentence read from settings, sent with this template. */
+  templateId?: "tour-length" | "tour-id-form" | "tour-id-none";
 }
 
 const STOPWORDS = new Set(
@@ -89,5 +91,5 @@ export function approvedFacts(config: TourCoreConfig, unitId?: string): Approved
 /** How an approved answer reads to the visitor: generated unit details are complete sentences on their own. */
 export function approvedAnswerText(facts: ApprovedFact[], team?: string): string {
   const text = facts.map((f) => f.text).join(" ");
-  return facts.every((f) => f.profileField) ? text : `Here's what the ${visitorTeamName(team)} shared: ${text}`;
+  return facts.every((f) => f.profileField || f.templateId) ? text : `Here's what the ${visitorTeamName(team)} shared: ${text}`;
 }

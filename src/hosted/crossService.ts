@@ -12,6 +12,7 @@ import { normalize } from "../intent/normalize";
 import { PropertyWorkspace } from "../setup/workspace";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { touringSinkFor } from "./touringAlerts";
+import { readHostTexts, textHost, writeHostTexts } from "./hostTexts";
 
 /**
  * Rules that hold for a number whatever service it runs. A phone that texted STOP stays opted out of
@@ -141,13 +142,20 @@ export async function screenText(h: HostedCleaner, tenant: Tenant, fields: Recor
   // HELP and anything that sounds like an injury always reach the service, whoever sends them:
   // each service answers those itself, including the 911 path.
   if (keywordOf(body) === "help" || isInjuryReport(body) || isMedicalEmergency(body)) return "route";
+  // The touring host's own phone is never a visitor. STOP and START from it switch host texts.
+  const host = active === "touring" && readHostTexts(h, tenant.id).phone === from;
   if (isStopText(body)) {
     optOuts.stop(tenant.id, from);
-    return "route";
+    return host ? "drop" : "route";
   }
   if (isStartText(body)) {
     optOuts.start(tenant.id, from);
-    return "route";
+    return host ? "drop" : "route";
+  }
+  if (host) {
+    // A host phone that texted STOP gets nothing back, not even this one reply.
+    if (!optOuts.stopped(tenant.id, from)) await replyToHost(h, tenant, from);
+    return "drop";
   }
   if (optOuts.stopped(tenant.id, from)) {
     h.log(`A text reached ${tenant.id} from a phone that opted out. Nothing was sent.`);
@@ -159,6 +167,16 @@ export async function screenText(h: HostedCleaner, tenant: Tenant, fields: Recor
   h.log(`A text reached ${tenant.id} from someone in its ${inactive} setup. Nothing was sent.`);
   await tellHost(h, tenant, inactive, active, from);
   return "drop";
+}
+
+const HOST_REPLY = "This is your Tour Core number. Open your chat to manage tours.";
+
+/** The one reply a host gets for texting their own number, until they save a new phone. */
+async function replyToHost(h: HostedCleaner, tenant: Tenant, phone: string): Promise<void> {
+  const texts = readHostTexts(h, tenant.id);
+  if (texts.repliedAt) return;
+  writeHostTexts(h, tenant.id, { ...texts, repliedAt: h.now().toISOString() });
+  await textHost(h, tenant, phone, HOST_REPLY);
 }
 
 /** One note per phone for each time the number's service was set. */

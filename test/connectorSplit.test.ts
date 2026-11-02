@@ -82,7 +82,7 @@ function resultOf(json: unknown): Record<string, unknown> {
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 describe("landlord, ops, and QA connector split", () => {
-  it("gate 1: flag off, landlord /mcp lists the 21 tools and refuses an ops or QA tool by name", async () => {
+  it("gate 1: flag off, landlord /mcp lists the 22 tools and refuses an ops or QA tool by name", async () => {
     const root = mkdtempSync(join(tmpdir(), "tourcore-gate1-"));
     cleanups.push(() => rmSync(root, { recursive: true, force: true }));
     const server = createSetupServer({
@@ -253,7 +253,7 @@ describe("landlord, ops, and QA connector split", () => {
     expect(inst.records.provider()).not.toBe("LOCAL_DEMO");
   });
 
-  it("gate 6: flag off, a fresh landlord reaches publish on the 21 tools, the Drive line shows, and records stay local", async () => {
+  it("gate 6: flag off, a fresh landlord reaches publish on the 22 tools, the Drive line shows, and records stay local", async () => {
     // Which tools those docs may name is checked in landlordFacingTools.test.ts.
     const skill = read(".grok/skills/install-tour-core/SKILL.md");
     expect(skill).toContain(DRIVE_APPROVAL_LINE);

@@ -26,6 +26,40 @@ export class LayeredIntentInterpreter implements IntentInterpreter {
     return this.semantic ? `rules + ${this.semantic.description}` : "rules";
   }
 
+  /** Only with a model: the semantic interpreter's fact pick. Undefined (none) on any failure. */
+  async pickFact(question: string, facts: string[], options: { name?: string } = {}): Promise<number | undefined> {
+    if (!this.semantic?.pickFact) return undefined;
+    try {
+      return await this.semantic.pickFact(question, facts, options);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Only with a model. The rules file any question-shaped text they don't recognize as a property
+   * question. When nothing on file answers it, this asks the model whether it is really tour logistics
+   * (moving the tour, open times, their booking, directions). Anything else, or any failure, is
+   * undefined, and the text stays a property question.
+   */
+  async reclassify(ctx: InterpretContext): Promise<IntentInterpretation | undefined> {
+    if (!this.semantic) return undefined;
+    let out: IntentInterpretation;
+    try {
+      out = await this.semantic.interpret(ctx);
+    } catch (err) {
+      this.log?.(`Couldn't reach the language model, so the built-in rules handled a text (${err instanceof Error ? err.message : "unknown error"}).`);
+      return undefined;
+    }
+    if (!isConfident(out)) return undefined;
+    const type = out.intent.type;
+    if (type === "RESCHEDULE_TOUR") return ctx.hasCancelableTour && !ctx.hasRunningTour ? out : undefined;
+    if (type === "ASK_DIRECTIONS") return ctx.hasRunningTour ? undefined : out;
+    if (type === "ASK_OPEN_TIMES") return ctx.hasRunningTour || ctx.step === "choose-date" || ctx.step === "choose-time" ? undefined : out;
+    if (type === "ASK_MY_TOUR") return out;
+    return undefined;
+  }
+
   get hasSemantic(): boolean {
     return !!this.semantic;
   }

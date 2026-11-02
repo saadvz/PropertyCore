@@ -2,7 +2,7 @@
 name: install-tour-core
 description: Connect an operator to Tour Core and take them from a blank setup to a published property by following Tour Core's own next steps, asking only for approvals, logins, credentials through a secure handoff, property information and decisions.
 when-to-use: "set up Tour Core", "install Tour Core", "what's left to set up", "check my Tour Core installation", "is Tour Core running", "restart Tour Core", "test alerts", "connect texting", "turn on alerts", "tour updates", "change my notifications", "reset Tour Core", "fresh demo", "fresh onboarding test"
-allowed-tools: get_state set_up_texting save_property save_units save_doors_and_routes save_hours save_settings run_checks publish backup_records restore_records reset_hosted_demo get_inbox remove_property pause_tours get_tours schedule_tour cancel_tour hold_tour reply_to_time_request resolve_issue export_records
+allowed-tools: get_state set_up_texting save_property save_units save_doors_and_routes save_hours save_facts save_settings run_checks publish backup_records restore_records reset_hosted_demo get_inbox remove_property pause_tours get_tours schedule_tour cancel_tour hold_tour reply_to_time_request resolve_issue export_records
 argument-hint: "[what to check or connect]"
 user-invocable: true
 metadata:
@@ -292,7 +292,10 @@ building-door control for an apartment or condo), each unit's bedrooms,
 bathrooms, rent and availability, "Which door do visitors come in through?"
 when they control a building entrance, "When can people tour?", "How
 carefully do you want to verify visitors?", then Tour Core's optional question
-about a visitor help number (they can skip it). Never show field names and never
+about a visitor help number (they can skip it), then the property facts
+questions Tour Core returns one at a time (how to apply, fees, lease, move-in,
+bringing someone, rules, the area, anything else). Save each answer word for
+word with `save_facts`; each can be skipped. Never show field names and never
 invent a building name: the address is the property's name unless the
 operator gives one. An apartment or condo is named as street plus unit.
 

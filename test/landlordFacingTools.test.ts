@@ -16,6 +16,7 @@ import { MCP_INSTRUCTIONS } from "../src/playbooks/instructions";
 import { milestoneToolFor } from "../src/playbooks/milestoneTool";
 import { SHARED_STEPS, type StepId } from "../src/playbooks/shared";
 import { PropertyWorkspace } from "../src/setup";
+import { FACT_QUESTIONS, FACT_TOPICS } from "../src/setup/factsSheet";
 import { BUILDING_ACCESS_QUESTION, BUILDING_ENTRANCE_QUESTION, ENTRY_INSTRUCTIONS_QUESTION } from "../src/setup/setupActions";
 import { VisitorDemoRegistry } from "../src/visitor";
 import { FileRuntimeStore } from "../src/storage/runtimeStore";
@@ -23,7 +24,7 @@ import { createSetupServer } from "../src/web/server";
 import { repoFilesUnder } from "./files";
 
 /**
- * Landlord-facing instructions may name only the 21 landlord tools, plus
+ * Landlord-facing instructions may name only the 22 landlord tools, plus
  * reset_hosted_demo. <!-- connector: qa-skill --> exempts only its section:
  * through <!-- /connector --> when that closer is present, otherwise until
  * the next h1 or h2. A marker inside the opening frontmatter exempts nothing.
@@ -411,6 +412,10 @@ describe("hosted setup-property dry walk", () => {
         if (/stuck visitors|touring hours/i.test(say)) return { name: tool, args: { ...property, skipVisitorHelp: true } };
         if (/time zone|switch to/i.test(say)) return { name: tool, args: { ...property, timezone: "no" } };
       }
+      if (tool === "save_facts") {
+        const topic = FACT_TOPICS.find((t) => FACT_QUESTIONS[t] === say);
+        if (topic) return { name: tool, args: { ...property, topic, skip: true } };
+      }
       throw new Error(`No landlord answer for ${tool}: ${say}`);
     };
 
@@ -490,6 +495,10 @@ describe("hosted setup-property dry walk", () => {
         if (say === ENTRY_INSTRUCTIONS_QUESTION) return { name: tool, args: { ...property, skipEntryInstructions: true } };
         if (/stuck visitors|touring hours/i.test(say)) return { name: tool, args: { ...property, skipVisitorHelp: true } };
         if (/time zone|switch to/i.test(say)) return { name: tool, args: { ...property, timezone: "no" } };
+      }
+      if (tool === "save_facts") {
+        const topic = FACT_TOPICS.find((t) => FACT_QUESTIONS[t] === say);
+        if (topic) return { name: tool, args: { ...property, topic, skip: true } };
       }
       throw new Error(`No landlord answer for ${tool}: ${say}`);
     };

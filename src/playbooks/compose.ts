@@ -1,9 +1,10 @@
 import { BASELINE_FLAGGED, BASELINE_KEYS, BASELINE_TOOLS } from "./baseline";
 import { CHATGPT_FLAGGED, CHATGPT_KEYS, CHATGPT_TOOLS } from "./chatgpt";
 import { CLAUDE_FLAGGED, CLAUDE_FULL, CLAUDE_KEYS, CLAUDE_TOOLS } from "./claude";
-import { GROK_ALERTS, GROK_ALERTS_SAY, GROK_ALERTS_SHARED, GROK_BACKUPS_FULL, GROK_BACKUPS_TOOLS, GROK_FLAGGED, GROK_FULL, GROK_KEYS_FULL, GROK_KEYS_TOOLS, GROK_TOOLS, GROK_WAKE } from "./grok";
+import { GROK_ALERTS, GROK_ALERTS_SAY, GROK_BACKUPS_FULL, GROK_BACKUPS_TOOLS, GROK_FLAGGED, GROK_FULL, GROK_KEYS_FULL, GROK_KEYS_TOOLS, GROK_TOOLS, GROK_WAKE } from "./grok";
 import { selectPlaybook, type PlaybookSelection, type ReportedClient } from "./select";
 import { milestoneToolFor } from "./milestoneTool";
+import { sharedAlertsStep, type SharedPlatform } from "./sharedAlerts";
 import { RECONNECT_INSTRUCTIONS, SHARED_AFTER_PUBLISH, SHARED_FLAGGED_RULES, SHARED_IRREVERSIBLE, SHARED_STEPS, SHARED_VOICE, STEP_TITLES, stepAside, type StepId } from "./shared";
 
 export interface PlaybookText {
@@ -24,6 +25,8 @@ function profileIntro(selection: PlaybookSelection): string {
 /** Where the playbook is read. A touring host on the shared service connects tour updates through it. */
 export interface PlaybookPlace {
   sharedService?: boolean;
+  /** The chat on the shared service. Grok when unset. */
+  platform?: SharedPlatform;
 }
 
 function profileStep(selection: PlaybookSelection, step: StepId, place: PlaybookPlace): string | undefined {
@@ -38,7 +41,9 @@ function profileStep(selection: PlaybookSelection, step: StepId, place: Playbook
   }
   if (step === "alerts-error") return RECONNECT_INSTRUCTIONS;
   if (step === "backups" && selection.id === "grok") return selection.mode === "full" ? GROK_BACKUPS_FULL : GROK_BACKUPS_TOOLS;
-  if (step === "alerts" && selection.id === "grok") return place.sharedService ? GROK_ALERTS_SHARED : GROK_ALERTS;
+  // On the shared service every chat connects tour updates through it, each its own way.
+  if (step === "alerts" && place.sharedService) return sharedAlertsStep(place.platform ?? "grok");
+  if (step === "alerts" && selection.id === "grok") return GROK_ALERTS;
   return undefined;
 }
 

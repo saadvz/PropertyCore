@@ -159,6 +159,13 @@ describe("TENANT_WORKER mode", () => {
     expect((state as unknown as { texting: { number?: string } }).texting.number).toBe("+15555550150");
   });
 
+  it("points save_settings' connect-alerts step at save_alert_routine, never at a setup page on this computer", async () => {
+    const w = await worker({ TOURCORE_MESSAGING_PROVIDER: "twilio" });
+    const reply = JSON.stringify(await w.tool("save_settings", { connectAlerts: true }));
+    expect(reply).toContain("save_alert_routine");
+    expect(reply).not.toMatch(/localhost|\/install|secureSetup/);
+  });
+
   it("says the host's number isn't ready when the service gave it none", async () => {
     const w = await worker({ TOURCORE_TWILIO_PHONE_NUMBER: "" });
     const state = await w.state();

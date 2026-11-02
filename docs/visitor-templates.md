@@ -4,7 +4,7 @@ Every outbound visitor text uses one of these ids. `{slot}` is filled before sen
 
 Text from the landlord or from a model reaches a visitor only as `approved-answer` or `approved-answer-closing`, and only after they approve a flagged question (`resolve_issue`). A no-draft flag never gets a draft. `approved-profile-fact` repeats a fact they already saved.
 
-204 message templates. 7 channel prompts.
+217 message templates. 7 channel prompts.
 
 ## Messages
 
@@ -74,6 +74,88 @@ I can't open photos yet. I'll pass your question to the {team}, and they'll repl
 This tour has ended. Text HI any time to start a new one.
 ```
 
+### open-times
+
+{times} is one line per day: the day, then its open times. Never the unit's move-in availability.
+
+```
+Here are the open tour times:
+{times}
+```
+
+### open-times-booked
+
+A booked visitor asked. Their booking is not changed.
+
+```
+Here are the open tour times:
+{times}
+Your tour stays as it is. To move it, say which day and time you'd like.
+```
+
+### open-times-other-day
+
+The named weekday has no open times.
+
+```
+Nothing is open {day}. Here are the next open times:
+{times}
+```
+
+### open-times-none
+
+```
+Nothing is open for tours right now.
+```
+
+### reschedule-offer
+
+A booked visitor asked to move their tour. {options} is numbered lines like "1) Tuesday, Sep 29 at 2:00 PM".
+
+```
+Here are the open times:
+{options}
+Reply with the number of the time you'd like. Your tour stays as it is until you pick.
+```
+
+### reschedule-none
+
+```
+Nothing else is open right now, so your tour stays as it is.
+```
+
+### my-tour
+
+A booked visitor asked when their tour is.
+
+```
+Your tour is at {time} on {day}.
+Doors will work for you from {start} to {end}.
+The address is {address}.
+```
+
+### no-tour-booked
+
+```
+You don't have a tour booked yet.
+```
+
+### property-address
+
+```
+The address is {address}.
+```
+
+### reschedule-taken
+
+The picked time was booked by someone else first. The visitor's tour is unchanged.
+
+```
+That time was just taken. Here are the open times now:
+{options}
+Reply with the number of the time you'd like.
+```
+
 ### storage-unavailable
 
 ```
@@ -84,6 +166,30 @@ I can't check that right now. Please try again in a little while.
 
 ```
 Here's what the {team} shared: {fact}
+```
+
+### tour-length
+
+From the tour length set at setup.
+
+```
+Tours are about {minutes} minutes.{again?}
+```
+
+### tour-id-form
+
+ID question, identity form on.
+
+```
+You'll fill out a short form with your name, email, and phone before your tour. No ID is needed at the door.{again?}
+```
+
+### tour-id-none
+
+ID question, no identity form.
+
+```
+No ID or form is needed for this tour.{again?}
 ```
 
 ### approved-profile-fact

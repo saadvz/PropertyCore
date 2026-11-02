@@ -7,6 +7,7 @@ import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
 import { OPERATOR_TOOL_NAMES } from "../operator/tools";
 import { ServiceNotices } from "./crossService";
 import { FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsFor, UNSET_INSTRUCTIONS, wrongServiceLine, type FrontReply, type ToolState } from "./serviceTools";
+import { taskWarning } from "./touringAlerts";
 import { callWorkerMcp, forwardMcp, type WorkerTarget } from "./touringForward";
 
 /**
@@ -127,20 +128,31 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
   if (state === "touring" && message?.method === "tools/call" && message.id !== undefined && message.params?.name === "get_state") {
     const answer = await touringCall(h, tenant.id, caller, raw, r);
     if (!answer) return r.send(503, JSON_TYPE, JSON.stringify({ error: { message: TOURING_DOWN } }));
-    return r.send(answer.status, JSON_TYPE, withNotices(answer.body, new ServiceNotices(h.dataRoot).take(tenant.id)));
+    const warn = (state: Record<string, unknown>) => taskWarning(h, tenant, isPublished(state));
+    return r.send(answer.status, JSON_TYPE, withNotices(answer.body, new ServiceNotices(h.dataRoot).take(tenant.id), warn));
   }
   if (state === "touring") return touringPass(h, r, tenant, caller, raw, message?.method === "initialize");
   return cleaningPass(h, r, tenant, caller, raw);
 }
 
-/** Adds the notes to a tools/call reply's structured content and its JSON text. Unchanged when there are none. */
-function withNotices(body: string, notices: string[]): string {
-  if (notices.length === 0) return body;
+/** True when touring's get_state says the publish milestone is done. */
+function isPublished(state: Record<string, unknown>): boolean {
+  const milestones = Array.isArray(state.milestones) ? (state.milestones as { id?: string; status?: string }[]) : [];
+  return milestones.some((m) => m.id === "publish" && m.status === "done");
+}
+
+/**
+ * Adds the notes, and a stopped-task warning when `warn` gives one, to a tools/call reply's
+ * structured content and its JSON text. Unchanged when there's nothing to add.
+ */
+function withNotices(body: string, notices: string[], warn?: (state: Record<string, unknown>) => string | undefined): string {
   try {
     const reply = JSON.parse(body) as { result?: { structuredContent?: Record<string, unknown>; content?: { type: string; text?: string }[] } };
     const result = reply.result;
     if (!result?.structuredContent) return body;
-    result.structuredContent = { ...result.structuredContent, serviceNotices: notices };
+    const warning = warn?.(result.structuredContent);
+    if (notices.length === 0 && !warning) return body;
+    result.structuredContent = { ...result.structuredContent, ...(notices.length > 0 ? { serviceNotices: notices } : {}), ...(warning ? { warning } : {}) };
     const first = result.content?.[0];
     if (first?.type === "text") first.text = JSON.stringify(result.structuredContent);
     return JSON.stringify(reply);
@@ -150,7 +162,18 @@ function withNotices(body: string, notices: string[]): string {
 }
 
 /** The touring process for this tenant, once it has seen this connection's initialize. */
+/** How long a call waits for a touring process that is still starting. */
+const STARTING_WAIT_MS = 30_000;
+
 async function touringTarget(h: HostedCleaner, tenantId: string, caller: TouringCaller, isInitialize = false): Promise<WorkerTarget | undefined> {
+  // A process still starting (the service was just picked, or it's restarting) is waited for, so a
+  // chat's first tool list is never empty: Claude and ChatGPT keep the list a chat started with.
+  if (!h.touring?.supervisor.target(tenantId)) {
+    const tenant = h.registry.get(tenantId);
+    if (h.touring && tenant?.service === "touring" && !tenant.disabled) {
+      await Promise.race([h.touring.start(tenant).catch(() => undefined), new Promise((resolve) => setTimeout(resolve, STARTING_WAIT_MS).unref())]);
+    }
+  }
   const target = h.touring?.supervisor.target(tenantId);
   if (!target) return undefined;
   const seen = `${target.key}|${caller.grantId}`;

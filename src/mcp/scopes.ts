@@ -8,13 +8,14 @@ import { OPERATOR_TOOLS, type OperatorTool } from "../operator/tools";
  */
 export type ConnectorScope = "landlord" | "ops" | "qa";
 
-/** The 19 core landlord tools, then the two backup tools. Order is the tools/list order. */
+/** The 20 core landlord tools, then the two backup tools. Order is the tools/list order. */
 export const LANDLORD_CORE_TOOLS = [
   "get_state",
   "save_property",
   "save_units",
   "save_doors_and_routes",
   "save_hours",
+  "save_facts",
   "save_settings",
   "set_up_texting",
   "run_checks",
@@ -57,7 +58,7 @@ export const OPS_TOOL_NAMES = [
 
 /**
  * Local and demo exercising, plus checks that stay on the QA connector.
- * The landlord connector keeps the 21 tools. Nine of these map to a landlord
+ * The landlord connector keeps the 22 tools. Nine of these map to a landlord
  * tool. test_operator_alerts, run_dry_tour, and get_installation_status stay
  * on QA. run_checks stops when the connection isn't ready, so it cannot stand
  * in for those two, and get_state is not the installation status tool.
