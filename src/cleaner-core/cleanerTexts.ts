@@ -104,6 +104,12 @@ export function checklistBody(name: string, items: readonly string[]): string {
 
 export const PHOTO_FIRST = "Please send a photo of the finished rooms, then reply DONE.";
 
+/** DONE's question when the cleaner was sent a checklist. The job is done only after YES. */
+export const CHECKLIST_ASK = "Before I mark it done: is everything on the checklist I sent finished? Reply YES or NO.";
+
+/** The reply to NO: the cleaning stays open. */
+export const CHECKLIST_NOT_DONE = "No problem. Finish up and reply DONE when everything's done.";
+
 export function reminderBody(address: string, when: { day: string; time: string }, privateTurn: boolean): string {
   return privateTurn
     ? `Reminder: cleaning at ${address} is ${when.day} at ${when.time}.`

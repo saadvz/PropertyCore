@@ -1578,6 +1578,7 @@ export class LiveDesk {
       arrivalTime: job.arrivalTime ?? null,
       startedAt: local(job.startedAt),
       doneAt: local(job.doneAt),
+      ...(job.checklistConfirmedAt ? { checklistConfirmed: local(job.checklistConfirmedAt) } : {}),
       checklist: job.checklist ?? [],
       photos: job.photos ?? 0,
       // Photos that came in but couldn't be downloaded, so get_job_photos can't show them.
