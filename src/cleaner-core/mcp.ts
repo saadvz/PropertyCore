@@ -113,6 +113,20 @@ const TOOLS = [
     input: z.object({ on: z.boolean().optional(), rate: z.number().optional(), venmo: z.string().optional(), confirmation: z.string().optional() }),
   },
   {
+    name: "mark_paid",
+    title: "Mark a cleaning paid",
+    description:
+      "Records that the host paid the cleaner for one cleaning. job is its checkout date, like 2026-10-30. Call it only after the host says in chat that they paid; a scheduled run is never their yes. how is venmo or other. It never sends money.",
+    input: z.object({ job: z.string(), how: z.enum(["venmo", "other"]), confirmed: z.boolean() }),
+  },
+  {
+    name: "get_pay_link",
+    title: "Get a pay link",
+    description:
+      "Gives a new Venmo link for an unpaid cleaning, optionally with a different amount in dollars for that cleaning only. job is its checkout date. Post the link exactly as returned.",
+    input: z.object({ job: z.string(), amount: z.number().optional() }),
+  },
+  {
     name: "activate",
     title: "Activate",
     description:
@@ -411,6 +425,10 @@ async function callTool(desk: LiveDesk, name: ToolName, args: object, pinKey: Bu
       return desk.savePreferences(args as Parameters<LiveDesk["savePreferences"]>[0], pinKey);
     case "save_payments":
       return desk.savePayments(args as Parameters<LiveDesk["savePayments"]>[0]);
+    case "mark_paid":
+      return desk.markPaid(args as Parameters<LiveDesk["markPaid"]>[0]);
+    case "get_pay_link":
+      return desk.getPayLink(args as Parameters<LiveDesk["getPayLink"]>[0]);
     case "activate":
       return desk.activate(args as { googleEvents?: GoogleEventList });
     case "set_up_texting":

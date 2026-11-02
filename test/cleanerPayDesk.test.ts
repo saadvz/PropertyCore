@@ -14,6 +14,7 @@ const ROUTINE = { url: "https://routine.example/hook", token: "k-test-routine-ke
 const USERNAME = "scratch-cleaner";
 const STALE = "That approval has expired or doesn't match. Ask the host again.";
 const RATE_HELP = "Tell me the pay per cleaning, from $1 to $1,000.";
+const CODE_IN_USERNAME = "That username has the door code in it, so I can't save it. Ask the host to pay the cleaner in Venmo themselves.";
 const VENMO_HELP = "Tell me the cleaner's Venmo username, like @maria-cleans. A phone number or email won't work.";
 
 const roots: string[] = [];
@@ -189,3 +190,143 @@ describe("Payments setup step", () => {
   });
 });
 
+
+const LINK = `https://venmo.com/${USERNAME}?txn=pay&amount=85.00&audience=private&note=Lake+House+cleaning+Oct+18`;
+
+interface PayDue {
+  job: string;
+  cleaner: string;
+  amount: string;
+  link?: string;
+  payInVenmo?: true;
+  reminder: number;
+}
+
+/** A live setup that pays $85 to scratch-cleaner, with the cleaner's DONE taken on Wed Oct 14 at 11:00 AM. */
+async function paidCleaning(options: { payments?: "before" | "none"; venmo?: string; root?: string; newCode?: string } = {}) {
+  const time = testClock(FROZEN);
+  const opened = openDesk(time.now, options.root);
+  const { desk } = opened;
+  await throughPreferences(desk);
+  if (options.payments === "none") ok(await desk.savePayments({ on: false }));
+  else await approvePayments(desk, 85, options.venmo ?? USERNAME);
+  await goLive(desk);
+  if (options.newCode) ok(await desk.saveDoorCode({ code: options.newCode, lockLocation: LOCK }, PIN_KEY));
+  ok(await desk.markGuestsLeft({ confirmed: true }, PIN_KEY));
+  await desk.inbound({ id: "done", from: CLEANER, text: "DONE" });
+  return { ...opened, time };
+}
+
+async function payDueAt(desk: LiveDesk, time: ReturnType<typeof testClock>, iso: string): Promise<PayDue[] | undefined> {
+  time.set(iso);
+  return ok(await desk.checkNow()).payDue as PayDue[] | undefined;
+}
+
+describe("Owed cleanings and payDue", () => {
+  it("returns the pay link with the finished cleaning, once", async () => {
+    const { desk, time } = await paidCleaning();
+    const first = ok(await desk.checkNow());
+    expect(first.completed).toBeDefined();
+    expect(first.payDue).toEqual([{ job: "2026-10-18", cleaner: "Ana", amount: "$85.00", link: LINK, reminder: 0 }]);
+    expect(JSON.stringify(first.payDue).includes("Practice Lane")).toBe(false);
+    expect(await payDueAt(desk, time, "2026-10-14T22:00:00.000Z")).toBeUndefined();
+    expect(await doneLines(desk)).toContain("1 cleaning unpaid ($85.00).");
+  });
+
+  it("reminds at 9:00 the next three mornings, then stops but stays unpaid", async () => {
+    const { desk, time } = await paidCleaning();
+    ok(await desk.checkNow());
+    expect(await payDueAt(desk, time, "2026-10-15T12:59:00.000Z")).toBeUndefined();
+    expect((await payDueAt(desk, time, "2026-10-15T13:00:00.000Z"))?.map((item) => item.reminder)).toEqual([1]);
+    expect(await payDueAt(desk, time, "2026-10-15T20:00:00.000Z")).toBeUndefined();
+    expect((await payDueAt(desk, time, "2026-10-16T13:05:00.000Z"))?.map((item) => item.reminder)).toEqual([2]);
+    expect((await payDueAt(desk, time, "2026-10-17T13:05:00.000Z"))?.map((item) => item.reminder)).toEqual([3]);
+    expect(await payDueAt(desk, time, "2026-10-18T13:05:00.000Z")).toBeUndefined();
+    expect(await doneLines(desk)).toContain("1 cleaning unpaid ($85.00).");
+  });
+
+  it("marks paid only with confirmed true, once, and stops the reminders", async () => {
+    const { desk, time, root } = await paidCleaning();
+    ok(await desk.checkNow());
+    expect(refused(await desk.markPaid({ job: "2026-10-18", how: "venmo" }))).toBe("Ask the host first. Call mark_paid with confirmed true only after they say it's paid.");
+    expect(ok(await desk.markPaid({ job: "2026-10-18", how: "other", confirmed: true })).next).toBe("Marked Ana's Oct 18 cleaning paid.");
+    expect(ok(await desk.markPaid({ job: "2026-10-18", how: "venmo", confirmed: true })).next).toBe("That cleaning is already marked paid.");
+    expect(await payDueAt(desk, time, "2026-10-15T13:00:00.000Z")).toBeUndefined();
+    expect((await doneLines(desk)).some((line) => line.includes("unpaid"))).toBe(false);
+    const saved = JSON.parse(readFileSync(join(root, "cleaner-live.json"), "utf8")) as { pay: Record<string, { how?: string; confirmedBy?: string }> };
+    expect(Object.values(saved.pay)).toEqual([expect.objectContaining({ how: "other", confirmedBy: "landlord" })]);
+    expect(refused(await desk.markPaid({ job: "2026-12-25", how: "venmo", confirmed: true }))).toBe("That cleaning isn't waiting on pay.");
+  });
+
+  it("gives a new link for a different amount, within bounds, for an unpaid cleaning only", async () => {
+    const { desk, time } = await paidCleaning();
+    ok(await desk.checkNow());
+    const more = ok(await desk.getPayLink({ job: "2026-10-18", amount: 105 }));
+    expect(more).toEqual({ job: "2026-10-18", amount: "$105.00", link: LINK.replace("amount=85.00", "amount=105.00") });
+    expect((await payDueAt(desk, time, "2026-10-15T13:00:00.000Z"))?.[0]?.amount).toBe("$105.00");
+    expect(refused(await desk.getPayLink({ job: "2026-10-18", amount: 1000.01 }))).toBe(RATE_HELP);
+    expect(refused(await desk.getPayLink({ job: "2026-12-25" }))).toBe("That cleaning isn't waiting on pay.");
+    ok(await desk.markPaid({ job: "2026-10-18", how: "venmo", confirmed: true }));
+    expect(refused(await desk.getPayLink({ job: "2026-10-18" }))).toBe("That cleaning isn't waiting on pay.");
+  });
+
+  it("keeps the owed amount when the rate changes", async () => {
+    const { desk, time } = await paidCleaning();
+    ok(await desk.checkNow());
+    await approvePayments(desk, 90);
+    expect((await payDueAt(desk, time, "2026-10-15T13:00:00.000Z"))?.[0]?.amount).toBe("$85.00");
+  });
+
+  it("never owes a cleaning finished before payments were turned on", async () => {
+    const { desk, time } = await paidCleaning({ payments: "none" });
+    time.set("2026-10-14T16:00:00.000Z");
+    await approvePayments(desk);
+    expect(ok(await desk.checkNow()).payDue).toBeUndefined();
+    await approvePayments(desk, 90);
+    expect(await payDueAt(desk, time, "2026-10-15T13:00:00.000Z")).toBeUndefined();
+  });
+
+  it("refuses to save a username that holds the door code", async () => {
+    const { desk } = openDesk(() => new Date(FROZEN));
+    await throughPreferences(desk);
+    expect(refused(await desk.savePayments({ on: true, rate: 85, venmo: `scratch-${DOOR_CODE}` }))).toBe(CODE_IN_USERNAME);
+  });
+
+  it("withholds a link that would hold a door code saved later, and the rest of check_now still answers", async () => {
+    const { desk } = await paidCleaning({ venmo: "scratch-4242", newCode: "4242" });
+    const reply = ok(await desk.checkNow());
+    expect(reply.completed).toBeDefined();
+    expect(reply.payDue).toEqual([{ job: "2026-10-18", cleaner: "Ana", amount: "$85.00", payInVenmo: true, reminder: 0 }]);
+  });
+
+  it("owes the cleaning once across restarts", async () => {
+    const { root, time } = await paidCleaning();
+    resetLiveDesks();
+    const second = openDesk(time.now, root).desk;
+    expect((ok(await second.checkNow()).payDue as PayDue[]).map((item) => item.reminder)).toEqual([0]);
+    resetLiveDesks();
+    const third = openDesk(time.now, root).desk;
+    expect(ok(await third.checkNow()).payDue).toBeUndefined();
+  });
+
+  it("sends no text on any payment path", async () => {
+    const { desk, sms, groups } = await paidCleaning();
+    const texts = sms.sent.length;
+    const posts = groups.posts.length;
+    ok(await desk.checkNow());
+    ok(await desk.getPayLink({ job: "2026-10-18", amount: 100 }));
+    ok(await desk.markPaid({ job: "2026-10-18", how: "venmo", confirmed: true }));
+    await approvePayments(desk, 95);
+    ok(await desk.savePayments({ on: false }));
+    expect(sms.sent).toHaveLength(texts);
+    expect(groups.posts).toHaveLength(posts);
+  });
+
+  it("keeps each property's payments in its own folder", async () => {
+    const lane = await paidCleaning();
+    ok(await lane.desk.checkNow());
+    const court = openDesk(lane.time.now).desk;
+    expect((await doneLines(court)).some((line) => line.startsWith("Payments") || line.includes("unpaid"))).toBe(false);
+    expect(readFileSync(join(lane.root, "cleaner-live.json"), "utf8")).toContain(USERNAME);
+  });
+});

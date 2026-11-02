@@ -138,6 +138,8 @@ describe("Scratch test tools", () => {
       "save_door_code",
       "save_preferences",
       "save_payments",
+      "mark_paid",
+      "get_pay_link",
       "activate",
       "set_up_texting",
       "get_turns",
