@@ -173,7 +173,7 @@ Here's what the {team} shared: {fact}
 From the tour length set at setup.
 
 ```
-Tours are about {minutes} minutes.
+Tours are about {minutes} minutes.{again?}
 ```
 
 ### tour-id-form
@@ -181,7 +181,7 @@ Tours are about {minutes} minutes.
 ID question, identity form on.
 
 ```
-You'll fill out a short form with your name, email, and phone before your tour. No ID is needed at the door.
+You'll fill out a short form with your name, email, and phone before your tour. No ID is needed at the door.{again?}
 ```
 
 ### tour-id-none
@@ -189,7 +189,7 @@ You'll fill out a short form with your name, email, and phone before your tour. 
 ID question, no identity form.
 
 ```
-No ID or form is needed for this tour.
+No ID or form is needed for this tour.{again?}
 ```
 
 ### approved-profile-fact

@@ -93,16 +93,21 @@ function withoutUnitNames(question: string, units: Pick<Unit, "name">[]): string
 }
 
 /** "How long does the tour take?" Needs a tour word, so "How long is the lease?" is not this. */
-const TOUR_LENGTH = /\bhow long\b[^?]*\b(?:tours?|showings?|visits?|viewings?)\b|\b(?:tours?|showings?|visits?|viewings?)\b[^?]*\bhow long\b|\bhow many minutes\b/;
-/** "Do I need ID?", "Should I bring my license?" */
-const ID_ASK = /\b(?:need|bring|required?|show|have)\b[^?]*\b(?:id|ids|identification|license|licence|passport)\b/;
+const TOUR_WORD = /\b(?:tours?|showings?|viewings?)\b/;
+const HOW_LONG = /\bhow (?:long|many minutes)\b/;
+/** "Do I need ID?", "Should I bring my license?" Not a license plate. */
+const ID_ASK = /\b(?:need|bring|required?|require)\b.*\b(?:id|ids|identification|license|licence|passport)\b(?!\s+plates?)/;
 
 /** Tour logistics read from settings: a full sentence, never a guess. */
 function logisticsAnswer(config: TourCoreConfig, asked: string): ApprovedFact | undefined {
-  const t = norm(asked).replace(/[^a-z0-9 ]+/g, " ");
+  // One sentence at a time, so "How long is the lease? ... the tour." isn't read as the tour's length.
+  const sentences = norm(asked)
+    .split(/[.?!]+/)
+    .map((s) => s.replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
   const base = { scope: "property" as const, subject: config.property.name, source: "operator" as const };
-  if (TOUR_LENGTH.test(t)) return { ...base, text: `Tours are about ${config.tourHours.tourLengthMinutes} minutes.`, templateId: "tour-length" };
-  if (ID_ASK.test(t)) {
+  if (sentences.some((s) => HOW_LONG.test(s) && TOUR_WORD.test(s))) return { ...base, text: `Tours are about ${config.tourHours.tourLengthMinutes} minutes.`, templateId: "tour-length" };
+  if (sentences.some((s) => ID_ASK.test(s))) {
     return config.verificationMode === "none"
       ? { ...base, text: "No ID or form is needed for this tour.", templateId: "tour-id-none" }
       : { ...base, text: "You'll fill out a short form with your name, email, and phone before your tour. No ID is needed at the door.", templateId: "tour-id-form" };

@@ -17,7 +17,7 @@ export function redactForModel(text: string, name?: string): string {
   const known = name?.trim();
   if (known && known.length > 1) {
     const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    out = out.replace(new RegExp(esc(known), "gi"), "[name]");
+    out = out.replace(new RegExp(`\\b${esc(known)}\\b`, "gi"), "[name]");
     for (const part of known.split(/\s+/).filter((p) => p.length > 2)) out = out.replace(new RegExp(`\\b${esc(part)}\\b`, "gi"), "[name]");
   }
   return out;

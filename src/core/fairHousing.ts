@@ -369,15 +369,29 @@ export function isFairHousingQuestion(text: string): boolean {
   return false;
 }
 
-/** "Ideal for a young professional", "perfect for a quiet guy": a preference about who, even with no group word. */
-const WHO_SUITS = /\b(?:ideal|perfect|great|best|suited|good)\s+for\s+(?:an?\s+)?(?:\w+\s+)?(?:man|men|woman|women|guys?|girls?|lad(?:y|ies)|gentlem[ae]n|students?|professionals?|person|people|tenants?|renters?)\b/;
+/** People words a landlord's fact can aim a preference at, beyond the question classifier's group words. */
+const STATEMENT_GROUP =
+  /\b(?:mature|young|older|old|bachelors?|bachelorettes?|english speakers?|native speakers?|citizens?|men|women|man|woman|males?|females?|guys?|girls?|lad(?:y|ies)|gentlem[ae]n|singles?|retired|retirees?)\b/;
+
+/** Wording that prefers, limits, or rules out who lives there. "welcome", "allowed", "accessible" are not this. */
+const PREFERENCE =
+  /\b(?:prefer(?:s|red)?|only|ideal|perfect|great|best|suited|suitable|must|restricted|limited|exclusively|seeking|looking for|no)\b/;
+
+/** A limit on its own: adults only, 55 and over, no Section 8 or vouchers. */
+const STANDALONE_LIMIT = /\badults only\b|\b55 and (?:over|older)\b|\bno (?:section 8|vouchers?|housing vouchers?)\b/;
 
 /**
- * A landlord's fact that states who should live there (families, age, faith, origin, disability,
- * sex, race, or similar wording like "no kids" or "ideal for a young professional"). Such a line is
- * never stored or sent. Uses the same checks as visitor questions, plus suitability-for-a-person phrasing.
+ * A landlord's fact that states a preference or limit about who should live there: family status, age,
+ * faith, origin, disability, sex, race, or similar ("no kids", "mature tenants preferred", "ideal for a
+ * young professional", "English speakers only"). Such a line is never stored or sent. Inclusive and
+ * accessibility facts ("kids are welcome on the tour", "wheelchair accessible", "we accept vouchers")
+ * stay allowed: they describe the place, not who may live there.
  */
 export function isFairHousingStatement(text: string): boolean {
-  if (isFairHousingQuestion(text)) return true;
-  return WHO_SUITS.test(norm(text));
+  if (FIFTY_FIVE_PLUS.test(text)) return true;
+  const t = norm(text);
+  if (!t) return false;
+  if (STANDALONE_LIMIT.test(t)) return true;
+  if (!PREFERENCE.test(t)) return false;
+  return unstoppedGroupWord(t, text) || STATEMENT_GROUP.test(t) || FAITH.test(t);
 }

@@ -187,6 +187,8 @@ export interface InterpretContext {
   hasCancelableTour?: boolean;
   /** On-site now: touring, operator hold, or door-system problem. */
   hasRunningTour?: boolean;
+  /** The visitor's known name, only so it can be removed before anything goes to a model. */
+  visitorName?: string;
 }
 
 export interface IntentInterpreter {

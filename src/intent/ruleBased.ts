@@ -527,7 +527,6 @@ function questionInsteadOfDayPick(raw: string, t: string, today?: InterpretConte
   return false;
 }
 
-/** A weekday plus availability language that the short day parser did not already accept. */
 /**
  * "What times do you have?", "any openings Tuesday?": the open tour times. Not a unit's availability to
  * move in, and not a change to a booked tour.
@@ -535,8 +534,11 @@ function questionInsteadOfDayPick(raw: string, t: string, today?: InterpretConte
 export function isOpenTimesAsk(text: string): boolean {
   const t = text.toLowerCase();
   if (/\b(move[- ]?in|lease|rent|change|move|reschedule|switch|push)\b/.test(t)) return false;
+  // Another place's hours ("what times is the gym open?") are a property question.
+  if (!/\b(tours?|showings?|viewings?)\b/.test(t) && /\b(gym|pool|laundry|trash|garbage|recycling|pickup|office|parking|quiet|mail|package|doorman|front desk)\b/.test(t)) return false;
   if (/\bany\s+(openings?|availability)\b/.test(t)) return true;
-  return /\b(times?|slots?|openings?)\b/.test(t) && /\b(what|which|any|available|open|free|have|got|left|other)\b/.test(t);
+  // Plural "times" or a slot word: a single "time" is the clock ("what time do I need to be out?").
+  return /\b(times|slots?|openings?)\b/.test(t) && /\b(what|which|any|available|open|free|have|got|other)\b/.test(t);
 }
 
 /**
@@ -546,7 +548,11 @@ export function isOpenTimesAsk(text: string): boolean {
 export function isRescheduleAsk(text: string): boolean {
   const t = text.toLowerCase();
   if (/\b\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)\b|\b\d{1,2}:\d{2}\b|\bnoon\b/.test(t)) return false;
-  if (/\b(change|move|reschedule|switch|push|bump)\b/.test(t) && /\b(time|tour|appointment|booking|it|day|date|showing)\b/.test(t)) return true;
+  // Moving in, the lease, rent, or a unit's availability are property questions, not the tour.
+  if (/\b(move[- ]?in|moving in|lease|rent|bedrooms?|available|availability|ready|price|deposit)\b/.test(t)) return false;
+  if (/\breschedule\b/.test(t)) return true;
+  // The verb right next to what moves: "change the time", "push it back", "move my tour".
+  if (/\b(change|move|switch|push|bump)\s+(?:(?:the|my|our|this|that)\s+)?(time|tour|appointment|booking|it|day|date|showing)\b/.test(t)) return true;
   if (/\b(different|another|other|new)\s+(time|day|date)\b/.test(t)) return true;
   return /\binstead\b/.test(t) && /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|day|time)\b/.test(t);
 }
@@ -715,7 +721,7 @@ function readByRules(ctx: InterpretContext): IntentInterpretation {
   if (!ctx.hasRunningTour && isDirectionsAsk(t)) return result({ type: "ASK_DIRECTIONS" }, 0.9);
   if (ctx.hasCancelableTour && isRescheduleAsk(t)) return result({ type: "RESCHEDULE_TOUR", ...openTimesDay(t) }, 0.9);
   // On the day and time menus the day-pick rules already list times; a general hours ask keeps the saved-hours reply.
-  if (ctx.step !== "choose-date" && ctx.step !== "choose-time" && !isGeneralTourHoursQuestion(raw) && isOpenTimesAsk(t)) {
+  if (!ctx.hasRunningTour && ctx.step !== "choose-date" && ctx.step !== "choose-time" && !isGeneralTourHoursQuestion(raw) && isOpenTimesAsk(t)) {
     return result({ type: "ASK_OPEN_TIMES", ...openTimesDay(t) }, 0.9);
   }
 

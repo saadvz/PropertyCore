@@ -217,7 +217,7 @@ export class LLMIntentInterpreter implements IntentInterpreter {
       remainingStops: ctx.remainingStops.map((s) => s.doorName),
       doors: ctx.doors.map((d) => d.doorName),
       ...(ctx.today ? { today: isoDate(ctx.today) } : {}),
-      message: redactForModel(ctx.message.slice(0, 500)),
+      message: redactForModel(ctx.message.slice(0, 500), ctx.visitorName),
     });
     const started = Date.now();
     let text = "";
