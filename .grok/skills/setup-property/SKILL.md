@@ -2,7 +2,7 @@
 name: setup-property
 description: Set up a self-guided touring property in Tour Core through a friendly, one-question-at-a-time conversation, then check it and run a practice tour before offering to publish. Use when the operator wants to add, set up, import or change a building.
 when-to-use: "set up a property", "set up my building", "add a property", "I have a new building", "change the tour hours", "add a unit"
-allowed-tools: get_state save_property save_units save_doors_and_routes save_hours save_settings set_up_texting run_checks publish remove_property pause_tours
+allowed-tools: get_state save_property save_units save_doors_and_routes save_hours save_facts save_settings set_up_texting run_checks publish remove_property pause_tours
 argument-hint: "[address]"
 user-invocable: true
 metadata:
@@ -13,7 +13,7 @@ metadata:
 
 # Setup Property
 
-Call only `get_state`, `save_property`, `save_units`, `save_doors_and_routes`, `save_hours`, `save_settings`, `set_up_texting`, `run_checks`, `publish`, `remove_property`, and `pause_tours`.
+Call only `get_state`, `save_property`, `save_units`, `save_doors_and_routes`, `save_hours`, `save_facts`, `save_settings`, `set_up_texting`, `run_checks`, `publish`, `remove_property`, and `pause_tours`.
 
 Tour Core is the system of record. Everything you learn goes into Tour Core
 through its tools the moment the operator says it; nothing about the property
@@ -55,6 +55,7 @@ one of these:
 | `save_units` | The places people tour, and their bedrooms, bathrooms, rent, and availability |
 | `save_doors_and_routes` | Entrances, hallway doors, and the walking route. `preview: true` shows the match and saves nothing |
 | `save_hours` | Tour days and hours |
+| `save_facts` | The property facts sheet: how to apply, fees, lease, move-in, bringing someone, rules, the area, anything else |
 | `save_settings` | The identity form, and tour updates |
 | `set_up_texting` | How people text about a tour, when texting is the step that is next |
 | `run_checks` | The readiness check and the practice tour |
@@ -223,6 +224,14 @@ one of these:
    units called? For example, Unit A and Unit B."** After doors and routes
    are saved, do not stay on that question. An address that is already set up
    is read back as the saved full address, not the raw characters just typed.
+
+   When `get_state` names `save_facts`, ask `nextStep.say` word for word, one
+   question at a time. Pass their answer as `text` with that question's
+   `topic` (`apply`, `fees`, `lease`, `move_in`, `guests`, `rules`, `area`,
+   `other`). If they skip, call `save_facts` with `skip: true`. Each answer is
+   saved word for word and told to visitors who ask. A line saying who should
+   live there is refused; say the refusal as returned. A published property
+   can add or change facts anytime with `save_facts`.
 
 12. When `get_state` names `save_settings`, ask **"Should visitors fill out a short identity form before their tour? I recommend it, so you know who's coming in."**
    Options: "Basic identity form (recommended)" and "No form". The basic form is the default.

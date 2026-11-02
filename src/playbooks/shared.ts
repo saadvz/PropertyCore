@@ -132,6 +132,11 @@ export const SHARED_STEPS = {
     done: "A number is saved, or they skipped it, and this step is no longer next.",
     ifItFails: `Tell them the number didn't save, and that they can skip it. You help. ${SETUP_HELP_ENDING}`,
   },
+  facts: {
+    ask: "How do people apply?",
+    done: "They answered or skipped each facts question, and each answer is saved word for word.",
+    ifItFails: `Tell them that answer didn't save, and that they can skip it. You help. ${SETUP_HELP_ENDING}`,
+  },
   alerts: {
     ask: "Want me to tell you when someone books, starts, or finishes a tour, and when something needs you?",
     done: "They said yes and a test note arrived, or they said no and that is saved.",
@@ -199,6 +204,7 @@ export const STEP_TITLES: Record<StepId, string> = {
   "units-route": "Units, doors, and routes",
   hours: "Hours",
   "hours-help": "Hours",
+  facts: "Property facts",
   alerts: "Tour updates",
   "alerts-degraded": "Tour updates",
   "alerts-error": "Tour updates",

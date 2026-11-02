@@ -626,7 +626,7 @@ describe("MCP bridge", () => {
     expect((await post("/mcp", rpc, { Authorization: "Bearer wrong" })).status).toBe(401);
     const good = await post("/mcp", rpc, { Authorization: `Bearer ${token}` });
     expect(good.status).toBe(200);
-    expect(((await good.json()) as { result: { tools: unknown[] } }).result.tools.length).toBe(21);
+    expect(((await good.json()) as { result: { tools: unknown[] } }).result.tools.length).toBe(22);
 
     // Through the public tunnel host: /mcp (with the token) yes, the browser operator API no.
     const viaTunnel = (path: string, headers: Record<string, string> = {}) =>

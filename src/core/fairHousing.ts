@@ -368,3 +368,16 @@ export function isFairHousingQuestion(text: string): boolean {
   if (personAge(t) || unstoppedGroupWord(t, text)) return true;
   return false;
 }
+
+/** "Ideal for a young professional", "perfect for a quiet guy": a preference about who, even with no group word. */
+const WHO_SUITS = /\b(?:ideal|perfect|great|best|suited|good)\s+for\s+(?:an?\s+)?(?:\w+\s+)?(?:man|men|woman|women|guys?|girls?|lad(?:y|ies)|gentlem[ae]n|students?|professionals?|person|people|tenants?|renters?)\b/;
+
+/**
+ * A landlord's fact that states who should live there (families, age, faith, origin, disability,
+ * sex, race, or similar wording like "no kids" or "ideal for a young professional"). Such a line is
+ * never stored or sent. Uses the same checks as visitor questions, plus suitability-for-a-person phrasing.
+ */
+export function isFairHousingStatement(text: string): boolean {
+  if (isFairHousingQuestion(text)) return true;
+  return WHO_SUITS.test(norm(text));
+}

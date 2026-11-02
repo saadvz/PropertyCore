@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { WEEKDAYS } from "../core/timezone";
+import { FACT_TOPICS } from "../setup/factsSheet";
 import { UnitProfileSchema } from "./unitProfile";
 import { semanticIssues, type ConfigIssue, type ConfigSection } from "./validateConfig";
 
@@ -161,6 +162,8 @@ export const PropertySchema = z.object({
     ])
     .optional(),
   facts: ApprovedFacts,
+  /** Facts-sheet topics the landlord answered or skipped during setup. Absent on older setups. */
+  factsAsked: z.array(z.enum(FACT_TOPICS)).optional(),
 });
 
 /** One set of days that share the same touring hours, like weekdays 9-5. */

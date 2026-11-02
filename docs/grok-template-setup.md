@@ -65,7 +65,7 @@ for a short-lived token (`/token`, PKCE S256). Through the tunnel address,
 and the page where you approve connections, answer only on this computer.
 
 `npm run grok:status` shows the mode, the URL and what's connected (never token
-values). `npm run grok:tools` lists the 21 landlord tools. The hosted owner
+values). `npm run grok:tools` lists the 22 landlord tools. The hosted owner
 also sees `reset_hosted_demo`. The ops connector lists its 13 tools and the
 QA connector lists its 15. Those connectors are separate from the landlord list.
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { isOpenTimesAsk } from "../src/intent/ruleBased";
 import type { TourCoreConfig } from "../src/config/tourCoreConfig";
+import { factFor } from "../src/setup/factsSheet";
 import { at, hillsideConfig, liveApp, type LiveApp } from "./liveApp";
 import { reachedLandlord } from "./visitorScenarioKit";
 
@@ -24,21 +25,37 @@ function addressed(): TourCoreConfig {
   return config;
 }
 
-async function ready(setup: Setup): Promise<LiveApp> {
-  const app = await liveApp({ cleanups, config: addressed() });
+/** What the landlord's facts-sheet answers store (save_facts), word for word. */
+const FACTS = {
+  apply: factFor("apply", "Apply online at apply.example.com."),
+  fees: factFor("fees", "$40 application fee and a $500 deposit."),
+  lease: factFor("lease", "12-month leases."),
+  guests: factFor("guests", "Yes, bring anyone you like on the tour."),
+};
+
+/** The addressed property with the facts sheet filled in. */
+function withFacts(): TourCoreConfig {
+  const config = addressed();
+  config.property = { ...config.property, facts: [...config.property.facts, ...Object.values(FACTS)] };
+  return config;
+}
+
+async function ready(setup: Setup, config = addressed()): Promise<LiveApp> {
+  const app = await liveApp({ cleanups, config });
   if (setup === "booked") await app.book();
   else await app.optInSms();
   return app;
 }
 
 /** Sends each text in turn, then checks the last reply and whether anything new reached the landlord. */
-async function scenario(setup: Setup, texts: string[], expectation: { reply?: RegExp; not?: RegExp; landlord: boolean }) {
-  const app = await ready(setup);
+async function scenario(setup: Setup, texts: string[], expectation: { reply?: RegExp | string; not?: RegExp; landlord: boolean }, config?: TourCoreConfig) {
+  const app = await ready(setup, config);
   const before = reachedLandlord(app).length;
   let replies: string[] = [];
   for (const text of texts) replies = await app.text(text);
   const reply = replies.join("\n");
-  if (expectation.reply) expect(reply).toMatch(expectation.reply);
+  if (typeof expectation.reply === "string") expect(reply).toContain(expectation.reply);
+  else if (expectation.reply) expect(reply).toMatch(expectation.reply);
   if (expectation.not) expect(reply).not.toMatch(expectation.not);
   expect(reachedLandlord(app).length > before, `reached the landlord: ${reply}`).toBe(expectation.landlord);
   return { app, reply };
@@ -67,6 +84,12 @@ describe("before booking", () => {
     await scenario("unbooked", ["Is there parking?"], { reply: /Street parking only/, landlord: false });
   });
 
+  it("5. answers apply, deposit, and lease questions from the facts sheet, word for word", SLOW, async () => {
+    await scenario("unbooked", ["How do I apply?"], { reply: FACTS.apply, landlord: false }, withFacts());
+    await scenario("unbooked", ["What's the deposit?"], { reply: FACTS.fees, landlord: false }, withFacts());
+    await scenario("unbooked", ["How long is the lease?"], { reply: FACTS.lease, landlord: false }, withFacts());
+  });
+
   it("6. gives the address and directions before booking", SLOW, async () => {
     await scenario("unbooked", ["Where is it?"], { reply: /100 Alfred Way[\s\S]*google\.com\/maps/, landlord: false });
     await scenario("unbooked", ["What's the address?"], { reply: /100 Alfred Way[\s\S]*google\.com\/maps/, landlord: false });
@@ -93,6 +116,8 @@ describe("booked", () => {
     await scenario("booked", ["Can we do Thursday instead?"], { reply: /Thursday/, landlord: false });
   });
 
+  it("11. answers bringing someone from the facts sheet", SLOW, () => scenario("booked", ["Can I bring someone?"], { reply: FACTS.guests, landlord: false }, withFacts()));
+
   it("10. confirms, then cancels", SLOW, () => scenario("booked", ["Cancel my tour"], { reply: /cancel/i, landlord: false }));
 });
 
@@ -106,6 +131,10 @@ describe("on the day and on tour", () => {
     expect(reply).toMatch(/open|unlock|entrance/i);
     expect(reachedLandlord(app)).toEqual([]);
   });
+});
+
+describe("after the tour", () => {
+  it("16. answers how to apply from the facts sheet", SLOW, () => scenario("booked", ["How do I apply?"], { reply: FACTS.apply, landlord: false }, withFacts()));
 });
 
 describe("always", () => {

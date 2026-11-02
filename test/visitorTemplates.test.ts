@@ -1,3 +1,4 @@
+import { FACT_TOPICS } from "../src/setup/factsSheet";
 import { readFileSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -617,8 +618,11 @@ describe("setup step guidance", () => {
     expect(hours.currentMilestone).toBe("hours");
     await h.ok("save_hours", { property: id, days: "weekdays", start: "9am", end: "5pm" });
     const afterHours = await h.ok("get_state", { propertyId: id });
-    expect(afterHours.currentMilestone).not.toBe("hours");
     expect(afterHours.nextStep.tool).not.toBe("save_hours");
+    // The facts sheet comes after hours, inside the same milestone. Skipping it moves setup on.
+    expect(afterHours.nextStep.tool).toBe("save_facts");
+    for (const topic of FACT_TOPICS) await h.ok("save_facts", { property: id, topic, skip: true });
+    expect((await h.ok("get_state", { propertyId: id })).currentMilestone).not.toBe("hours");
   });
 
   it("refuses a 5 minute tour length and 5 minute spacing without saving", async () => {

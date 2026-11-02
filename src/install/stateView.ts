@@ -4,6 +4,7 @@ import { UNSET_ZONE_LINE } from "../setup/storedTimeZone";
 import type { PropertyWorkspace } from "../setup/workspace";
 import { nextProfileQuestion } from "../config/unitProfile";
 import { hoursStepSay } from "../operator/milestones";
+import { FACT_QUESTIONS, nextFactTopic } from "../setup/factsSheet";
 import { addressConfirmQuestion, nextAddressPartQuestion } from "../setup/address";
 import { renderPlaybook, spokenAsk } from "../playbooks/compose";
 import { milestoneToolFor } from "../playbooks/milestoneTool";
@@ -65,6 +66,11 @@ interface Picture {
   routesOpen: boolean;
   condoAccessOpen: boolean;
   helpOpen: boolean;
+  hoursConfirmed: boolean;
+  /** A setup issue outside units and routes (verification, hours) that keeps the hours step open. */
+  otherIssues: boolean;
+  /** A facts-sheet question is still unasked, during setup only. Never blocks a published or checked property. */
+  factsOpen: boolean;
   hoursReady: boolean;
   readinessPassed: boolean;
   practicePassed: boolean;
@@ -84,6 +90,9 @@ function pictureOf(services: OperatorServices, id: string | undefined): Picture 
     routesOpen: false,
     condoAccessOpen: false,
     helpOpen: false,
+    hoursConfirmed: false,
+    otherIssues: false,
+    factsOpen: false,
     hoursReady: false,
     readinessPassed: false,
     practicePassed: false,
@@ -124,6 +133,7 @@ function pictureOf(services: OperatorServices, id: string | undefined): Picture 
   const practicePassed = !!saved && !!saved.state.dryTour?.passed && isCurrent(saved.state.dryTour, saved.state);
   const published = saved?.state.status === "PUBLISHED_FOR_DEMO";
   const hoursConfirmed = published || readinessPassed || practicePassed || services.workspace.hoursWereConfirmed(id);
+  const factsOpen = !published && !readinessPassed && !practicePassed && !!nextFactTopic(draft.property);
   return {
     id,
     draft,
@@ -134,7 +144,10 @@ function pictureOf(services: OperatorServices, id: string | undefined): Picture 
     routesOpen,
     condoAccessOpen,
     helpOpen,
-    hoursReady: unitsReady && !helpOpen && !otherIssues && hoursConfirmed,
+    hoursConfirmed,
+    otherIssues,
+    factsOpen,
+    hoursReady: unitsReady && !helpOpen && !otherIssues && hoursConfirmed && !factsOpen,
     readinessPassed,
     practicePassed,
     published,
@@ -178,6 +191,7 @@ function stepFor(action: string, picture: Picture): StepId {
       return "units-details";
     }
     if (picture.helpOpen) return "hours-help";
+    if (picture.hoursConfirmed && !picture.otherIssues && picture.factsOpen) return "facts";
     return "hours";
   }
   if (action === "OFFER_OPERATOR_ALERTS" || action === "CONNECT_OPERATOR_ALERTS" || action === "TEST_OPERATOR_ALERTS" || action === "FIX_OPERATOR_ALERTS") return "alerts";
@@ -201,7 +215,7 @@ function milestonesFor(status: InstallationStatus, picture: Picture) {
     "Backups aren't decided yet. Saving a copy or skipping both still count.",
     "The property isn't set up yet.",
     "Units, doors, and routes aren't finished.",
-    "Touring hours aren't confirmed yet.",
+    "Touring hours and property facts aren't finished yet.",
     "The practice tour hasn't passed.",
     "This place isn't published yet.",
   ];
@@ -325,6 +339,7 @@ function setupOf(services: OperatorServices, inst: Installation, picture: Pictur
     doors: view.doors.map((door) => ({ name: door.name, kind: door.kindLabel })),
     routes: view.units.filter((unit) => unit.route).map((unit) => ({ unit: operatorUnitName(draft.property, unit.name), doors: unit.route!.doorNames })),
     hours: view.tourHours.summary ?? view.tourHours.label,
+    facts: draft.property.facts,
     verification: view.reviewCards.find((card) => card.step === "verification")?.rows ?? [],
     texting: texting.label,
     alerts: alertsLine(status),
@@ -384,6 +399,10 @@ function sayFor(client: ReportedClient | undefined, step: StepId, draft: SetupDr
     if (detail) say = detail;
   }
   if (step === "hours" && draft) say = hoursStepSay(draft.tourHours);
+  if (step === "facts" && draft) {
+    const topic = nextFactTopic(draft.property);
+    if (topic) say = FACT_QUESTIONS[topic];
+  }
   if ((step === "property-address" || step === "property-confirm") && draft?.property.canonicalAddress) {
     const part = nextAddressPartQuestion(draft.property.canonicalAddress);
     if (part) say = part;
@@ -405,6 +424,14 @@ function publishedMissingZone(workspace: PropertyWorkspace, onlyId?: string): bo
     const saved = workspace.load(propertyId);
     return saved.state.status === "PUBLISHED_FOR_DEMO" && !saved.state.removedAt && !isValidTimeZone(saved.config.property.timezone);
   });
+}
+
+/** Optional steps that never block. The facts sheet is offered here once a property is checked or published. */
+function optionalActionsFor(picture: Picture): Array<{ tool: string; say: string }> {
+  if (!picture.draft || picture.factsOpen) return [];
+  const topic = nextFactTopic(picture.draft.property);
+  if (!topic || !(picture.published || picture.readinessPassed || picture.practicePassed)) return [];
+  return [{ tool: "save_facts", say: FACT_QUESTIONS[topic] }];
 }
 
 /** One read-only picture. Does not persist texting choices or probe the disk. */
@@ -462,6 +489,7 @@ export function readState(input: StateReadInput, propertyId?: string): Record<st
       doneLooksLike: copy.done,
     },
     playbook: { id: playbook.id, version: playbook.version, mode: playbook.mode, step: playbook.step, text: playbook.text },
+    optionalActions: optionalActionsFor(picture),
   };
 }
 
