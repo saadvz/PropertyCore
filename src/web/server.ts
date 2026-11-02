@@ -21,9 +21,8 @@ import { cleanerCoreEnabled, cleanerMultiTenant, tourCoreTenants } from "../clea
 import type { TouringFront } from "../hosted/serviceTools";
 import type { OperatorServices } from "../operator/services";
 import { DeliveryError } from "../alerts/operatorEvents";
-import { sendHostText } from "../hosted/hostTexts";
 import type { ServicePick } from "../hosted/serviceChoice";
-import { refreshTouringAlerts, touringSinkFor } from "../hosted/touringAlerts";
+import { deliverTouringEvent, refreshTouringAlerts } from "../hosted/touringAlerts";
 import { buildTouringEnv, touringScratch } from "../hosted/touringEnv";
 import { standDownTouring, TOURING_LIVE_PATH, TOURING_STAND_DOWN_PATH, touringLiveWork } from "../hosted/touringLive";
 import { screenText } from "../hosted/crossService";
@@ -406,10 +405,8 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           onEvent: async (tenantId, id, event) => {
             const tenant = tenants.get(tenantId);
             if (!tenant) return { type: "event-ack", id, ok: false, retryable: false, message: "This host is gone." };
-            // The host's own phone hears its own way; that never decides whether the chat's update went out.
-            void sendHostText(hostedCleanerService, tenant, event);
             try {
-              await touringSinkFor(hostedCleanerService, tenant).deliver(event);
+              await deliverTouringEvent(hostedCleanerService, tenant, event);
               return { type: "event-ack", id, ok: true };
             } catch (err) {
               return { type: "event-ack", id, ok: false, retryable: err instanceof DeliveryError ? err.retryable : true, message: err instanceof DeliveryError ? err.message : "The alert couldn't be delivered." };

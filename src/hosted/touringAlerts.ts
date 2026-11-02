@@ -1,14 +1,15 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ClaudeRoutineFireSink, GrokRoutineWebhookSink, NoopOperatorNotificationSink, type OperatorNotificationSink } from "../alerts/operatorEvents";
+import { ClaudeRoutineFireSink, GrokRoutineWebhookSink, NoopOperatorNotificationSink, type OperatorEvent, type OperatorNotificationSink } from "../alerts/operatorEvents";
 import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { ASSISTANT_PROFILES, CLAUDE_FIRE_URL, type CleanerAssistant } from "../cleaner-core/assistant";
 import { formatWhen } from "../cleaner-core/calendar";
 import { PropertyWorkspace } from "../setup/workspace";
-import { lastCheckAt, UpdateFeedSink } from "./touringUpdates";
+import { sendHostText } from "./hostTexts";
+import { appendUpdate, lastCheckAt, UpdateFeedSink } from "./touringUpdates";
 
 /**
  * A touring tenant's landlord alerts. Each chat connected to the tenant saves its own routine through a
@@ -260,6 +261,17 @@ function touringTimeZone(h: HostedCleaner, tenantId: string): string {
   } catch {
     return "UTC";
   }
+}
+
+/**
+ * One tour event from the tenant's touring process: onto the "what's new" list every chat can read
+ * with get_updates, to the host's phone when their choice covers it, and to the chosen chat's routine.
+ * Only the routine's delivery decides whether the touring process retries; it throws when that fails.
+ */
+export async function deliverTouringEvent(h: HostedCleaner, tenant: Tenant, event: OperatorEvent): Promise<void> {
+  appendUpdate(h, tenant.id, event);
+  void sendHostText(h, tenant, event);
+  await touringSinkFor(h, tenant).deliver(event);
 }
 
 /** Tells the tenant's touring process whether its updates are connected, and how. */

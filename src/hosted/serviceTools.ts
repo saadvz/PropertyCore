@@ -78,7 +78,7 @@ const GET_UPDATES: FrontTool = {
   name: "get_updates",
   title: "What's new on tours",
   description:
-    "For a recurring task that checks on a schedule: returns the tour updates since this chat last checked, oldest first, each with a plain line, and marks them read. For anything urgent, call get_inbox for the details. Say nothing when the list is empty.",
+    "Returns the tour updates since this chat last checked, oldest first, each with a plain line, and marks them read. A recurring task or a woken routine calls it each run. For anything urgent, call get_inbox for the details. Say nothing when the list is empty.",
   input: z.object({}),
 };
 

@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { testEvent, timeRequestedEvent } from "../src/alerts/operatorEvents";
+import { testEvent, timeRequestedEvent, type OperatorEvent } from "../src/alerts/operatorEvents";
 import type { CleanerAssistant } from "../src/cleaner-core/assistant";
 import { tenantFolder } from "../src/cleaner-core/hosted/registry";
-import { touringSinkFor } from "../src/hosted/touringAlerts";
+import { deliverTouringEvent, touringSinkFor } from "../src/hosted/touringAlerts";
 import { PropertyWorkspace, runReadinessCheck } from "../src/setup";
 import { hillsideConfig, publishForVisitors } from "./liveApp";
 import { closeHostedApps } from "./cleanerOauthHarness";
@@ -33,6 +33,9 @@ async function touring(assistant: CleanerAssistant) {
   await m.toolAt("/mcp", token, "choose_service", { service: "touring" });
   return { m, tenant: m.registry.get(tenant.id)!, token };
 }
+
+/** One event down the same path the touring process's events take. */
+const touringEvent = (m: MultiTenantApp, tenantId: string, event: OperatorEvent) => deliverTouringEvent(m.hosted(), m.registry.get(tenantId)!, event);
 
 const timeRequest = () => timeRequestedEvent({ propertyId: "prop_lane", tourTimeRequestId: "ttr_0123456789ab", occurredAt: "2026-11-01T15:00:00.000Z" });
 
@@ -81,6 +84,17 @@ describe("two chats on one touring number", () => {
     await touringSinkFor(m.hosted(), m.registry.get(tenant.id)!).deliver(timeRequest());
     expect((await m.toolAt("/mcp", token, "get_updates")).structured?.updates).toHaveLength(1);
     expect((await m.toolAt("/mcp", grok, "get_updates")).structured?.updates).toHaveLength(1);
+  });
+});
+
+describe("a Claude chat's routine", () => {
+  it("can read the same events with get_updates after the API trigger wakes it", SLOW, async () => {
+    const { m, tenant, token } = await touring("claude");
+    const path = new URL(String((await m.toolAt("/mcp", token, "save_alert_routine")).structured?.uploadUrl)).pathname;
+    const form = new URLSearchParams({ url: "https://api.anthropic.com/v1/claude_code/routines/r1/fire", token: "claude-token-0123456789" }).toString();
+    expect((await m.app.http(path, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form })).status).toBe(200);
+    await touringEvent(m, tenant.id, timeRequest());
+    expect((await m.toolAt("/mcp", token, "get_updates")).structured?.updates).toEqual([{ eventType: "tour.time_requested", occurredAt: "2026-11-01T15:00:00.000Z", line: "A visitor asked for a tour time." }]);
   });
 });
 
