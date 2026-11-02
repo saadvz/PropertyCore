@@ -6,10 +6,15 @@ host. It uses the task's **API trigger**, so nothing waits for a schedule.
 
 ## Make it
 
-1. On https://claude.ai/code/routines, make a scheduled task named **Tour Core
-   Updates** with the prompt below, word for word, and the **Property Core**
-   connector attached.
-2. Add an **API trigger** to it. Claude shows its **Fire URL** and a token.
+Claude can't make this task for you: the tasks it makes from a chat can't
+take an API trigger. You make it by hand, once. It takes about a minute.
+
+1. On https://claude.ai/code/routines, click **New task** and choose **Set up
+   manually**. Name it **Tour Core Updates**, paste the prompt below word for
+   word, and turn on the **Property Core** connector.
+2. For **Trigger**, choose **API** and add no schedule. Click **Create**.
+   Claude shows the token once, so copy it right away, then copy the **Fire
+   URL** from the task's page.
 3. In the chat, Claude calls `save_alert_routine`. It gives a one-time link to
    a private page. The host opens it and pastes the Fire URL and the token
    there. They never go in chat or in a tool argument.

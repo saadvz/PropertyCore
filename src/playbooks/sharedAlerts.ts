@@ -28,7 +28,7 @@ const SETUP: Record<SharedPlatform, string[]> = {
     "Never send that link to the landlord or ask them to open a page. Never put the address or the key in chat or in a tool argument. A test note means it is done.",
   ],
   claude: [
-    "If they say yes, call save_settings with their choice, then help them make a Claude scheduled task named Tour Core Updates with an API trigger, using the prompt in the Property Core template's Claude touring task doc.",
+    "If they say yes, call save_settings with their choice, then call save_alert_routine and walk the host through making the Claude task it describes, with an API trigger. Don't create the task with your own scheduled-task tool: its tasks can't take an API trigger.",
     "Call save_alert_routine. It gives a one-time link to a private page: send the landlord that link, and they paste the task's Fire URL and token there. Never ask for either in chat or put them in a tool argument. A test note means it is done.",
   ],
   chatgpt: [
@@ -52,8 +52,8 @@ const ACTION: Record<SharedPlatform, string> = {
     "You made the routine, so you already hold both. Only if you don't, ask the host for them with Grok's secure secret input card. " +
     "Never send the link to the host or ask them to open a page. Never put the address or key in chat or in a tool argument.",
   claude:
-    "Help the host make a Claude scheduled task named Tour Core Updates with an API trigger, using the prompt in the Property Core template's Claude touring task doc. " +
-    "Then call save_alert_routine and send the host the link it gives: they paste the task's Fire URL and token on that private page. Never ask for either in chat or put them in a tool argument.",
+    "Call save_alert_routine and walk the host through making the Claude task it describes, with an API trigger. Don't create the task with your own scheduled-task tool: its tasks can't take an API trigger. " +
+    "Send the host the link it gives: they paste the task's Fire URL and token on that private page. Never ask for either in chat or put them in a tool argument.",
   chatgpt:
     "Create a recurring task that runs every hour, using the prompt in the Property Core template's ChatGPT touring task doc, and tell the host ChatGPT checks at most once an hour. " +
     "Then call save_alert_routine with no arguments. Nothing secret is saved.",

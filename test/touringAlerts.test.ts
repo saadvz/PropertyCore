@@ -242,8 +242,15 @@ describe("touring alerts", () => {
       const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
       const token = await m.joinAt(tenant.id, "claude", "/mcp");
       await m.toolAt("/mcp", token, "choose_service", { service: "touring" });
-      const next = String((await m.toolAt("/mcp", token, "save_alert_routine")).structured?.next);
+      const reply = (await m.toolAt("/mcp", token, "save_alert_routine")).structured!;
+      const next = String(reply.next);
       expect(next).toContain("Send the host this link");
+      // Claude's own scheduled-task tool makes tasks that can't take an API trigger: the host makes this one.
+      expect(next).toContain("Don't create the task with your own scheduled-task tool");
+      expect(next).toContain("Set up manually");
+      expect(next).toContain("API");
+      expect(String(reply.taskPrompt)).toContain("call get_inbox");
+      expect(reply.taskName).toBe("Tour Core Updates");
       expect(next).not.toContain("Never send uploadUrl");
       expect(next).not.toContain("secure secret input");
       expect(next).not.toContain("cloud computer");

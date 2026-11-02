@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { SERVICE_CHOICES, SERVICE_QUESTION } from "../src/hosted/serviceTools";
+import { CLAUDE_TASK_PROMPT, SERVICE_CHOICES, SERVICE_QUESTION } from "../src/hosted/serviceTools";
 
 /** The Property Core Grok Bot template: one bot for both services, consistent with the service and free of secrets. */
 
@@ -115,6 +115,8 @@ describe.each(["claude", "chatgpt", "muse"] as const)("Property Core for %s", (p
     if (platform === "claude") {
       expect(task).toContain("API trigger");
       expect(task).toContain("Fire URL");
+      // The same prompt save_alert_routine hands Claude, line for line.
+      for (const line of CLAUDE_TASK_PROMPT.split("\n")) expect(task).toContain(line);
     } else {
       expect(task).toContain("get_updates");
       expect(task).toContain("get_inbox");
