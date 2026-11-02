@@ -29,12 +29,14 @@ describe("Every assistant knows the payments flow", () => {
       expect(text).toContain("mark_paid");
       expect(text).toContain("Never build or change a Venmo link");
       expect(text).toContain("never send a pay link to the cleaner");
+      expect(text).toContain("checklist-asked");
     });
   }
 
   for (const [name, prompt] of Object.entries(TASK_PROMPTS)) {
     it(`${name}: the scheduled run posts payDue and never marks paid on its own`, () => {
       expect(prompt).toContain("If the reply has payDue");
+      expect(prompt).toContain("checklist-asked");
       expect(prompt).toMatch(/Call confirm_times, mark_guests_left, mark_paid,/);
     });
   }
@@ -44,6 +46,7 @@ describe("Every assistant knows the payments flow", () => {
       const text = read(path);
       expect(text).toContain("payDue");
       expect(text).toContain("mark_paid");
+      expect(text).toContain("checklist-asked");
     });
   }
 

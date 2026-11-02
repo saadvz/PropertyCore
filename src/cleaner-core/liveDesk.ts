@@ -1660,8 +1660,18 @@ export class LiveDesk {
   private payLink(job: JobView, record: PayRecord): string {
     const zone = this.file.timeZone ?? "UTC";
     const day = formatWhen(zonedInstant(job.checkoutDate, "12:00", zone), zone).day.split(", ").at(-1) ?? job.checkoutDate;
-    const label = this.file.nickname ?? this.file.business ?? "Cleaning";
+    const label = this.payLabel();
     return venmoPayLink({ username: record.venmo, cents: record.amountCents, label, day });
+  }
+
+  /** The pay note's name for the property: the nickname or business, never the address. */
+  private payLabel(): string {
+    const label = (this.file.nickname ?? this.file.business ?? "").trim();
+    const address = (this.file.address ?? "").toLowerCase();
+    const street = address.split(",")[0]?.trim() ?? "";
+    const lower = label.toLowerCase();
+    if (!label || (address && (address.includes(lower) || (street && lower.includes(street))))) return "Cleaning";
+    return label;
   }
 
   /** The owed, unpaid cleaning `wanted` names (a checkout date, a day, or an id). */

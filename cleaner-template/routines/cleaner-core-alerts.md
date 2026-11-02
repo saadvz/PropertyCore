@@ -79,6 +79,10 @@ routine runs, it wakes once, and `check_now` returns all of them.
    says it still shows unpaid. Only the host's own "paid" in chat marks it
    paid, with `mark_paid`. Never build or change a Venmo link, and never send
    a pay link to the cleaner.
+   A message handled `checklist-asked` means the cleaner said DONE and was
+   asked to confirm the checklist: tell the host the cleaning isn't marked
+   done until the cleaner replies YES. With `checklist-not-done`, tell the
+   host the cleaner said the checklist isn't finished.
 8. If the reply has `needsTimes`, ask the host for the checkout time and the
    next check-in time, then call `confirm_times` with each as 24-hour HH:MM.
 9. Never show a door code, an id, or the webhook payload.

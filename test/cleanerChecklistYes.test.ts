@@ -177,4 +177,34 @@ describe("DONE waits for the checklist YES", () => {
     expect(bodies([...box.sent, ...box2.sent], DONE_ACK)).toHaveLength(1);
     expect(reopened.jobs()[0]?.status).toBe("done");
   });
+
+  it("lets a YES to the next turnover's offer confirm that offer and leaves the waiting cleaning open", async () => {
+    const { box, job } = await cleaning();
+    await job.receive({ id: "done-1", from: CLEANER, text: "DONE" });
+    // The host confirms the next turnover's times, so its offer goes to the cleaner.
+    await job.setHostTimes({ checkout: 11 * 60, checkIn: 16 * 60 });
+    await job.receive({ id: "next-out", from: OWNER, text: "YES" });
+    await job.receive({ id: "next-in", from: OWNER, text: "YES" });
+    expect(box.sent.at(-1)?.kind).toBe("offer");
+    await job.receive({ id: "offer-yes", from: CLEANER, text: "YES" });
+    expect(bodies(box.sent, DONE_ACK)).toEqual([]);
+    expect(job.jobs()[0]?.status).not.toBe("done");
+    expect(job.jobs()[1]?.status).toBe("confirmed");
+  });
+
+  it("keeps a held cleaning open when the cleaner answers YES", async () => {
+    const { box, job } = await cleaning();
+    await job.receive({ id: "done-1", from: CLEANER, text: "DONE" });
+    await job.hostHold("hold-1");
+    await job.receive({ id: "yes-1", from: CLEANER, text: "YES" });
+    expect(bodies(box.sent, DONE_ACK)).toEqual([]);
+    expect(bodies(box.sent, HOST_DONE)).toEqual([]);
+    expect(job.jobs()[0]?.status).not.toBe("done");
+  });
+
+  it("labels DONE checklist-asked while the question waits, so the host hears about it", async () => {
+    const { job } = await cleaning();
+    const asked = await job.receive({ id: "done-1", from: CLEANER, text: "DONE" });
+    expect(asked.outcome).toBe("checklist-asked");
+  });
 });

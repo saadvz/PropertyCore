@@ -40,7 +40,8 @@ const USERNAME = /^[A-Za-z0-9_-]{5,30}$/;
 export function venmoUsername(input: string): string | undefined {
   const trimmed = input.trim();
   const name = trimmed.startsWith("@") ? trimmed.slice(1) : trimmed;
-  if (!USERNAME.test(name) || /^\d+$/.test(name)) return undefined;
+  // A Venmo username has a letter. Digits with dashes or underscores are a phone number.
+  if (!USERNAME.test(name) || !/[A-Za-z]/.test(name)) return undefined;
   return name;
 }
 

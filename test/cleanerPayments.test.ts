@@ -8,7 +8,7 @@ describe("venmoUsername", () => {
   });
 
   it("refuses short, long, all-digit, phone, and email values", () => {
-    for (const bad of ["abcd", "a".repeat(31), "5555550101", "+15555550101", "scratch@example.com", "@@scratch-cleaner", "scratch cleaner"]) {
+    for (const bad of ["abcd", "a".repeat(31), "5555550101", "+15555550101", "scratch@example.com", "@@scratch-cleaner", "scratch cleaner", "555-555-0101", "1-555-555-0101", "555_555_0101"]) {
       expect(venmoUsername(bad)).toBeUndefined();
     }
   });

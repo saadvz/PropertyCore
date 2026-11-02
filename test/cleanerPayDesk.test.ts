@@ -270,6 +270,15 @@ describe("Owed cleanings and payDue", () => {
     expect(refused(await desk.getPayLink({ job: "2026-10-18" }))).toBe("That cleaning isn't waiting on pay.");
   });
 
+  it("leaves the address out of the note when the nickname is the street address", async () => {
+    const { desk } = await paidCleaning();
+    ok(await desk.saveProperty({ business: BUSINESS, nickname: "12 Practice Lane", address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
+    ok(await desk.checkNow());
+    const reply = ok(await desk.getPayLink({ job: "2026-10-18" }));
+    expect(String(reply.link)).toContain("note=Cleaning+cleaning+Oct+18");
+    expect(String(reply.link).toLowerCase()).not.toContain("practice");
+  });
+
   it("keeps the owed amount when the rate changes", async () => {
     const { desk, time } = await paidCleaning();
     ok(await desk.checkNow());

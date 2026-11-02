@@ -56,6 +56,10 @@ webhook address, no key, and no secret.
    says it still shows unpaid. Only the host's own "paid" in chat marks it
    paid, with `mark_paid`. Never build or change a Venmo link, and never send
    a pay link to the cleaner.
+   A message handled `checklist-asked` means the cleaner said DONE and was
+   asked to confirm the checklist: tell the host the cleaning isn't marked
+   done until the cleaner replies YES. With `checklist-not-done`, tell the
+   host the cleaner said the checklist isn't finished.
 9. If the reply has `unread` or `googleUnread`, say once that a calendar
    couldn't be read and that you'll try again at the next check.
 10. If the reply has `needsTimes`, ask the host for the checkout time and the
