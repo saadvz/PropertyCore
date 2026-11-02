@@ -68,12 +68,12 @@ describe("inbound sms timing", () => {
     expect(Number(/tourCoreMs=(\d+)/.exec(done)?.[1])).toBe(Number(/elapsedMs=(\d+)/.exec(done)?.[1]));
   });
 
-  it("caps a hung intent model at 3.5s and counts that wait", async () => {
-    expect(intentModelTimeoutMs()).toBe(3500);
-    expect(intentModelTimeoutMs(undefined)).toBe(3500);
-    expect(intentModelTimeoutMs(10_000)).toBe(3500);
+  it("caps a hung intent model at 6s and counts that wait", async () => {
+    expect(intentModelTimeoutMs()).toBe(6000);
+    expect(intentModelTimeoutMs(undefined)).toBe(6000);
+    expect(intentModelTimeoutMs(10_000)).toBe(6000);
     expect(intentModelTimeoutMs(1000)).toBe(1000);
-    expect(intentModelTimeoutMs(0)).toBe(3500);
+    expect(intentModelTimeoutMs(0)).toBe(6000);
 
     const lines: string[] = [];
     const model: LanguageModel = {

@@ -88,9 +88,14 @@ export function addInboundModelMs(ms: number): void {
   state.modelMs += ms;
 }
 
-/** A hung model must not use the whole reply budget. Default stays under 4s and never above 3.5s. */
+/**
+ * A hung model must not use the whole reply budget. Each model call waits at most 6s (the default too).
+ * A question can make two calls (a second read, then a fact pick), so the worst case stays near 12s:
+ * under Twilio's 15s webhook wait, and the text is saved before it's handed over either way.
+ */
+export const INTENT_MODEL_TIMEOUT_CAP_MS = 6000;
+
 export function intentModelTimeoutMs(requested?: number): number {
-  const fallback = 4000;
-  const value = requested && requested > 0 ? requested : fallback;
-  return Math.min(value, 3500);
+  const value = requested && requested > 0 ? requested : INTENT_MODEL_TIMEOUT_CAP_MS;
+  return Math.min(value, INTENT_MODEL_TIMEOUT_CAP_MS);
 }
