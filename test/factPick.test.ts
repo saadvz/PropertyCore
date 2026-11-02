@@ -130,12 +130,13 @@ describe("picking a fact for a visitor", () => {
 });
 
 describe("the touring pass-through", () => {
-  it("passes the four model settings into a touring process and still drops other TOURCORE_ values", () => {
+  it("passes the five model settings into a touring process and still drops other TOURCORE_ values", () => {
     const base: NodeJS.ProcessEnv = {
       TOURCORE_INTENT_MODEL_URL: "https://generativelanguage.googleapis.com/v1beta/openai",
       TOURCORE_INTENT_MODEL_KEY: "not-a-real-key",
       TOURCORE_INTENT_MODEL: "flash-model",
       TOURCORE_INTENT_MODEL_TIMEOUT_MS: "2500",
+      TOURCORE_INTENT_MODEL_REASONING_EFFORT: "none",
       TOURCORE_STORAGE_MODEL: "DIRECT_GOOGLE_DRIVE",
     };
     const lane: Tenant = { id: "tnt_lane000001", label: "Lane", twilioNumber: "+15555550150", connections: [], invites: [], service: "touring", createdAt: "2026-10-01T00:00:00.000Z" };
@@ -144,6 +145,7 @@ describe("the touring pass-through", () => {
     expect(env.TOURCORE_INTENT_MODEL_KEY).toBe("not-a-real-key");
     expect(env.TOURCORE_INTENT_MODEL).toBe("flash-model");
     expect(env.TOURCORE_INTENT_MODEL_TIMEOUT_MS).toBe("2500");
+    expect(env.TOURCORE_INTENT_MODEL_REASONING_EFFORT).toBe("none");
     expect(env.TOURCORE_STORAGE_MODEL).toBeUndefined();
   });
 });

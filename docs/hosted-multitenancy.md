@@ -80,8 +80,9 @@ tenants became cleaning. A tenant's one number answers for its service only.
   (1 s, 2 s, 4 s, up to a minute). Texts that arrive while it's down wait in
   `/data/tenants/<id>/tour-core-inbound/` and are handed over once it's back.
   Its environment drops every `TOURCORE_*` value of the service except the
-  four visitor-model settings (`TOURCORE_INTENT_MODEL_URL`, `_KEY`,
-  `TOURCORE_INTENT_MODEL`, `TOURCORE_INTENT_MODEL_TIMEOUT_MS`), which every
+  five visitor-model settings (`TOURCORE_INTENT_MODEL_URL`, `_KEY`,
+  `TOURCORE_INTENT_MODEL`, `TOURCORE_INTENT_MODEL_TIMEOUT_MS`,
+  `TOURCORE_INTENT_MODEL_REASONING_EFFORT`), which every
   touring process shares. Without them, touring runs on its rules alone.
 - **Switching.** Only when nothing on the service is live, after the host's
   yes, with no texts. `stand_down_service` previews the exact texts, then stops
