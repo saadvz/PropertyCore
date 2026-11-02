@@ -82,6 +82,8 @@ function propertyIdFrom(extra: Record<string, unknown>): string | undefined {
 
 /** A touring host on the shared service publishes only once their alert routine is connected. */
 export const ALERTS_NEEDED = "Connect the touring alert routine first. Call save_alert_routine.";
+/** save_settings' connect step on the shared service, which keeps each chat's routine itself. */
+const ALERTS_ON_SHARED_SERVICE = "Tour updates connect through save_alert_routine on this service. Call it now and follow its next step. There is no setup page to open.";
 
 export function envelope(
   ctx: ToolContext,
@@ -548,6 +550,8 @@ export const MILESTONE_TOOLS: OperatorTool[] = [
       }
       if (i.connectAlerts) {
         if (!inst) return envelope(ctx, opened?.id, "blocked", TOUR_UPDATES_NOT_HERE, {}, "INSTALLATION_UNAVAILABLE");
+        // On the shared service there's no setup page on this computer: the service connects updates itself.
+        if (isTenantWorker(inst.deploymentMode())) return envelope(ctx, opened?.id, "next", ALERTS_ON_SHARED_SERVICE, { tool: "save_alert_routine" });
         return envelope(ctx, opened?.id, "next", "Want me to tell you when someone books, starts, or finishes a tour, and when something needs you?", {
           secureSetup: secureSetupLink(inst, ctx.localUrl?.(), "operator-alerts"),
         });
