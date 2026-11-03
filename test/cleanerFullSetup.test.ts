@@ -182,8 +182,12 @@ describe("Cleaner Core full setup: the diagram order", () => {
 
     const preferences = await call(wired, "save_preferences", PREFERENCES);
     expect(preferences.isError).toBe(false);
+    // The optional Payments step comes next.
+    expect(askStep(preferences.structured)).toBe("payments");
+    const payments = await call(wired, "save_payments", { on: false });
+    expect(payments.isError).toBe(false);
     // The routines come before the review, and activate waits for them.
-    expect(String(preferences.structured?.next)).toMatch(/^Create the Cleaner Core Check and Cleaner Core Alerts routines\./);
+    expect(String(payments.structured?.next)).toMatch(/^Create the Cleaner Core Check and Cleaner Core Alerts routines\./);
     expect((await state(wired)).setup).toBeUndefined();
     expect((await call(wired, "activate")).isError).toBe(true);
     expect((await call(wired, "save_alert_routine", ROUTINE)).isError).toBe(false);
@@ -242,6 +246,8 @@ describe("Cleaner Core full setup: the diagram order", () => {
     expect((await call(wired, "save_door_code", { code: DOOR_CODE })).isError).toBe(false);
     expect(askStep((await state(wired)))).toBe("preferences");
     expect((await call(wired, "save_preferences", {})).isError).toBe(false);
+    expect(askStep(await state(wired))).toBe("payments");
+    expect((await call(wired, "save_payments", { on: false })).isError).toBe(false);
     expect((await call(wired, "save_alert_routine", ROUTINE)).isError).toBe(false);
     const review = await state(wired);
     expect(review.next).toBe(REVIEW_NEXT);
@@ -1772,6 +1778,8 @@ describe("Cleaner Core cleaning: the completed record", () => {
     await desk.inbound({ id: "mms-2", from: CLEANER, text: "", media: [photo()] });
     time.set("2026-10-14T18:10:00.000Z");
     await desk.inbound({ id: "done", from: CLEANER, text: "DONE" });
+    time.set("2026-10-14T18:11:00.000Z");
+    await desk.inbound({ id: "checklist-yes", from: CLEANER, text: "YES" });
 
     const reply = ok(await desk.checkNow());
     expect(JSON.parse(plain(JSON.stringify(reply.completed)))).toEqual([
@@ -1780,7 +1788,8 @@ describe("Cleaner Core cleaning: the completed record", () => {
         day: "Sunday, Oct 18",
         arrivalTime: "11:30 AM",
         startedAt: "Wednesday, Oct 14, 11:32 AM",
-        doneAt: "Wednesday, Oct 14, 2:10 PM",
+        doneAt: "Wednesday, Oct 14, 2:11 PM",
+        checklistConfirmed: "Wednesday, Oct 14, 2:11 PM",
         checklist: ["Strip the beds", "Restock coffee"],
         photos: 3,
         notes: ["Need more paper towels", "The lockbox code [redacted] stuck", "Is it [redacted] again?"],
@@ -2089,6 +2098,7 @@ describe("Cleaner Core full diagram", () => {
     await say("save_schedule", { firstText: "days-after-check-in", firstTextDays: 1, reminder: "days-before-checkout", reminderDays: 1, reminderTime: "18:00" });
     await say("save_door_code", { code: DOOR_CODE, lockLocation: LOCK });
     await say("save_preferences", PREFERENCES);
+    await say("save_payments", { on: false });
     await safe("2 setup");
 
     // 3. The alert routine, before the review, with a stubbed webhook. A Grok Bot's secure card can't
@@ -2192,8 +2202,11 @@ describe("Cleaner Core full diagram", () => {
     await fromCleaner("need paper towels");
     at = new Date("2026-10-17T17:00:00.000Z");
     await fromCleaner("DONE");
+    expect(inGroup().at(-1)).toBe("Before I mark it done: is everything on the checklist I sent finished? Ana, reply YES or NO.");
+    expect(inGroup().filter((body) => body === "Thanks, cleaning marked done.")).toHaveLength(0);
+    await fromCleaner("YES");
     expect(inGroup().filter((body) => body === "Thanks, cleaning marked done.")).toHaveLength(1);
-    await safe("9 checklist, photo, note, DONE");
+    await safe("9 checklist, photo, note, DONE, checklist YES");
 
     // 10. check_now returns the finished cleaning, and get_job_photos returns a link that works.
     const finished = await checkAt("2026-10-17T17:05:00.000Z");
@@ -2204,6 +2217,7 @@ describe("Cleaner Core full diagram", () => {
         day: "Saturday, Oct 17",
         arrivalTime: "11:30 AM",
         checklist: PREFERENCES.checklist,
+        checklistConfirmed: "Saturday, Oct 17, 1:00 PM",
         photos: 1,
         notes: ["need paper towels"],
       }),

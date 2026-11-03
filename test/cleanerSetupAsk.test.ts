@@ -103,7 +103,8 @@ describe("Cleaner Core setup asks: one question at a time", () => {
     }
     expect((await call(wired, "save_door_code", { code: DOOR_CODE })).isError).toBe(false);
     expect(askOf((await call(wired, "get_state")).structured).step).toBe("preferences");
-    const routines = (await call(wired, "save_preferences", {})).structured;
+    expect(askOf((await call(wired, "save_preferences", {})).structured).step).toBe("payments");
+    const routines = (await call(wired, "save_payments", { on: false })).structured;
     expect(routines?.ask).toBeUndefined();
     expect(String(routines?.next)).toMatch(/^Create the Cleaner Core Check and Cleaner Core Alerts routines\./);
     setCleanerAlertFetch(async () => ({ status: 200 }));
@@ -308,7 +309,8 @@ async function activatedGroup(
     const posted = await desk.uploadDoorCode(link.slice(link.lastIndexOf("/") + 1), { code: DOOR_CODE });
     expect(posted.status).toBe(200);
   } else ok(await desk.saveDoorCode({ code: DOOR_CODE }, PIN_KEY));
-  const preferences = ok(await desk.savePreferences({}));
+  ok(await desk.savePreferences({}));
+  const preferences = ok(await desk.savePayments({ on: false }));
   // The routine counts only once this setup connects it. The env already holds its values.
   const posts: string[] = [];
   setCleanerAlertFetch(async (_url, init) => {
@@ -476,6 +478,7 @@ describe("Cleaner Core setup: the door code from Grok's secure card", () => {
     expect(state?.done).toContain("Door code saved.");
     expect(askOf(state).step).toBe("preferences");
     await call(wired, "save_preferences", {});
+    await call(wired, "save_payments", { on: false });
     setCleanerAlertFetch(async () => ({ status: 200 }));
     await call(wired, "save_alert_routine", { url: "https://routine.example/hook", token: "k-test-routine-key" });
     expect(JSON.stringify((await call(wired, "get_state")).structured?.setup)).toContain("front door keypad");

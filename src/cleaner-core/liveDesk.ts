@@ -12,12 +12,13 @@ import { messagingKeyword, normalize } from "../intent";
 import { stripFiller } from "../intent/normalize";
 import { spokenTimes } from "../core/spokenTime";
 import { formatWhen, zonedInstant } from "./calendar";
+import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink, venmoProfileLink, venmoUsername, type PaymentSettings, type PayRecord } from "./payments";
 import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
 import { groupChatEnabled } from "./flag";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
 import { calendarUrlAllowed, readPublicCalendar, type CalendarFetch } from "./fetchLimits";
-import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, type SetupAsk } from "./setupAsk";
+import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, PAYMENTS_STEP, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, type SetupAsk } from "./setupAsk";
 import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jobHoldLine, optedOutCodeLine, resumeNote } from "./cleanerTexts";
 import { isInjuryReport } from "./injury";
 import { GroupNotConfirmed } from "./groupThread";
@@ -137,6 +138,12 @@ const DOOR_CODE_QUESTION = "You added other people to the group. Should the door
 const TOO_MANY = "That's a lot of messages this hour. Try again later.";
 /** The approval action for a property reset. It is bound to this property's group, so a changed group voids it. */
 const RESET_ACTION = "cleaner-reset-property";
+const PAYMENTS_ACTION = "cleaner-payments";
+const RATE_HELP = "Tell me the pay per cleaning, from $1 to $1,000.";
+const CODE_IN_USERNAME = "That username has the door code in it, so I can't save it. Ask the host to pay the cleaner in Venmo themselves.";
+const NOT_OWED = "That cleaning isn't waiting on pay.";
+const PAID_NEEDS_YES = "Ask the host first. Call mark_paid with confirmed true only after they say it's paid.";
+const VENMO_HELP = "Tell me the cleaner's Venmo username, like @maria-cleans. A phone number or email won't work.";
 const HOLD_ACTION = "cleaner-hold";
 const RESUME_ACTION = "cleaner-resume";
 const CLEANING_TARGET = "cleaning";
@@ -346,6 +353,10 @@ interface LiveFile {
   schedule?: Schedule;
   /** Set once the host saved cleaning preferences or said there are none. */
   preferences?: Preferences;
+  /** Set once the host answered the Payments step, or turned payments on later. */
+  payments?: PaymentSettings;
+  /** Each finished cleaning's pay, by job id, once it became owed. */
+  pay?: Record<string, PayRecord>;
   /** Legacy single link from save_calendar_link. It reads as one calendar named Guesty Lite. */
   calendarLink?: string;
   /** Saved calendar links in dedupe order, after the legacy link. Each one is the source `ical:<slug>`. */
@@ -859,6 +870,18 @@ export class LiveDesk {
     return /\bdoor code\b/i.test(text) && /\b\d{4,8}\b/.test(text);
   }
 
+  /**
+   * The number already runs cleaning (the host picked it on the shared address or its Allow page, or
+   * connected at the cleaning address), so setup never asks touring or cleaning again.
+   */
+  chooseCleaning(): Promise<void> {
+    return this.serial(async () => {
+      if (this.file.choice) return;
+      this.file.choice = "cleaners";
+      this.persist();
+    });
+  }
+
   getState(choice?: "tours" | "cleaners"): Promise<ToolReply> {
     return this.serial(async () => this.getStateNow(choice));
   }
@@ -1276,6 +1299,44 @@ export class LiveDesk {
    * Saves the cleaning preferences. A field left out keeps what was saved, and `{}` the first time
    * means there are none, which still moves setup on to the review.
    */
+  /**
+   * Saves whether to help pay the cleaner, the pay per cleaning, and the cleaner's Venmo username.
+   * Turning it on needs the host's approval, bound to that exact username and amount. Never moves money.
+   */
+  savePayments(input: { on?: boolean; rate?: number; venmo?: string; confirmation?: string }): Promise<ToolReply> {
+    return this.serial(async () => this.savePaymentsNow(input));
+  }
+
+  private savePaymentsNow(input: { on?: boolean; rate?: number; venmo?: string; confirmation?: string }): ToolReply {
+    const now = this.now().toISOString();
+    if (input.on === false) {
+      this.file.payments = { on: false, savedAt: now };
+      this.persist();
+      return this.setupReply({ saved: "Payments are off." });
+    }
+    const cents = typeof input.rate === "number" ? payCents(input.rate) : undefined;
+    if (cents === undefined) return this.fail(RATE_HELP);
+    const venmo = typeof input.venmo === "string" ? venmoUsername(input.venmo) : undefined;
+    if (!venmo) return this.fail(VENMO_HELP);
+    if (this.leaks(venmoProfileLink(venmo))) return this.fail(CODE_IN_USERNAME);
+    const fingerprint = createHash("sha256").update(`${venmo}|${cents}`).digest("hex");
+    const code = input.confirmation?.trim() ?? "";
+    if (!code) {
+      const question = `Save ${dollarsText(cents)} per cleaning to @${venmo}?`;
+      return this.reply({ profile: venmoProfileLink(venmo), question, confirmation: this.approvals.issue(PAYMENTS_ACTION, "payments", fingerprint, question) });
+    }
+    try {
+      this.approvals.redeem(code, PAYMENTS_ACTION, "payments", fingerprint);
+    } catch {
+      return this.fail(APPROVAL_STALE);
+    }
+    const saved = this.file.payments;
+    const onSince = saved?.on && saved.onSince ? saved.onSince : now;
+    this.file.payments = { on: true, rateCents: cents, venmo, onSince, savedAt: now };
+    this.persist();
+    return this.setupReply({ saved: `Saved. After each cleaning I'll offer a Venmo link for ${dollarsText(cents)}.` });
+  }
+
   savePreferences(input: { checklist?: string[]; photosRequired?: boolean; supplyNotes?: boolean; instructions?: string }, pinKey?: Buffer): Promise<ToolReply> {
     return this.serial(async () => this.savePreferencesNow(input, pinKey));
   }
@@ -1406,6 +1467,7 @@ export class LiveDesk {
     const shownDone = new Set(this.file.completedShown ?? []);
     const finished = jobs.filter((job) => job.doneAt && !shownDone.has(job.id));
     this.file.completedShown = [...shownDone, ...finished.map((job) => job.id)];
+    const payDue = this.payDueNow(jobs);
     prunePhotos(this.root, jobs, this.now());
     this.pruneMessagePhotos();
     this.noteCheck();
@@ -1414,6 +1476,7 @@ export class LiveDesk {
       alerts: fresh.map((note) => note.body),
       messages: this.messagesOut(newMessages, save),
       ...(finished.length > 0 ? { completed: finished.map((job) => this.completedFacts(job)) } : {}),
+      ...(payDue.length > 0 ? { payDue } : {}),
       turns: this.turns(),
       ...(this.needsTimes(engine) ? { needsTimes: true as const } : {}),
       ...(read.unread.length > 0 ? { unread: read.unread } : {}),
@@ -1565,6 +1628,112 @@ export class LiveDesk {
    * A finished cleaning's facts, for Grok to summarize in its own words. Times are local at the
    * property. Notes were redacted when they were kept, and the reply's leak check still runs.
    */
+  /**
+   * Adds an owed record for each cleaning finished while payments were on, and returns the ones
+   * check_now shows now: new ones, and unpaid ones whose next 9:00 AM reminder is due.
+   */
+  private payDueNow(jobs: JobView[]): Record<string, unknown>[] {
+    const now = this.now();
+    const at = now.toISOString();
+    const zone = this.file.timeZone ?? "UTC";
+    const pay = (this.file.pay ??= {});
+    const settings = this.file.payments;
+    const due: Record<string, unknown>[] = [];
+    for (const job of jobs) {
+      const record = pay[job.id];
+      if (!record) {
+        if (!job.doneAt || !settings?.on || !settings.rateCents || !settings.venmo || !settings.onSince) continue;
+        if (Date.parse(job.doneAt) < Date.parse(settings.onSince)) continue;
+        pay[job.id] = { amountCents: settings.rateCents, venmo: settings.venmo, owedAt: at, lastShownAt: at, reminders: 0 };
+        due.push(this.payItem(job, pay[job.id]!));
+        continue;
+      }
+      if (record.paidAt || record.reminders >= MAX_PAY_REMINDERS) continue;
+      if (now.getTime() < Date.parse(nextReminderAt(record.lastShownAt, zone))) continue;
+      record.reminders += 1;
+      record.lastShownAt = at;
+      due.push(this.payItem(job, record));
+    }
+    return due;
+  }
+
+  /** One payDue item. A link that would hold the door code is left out, and the host pays in Venmo. */
+  private payItem(job: JobView, record: PayRecord): Record<string, unknown> {
+    const link = this.payLink(job, record);
+    return {
+      job: job.checkoutDate,
+      cleaner: this.file.cleanerName ?? "the cleaner",
+      amount: dollarsText(record.amountCents),
+      ...(this.leaks(link) ? { payInVenmo: true } : { link }),
+      reminder: record.reminders,
+    };
+  }
+
+  private payLink(job: JobView, record: PayRecord): string {
+    const zone = this.file.timeZone ?? "UTC";
+    const day = formatWhen(zonedInstant(job.checkoutDate, "12:00", zone), zone).day.split(", ").at(-1) ?? job.checkoutDate;
+    const label = this.payLabel();
+    return venmoPayLink({ username: record.venmo, cents: record.amountCents, label, day });
+  }
+
+  /** The pay note's name for the property: the nickname or business, never the address. */
+  private payLabel(): string {
+    const label = (this.file.nickname ?? this.file.business ?? "").trim();
+    const address = (this.file.address ?? "").toLowerCase();
+    const street = address.split(",")[0]?.trim() ?? "";
+    const lower = label.toLowerCase();
+    if (!label || (address && (address.includes(lower) || (street && lower.includes(street))))) return "Cleaning";
+    return label;
+  }
+
+  /** The owed, unpaid cleaning `wanted` names (a checkout date, a day, or an id). */
+  private owedJob(wanted: string | undefined): { job: JobView; record: PayRecord } | undefined {
+    const engine = this.engine;
+    if (!engine || !wanted?.trim()) return undefined;
+    const job = this.findJob(engine.jobs(), wanted.trim().toLowerCase());
+    const record = job ? this.file.pay?.[job.id] : undefined;
+    return job && record ? { job, record } : undefined;
+  }
+
+  /** Records that the host paid for one cleaning. Only after the host's own words in chat. Never moves money. */
+  markPaid(input: { job?: string; how?: "venmo" | "other"; confirmed?: boolean }): Promise<ToolReply> {
+    return this.serial(async () => this.markPaidNow(input));
+  }
+
+  private markPaidNow(input: { job?: string; how?: "venmo" | "other"; confirmed?: boolean }): ToolReply {
+    if (input.confirmed !== true) return this.fail(PAID_NEEDS_YES);
+    this.resume();
+    const owed = this.owedJob(input.job);
+    if (!owed) return this.fail(NOT_OWED);
+    if (owed.record.paidAt) return this.reply({ next: "That cleaning is already marked paid." });
+    owed.record.paidAt = this.now().toISOString();
+    owed.record.how = input.how === "other" ? "other" : "venmo";
+    owed.record.confirmedBy = "landlord";
+    this.persist();
+    const zone = this.file.timeZone ?? "UTC";
+    const day = formatWhen(zonedInstant(owed.job.checkoutDate, "12:00", zone), zone).day.split(", ").at(-1);
+    return this.reply({ next: `Marked ${this.file.cleanerName ? `${this.file.cleanerName}'s` : "the cleaner's"} ${day} cleaning paid.` });
+  }
+
+  /** A new pay link for an unpaid cleaning, with a new amount for that cleaning when given. */
+  getPayLink(input: { job?: string; amount?: number }): Promise<ToolReply> {
+    return this.serial(async () => this.getPayLinkNow(input));
+  }
+
+  private getPayLinkNow(input: { job?: string; amount?: number }): ToolReply {
+    this.resume();
+    const owed = this.owedJob(input.job);
+    if (!owed || owed.record.paidAt) return this.fail(NOT_OWED);
+    if (input.amount !== undefined) {
+      const cents = payCents(input.amount);
+      if (cents === undefined) return this.fail(RATE_HELP);
+      owed.record.amountCents = cents;
+      this.persist();
+    }
+    const item = this.payItem(owed.job, owed.record);
+    return this.reply({ job: item.job, amount: item.amount, ...(item.link ? { link: item.link } : { payInVenmo: true }) });
+  }
+
   private completedFacts(job: JobView): Record<string, unknown> {
     const zone = this.file.timeZone ?? "UTC";
     const local = (iso: string | undefined) => {
@@ -1578,6 +1747,7 @@ export class LiveDesk {
       arrivalTime: job.arrivalTime ?? null,
       startedAt: local(job.startedAt),
       doneAt: local(job.doneAt),
+      ...(job.checklistConfirmedAt ? { checklistConfirmed: local(job.checklistConfirmedAt) } : {}),
       checklist: job.checklist ?? [],
       photos: job.photos ?? 0,
       // Photos that came in but couldn't be downloaded, so get_job_photos can't show them.
@@ -1600,18 +1770,21 @@ export class LiveDesk {
     const engine = this.engine;
     if (!this.file.checked || !engine) return this.fail("Run the checks first.");
     const wanted = input.job?.trim().toLowerCase() ?? "";
-    const zone = this.file.timeZone ?? "UTC";
-    const dayOf = (job: JobView) => formatWhen(zonedInstant(job.checkoutDate, "12:00", zone), zone).day.toLowerCase();
     const jobs = engine.jobs();
-    const job = wanted
-      ? jobs.find((item) => item.checkoutDate === wanted || dayOf(item) === wanted || item.id.toLowerCase() === wanted)
-      : [...jobs].reverse().find((item) => photoCount(this.root, item.id) > 0);
+    const job = wanted ? this.findJob(jobs, wanted) : [...jobs].reverse().find((item) => photoCount(this.root, item.id) > 0);
     if (wanted && !job) return this.fail(NO_PHOTO_JOB);
     if (!job) return this.reply({ photos: [] });
     const base = publicBaseUrl(this.env());
     const key = base ? photoKey(this.env(), save) : undefined;
     if (!base || !key) return this.fail(PHOTO_LINKS_OFF);
     return this.reply({ photos: photoLinks(this.root, job.id, base, key, this.now()) });
+  }
+
+  /** The job a lowercase `wanted` names: its checkout date, its day like "sunday, oct 18", or its id. */
+  private findJob(jobs: JobView[], wanted: string): JobView | undefined {
+    const zone = this.file.timeZone ?? "UTC";
+    const dayOf = (job: JobView) => formatWhen(zonedInstant(job.checkoutDate, "12:00", zone), zone).day.toLowerCase();
+    return jobs.find((item) => item.checkoutDate === wanted || dayOf(item) === wanted || item.id.toLowerCase() === wanted);
   }
 
   getTurns(): Promise<ToolReply> {
@@ -2413,6 +2586,15 @@ export class LiveDesk {
       const any = preferences.checklist.length > 0 || preferences.photosRequired || preferences.supplyNotes || Boolean(preferences.instructions);
       done.push(any ? "Preferences saved." : "No cleaning preferences.");
     }
+    const payments = this.file.payments;
+    if (payments) {
+      done.push(payments.on && payments.rateCents && payments.venmo ? `Payments: ${dollarsText(payments.rateCents)} per cleaning to @${payments.venmo}.` : "Payments: off.");
+    }
+    const unpaid = Object.values(this.file.pay ?? {}).filter((record) => !record.paidAt);
+    if (unpaid.length > 0) {
+      const total = unpaid.reduce((sum, record) => sum + record.amountCents, 0);
+      done.push(`${unpaid.length} ${unpaid.length === 1 ? "cleaning" : "cleanings"} unpaid (${dollarsText(total)}).`);
+    }
     if (this.file.texting) done.push("Texting saved.");
     if (this.file.texting && this.groupOn()) done.push(this.groupLine());
     if (this.file.checked) done.push("Checks finished.");
@@ -2430,6 +2612,7 @@ export class LiveDesk {
     else if (!this.file.schedule && !this.file.texting) ask = SCHEDULE_STEP;
     else if (!this.codeSaved()) ask = DOOR_CODE_STEP;
     else if (!this.file.texting && !preferences) ask = PREFERENCES_STEP;
+    else if (!this.file.texting && !this.file.payments) ask = PAYMENTS_STEP;
     if (ask) next = askNext(ask.tool);
     // The routines come before the review, so the cleaner's first reply already wakes Grok.
     else if (!this.file.texting && !this.routineReady()) next = this.words().routineAsk;

@@ -49,6 +49,17 @@ webhook address, no key, and no secret.
 8. If the reply has `completed`, call `get_job_photos`, look at the photos, and
    compare them with the checklist. Summarize the cleaning in your own words:
    arrival, start and done times, checklist, what the photos show, and notes.
+   If the reply has `payDue`, add one line per item after the summary: ask
+   the host to pay the cleaner that amount for that cleaning, with `link`
+   exactly as returned, and to tell you when they've paid. With `payInVenmo`
+   there is no link: ask them to pay in Venmo themselves. A `reminder` above 0
+   says it still shows unpaid. Only the host's own "paid" in chat marks it
+   paid, with `mark_paid`. Never build or change a Venmo link, and never send
+   a pay link to the cleaner.
+   A message handled `checklist-asked` means the cleaner said DONE and was
+   asked to confirm the checklist: tell the host the cleaning isn't marked
+   done until the cleaner replies YES. With `checklist-not-done`, tell the
+   host the cleaner said the checklist isn't finished.
 9. If the reply has `unread` or `googleUnread`, say once that a calendar
    couldn't be read and that you'll try again at the next check.
 10. If the reply has `needsTimes`, ask the host for the checkout time and the

@@ -28,7 +28,7 @@ export interface AskQuestion {
 }
 
 export interface SetupAsk {
-  step: "start" | "property" | "sources" | "people" | "schedule" | "door-code" | "preferences" | "times";
+  step: "start" | "property" | "sources" | "people" | "schedule" | "door-code" | "preferences" | "payments" | "times";
   tool: string;
   questions: AskQuestion[];
 }
@@ -256,6 +256,33 @@ export const PREFERENCES_STEP: SetupAsk = {
     },
     { field: "checklist", ask: "checklist items", required: false, when: "any is some" },
     { field: "instructions", ask: "a note for the cleaner, sent with the door code", required: false, when: "any is some" },
+  ],
+};
+
+/** Optional: help paying the cleaner after each cleaning, with a Venmo link the host taps. */
+export const PAYMENTS_STEP: SetupAsk = {
+  step: "payments",
+  tool: "save_payments",
+  questions: [
+    {
+      field: "on",
+      ask: "whether you'd like help paying the cleaner after each cleaning",
+      required: true,
+      options: [
+        { value: "yes", label: "Yes" },
+        { value: "no", label: "Not now" },
+      ],
+      how: "Not now saves save_payments { on: false }.",
+    },
+    { field: "rate", ask: "how much the host pays the cleaner per cleaning, in dollars", required: false, when: "on is yes", example: "85" },
+    {
+      field: "venmo",
+      ask: "the cleaner's Venmo username",
+      required: false,
+      when: "on is yes",
+      example: "@maria-cleans",
+      how: "Call save_payments without confirmation, show the host the profile link and the question, and call again with the code only after the host says yes.",
+    },
   ],
 };
 

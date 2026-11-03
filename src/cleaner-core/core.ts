@@ -25,7 +25,7 @@ import {
 } from "./sources";
 import { fingerprintOf, freshnessOf, GUESTY_POLL_MS, staleAfterMs, type SourceRecord } from "./freshness";
 import { containsCodeToken, redactLine, redactPhone } from "./redact";
-import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
+import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
 import { codeRoute, GroupNotConfirmed, type GroupSeat } from "./groupThread";
 import { GROK_HELPER } from "./assistant";
 import { codeHandlingText, HEALTH_NOTE, isReviewKind, reviewAlert, reviewId, type AuditEvent, type ReviewDetail, type ReviewItem, type ReviewKind } from "./review";
@@ -118,6 +118,8 @@ export interface JobView {
   notes?: string[];
   /** The checklist items the cleaner was sent. */
   checklist?: string[];
+  /** When the cleaner answered YES to the checklist question, as an instant. */
+  checklistConfirmedAt?: string;
 }
 
 export interface OutboxView {
@@ -238,7 +240,7 @@ export type ReceiveReason =
   | "retry";
 
 /** What Cleaner Core did with an inbound text, for Grok to read beside the message. */
-export type MessageHandled = "opted-in" | "confirmed" | "declined" | "done" | "stop" | "start" | "injury" | "code-held" | "none" | "sent";
+export type MessageHandled = "opted-in" | "confirmed" | "declined" | "done" | "stop" | "start" | "injury" | "code-held" | "checklist-asked" | "checklist-not-done" | "none" | "sent";
 
 export interface ReceiveResult {
   handled: boolean;
@@ -541,6 +543,8 @@ export function redactDigitRuns(text: string): string {
   return text.replace(/\d(?:[\s.\-_/\u2010-\u2015]*\d){3,}/g, "[redacted]");
 }
 
+/** Texts that ask the cleaner their own YES or NO. */
+const CLEANER_QUESTIONS = new Set<TextKind>(["offer", "corrected", "opt-in"]);
 const JOB_TEXTS = new Set<TextKind>(["offer", "corrected", "confirm", "reminder", "cancel-update", "declined", "started", "done", "checklist"]);
 /** Job notes kept during a cleaning, newest last, and the length of each. */
 const MAX_NOTES = 5;
@@ -632,6 +636,12 @@ interface Job {
   notes?: string[];
   /** The checklist items sent to the cleaner. */
   checklist?: string[];
+  /** Set while DONE's checklist question waits for the cleaner's YES or NO. */
+  checklistAskedAt?: string;
+  /** The outbox id of that question, so a later question to the cleaner can take over their reply. */
+  checklistAskId?: string;
+  /** When the cleaner answered YES to the checklist question. */
+  checklistConfirmedAt?: string;
 }
 
 interface Clearance {
@@ -1062,6 +1072,8 @@ class Engine implements CleanerCore {
       }
     }
     if (from === this.owner && stripFiller(normalize(input.text)) === "retry") return this.retryUncertain(input.id);
+    const asked = this.pin && from === this.cleanerPhone && this.cleanerConsent === "in" ? this.progressJob() : undefined;
+    if (asked && this.checklistWaiting(asked) && (isYes(input.text) || isNo(input.text))) return this.answerChecklist(asked, from, input.id, isYes(input.text));
     if (this.pin && from === this.cleanerPhone && isYes(input.text) && this.awaitingOptIn()) return this.optInCleaner(input.id);
     if (from && isYes(input.text) && this.participantConsent.get(from) === "pending" && this.delivery(`opt-in:${from}`) === "sent") {
       return this.optInParticipant(from, input.id);
@@ -1792,6 +1804,48 @@ class Engine implements CleanerCore {
       this.save();
       return { ...asked, label: "none" };
     }
+    if ((job.checklist?.length ?? 0) > 0 && !job.checklistConfirmedAt) {
+      // The cleaning stays open until the cleaner says the checklist is finished.
+      job.checklistAskedAt = this.now().toISOString();
+      job.checklistAskId = `next:${id}`;
+      const asked = await this.reply(from, CHECKLIST_ASK, "next", "ignored", id, job.id);
+      if (!this.inboundIds.includes(id)) this.inboundIds.push(id);
+      this.save();
+      return { ...asked, label: "checklist-asked" };
+    }
+    return this.markDone(job, from, id);
+  }
+
+  /**
+   * True while DONE's checklist question is the cleaner's open question. A later offer or opt-in to
+   * the cleaner asks its own YES or NO, so the cleaner's reply goes to that one instead.
+   */
+  private checklistWaiting(job: Job): boolean {
+    if (!job.checklistAskedAt) return false;
+    const at = job.checklistAskId ? this.outboxState.findIndex((item) => item.id === job.checklistAskId) : -1;
+    if (at < 0) return true;
+    return !this.outboxState.slice(at + 1).some((item) => item.status === "sent" && item.jobId !== job.id && CLEANER_QUESTIONS.has(item.kind));
+  }
+
+  /** The cleaner's YES or NO to DONE's checklist question. */
+  private async answerChecklist(job: Job, from: string, id: string, yes: boolean): Promise<ReceiveResult & { label?: MessageHandled }> {
+    if (this.inboundIds.includes(id)) return { handled: true, reason: "duplicate", sent: [] };
+    // A held cleaning stays open: the question keeps waiting until the host resumes it.
+    if (this.problemHold) return this.guide(from, id);
+    delete job.checklistAskedAt;
+    delete job.checklistAskId;
+    if (yes) {
+      job.checklistConfirmedAt = this.now().toISOString();
+      return this.markDone(job, from, id);
+    }
+    const replied = await this.reply(from, CHECKLIST_NOT_DONE, "next", "ignored", id, job.id);
+    this.inboundIds.push(id);
+    this.save();
+    return { ...replied, label: "checklist-not-done" };
+  }
+
+  /** Marks the cleaning done once the cleaner's acknowledgement went out, and tells the host. */
+  private async markDone(job: Job, from: string, id: string): Promise<ReceiveResult & { label?: MessageHandled }> {
     const result = await this.reply(from, "Thanks, cleaning marked done.", "done", "done", id, job.id);
     const acked = result.sent.length > 0 || this.delivery(`done:${id}`) === "sent";
     if (acked) {
@@ -3052,6 +3106,7 @@ class Engine implements CleanerCore {
       ...(job.photosSaved ? { photosSaved: job.photosSaved } : {}),
       ...(job.notes ? { notes: [...job.notes] } : {}),
       ...(job.checklist ? { checklist: [...job.checklist] } : {}),
+      ...(job.checklistConfirmedAt ? { checklistConfirmedAt: job.checklistConfirmedAt } : {}),
     };
   }
 

@@ -87,6 +87,27 @@ describe("one address, tools by service", () => {
     expect(await m.toolNames("/mcp/cleaner-core", token)).toEqual(expect.arrayContaining(["save_property", "switch_service", "stand_down_service"]));
   });
 
+  it("goes straight to cleaning setup after choosing cleaning, without asking tours or cleaners again", async () => {
+    const m = await start();
+    const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+    const token = await m.joinAt(tenant.id, "grok", "/mcp");
+    await m.toolAt("/mcp", token, "choose_service", { service: "cleaning" });
+    const state = await m.toolAt("/mcp", token, "get_state");
+    expect(state.isError).toBe(false);
+    expect(state.text).not.toContain("Letting renters tour a unit");
+    expect((state.structured?.ask as { step?: string } | undefined)?.step).toBe("property");
+  });
+
+  it("asks nothing about Tour Core on connect while TOUR_CORE_TENANTS is off", async () => {
+    const m = await start({});
+    const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+    const token = await m.joinAt(tenant.id, "grok", "/mcp");
+    const init = await m.rpcAt("/mcp", token, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "Grok", version: "1" } });
+    expect(JSON.stringify(init.json.result)).not.toContain("Tour Core: self-guided tours");
+    const listed = await m.rpcAt("/mcp", token, "tools/list", {});
+    expect(JSON.stringify(listed.json.result)).not.toContain("Tour Core: self-guided tours");
+  });
+
   it("offers only cleaning while TOUR_CORE_TENANTS is off", async () => {
     const m = await start({});
     const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
