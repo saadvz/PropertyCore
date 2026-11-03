@@ -556,6 +556,12 @@ export function redactDigitRuns(text: string): string {
 /** Texts that ask the cleaner their own YES or NO. */
 const CLEANER_QUESTIONS = new Set<TextKind>(["offer", "corrected", "opt-in"]);
 const JOB_TEXTS = new Set<TextKind>(["offer", "corrected", "confirm", "reminder", "cancel-update", "declined", "started", "done", "checklist"]);
+/**
+ * Engine job texts that carry a due group intro in the same post, the intro first. Two texts sent
+ * back to back into a group can reach each phone in a different order. The door code, the injury
+ * alert, and the landlord's own messages always go on their own.
+ */
+const INTRO_RIDES = new Set<TextKind>(["offer", "corrected", "confirm", "reminder", "cancel-update", "declined", "started", "done", "next", "checklist"]);
 /** Job notes kept during a cleaning, newest last, and the length of each. */
 const MAX_NOTES = 5;
 const MAX_NOTE = 200;
@@ -2246,9 +2252,10 @@ class Engine implements CleanerCore {
 
   private async drainOne(): Promise<CleanerText[]> {
     if (this.optedOut || this.problemHold) return [];
+    // A job text posted to the group carries a due intro. An intro still due after it goes alone.
+    const rest = await this.drainJobs();
     const intro = await this.ensureIntro();
     if (intro) this.pendingIntros = this.pendingIntros.filter((item) => item !== intro);
-    const rest = await this.drainJobs();
     return intro ? [intro, ...rest] : rest;
   }
 
@@ -2489,7 +2496,8 @@ class Engine implements CleanerCore {
     const id = `${draft.id}:group`;
     // A text already sent one-to-one (an older store, an earlier fallback) is never posted again.
     if (this.delivery(draft.id) === "sent" || this.delivery(id) === "sent") return null;
-    await this.ensureIntro();
+    const intro = INTRO_RIDES.has(draft.kind) ? this.dueIntro() : undefined;
+    if (!intro) await this.ensureIntro();
     const audience = this.groupAudience();
     const name = this.seatName(draft.to);
     // The landlord's approved words are posted exactly as approved.
@@ -2506,13 +2514,14 @@ class Engine implements CleanerCore {
       id,
       ...(draft.jobId ? { jobId: draft.jobId } : {}),
       to: this.cleanerPhone ?? audience[0] ?? draft.to,
-      body,
+      body: intro ? `${intro.body}\n\n${body}` : body,
       kind: draft.kind,
       channel: "group",
       audience,
       ...(draft.afterSend ? { afterSend: draft.afterSend } : {}),
     });
     const status = this.delivery(id);
+    if (intro) this.noteIntro(intro, status);
     if (status === "sent") {
       if (draft.kind === "offer" && this.messagingMode() !== "cleaner-only") await this.copyOffer(draft, draft.to);
       // The landlord's own line still reaches Grok through get_state, beside the group post.
@@ -2909,23 +2918,31 @@ class Engine implements CleanerCore {
    * holds back the group's other texts.
    */
   private async ensureIntro(): Promise<CleanerText | null> {
-    const intro = this.introId();
-    if (!intro || !this.groupChat || this.lastIntro === intro.members) return null;
-    const audience = intro.seats.map((seat) => seat.phone);
-    const to = audience.find((phone) => phone === this.cleanerPhone) ?? audience[0];
-    if (!to) return null;
-    const text = await this.emit({
-      id: intro.id,
-      to,
-      body: groupIntroBody(intro.seats.map((seat) => seat.name), this.groupChat.hostName, this.options.property.address),
-      kind: "intro",
-      channel: "group",
-      audience,
-    });
+    const intro = this.dueIntro();
+    if (!intro) return null;
+    const text = await this.emit({ id: intro.id, to: intro.to, body: intro.body, kind: "intro", channel: "group", audience: intro.audience });
     // Once an attempt is on record (sent, failed or waiting), this membership is introduced.
     if (this.delivery(intro.id) !== undefined) this.lastIntro = intro.members;
     if (text) this.pendingIntros.push(text);
     return text;
+  }
+
+  /** The intro the group is owed now, if any. */
+  private dueIntro(): { id: string; members: string; to: string; audience: string[]; body: string } | undefined {
+    const intro = this.introId();
+    if (!intro || !this.groupChat || this.lastIntro === intro.members) return undefined;
+    const audience = intro.seats.map((seat) => seat.phone);
+    const to = audience.find((phone) => phone === this.cleanerPhone) ?? audience[0];
+    if (!to) return undefined;
+    const body = groupIntroBody(intro.seats.map((seat) => seat.name), this.groupChat.hostName, this.options.property.address);
+    return { id: intro.id, members: intro.members, to, audience, body };
+  }
+
+  /** Records an intro that went out inside a job text, with that post's outcome. */
+  private noteIntro(intro: NonNullable<ReturnType<Engine["dueIntro"]>>, status: OutboxItem["status"] | undefined): void {
+    if (status === undefined) return;
+    this.upsert({ id: intro.id, to: intro.to, body: intro.body, kind: "intro", channel: "group", audience: intro.audience }, status);
+    this.lastIntro = intro.members;
   }
 
   /** An intro posted during a step is listed first among that step's texts. */

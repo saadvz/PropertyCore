@@ -1589,8 +1589,9 @@ describe("Cleaner Core Grok demo: Scratch rehearsal", () => {
     // The second YES takes the offer.
     await fromCleaner("YES");
     // The offer goes once, into the group, and asks the cleaner by name. There is no one-to-one copy.
+    // It is the group's first text, so the intro leads it in the same post.
     const offers = await labelled("Cleaning offer to the group");
-    expect(offers.map((item) => item.body.startsWith(`Turnover at ${address} on Wednesday, Oct 14. Checkout 10:00 AM`))).toEqual([true]);
+    expect(offers.map((item) => item.body.startsWith("Hi ") && item.body.includes(`\n\nTurnover at ${address} on Wednesday, Oct 14. Checkout 10:00 AM`))).toEqual([true]);
     await fromCleaner("YES");
     expect(await labelled("Confirmation to the group")).toHaveLength(1);
     const heard = alertsOf(await say("check_now", { googleEvents: googleList([today]) }));

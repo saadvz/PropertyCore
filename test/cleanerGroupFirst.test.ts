@@ -187,17 +187,23 @@ describe("group-first: intro", () => {
     ]);
   });
 
-  it("comes before the first offer", async () => {
+  it("goes out in one text with the first offer, the intro first", async () => {
+    // Two texts sent back to back into a new group can reach each phone in a different order.
     const sent: CleanerText[] = [];
-    const job = engine(sent);
+    const job = engine(sent, { groupChat: { hostName: "Saad", cleanerName: "Mike" } });
     await job.pollFeed(FEED);
     await job.confirmHostTimes({ checkout: "11:00 AM", checkIn: "4:00 PM" });
     await yes(job, MIKE);
-    const kinds = sent.filter((text) => text.channel === "group").map((text) => text.kind);
-    expect(kinds[0]).toBe("intro");
-    expect(kinds).toContain("offer");
-    expect(kinds.indexOf("intro")).toBeLessThan(kinds.indexOf("offer"));
-    expect(intros(sent)).toHaveLength(1);
+    const group = sent.filter((text) => text.channel === "group");
+    expect(group.map((text) => text.kind)).toEqual(["offer"]);
+    const intro = groupIntroBody(["Saad", "Mike"], "Saad", LANE);
+    expect(group[0]?.body).toBe(`${intro}\n\nTurnover at ${LANE} on Sunday, Oct 18. Checkout 11:00 AM, next guest 4:00 PM. Mike, reply YES to schedule it.`);
+    // The intro is on record, so it is not posted again.
+    const rows = job.outbox().filter((item) => item.kind === "intro");
+    expect(rows.map((item) => [item.status, item.body])).toEqual([["sent", intro]]);
+    await job.receive({ id: "take-offer", from: MIKE, text: "YES" });
+    expect(sent.filter((text) => text.channel === "group").map((text) => text.kind)).toEqual(["offer", "confirm"]);
+    expect(sent.filter((text) => text.channel === "group")[1]?.body).not.toContain(intro);
   });
 
   it("posts a second intro naming all three when Ana joins after Mike", async () => {
@@ -277,14 +283,15 @@ describe("group-first: intro", () => {
         },
       },
     });
-    await job.pollFeed(FEED);
-    await job.confirmHostTimes({ checkout: "11:00 AM", checkIn: "4:00 PM" });
+    // With no job booked yet, the intro goes on its own when Mike joins.
+    await job.pollFeed(EMPTY);
     await yes(job, MIKE);
-    expect(sent.some((text) => text.kind === "offer" && text.to === MIKE)).toBe(true);
     // The failed intro is kept for review, and it is not posted again.
     expect(job.reviews().filter((item) => item.kind === "failed-sms" && item.status === "open")).toHaveLength(1);
     failIntro = false;
     await job.pollFeed(FEED);
+    await job.confirmHostTimes({ checkout: "11:00 AM", checkIn: "4:00 PM" });
+    expect(sent.some((text) => text.kind === "offer" && text.to === MIKE && !text.body.startsWith("Hi "))).toBe(true);
     expect(intros(sent)).toEqual([]);
   });
 
@@ -475,14 +482,15 @@ describe("group-first: routing", () => {
     expect(job.reviews().some((item) => item.kind === "failed-sms" && item.status === "open")).toBe(true);
   });
 
-  it("posts the intro first when a reply is routed from a receive, with both already in", async () => {
+  it("puts the intro first in the same text when a reply is routed from a receive, with both already in", async () => {
     const sent: CleanerText[] = [];
     const job = engine(sent, { at: "2026-10-14T15:00:00.000Z" });
     expect(sent).toEqual([]);
     const result = await say(job, "hello", MIKE, "what do I do next?");
     const group = sent.filter((text) => text.channel === "group");
-    expect(group.map((text) => text.kind)).toEqual(["intro", "next"]);
-    expect(result.sent.map((text) => text.kind)).toEqual(["intro", "next"]);
+    expect(group.map((text) => text.kind)).toEqual(["next"]);
+    expect(group[0]?.body.startsWith(`${groupIntroBody(["Saad", "Mike"], "Saad", LANE)}\n\n`)).toBe(true);
+    expect(result.sent.map((text) => text.kind)).toEqual(["next"]);
     expect(group.every((text) => text.audience?.join() === [OWNER, MIKE].join())).toBe(true);
   });
 
@@ -867,7 +875,8 @@ describe("group-first: Grok's tools", () => {
     expect((await sms(wired, CLEANER, "YES")).status).toBe(200);
     expect(fake.created).toHaveLength(1);
     const sid = fake.created[0] ?? "";
-    expect(fake.posts[0]?.body).toBe(groupIntroBody([BUSINESS, "Mike"], BUSINESS, ADDRESS));
+    // The first group text is the intro with the offer after it, in one post.
+    expect(fake.posts[0]?.body.startsWith(`${groupIntroBody([BUSINESS, "Mike"], BUSINESS, ADDRESS)}\n\nTurnover at `)).toBe(true);
     expect(await hook(wired, inGroup(sid, CLEANER, "YES"))).toBe(200);
     const left = await must(wired, "mark_guests_left", { confirmed: true });
     expect(left.next).toBe(PIN_SENT_GROUP);
