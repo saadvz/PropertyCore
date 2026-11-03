@@ -128,6 +128,12 @@ const PHOTO_MARK = "[photo]";
 const MAX_HOST_MESSAGE = 600;
 const HOST_MESSAGES_PER_HOUR = 10;
 const HOUR_MS = 60 * 60_000;
+/**
+ * Twilio hands one group reply to both the group's webhook and the cleaning number's SMS webhook,
+ * each with its own sid. The same words from the same person on the other path this soon after
+ * are that second copy.
+ */
+const SECOND_COPY_MS = 5 * 60_000;
 /** The approval action for a host message. Its target is the recipient, its fingerprint the recipient and the exact text. */
 const SEND_ACTION = "cleaner-message";
 const MESSAGE_NEEDED = `Write the message in 1 to ${MAX_HOST_MESSAGE} characters.`;
@@ -2396,6 +2402,11 @@ export class LiveDesk {
       this.resume();
       return { sent: [] };
     }
+    if (this.secondCopy(from, input)) {
+      this.noteSeen(input.id);
+      this.persist();
+      return { sent: [] };
+    }
     this.claiming.add(input.id);
     try {
       // A photo from the cleaner or a contact is downloaded once: for the cleaning in progress, and for its message.
@@ -2407,6 +2418,30 @@ export class LiveDesk {
     } finally {
       this.claiming.delete(input.id);
     }
+  }
+
+  /**
+   * True when this text is the other webhook's copy of a group reply already taken. Only a group
+   * copy and a one-to-one copy match each other, so a person who sends the same words twice in one
+   * thread is still read twice.
+   */
+  private secondCopy(from: string, input: Inbound): boolean {
+    if (!this.groupOn() || !this.file.conversationSid) return false;
+    const members = [this.file.host, this.file.cleaner, ...this.groupExtras().map((contact) => contact.phone)];
+    if (!members.includes(from)) return false;
+    const at = this.now().getTime();
+    const words = input.text.trim().replace(/\s+/g, " ");
+    const media = input.media?.length ?? 0;
+    const group = input.channel === "group";
+    this.recentInbound = this.recentInbound.filter((item) => at - item.at < SECOND_COPY_MS);
+    const index = this.recentInbound.findIndex((item) => item.from === from && item.words === words && item.media === media && item.group !== group);
+    if (index >= 0) {
+      // One copy matches one copy, so a third send of the same words is read again.
+      this.recentInbound.splice(index, 1);
+      return true;
+    }
+    this.recentInbound.push({ from, words, media, group, at });
+    return false;
   }
 
   /** Handles one inbound text. `handled` is what Cleaner Core did, or undefined when the text was not taken. */
@@ -2523,6 +2558,8 @@ export class LiveDesk {
   }
 
   private readonly claiming = new Set<string>();
+  /** Recent texts from group members, kept in memory only, to drop a group reply's second copy. */
+  private recentInbound: { from: string; words: string; media: number; group: boolean; at: number }[] = [];
 
   /** The engine tells the host nothing when the cleaner accepts. One note per job, the first time it is confirmed. */
   private noteCleanerYes(engine: CleanerCore, offered: Set<string>): void {
