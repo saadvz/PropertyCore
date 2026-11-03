@@ -59,6 +59,7 @@ const REVIEW_ASK = "Summarize this setup for the host in your own words, then as
 const DEPARTURES = new Set(["guests have left", "guests left", "they have left", "they left", "departed", "left"]);
 
 const PIN_SENT = "I sent the door code to the cleaner. I'll tell you if it doesn't go through.";
+const UPDATE_HELD = "Times saved. I'll send the cleaner the new time in about a minute. If the time changes again before then, they get only the last one.";
 const PIN_SENT_GROUP = "I posted the door code in the cleaning group for the cleaner. I'll tell you if it doesn't go through.";
 const PIN_FAILED = "The door code didn't reach the cleaner. Tell your Grok Bot the guests have left and I'll resend it.";
 const PIN_REPEAT = "I already sent the door code to the cleaner.";
@@ -452,6 +453,18 @@ let alertFetch: AlertFetch | undefined;
 /** Tests stub the routine webhook. Unset uses the platform fetch. */
 export function setCleanerAlertFetch(fetchImpl: AlertFetch | undefined): void {
   alertFetch = fetchImpl;
+}
+
+/**
+ * How long a checkout change after the offer waits before the cleaner's update goes. A quick second
+ * change then sends one text, and a change back sends none.
+ */
+const UPDATE_SETTLE_MS = 60_000;
+let updateSettle: number | undefined;
+
+/** Tests set the hold. Unset is one minute. */
+export function setCleanerUpdateSettle(ms: number | undefined): void {
+  updateSettle = ms;
 }
 
 const desks = new Map<string, LiveDesk>();
@@ -1842,6 +1855,7 @@ export class LiveDesk {
     this.persist();
     await engine.releaseCleanerTexts();
     const sent = this.cleanerSent(engine, sentBefore);
+    const held = this.armUpdate(engine);
     return this.reply({
       next:
         sent === "opt-in"
@@ -1850,7 +1864,9 @@ export class LiveDesk {
             ? "Times saved. I sent the cleaner the cleaning offer. They reply YES to take it."
             : sent === "corrected"
               ? "Times saved. I sent the cleaner the new time."
-              : "Times saved. Nothing was sent.",
+              : held
+                ? UPDATE_HELD
+                : "Times saved. Nothing was sent.",
       turns: this.turns(),
     });
   }
@@ -1889,6 +1905,35 @@ export class LiveDesk {
             : `${saved} Nothing was sent yet. The cleaner gets one cleaning offer at a time, starting with the first.`,
       turns: this.turns(),
     });
+  }
+
+  /**
+   * Wakes the desk when a held checkout update is due. True while one is held. A restart loses the
+   * timer, and the next check_now sends the update instead.
+   */
+  private armUpdate(engine: CleanerCore, onlyAhead = false): boolean {
+    if (this.updateTimer) clearTimeout(this.updateTimer);
+    this.updateTimer = undefined;
+    const due = engine.updateDueAt();
+    if (!due) return false;
+    const ahead = Date.parse(due) - this.now().getTime();
+    // An update that is due but still can't go (a hold, an opt-out) waits for the next check_now.
+    if (onlyAhead && ahead <= 0) return true;
+    const wait = Math.max(0, ahead) + 1000;
+    this.updateTimer = setTimeout(() => {
+      this.updateTimer = undefined;
+      if (desks.get(this.root) !== this) return;
+      void this.serial(async () => {
+        this.resume();
+        const current = this.engine;
+        if (!current) return;
+        await current.sendDueUpdates();
+        this.persist();
+        this.armUpdate(current, true);
+      }).catch(() => undefined);
+    }, wait);
+    this.updateTimer.unref?.();
+    return true;
   }
 
   markGuestsLeft(input: { confirmed?: boolean }, pinKey: Buffer | undefined): Promise<ToolReply> {
@@ -2558,6 +2603,7 @@ export class LiveDesk {
   }
 
   private readonly claiming = new Set<string>();
+  private updateTimer: NodeJS.Timeout | undefined;
   /** Recent texts from group members, kept in memory only, to drop a group reply's second copy. */
   private recentInbound: { from: string; words: string; media: number; group: boolean; at: number }[] = [];
 
@@ -2932,6 +2978,7 @@ export class LiveDesk {
       ...this.scheduleOptions(),
       reminderAsksArrival: true,
       grokReadsMessages: true,
+      updateSettleMs: updateSettle ?? UPDATE_SETTLE_MS,
       ...(this.primaryAssistant() !== "grok" ? { helperName: this.hostWords().helper } : {}),
       ...this.preferenceOptions(),
       ownerPhone: file.host,

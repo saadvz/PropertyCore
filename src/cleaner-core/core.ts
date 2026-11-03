@@ -366,6 +366,12 @@ export interface CleanerCoreOptions {
    * Unset keeps the guide reply for the Scratch CLI and the smoke runs.
    */
   grokReadsMessages?: boolean;
+  /**
+   * How long a checkout change after the offer waits before the cleaner's "Update" text goes, so
+   * a quick second change replaces it, and a change back sends nothing. Unset or 0 sends at once.
+   * A held update goes out on sendDueUpdates, runReminders, or the cleaner's next YES.
+   */
+  updateSettleMs?: number;
   /** Who a host text tells them to talk to. Unset is "your Grok Bot"; a Claude deployment passes "Claude". */
   helperName?: string;
   /** The host's checklist, sent to the cleaner once per job right after the private code. */
@@ -421,6 +427,10 @@ export interface CleanerCore {
    * Grok passes them from chat. The cleaner's next text goes out as it would after a host text.
    */
   setHostTimes(input: { checkout: number; checkIn: number; keepCheckIn?: boolean }): Promise<CleanerText[]>;
+  /** When the held checkout update goes out, as an ISO time. Undefined when no update is held. */
+  updateDueAt(): string | undefined;
+  /** Sends a held checkout update whose hold has ended. */
+  sendDueUpdates(): Promise<CleanerText[]>;
   /** confirmOpenTimes with minutes after midnight. Group setups only. */
   setOpenTimes(input: { checkout: number; checkIn: number }): Promise<{ timed: number; sent: CleanerText[] }>;
   /** The host told Grok the guests have left. The door code goes out under the same rules as before. */
@@ -656,6 +666,8 @@ interface HostFact {
   field: "checkout" | "checkin";
   version: number;
   minutes: number;
+  /** When the time was saved. Older stores have none, and their updates are never held. */
+  at?: string;
 }
 
 interface Tombstone {
@@ -781,6 +793,8 @@ class Engine implements CleanerCore {
   private readonly defaultCheckIn: number;
   private jobsState: Job[] = [];
   private hostFacts: HostFact[] = [];
+  /** Set while the cleaner's YES sends a held update early. */
+  private sendHeldUpdate = false;
   private tombstones: Tombstone[] = [];
   private outboxState: OutboxItem[] = [];
   private inboundIds: string[] = [];
@@ -1097,6 +1111,8 @@ class Engine implements CleanerCore {
     const failed: string[] = [];
     // An offer held by the offer trigger or quiet hours goes out on the first check after it is due.
     if (this.options.offerTrigger) sent.push(...(await this.drainOne()));
+    // A held checkout update whose hold ended goes out on this check, if nothing sent it sooner.
+    else if (this.heldJobs().length > 0) sent.push(...(await this.drainOne()));
     if (!this.inQuietHours()) for (const job of this.ordered()) {
       if (!this.canRemind(job)) continue;
       const fact = this.latestFact(job.id, "checkout");
@@ -1688,6 +1704,8 @@ class Engine implements CleanerCore {
       const confirmer = this.cleanerRecord()?.phone;
       if (!confirmer || from !== confirmer) return this.quietOrGuide(from, id, text);
       if (isYes(text)) {
+        // A YES during a held update answered the old time. The update goes now and asks again.
+        if (this.updateHeld(job)) return this.sendUpdateNow(id);
         if (this.stale(job)) return this.quietOrGuide(from, id, text);
         const sent = await this.confirm(job);
         if (sent.length === 0 && !this.confirmSent(job)) return { handled: true, reason: "ignored", sent: [] };
@@ -1701,6 +1719,17 @@ class Engine implements CleanerCore {
       }
     }
     return this.quietOrGuide(from, id, text);
+  }
+
+  private async sendUpdateNow(id: string): Promise<ReceiveResult> {
+    this.sendHeldUpdate = true;
+    try {
+      const sent = await this.drainOne();
+      this.inboundIds.push(id);
+      return { handled: true, reason: "ignored", sent };
+    } finally {
+      this.sendHeldUpdate = false;
+    }
   }
 
   private async confirm(job: Job): Promise<CleanerText[]> {
@@ -2319,6 +2348,7 @@ class Engine implements CleanerCore {
       };
     }
     if (this.checkoutDrift(job)) {
+      if (this.updateHeld(job)) return null;
       const to = this.cleanerRecord()?.phone;
       if (!to) return null;
       const when = this.clock(job.checkoutDate, checkout.minutes);
@@ -3110,6 +3140,37 @@ class Engine implements CleanerCore {
     };
   }
 
+  /** When this job's checkout update may go: its last checkout change plus the hold. */
+  private updateDue(job: Job): number | undefined {
+    const settle = this.options.updateSettleMs ?? 0;
+    if (settle <= 0 || !this.checkoutDrift(job)) return undefined;
+    const at = Date.parse(this.latestFact(job.id, "checkout")?.at ?? "");
+    return Number.isNaN(at) ? undefined : at + settle;
+  }
+
+  private updateHeld(job: Job): boolean {
+    if (this.sendHeldUpdate) return false;
+    const due = this.updateDue(job);
+    return due !== undefined && this.now().getTime() < due;
+  }
+
+  private heldJobs(): Job[] {
+    return this.ordered().filter((job) => !job.canceled && !job.declined && this.updateDue(job) !== undefined);
+  }
+
+  updateDueAt(): string | undefined {
+    const due = this.heldJobs().map((job) => this.updateDue(job) ?? Infinity);
+    if (due.length === 0) return undefined;
+    return new Date(Math.min(...due)).toISOString();
+  }
+
+  async sendDueUpdates(): Promise<CleanerText[]> {
+    if (!this.enabled || !this.everConsented || this.heldJobs().length === 0) return [];
+    const sent = await this.drainOne();
+    this.save();
+    return sent;
+  }
+
   private checkoutDrift(job: Job): boolean {
     const checkout = this.latestFact(job.id, "checkout");
     if (!job.announced || !checkout) return false;
@@ -3181,7 +3242,7 @@ class Engine implements CleanerCore {
   private addFact(jobId: string, field: "checkout" | "checkin", minutes: number): void {
     const latest = this.latestFact(jobId, field);
     if (latest?.minutes === minutes) return;
-    this.hostFacts.push({ jobId, field, version: (latest?.version ?? 0) + 1, minutes });
+    this.hostFacts.push({ jobId, field, version: (latest?.version ?? 0) + 1, minutes, at: this.now().toISOString() });
     this.cancelPendingReminders(jobId);
   }
 
