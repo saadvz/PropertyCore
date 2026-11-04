@@ -43,9 +43,9 @@ const buttons = (choices: readonly ServiceChoice[]) => `${choices.length === 2 ?
 const askOnConnect = (choices: readonly ServiceChoice[]) =>
   `Right after connecting, before anything else, ask the host exactly "${serviceQuestion(choices)}" with ${buttons(choices)}. Don't describe what you can do instead.`;
 
-/** The services a new number can choose here: touring and Supply Core only while their flags are on. */
-export function choicesFor(h: HostedCleaner): ServiceChoice[] {
-  return serviceChoices({ touring: tourCoreTenants(h.baseEnv()) && !!h.touring, supplies: supplyCoreOn(h.baseEnv()) });
+/** The services a new number can choose here: touring and Supply Core only while their flags are on, and Supply Core only for Grok. */
+export function choicesFor(h: HostedCleaner, assistant?: CleanerAssistant): ServiceChoice[] {
+  return serviceChoices({ touring: tourCoreTenants(h.baseEnv()) && !!h.touring, supplies: supplyCoreOn(h.baseEnv()) && assistant === "grok" });
 }
 
 /** The same tools where touring is off: a new number can only run cleaning. */
@@ -238,7 +238,7 @@ export async function handleFrontTool(ctx: FrontContext, name: string, args: unk
   if (!tool) return undefined;
   const parsed = tool.input.safeParse(args ?? {});
   if (!parsed.success) return fail("That was missing something I need.");
-  const choices = choicesFor(ctx.h);
+  const choices = choicesFor(ctx.h, ctx.caller.assistant);
   if (name === "get_state") {
     if (choices.length < 2) return done({ next: UNSET_CLEANING_ONLY, services: ["cleaning"] });
     return done({ next: unsetNext(choices), say: serviceQuestion(choices), choices, services: choices.map((choice) => choice.service) });

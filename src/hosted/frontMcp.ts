@@ -94,7 +94,7 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
   if (message?.method === "initialize") initializes.set(caller.grantId, raw);
 
   // While touring and Supply Core are off here, a new number can only run cleaning, so nothing offers a pick.
-  const choices = choicesFor(h);
+  const choices = choicesFor(h, caller.assistant);
   const cleaningOnly = choices.length < 2;
   if (state === "supplies") return suppliesAnswer(h, r, tenant, caller, sessionKey, message);
   if (state === "unset") {

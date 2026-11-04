@@ -158,9 +158,9 @@ function passes(rule: Rule, ymd: string, startYmd: string): boolean {
   return true;
 }
 
-/** Every occurrence of a rule from its start, in order, up to the lookahead. The start counts when it matches. */
-function* occurrences(rule: Rule, startYmd: string): Generator<string> {
-  const end = addCalendarDays(startYmd, 366 * LOOKAHEAD_YEARS);
+/** Every occurrence of a rule from its start, in order, up to `endYmd`. The start counts when it matches. */
+function* occurrences(rule: Rule, startYmd: string, endYmd: string): Generator<string> {
+  const end = endYmd;
   let produced = 0;
   for (let index = 0; ; index += rule.interval) {
     const days = periodDays(rule, startYmd, index);
@@ -180,18 +180,27 @@ function* occurrences(rule: Rule, startYmd: string): Generator<string> {
   }
 }
 
-function* monthly(day: number, startYmd: string): Generator<string> {
-  const { y, m } = parts(startYmd);
-  for (let i = 0; i < 12 * LOOKAHEAD_YEARS; i++) {
+/** The day of each month from `fromYmd`'s month, on or after `fromYmd`, up to `endYmd`. */
+function* monthly(day: number, fromYmd: string, endYmd: string): Generator<string> {
+  const { y, m } = parts(fromYmd);
+  for (let i = 0; ; i++) {
     const first = new Date(Date.UTC(y, m - 1 + i, 1));
     const date = ymdOf(first.getUTCFullYear(), first.getUTCMonth() + 1, day);
-    if (date >= startYmd) yield date;
+    if (date > endYmd) return;
+    if (date >= fromYmd) yield date;
   }
 }
 
-function* everyDays(days: number, startYmd: string): Generator<string> {
-  for (let k = 1; k * days <= 366 * LOOKAHEAD_YEARS; k++) yield addCalendarDays(startYmd, k * days);
+function* everyDays(days: number, startYmd: string, endYmd: string): Generator<string> {
+  for (let k = 1; ; k++) {
+    const date = addCalendarDays(startYmd, k * days);
+    if (date > endYmd) return;
+    yield date;
+  }
 }
+
+/** The lookahead: three years past a date. */
+const horizon = (ymd: string) => addCalendarDays(ymd, 366 * LOOKAHEAD_YEARS);
 
 /** A plain-language refusal, or undefined when the schedule is valid. */
 export function scheduleProblem(schedule: Schedule): string | undefined {
@@ -207,7 +216,7 @@ export function scheduleProblem(schedule: Schedule): string | undefined {
   const rule = parseRule(schedule.rrule);
   if (typeof rule === "string") return rule;
   const today = todayUtc();
-  for (const day of occurrences(rule, today)) if (day > today) return undefined;
+  for (const day of occurrences(rule, today, horizon(today))) if (day > today) return undefined;
   return "That rule never comes up again.";
 }
 
@@ -219,19 +228,24 @@ export function nextDates(schedule: Schedule, startYmd: string, afterYmd: string
     for (let i = schedule.stays - 1; i < later.length && out.length < count; i += schedule.stays) out.push(later[i]!);
     return out;
   }
-  for (const day of dates(schedule, startYmd)) {
+  for (const day of dates(schedule, startYmd, afterYmd, horizon(afterYmd > startYmd ? afterYmd : startYmd))) {
     if (day > afterYmd) out.push(day);
     if (out.length >= count) break;
   }
   return out;
 }
 
-function dates(schedule: Exclude<Schedule, { kind: "bookings" }>, startYmd: string): Iterable<string> {
+/**
+ * A schedule's dates from `startYmd` up to `endYmd`. `fromYmd` lets a monthly schedule skip the
+ * months before it; a custom rule always runs from its start, so COUNT and INTERVAL stay right.
+ */
+function dates(schedule: Exclude<Schedule, { kind: "bookings" }>, startYmd: string, fromYmd: string, endYmd: string): Iterable<string> {
   if (schedule.kind === "custom") {
     const rule = parseRule(schedule.rrule);
-    return typeof rule === "string" ? [] : occurrences(rule, startYmd);
+    return typeof rule === "string" ? [] : occurrences(rule, startYmd, endYmd);
   }
-  return "days" in schedule ? everyDays(schedule.days, startYmd) : monthly(schedule.monthlyOn, startYmd);
+  if ("days" in schedule) return everyDays(schedule.days, startYmd, endYmd);
+  return monthly(schedule.monthlyOn, fromYmd > startYmd ? fromYmd : startYmd, endYmd);
 }
 
 export interface DueInput {
@@ -260,7 +274,7 @@ export function dueOn(input: DueInput): { due: boolean; why?: "schedule" | "repo
   }
   const after = anchorYmd ?? addCalendarDays(startYmd, -1);
   let latest: string | undefined;
-  for (const day of dates(schedule, startYmd)) {
+  for (const day of dates(schedule, startYmd, after, todayYmd)) {
     if (day > todayYmd) break;
     if (day > after) latest = day;
   }

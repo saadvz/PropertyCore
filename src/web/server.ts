@@ -516,8 +516,9 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
                   connected: (tenantId: string, grantId: string, assistant: CleanerAssistant) =>
                     tenants.connect(tenantId, { grantId, assistant, connectedAt: (options.now?.() ?? new Date()).toISOString() }),
                   refusal: (reason: InviteRefusal) => INVITE_REFUSALS[reason],
-                  offersPick: () => serviceChoices({ touring: tourCoreTenants(installation.env()) && !!touringFront, supplies: supplyCoreOn(installation.env()) }).length > 1,
-                  choices: () => serviceChoices({ touring: tourCoreTenants(installation.env()) && !!touringFront, supplies: supplyCoreOn(installation.env()) }),
+                  // Supply Core is offered to Grok chats only: the others have no shopping tools or Vault.
+                  offersPick: (assistant?: CleanerAssistant) => serviceChoices({ touring: tourCoreTenants(installation.env()) && !!touringFront, supplies: supplyCoreOn(installation.env()) && assistant === "grok" }).length > 1,
+                  choices: (assistant?: CleanerAssistant) => serviceChoices({ touring: tourCoreTenants(installation.env()) && !!touringFront, supplies: supplyCoreOn(installation.env()) && assistant === "grok" }),
                   // The host's pick on the Allow page sets a new number's service before its chat lists any tools.
                   choose: (tenantId: string, service: ServicePick) => {
                     const tenant = tenants.get(tenantId);

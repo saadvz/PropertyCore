@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { tenantFolder } from "../src/cleaner-core/hosted/registry";
-import { readSupply } from "../src/supply-core/store";
+import { readSupply, supplyAskOn } from "../src/supply-core/store";
 import { BASE, closeHostedApps, pkce } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 
@@ -186,5 +186,54 @@ describe("the cleaning add-on", () => {
     expect(m.registry.get(tenant.id)?.supplies).toBe(false);
     expect(await m.toolNames("/mcp/cleaner-core", grok)).not.toContain("save_supply_item");
     expect(readSupply(tenantFolder(m.app.root, tenant.id)).offAt).toBeDefined();
+  });
+});
+
+describe("Grok only, and switching away", () => {
+  it("doesn't offer Supply Core to a Claude chat, and a Claude chat on a supplies tenant gets no supply tools", SLOW, async () => {
+    const m = await start();
+    const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+    const claude = await m.joinAt(tenant.id, "claude", "/mcp");
+    const state = await m.toolAt("/mcp", claude, "get_state");
+    expect(JSON.stringify(state.structured)).not.toContain("supplies");
+    expect((await m.toolAt("/mcp", claude, "choose_service", { service: "supplies" })).isError).toBe(true);
+    const clientId = await m.app.register("claude", "https://claude.ai/api/mcp/auth_callback");
+    const page = await (await m.app.authorize(clientId, pkce().challenge, `${BASE}/mcp`, "tourcore.operator", "state-1", "https://claude.ai/api/mcp/auth_callback")).text();
+    expect(page).not.toContain('value="supplies"');
+
+    const other = m.registry.create({ label: "Court", twilioNumber: COURT });
+    m.registry.setService(other.tenant.id, "supplies");
+    const claudeOnSupplies = await m.joinAt(other.tenant.id, "claude", "/mcp");
+    const names = await m.toolNames("/mcp", claudeOnSupplies);
+    expect(names).not.toContain("save_supply_item");
+    expect((await m.toolAt("/mcp", claudeOnSupplies, "save_supply_item", towels)).isError).toBe(true);
+  });
+
+  it("switching supplies to cleaning turns the supplies question off and keeps the list", SLOW, async () => {
+    const m = await start();
+    const { tenant, token } = await suppliesTenant(m);
+    await m.toolAt("/mcp", token, "save_supply_settings", { property: PROPERTY });
+    await m.toolAt("/mcp", token, "save_supply_item", towels);
+    await m.toolAt("/mcp", token, "save_supply_item", { done: true });
+    await m.toolAt("/mcp", token, "save_supply_settings", { mode: "checkout", perOrderCapCents: null, perMonthCapCents: null, checkTime: "10:00", routineCreated: true });
+    await m.toolAt("/mcp", token, "activate_supplies");
+    const ask = await m.toolAt("/mcp", token, "switch_service", { to: "cleaning" });
+    await m.toolAt("/mcp", token, "switch_service", { to: "cleaning", confirmation: (ask.structured?.confirmation as { code: string }).code });
+    const root = tenantFolder(m.app.root, tenant.id);
+    expect(supplyAskOn(root)).toBe(false);
+    expect(readSupply(root).items).toHaveLength(1);
+  });
+
+  it("switching a cleaning tenant with the add-on to supplies keeps the property's details", SLOW, async () => {
+    const m = await start();
+    const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+    const grok = await m.joinAt(tenant.id, "grok", "/mcp/cleaner-core");
+    await m.toolAt("/mcp/cleaner-core", grok, "get_state", { choice: "cleaners" });
+    await m.toolAt("/mcp/cleaner-core", grok, "save_property", { business: "Scratch", nickname: "Lake House", address: PROPERTY.address, timeZone: PROPERTY.timeZone, checkoutTime: "11:00", checkInTime: "16:00" });
+    await m.toolAt("/mcp/cleaner-core", grok, "turn_on_supplies");
+    const ask = await m.toolAt("/mcp/cleaner-core", grok, "switch_service", { to: "supplies" });
+    const switched = await m.toolAt("/mcp/cleaner-core", grok, "switch_service", { to: "supplies", confirmation: (ask.structured?.confirmation as { code: string }).code });
+    expect(switched.isError).toBe(false);
+    expect(readSupply(tenantFolder(m.app.root, tenant.id)).settings.property).toEqual({ name: "Lake House", address: PROPERTY.address, timeZone: PROPERTY.timeZone });
   });
 });

@@ -21,8 +21,8 @@ const ctx = (over: Partial<GateContext> = {}): GateContext => ({
   priceJumpPct: 20,
   monthSpentCents: 0,
   items: new Map([
-    ["it_towels", { name: "Paper towels", baseline: { preferred: 2400, backup: 2100 } }],
-    ["it_soap", { name: "Dish soap", baseline: { preferred: 429 } }],
+    ["it_towels", { name: "Paper towels", qtyPerOrder: 50, baseline: { preferred: 2400, backup: 2100 } }],
+    ["it_soap", { name: "Dish soap", qtyPerOrder: 50, baseline: { preferred: 429 } }],
   ]),
   due: new Map([
     ["it_towels", { deadline: "2026-11-08" }],
@@ -106,5 +106,24 @@ describe("cartFingerprint", () => {
     expect(cartFingerprint(a)).toBe(cartFingerprint(b));
     expect(cartFingerprint(a)).not.toBe(cartFingerprint({ ...a, totalCents: a.totalCents + 1 }));
     expect(cartFingerprint(a)).not.toBe(cartFingerprint({ ...a, items: [{ ...a.items[0]!, qty: 2 }, a.items[1]!] }));
+  });
+});
+
+describe("quantity and the checked total", () => {
+  const withQty = (over: Partial<GateContext> = {}) =>
+    ctx({ items: new Map([["it_towels", { name: "Paper towels", qtyPerOrder: 2, baseline: { preferred: 2400, backup: 2100 } }], ["it_soap", { name: "Dish soap", qtyPerOrder: 1, baseline: { preferred: 429 } }]]), ...over });
+
+  it("holds a quantity over the item's qtyPerOrder, and not at it", () => {
+    expect(checkCart(cart({ items: [{ itemId: "it_towels", product: "preferred", qty: 2, unitCents: 2400 }], totalCents: 4800 }), withQty()).verdict).toBe("go");
+    expect(checkCart(cart({ items: [{ itemId: "it_towels", product: "preferred", qty: 50, unitCents: 2400 }], totalCents: 120000 }), withQty())).toEqual({
+      verdict: "held",
+      holds: [{ reason: "over-quantity", itemId: "it_towels" }],
+    });
+  });
+
+  it("checks caps against the lines plus shipping and tax when the total given is lower", () => {
+    const low = cart({ items: [{ itemId: "it_towels", product: "preferred", qty: 2, unitCents: 2400 }], shippingCents: 500, taxCents: 300, totalCents: 1000 });
+    expect(checkCart(low, withQty({ perOrderCapCents: 5000 }))).toMatchObject({ verdict: "held", holds: [{ reason: "over-order-cap" }] });
+    expect(checkCart(low, withQty({ perMonthCapCents: 5000 }))).toMatchObject({ verdict: "held", holds: [{ reason: "over-month-cap" }] });
   });
 });

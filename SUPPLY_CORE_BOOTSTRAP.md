@@ -55,6 +55,7 @@ The Supply Core Check routine runs this, and you run it whenever the host says "
    - **go:** place the order with the saved Vault card, then `record_order` with the cart token, the order number, `chargedCents`, and `expectedBy`. Post the line it returns.
    - **held:** stop before Place Order. Show the host the cart and why. For a price jump, ask: buy anyway, switch to the backup, or skip. Buy anyway is `approve_cart`; the backup is a new `check_cart`; skip is `skip_item`.
    - **refused:** take those items out and check again. To place the rest of a cart around a held item, take the held item out and check the smaller cart.
+   - A go cart you then can't place (the store blocks you, or the item sold out at the last step): `record_problem` with its `cartToken`, so the items are free for the backup or another store.
 5. Place an order only on go, or after the landlord's yes and approve_cart's code. A routine run never calls approve_cart with a code. It shows the host the question and waits for their yes in chat.
 6. Until the hands-off probe passes, prepare the order with Buy now and ask the landlord to tap Pay. After they pay, call `record_order` with `approvedBy: "grok-card"` and the same cart token. If your card expires unpaid, try once more on the next run, then tell the host.
 7. When tracking shows an order arrived, `mark_delivered`. Tell the host once about each order in `late`.

@@ -63,6 +63,7 @@ const grok = (assistant: CleanerAssistant) => assistant === "grok";
 
 /** The Supply Core names this chat sees. A supplies tenant's get_state is Supply Core's own. */
 function available(tenant: Tenant, assistant: CleanerAssistant): string[] {
+  if (tenant.service === "supplies" && !grok(assistant)) return [];
   if (tenant.service === "supplies") return SUPPLY_TOOLS.map((tool) => tool.name).filter((name) => name !== "get_supply_state");
   if (tenant.service === "cleaning" && grok(assistant)) {
     if (!tenant.supplies) return [TURN_ON];
@@ -97,7 +98,7 @@ const GET_STATE_ALIAS = {
 export function listedSupplyFront(tenant: Tenant, assistant: CleanerAssistant): Record<string, unknown>[] {
   const names = available(tenant, assistant);
   const turns = names.filter((name) => name in TURN_TOOLS).map((name) => TURN_TOOLS[name]!);
-  return [...(tenant.service === "supplies" ? [GET_STATE_ALIAS] : []), ...listedSupplyTools(names), ...turns];
+  return [...(tenant.service === "supplies" && grok(assistant) ? [GET_STATE_ALIAS] : []), ...listedSupplyTools(names), ...turns];
 }
 
 /** The line Cleaner Core's get_state carries while the add-on is on. */
@@ -111,6 +112,9 @@ export async function handleSupplyFront(ctx: SupplyFrontContext, name: string, a
   const { h } = ctx;
   const tenant = h.registry.get(ctx.tenant.id) ?? ctx.tenant;
   const supplies = tenant.service === "supplies";
+  if (supplies && !grok(ctx.caller.assistant) && (name === "get_state" || SUPPLY_FRONT_NAMES.has(name))) {
+    return { text: "Supply Core works with Grok only for now: it shops with Grok's own shopping tools and Vault.", isError: true };
+  }
   if (supplies && name === "get_state") return supplyDesk(h, tenant).state();
   if (!SUPPLY_FRONT_NAMES.has(name)) return undefined;
   if (!available(tenant, ctx.caller.assistant).includes(name)) return { text: NOT_ON, isError: true };

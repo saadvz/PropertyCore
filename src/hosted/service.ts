@@ -96,7 +96,16 @@ export async function switchService(
       }
     }
   }
+  // Cleaner Core's property, read before the switch, so a number moving to Supply Core keeps it.
+  const cleaningProperty = from === "cleaning" && to === "supplies" ? cleaningPropertyOf(h, tenant) : undefined;
   h.registry.setService(tenant.id, to);
+  const switched = h.registry.get(tenant.id) ?? tenant;
+  // Leaving Supply Core: no new orders and no supplies question to a cleaner. The list is kept.
+  if (from === "supplies") await supplyDesk(h, switched).turnOff();
+  if (to === "supplies") {
+    await supplyDesk(h, switched).adoptProperty(cleaningProperty);
+    await supplyDesk(h, switched).turnOn();
+  }
   if (from === "touring") {
     h.touring?.supervisor.stop(tenant.id);
     // Texts that waited for touring are not replayed into a later touring setup.
@@ -111,6 +120,11 @@ export async function switchService(
   h.log(`${tenant.id} switched from ${from} to ${to}${forced ? " (forced by the admin)" : ""}.`);
   ctx.noteToolsChanged();
   return { text: CHOSEN_LINE(to), structured: { service: to }, isError: false };
+}
+
+function cleaningPropertyOf(h: HostedCleaner, tenant: Tenant) {
+  const ctx = tenantContext(h, tenant);
+  return liveDeskFor(ctx.root, ctx.env, () => h.now()).propertyForSupplies();
 }
 
 export async function standDownService(ctx: SwitchContext, input: { confirmation?: string }): Promise<FrontReply> {

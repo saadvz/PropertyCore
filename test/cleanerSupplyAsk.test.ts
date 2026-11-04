@@ -194,3 +194,18 @@ describe("the supplies question after DONE", () => {
     expect(job.jobs()[0]?.supplyReport?.text).not.toContain("4812");
   });
 });
+
+describe("the supplies question and a later offer", () => {
+  it("a bare NO while the next turnover's offer waits declines the offer, not the supplies question", async () => {
+    const { box, job } = await cleaning();
+    await job.receive({ id: "done-1", from: CLEANER, text: "DONE" });
+    await job.receive({ id: "h1", from: OWNER, text: "YES" });
+    await job.receive({ id: "h2", from: OWNER, text: "YES" });
+    expect(job.jobs()[1]?.status).toBe("offered");
+    const no = await job.receive({ id: "no-1", from: CLEANER, text: "No" });
+    expect(no.outcome).not.toBe("supply-report");
+    expect(bodies(box.sent, SUPPLY_NOTED)).toEqual([]);
+    expect(job.jobs()[0]?.supplyReport).toBeUndefined();
+    expect(job.jobs()[1]?.status).toBe("declined");
+  });
+});

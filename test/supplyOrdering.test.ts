@@ -344,3 +344,56 @@ describe("bookings", () => {
     expect(fetched).toBe(0);
   });
 });
+
+describe("held carts don't block the way forward", () => {
+  it("the backup after a price-jump hold is checked, and the held cart closes", async () => {
+    const { desk, root, ids } = await activated();
+    const held = await desk.checkCart(cartOf([{ itemId: ids.towels, qty: 2, unitCents: 3100 }]));
+    expect(held.structured!.verdict).toBe("held");
+    const backup = await desk.checkCart(cartOf([{ itemId: ids.towels, product: "backup", qty: 2, unitCents: 2100 }]));
+    expect(backup.structured!.verdict).toBe("go");
+    expect(readSupply(root).carts.map((c) => c.status)).toEqual(["go"]);
+    expect((await desk.approveCart({ cartToken: held.structured!.cartToken as string })).isError).toBe(true);
+  });
+
+  it("the rest of a cart goes through around a held item", async () => {
+    const { desk, ids } = await activated();
+    const held = await desk.checkCart(cartOf([{ itemId: ids.towels, qty: 2, unitCents: 3100 }, { itemId: ids.soap, qty: 1, unitCents: 429 }]));
+    expect(held.structured!.verdict).toBe("held");
+    const rest = await desk.checkCart(cartOf([{ itemId: ids.soap, qty: 1, unitCents: 429 }]));
+    expect(rest.structured!.verdict).toBe("go");
+  });
+
+  it("skip_item closes held carts holding the item", async () => {
+    const { desk, root, ids } = await activated();
+    await desk.checkCart(cartOf([{ itemId: ids.towels, qty: 2, unitCents: 3100 }, { itemId: ids.soap, qty: 1, unitCents: 429 }]));
+    await desk.skipItem({ itemId: ids.towels });
+    expect(readSupply(root).carts).toEqual([]);
+    expect((await desk.checkCart(cartOf([{ itemId: ids.soap, qty: 1, unitCents: 429 }]))).structured!.verdict).toBe("go");
+  });
+
+  it("a go cart Grok couldn't place closes with record_problem, so another store can be checked, and it never becomes unconfirmed", async () => {
+    const made = await activated();
+    const go = await made.desk.checkCart(cartOf([{ itemId: made.ids.towels, qty: 2, unitCents: 2400 }]));
+    const blocked = await made.desk.recordProblem({ reason: "store-blocked", cartToken: go.structured!.cartToken as string });
+    expect(blocked.isError).toBe(false);
+    const other = await made.desk.checkCart(cartOf([{ itemId: made.ids.towels, qty: 2, unitCents: 2400 }], { store: "Other Mart" }));
+    expect(other.structured!.verdict).toBe("go");
+    made.clock.now = new Date(START.getTime() + 31 * MIN);
+    const check = await made.desk.checkSupplies({});
+    expect((check.structured!.unconfirmed as unknown[]).length).toBe(1);
+    expect(check.structured!.monthSpentCents).toBe(4800);
+  });
+
+  it("a go cart still locks its items against a second cart", async () => {
+    const { desk, ids } = await activated();
+    await desk.checkCart(cartOf([{ itemId: ids.towels, qty: 2, unitCents: 2400 }]));
+    expect((await desk.checkCart(cartOf([{ itemId: ids.towels, product: "backup", qty: 2, unitCents: 2100 }]))).structured!.verdict).toBe("refused");
+  });
+
+  it("a card-like booking number in Google events doesn't block the daily check", async () => {
+    const { desk } = await activated();
+    const googleEvents = { timeZone: "America/New_York", items: [{ id: "ev1", status: "confirmed", summary: "Stay", description: "Booking 4242 4242 4242 4242", start: { date: "2026-11-05" }, end: { date: "2026-11-08" } }] };
+    expect((await desk.checkSupplies({ googleEvents })).isError).toBe(false);
+  });
+});

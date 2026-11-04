@@ -1922,6 +1922,8 @@ class Engine implements CleanerCore {
     if (!this.options.supplyAsk || !from || from !== this.cleanerPhone || this.cleanerConsent !== "in") return undefined;
     const text = raw.trim();
     if (!text || keywordOf(text) !== undefined || isYes(text) || isDone(text) || isInjuryReport(text) || isPlainLanguageStop(text) || this.looksLikeCode(text)) return undefined;
+    // A bare NO while the next cleaning's offer waits declines that offer.
+    if (isNo(text) && this.ordered().some((item) => this.derive(item) === "offered")) return undefined;
     const job = [...this.ordered()].reverse().find((item) => item.done && item.supplyAskedAt);
     if (!job || job.supplyReport) return undefined;
     if (this.now().getTime() - Date.parse(job.supplyAskedAt!) > SUPPLY_ANSWER_MS) return undefined;

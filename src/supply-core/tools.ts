@@ -150,8 +150,11 @@ export const SUPPLY_TOOLS: SupplyTool[] = [
   {
     name: "record_problem",
     title: "Record a problem",
-    description: "store-blocked, listing-changed, out-of-stock, or misses-deadline for items; not-placed for an unconfirmed order you didn't find in your order history.",
-    input: z.object({ reason: z.enum(["store-blocked", "listing-changed", "out-of-stock", "misses-deadline", "not-placed"]), itemIds: z.array(z.string().max(40)).max(30).optional(), orderId: z.string().max(40).optional() }).strict(),
+    description:
+      "store-blocked, listing-changed, out-of-stock, or misses-deadline for items, or with the cartToken of a cart you couldn't place, which closes it so its items can go to the backup or another store; not-placed for an unconfirmed order you didn't find in your order history.",
+    input: z
+      .object({ reason: z.enum(["store-blocked", "listing-changed", "out-of-stock", "misses-deadline", "not-placed"]), itemIds: z.array(z.string().max(40)).max(30).optional(), orderId: z.string().max(40).optional(), cartToken: z.string().max(40).optional() })
+      .strict(),
   },
   {
     name: "skip_item",
@@ -185,7 +188,9 @@ export function listedSupplyTools(names: readonly string[]): Record<string, unkn
 export async function handleSupplyTool(desk: SupplyDesk, name: string, args: unknown): Promise<SupplyReply | undefined> {
   const tool = SUPPLY_TOOLS.find((item) => item.name === name);
   if (!tool) return undefined;
-  if (refuseCards(args)) return { text: CARD_REFUSAL, isError: true };
+  // Google events are read for their dates only and never saved, so they skip the card check.
+  const checked = name === "check_supplies" && args && typeof args === "object" ? { ...(args as Record<string, unknown>), googleEvents: undefined } : args;
+  if (refuseCards(checked)) return { text: CARD_REFUSAL, isError: true };
   const parsed = tool.input.safeParse(args ?? {});
   if (!parsed.success) return { text: `That was missing something I need, or had something I don't take: ${parsed.error.issues.map((issue) => issue.path.join(".") || issue.message).join(", ")}.`, isError: true };
   const input = parsed.data as never;

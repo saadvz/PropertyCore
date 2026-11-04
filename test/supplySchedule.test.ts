@@ -98,3 +98,16 @@ describe("deadlineFor", () => {
     expect(deadlineFor({ todayYmd: "2026-11-04", bufferDays: 0 })).toBe("2026-11-04");
   });
 });
+
+describe("long-running schedules", () => {
+  it("monthly and custom schedules still come due years after Activate", () => {
+    const base = { startYmd: "2026-11-01", checkouts: [] as string[], lowReported: false };
+    expect(dueOn({ ...base, todayYmd: "2030-06-05", anchorYmd: "2030-05-05", schedule: { kind: "every", monthlyOn: 5 } })).toMatchObject({ due: true, occurrenceYmd: "2030-06-05" });
+    expect(dueOn({ ...base, todayYmd: "2030-06-03", anchorYmd: "2030-05-27", schedule: { kind: "custom", rrule: "FREQ=WEEKLY;BYDAY=MO", said: "Mondays" } })).toMatchObject({ due: true, occurrenceYmd: "2030-06-03" });
+    expect(nextDates({ kind: "every", monthlyOn: 5 }, "2026-11-01", "2031-01-01", 1)).toEqual(["2031-01-05"]);
+  });
+
+  it("a COUNT still counts from the start", () => {
+    expect(nextDates({ kind: "custom", rrule: "FREQ=DAILY;COUNT=3", said: "" }, "2026-11-04", "2026-11-05", 5)).toEqual(["2026-11-06"]);
+  });
+});

@@ -462,6 +462,16 @@ export class SupplyDesk {
     });
   }
 
+  /** A number switched to Supply Core keeps the property Cleaner Core had saved, when it has none of its own. */
+  adoptProperty(property: { name: string; address: string; timeZone: string } | undefined): Promise<void> {
+    return this.serial(() => {
+      const file = this.read();
+      if (file.settings.property || !property) return;
+      file.settings.property = { ...property };
+      this.write(file);
+    });
+  }
+
   /** Stand-down: every open cart closes. Orders on their way stay recorded. */
   clearCarts(): Promise<number> {
     return this.serial(() => {
@@ -526,9 +536,18 @@ export class SupplyDesk {
     file.carts = open;
   }
 
+  /**
+   * Items in a cart that may be placed right now: go, or approved by the landlord. A held cart
+   * doesn't lock its items, so the backup, a smaller cart, or a skip can follow it.
+   */
   protected openCartItems(file: SupplyFile): Set<string> {
     const now = this.deps.now();
-    return new Set(file.carts.filter((cart) => cart.status !== "recorded" && new Date(cart.expiresAt) > now).flatMap((cart) => cart.cart.items.map((line) => line.itemId)));
+    return new Set(file.carts.filter((cart) => (cart.status === "go" || cart.status === "approved") && new Date(cart.expiresAt) > now).flatMap((cart) => cart.cart.items.map((line) => line.itemId)));
+  }
+
+  /** Closes every held cart holding one of these items: a newer check or a skip replaces it. */
+  protected closeHeld(file: SupplyFile, itemIds: readonly string[]): void {
+    file.carts = file.carts.filter((cart) => cart.status !== "held" || !cart.cart.items.some((line) => itemIds.includes(line.itemId)));
   }
 
   /** Every item due today, with its deadline. */
@@ -557,7 +576,10 @@ export class SupplyDesk {
   }
 
   checkSupplies(input: { googleEvents?: GoogleEventList }): Promise<SupplyReply> {
-    return this.guarded(input, async () => {
+    // Event text can hold long booking numbers. Only their dates are read, and nothing from them is
+    // saved, so they skip the card check rather than block the day's ordering.
+    const { googleEvents: _events, ...rest } = input;
+    return this.guarded(rest, async () => {
       const file = this.read();
       if (!file.settings.activatedAt || file.offAt) return fail("Supply Core isn't active yet. Call get_supply_state.");
       this.sweep(file);
@@ -640,6 +662,7 @@ export class SupplyDesk {
   private holdText(file: SupplyFile, cart: CartInput, hold: Hold): string {
     const name = (id?: string) => file.items.find((item) => item.id === id)?.name ?? "An item";
     if (hold.reason === "price-jump") return `${name(hold.itemId)} went from ${dollars(hold.wasCents!)} to ${dollars(hold.nowCents!)}`;
+    if (hold.reason === "over-quantity") return `that's more ${name(hold.itemId)} than the ${file.items.find((item) => item.id === hold.itemId)?.qtyPerOrder ?? 1} you buy each time`;
     if (hold.reason === "over-order-cap") return `it's over your ${dollars(file.settings.perOrderCapCents!)} per-order cap`;
     if (hold.reason === "over-month-cap") return `it would put this month over your ${dollars(file.settings.perMonthCapCents!)} cap`;
     if (hold.reason === "misses-deadline") return `it arrives ${cart.deliveryBy}, after it's needed`;
@@ -661,13 +684,14 @@ export class SupplyDesk {
         ...(file.settings.perMonthCapCents !== undefined ? { perMonthCapCents: file.settings.perMonthCapCents } : {}),
         priceJumpPct: file.settings.priceJumpPct,
         monthSpentCents: monthSpentCents(file, this.timeZone(file), now),
-        items: new Map(file.items.map((item) => [item.id, { name: item.name, baseline: { preferred: item.preferred.lastPaidCents ?? item.preferred.priceCents, ...(item.backup ? { backup: item.backup.lastPaidCents ?? item.backup.priceCents } : {}) } }])),
+        items: new Map(file.items.map((item) => [item.id, { name: item.name, qtyPerOrder: item.qtyPerOrder, baseline: { preferred: item.preferred.lastPaidCents ?? item.preferred.priceCents, ...(item.backup ? { backup: item.backup.lastPaidCents ?? item.backup.priceCents } : {}) } }])),
         due: new Map([...due].map(([id, entry]) => [id, { deadline: entry.deadline }])),
         onItsWay: onItsWay(file, now),
         inOpenCart: this.openCartItems(file),
       };
       const cart: CartInput = { store: input.store, items: input.items.map((l) => ({ itemId: l.itemId, product: l.product, qty: l.qty, unitCents: l.unitCents })), shippingCents: input.shippingCents, taxCents: input.taxCents, totalCents: input.totalCents, deliveryBy: input.deliveryBy };
       const answer = checkCart(cart, ctx);
+      if (answer.verdict !== "refused") this.closeHeld(file, cart.items.map((line) => line.itemId));
       if (answer.verdict === "refused") {
         this.write(file);
         return ok({ verdict: "refused", remove: answer.remove, next: "Take those items out of the cart and check it again." });
@@ -789,12 +813,29 @@ export class SupplyDesk {
     });
   }
 
-  recordProblem(input: { reason?: ProblemReason; itemIds?: string[]; orderId?: string }): Promise<SupplyReply> {
+  recordProblem(input: { reason?: ProblemReason; itemIds?: string[]; orderId?: string; cartToken?: string }): Promise<SupplyReply> {
     return this.guarded(input, () => {
       const reasons: ProblemReason[] = ["store-blocked", "listing-changed", "out-of-stock", "misses-deadline", "not-placed"];
       if (!input.reason || !reasons.includes(input.reason)) return fail("Name the problem: store-blocked, listing-changed, out-of-stock, misses-deadline, or not-placed.");
       const file = this.read();
       this.sweep(file);
+      // A cart Grok couldn't place closes now, so its items are free for another store or the backup.
+      if (input.cartToken) {
+        const cart = file.carts.find((entry) => entry.token === input.cartToken);
+        if (!cart) return fail(CART_EXPIRED);
+        file.carts = file.carts.filter((entry) => entry !== cart);
+        let suggestOtherStore = false;
+        if (input.reason === "store-blocked") {
+          for (const line of cart.cart.items) {
+            const item = file.items.find((entry) => entry.id === line.itemId);
+            if (!item) continue;
+            item.blockedRuns = (item.blockedRuns ?? 0) + 1;
+            if (item.blockedRuns >= 2) suggestOtherStore = true;
+          }
+        }
+        this.write(file);
+        return ok({ noted: input.reason, closed: cart.token, tellHost: true, ...(suggestOtherStore ? { suggestOtherStore: true } : {}), next: "Tell the host what happened, then try the backup or another store." });
+      }
       if (input.reason === "not-placed") {
         const order = file.orders.find((entry) => entry.id === input.orderId && entry.status === "unconfirmed");
         if (!order) return fail("Pass the id of an unconfirmed order.");
@@ -829,6 +870,7 @@ export class SupplyDesk {
       const item = file.items.find((entry) => entry.id === input.itemId);
       if (!item) return fail("There's no item with that id.");
       item.skippedAt = this.deps.now().toISOString();
+      this.closeHeld(file, [item.id]);
       file.lowReports = file.lowReports.filter((report) => report.itemId !== item.id);
       this.write(file);
       return ok({ skipped: item.name });
