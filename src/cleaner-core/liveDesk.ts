@@ -8,6 +8,7 @@ import { OperatorEventOutbox } from "../alerts/outbox";
 import { parsePhone } from "../core/phone";
 import { FileRuntimeStore } from "../storage/runtimeStore";
 import { ConfirmationBook } from "../operator/confirmations";
+import { supplyAskOn } from "../supply-core/store";
 import { messagingKeyword, normalize } from "../intent";
 import { stripFiller } from "../intent/normalize";
 import { spokenTimes } from "../core/spokenTime";
@@ -2897,9 +2898,12 @@ export class LiveDesk {
 
   /** The engine options for the saved preferences. The cleaning note is set only when instructions are saved. */
   private preferenceOptions(): Partial<Parameters<typeof openCleanerCore>[0]> {
+    // Supply Core on and active: the done text also asks what's running low.
+    const supplies = supplyAskOn(this.root) ? { supplyAsk: true } : {};
     const preferences = this.file.preferences;
-    if (!preferences) return {};
+    if (!preferences) return supplies;
     return {
+      ...supplies,
       ...(preferences.checklist.length > 0 ? { checklist: { name: this.file.nickname ?? this.file.address ?? "the property", items: [...preferences.checklist] } } : {}),
       ...(preferences.photosRequired ? { photosRequired: true } : {}),
       ...(preferences.supplyNotes ? { supplyNotes: true } : {}),
