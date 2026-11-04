@@ -390,7 +390,8 @@ describe("Cleaner Core times: the usual times for every turnover", () => {
     const { desk, groups } = await activatedGroup();
     ok(await desk.confirmTimes({ checkout: "10:00", checkIn: "16:00", all: true }));
     await desk.inbound({ id: "join", from: CLEANER, text: "YES" });
-    const offers = () => groups.posts.filter((post) => post.body.startsWith("Turnover at"));
+    // The first offer follows the group's intro in the same post.
+    const offers = () => groups.posts.filter((post) => /(^|\n\n)Turnover at /.test(post.body));
     expect(offers()).toHaveLength(1);
     await desk.inbound({ id: "take-1", from: CLEANER, text: "YES", channel: "group" });
     expect(offers()).toHaveLength(1);
@@ -405,7 +406,8 @@ describe("Cleaner Core times: the usual times for every turnover", () => {
     const { desk, groups } = await activatedGroup({ schedule: { firstText: "days-before-checkout", firstTextDays: 2 }, now: () => at });
     ok(await desk.confirmTimes({ checkout: "10:00", checkIn: "16:00", all: true }));
     await desk.inbound({ id: "join", from: CLEANER, text: "YES" });
-    const offers = () => groups.posts.filter((post) => post.body.startsWith("Turnover at"));
+    // The first offer follows the group's intro in the same post.
+    const offers = () => groups.posts.filter((post) => /(^|\n\n)Turnover at /.test(post.body));
     expect(offers()).toHaveLength(0);
     // Checkouts are Oct 18 and Oct 22. Two days before, at 9:00 AM New York time.
     at = new Date("2026-10-16T13:00:00.000Z");

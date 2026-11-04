@@ -59,6 +59,7 @@ const REVIEW_ASK = "Summarize this setup for the host in your own words, then as
 const DEPARTURES = new Set(["guests have left", "guests left", "they have left", "they left", "departed", "left"]);
 
 const PIN_SENT = "I sent the door code to the cleaner. I'll tell you if it doesn't go through.";
+const UPDATE_HELD = "Times saved. I'll send the cleaner the new time in about a minute. If the time changes again before then, they get only the last one.";
 const PIN_SENT_GROUP = "I posted the door code in the cleaning group for the cleaner. I'll tell you if it doesn't go through.";
 const PIN_FAILED = "The door code didn't reach the cleaner. Tell your Grok Bot the guests have left and I'll resend it.";
 const PIN_REPEAT = "I already sent the door code to the cleaner.";
@@ -128,6 +129,12 @@ const PHOTO_MARK = "[photo]";
 const MAX_HOST_MESSAGE = 600;
 const HOST_MESSAGES_PER_HOUR = 10;
 const HOUR_MS = 60 * 60_000;
+/**
+ * Twilio hands one group reply to both the group's webhook and the cleaning number's SMS webhook,
+ * each with its own sid. The same words from the same person on the other path this soon after
+ * are that second copy.
+ */
+const SECOND_COPY_MS = 5 * 60_000;
 /** The approval action for a host message. Its target is the recipient, its fingerprint the recipient and the exact text. */
 const SEND_ACTION = "cleaner-message";
 const MESSAGE_NEEDED = `Write the message in 1 to ${MAX_HOST_MESSAGE} characters.`;
@@ -446,6 +453,18 @@ let alertFetch: AlertFetch | undefined;
 /** Tests stub the routine webhook. Unset uses the platform fetch. */
 export function setCleanerAlertFetch(fetchImpl: AlertFetch | undefined): void {
   alertFetch = fetchImpl;
+}
+
+/**
+ * How long a checkout change after the offer waits before the cleaner's update goes. A quick second
+ * change then sends one text, and a change back sends none.
+ */
+const UPDATE_SETTLE_MS = 60_000;
+let updateSettle: number | undefined;
+
+/** Tests set the hold. Unset is one minute. */
+export function setCleanerUpdateSettle(ms: number | undefined): void {
+  updateSettle = ms;
 }
 
 const desks = new Map<string, LiveDesk>();
@@ -1836,6 +1855,7 @@ export class LiveDesk {
     this.persist();
     await engine.releaseCleanerTexts();
     const sent = this.cleanerSent(engine, sentBefore);
+    const held = this.armUpdate(engine);
     return this.reply({
       next:
         sent === "opt-in"
@@ -1844,7 +1864,9 @@ export class LiveDesk {
             ? "Times saved. I sent the cleaner the cleaning offer. They reply YES to take it."
             : sent === "corrected"
               ? "Times saved. I sent the cleaner the new time."
-              : "Times saved. Nothing was sent.",
+              : held
+                ? UPDATE_HELD
+                : "Times saved. Nothing was sent.",
       turns: this.turns(),
     });
   }
@@ -1883,6 +1905,35 @@ export class LiveDesk {
             : `${saved} Nothing was sent yet. The cleaner gets one cleaning offer at a time, starting with the first.`,
       turns: this.turns(),
     });
+  }
+
+  /**
+   * Wakes the desk when a held checkout update is due. True while one is held. A restart loses the
+   * timer, and the next check_now sends the update instead.
+   */
+  private armUpdate(engine: CleanerCore, onlyAhead = false): boolean {
+    if (this.updateTimer) clearTimeout(this.updateTimer);
+    this.updateTimer = undefined;
+    const due = engine.updateDueAt();
+    if (!due) return false;
+    const ahead = Date.parse(due) - this.now().getTime();
+    // An update that is due but still can't go (a hold, an opt-out) waits for the next check_now.
+    if (onlyAhead && ahead <= 0) return true;
+    const wait = Math.max(0, ahead) + 1000;
+    this.updateTimer = setTimeout(() => {
+      this.updateTimer = undefined;
+      if (desks.get(this.root) !== this) return;
+      void this.serial(async () => {
+        this.resume();
+        const current = this.engine;
+        if (!current) return;
+        await current.sendDueUpdates();
+        this.persist();
+        this.armUpdate(current, true);
+      }).catch(() => undefined);
+    }, wait);
+    this.updateTimer.unref?.();
+    return true;
   }
 
   markGuestsLeft(input: { confirmed?: boolean }, pinKey: Buffer | undefined): Promise<ToolReply> {
@@ -2396,6 +2447,11 @@ export class LiveDesk {
       this.resume();
       return { sent: [] };
     }
+    if (this.secondCopy(from, input)) {
+      this.noteSeen(input.id);
+      this.persist();
+      return { sent: [] };
+    }
     this.claiming.add(input.id);
     try {
       // A photo from the cleaner or a contact is downloaded once: for the cleaning in progress, and for its message.
@@ -2407,6 +2463,30 @@ export class LiveDesk {
     } finally {
       this.claiming.delete(input.id);
     }
+  }
+
+  /**
+   * True when this text is the other webhook's copy of a group reply already taken. Only a group
+   * copy and a one-to-one copy match each other, so a person who sends the same words twice in one
+   * thread is still read twice.
+   */
+  private secondCopy(from: string, input: Inbound): boolean {
+    if (!this.groupOn() || !this.file.conversationSid) return false;
+    const members = [this.file.host, this.file.cleaner, ...this.groupExtras().map((contact) => contact.phone)];
+    if (!members.includes(from)) return false;
+    const at = this.now().getTime();
+    const words = input.text.trim().replace(/\s+/g, " ");
+    const media = input.media?.length ?? 0;
+    const group = input.channel === "group";
+    this.recentInbound = this.recentInbound.filter((item) => at - item.at < SECOND_COPY_MS);
+    const index = this.recentInbound.findIndex((item) => item.from === from && item.words === words && item.media === media && item.group !== group);
+    if (index >= 0) {
+      // One copy matches one copy, so a third send of the same words is read again.
+      this.recentInbound.splice(index, 1);
+      return true;
+    }
+    this.recentInbound.push({ from, words, media, group, at });
+    return false;
   }
 
   /** Handles one inbound text. `handled` is what Cleaner Core did, or undefined when the text was not taken. */
@@ -2523,6 +2603,9 @@ export class LiveDesk {
   }
 
   private readonly claiming = new Set<string>();
+  private updateTimer: NodeJS.Timeout | undefined;
+  /** Recent texts from group members, kept in memory only, to drop a group reply's second copy. */
+  private recentInbound: { from: string; words: string; media: number; group: boolean; at: number }[] = [];
 
   /** The engine tells the host nothing when the cleaner accepts. One note per job, the first time it is confirmed. */
   private noteCleanerYes(engine: CleanerCore, offered: Set<string>): void {
@@ -2895,6 +2978,7 @@ export class LiveDesk {
       ...this.scheduleOptions(),
       reminderAsksArrival: true,
       grokReadsMessages: true,
+      updateSettleMs: updateSettle ?? UPDATE_SETTLE_MS,
       ...(this.primaryAssistant() !== "grok" ? { helperName: this.hostWords().helper } : {}),
       ...this.preferenceOptions(),
       ownerPhone: file.host,

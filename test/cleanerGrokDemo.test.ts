@@ -40,6 +40,8 @@ import { filesUnder } from "./files";
 const PATH = "/mcp/cleaner-core";
 const open: WiredApp[] = [];
 
+const UPDATE_HELD = "Times saved. I'll send the cleaner the new time in about a minute. If the time changes again before then, they get only the last one.";
+
 afterEach(async () => {
   setCleanerTwilioClient(undefined);
   setCleanerGroupFetch(undefined);
@@ -235,7 +237,8 @@ describe("Cleaner Core Grok demo: check_now", () => {
   });
 
   it("moved stay updates the job", async () => {
-    const wired = await app();
+    let now = new Date(FROZEN);
+    const wired = await app({ now: () => now });
     await confirmedJob(wired, { id: "g1", start: "2026-10-10", end: "2026-10-15" });
     const before = wired.cleanerSent.length;
     const moved = await call(wired, "check_now", { googleEvents: withNext({ id: "g1", start: "2026-10-10", end: "2026-10-16" }) });
@@ -245,7 +248,13 @@ describe("Cleaner Core Grok demo: check_now", () => {
     // and tells the cleaner nothing until the host confirms the new day.
     expect(alertsOf(moved).some((line) => line.startsWith(HOST_CHECKOUT) && line.includes("Oct 16"))).toBe(true);
     expect(kindsSince(wired, before)).toEqual([]);
-    expect((await call(wired, "confirm_times", { checkout: "10:30", checkIn: "15:00" })).isError).toBe(false);
+    // The update waits a minute, so a quick second change would replace it.
+    const timed = await call(wired, "confirm_times", { checkout: "10:30", checkIn: "15:00" });
+    expect(timed.isError).toBe(false);
+    expect(timed.structured?.next).toBe(UPDATE_HELD);
+    expect(kindsSince(wired, before)).toEqual([]);
+    now = new Date(now.getTime() + 60_000);
+    expect((await call(wired, "check_now", { googleEvents: withNext({ id: "g1", start: "2026-10-10", end: "2026-10-16" }) })).isError).toBe(false);
     const got = wired.cleanerSent.slice(before);
     expect(got.map(textKind)).toEqual(["corrected"]);
     expect(got[0]?.body).toContain("Friday, Oct 16 at 10:30 AM");
@@ -506,7 +515,8 @@ describe("Cleaner Core Grok demo: check_now follow-ups", () => {
   it("with group chat on, a moved stay waits for the host and then sends one corrected text", async () => {
     const stub = groupStub();
     setCleanerGroupFetch(stub.impl);
-    const wired = await app({ groupChat: true });
+    let now = new Date(FROZEN);
+    const wired = await app({ groupChat: true, now: () => now });
     await confirmedJob(wired, { id: "g1", start: "2026-10-10", end: "2026-10-15" });
     const sms = wired.cleanerSent.length;
     const posts = stub.posts.length;
@@ -516,7 +526,10 @@ describe("Cleaner Core Grok demo: check_now follow-ups", () => {
     expect((moved.structured?.turns as { checkoutTime: string | null }[])[0]?.checkoutTime).toBeNull();
     expect(wired.cleanerSent).toHaveLength(sms);
     expect(stub.posts).toHaveLength(posts);
-    expect((await call(wired, "confirm_times", { checkout: "10:30", checkIn: "15:00" })).isError).toBe(false);
+    expect((await call(wired, "confirm_times", { checkout: "10:30", checkIn: "15:00" })).structured?.next).toBe(UPDATE_HELD);
+    expect(stub.posts).toHaveLength(posts);
+    now = new Date(now.getTime() + 60_000);
+    expect((await call(wired, "check_now", { googleEvents: withNext({ id: "g1", start: "2026-10-10", end: "2026-10-16" }) })).isError).toBe(false);
     // The corrected text goes once into the group, naming the cleaner, and nothing goes one-to-one.
     expect(wired.cleanerSent).toHaveLength(sms);
     const got = stub.posts.slice(posts);
@@ -1576,8 +1589,9 @@ describe("Cleaner Core Grok demo: Scratch rehearsal", () => {
     // The second YES takes the offer.
     await fromCleaner("YES");
     // The offer goes once, into the group, and asks the cleaner by name. There is no one-to-one copy.
+    // It is the group's first text, so the intro leads it in the same post.
     const offers = await labelled("Cleaning offer to the group");
-    expect(offers.map((item) => item.body.startsWith(`Turnover at ${address} on Wednesday, Oct 14. Checkout 10:00 AM`))).toEqual([true]);
+    expect(offers.map((item) => item.body.startsWith("Hi ") && item.body.includes(`\n\nTurnover at ${address} on Wednesday, Oct 14. Checkout 10:00 AM`))).toEqual([true]);
     await fromCleaner("YES");
     expect(await labelled("Confirmation to the group")).toHaveLength(1);
     const heard = alertsOf(await say("check_now", { googleEvents: googleList([today]) }));
@@ -1648,7 +1662,11 @@ describe("Cleaner Core Grok demo: Scratch rehearsal", () => {
     const movedCheck = await say("check_now", { googleEvents: googleList([today, moved]) });
     expect(movedCheck.structured?.needsTimes).toBe(true);
     expect(await labelled("Time correction to the group")).toEqual([]);
-    await say("confirm_times", { checkout: "11:00", checkIn: "16:00" });
+    expect((await say("confirm_times", { checkout: "11:00", checkIn: "16:00" })).structured?.next).toBe(UPDATE_HELD);
+    expect(await labelled("Time correction to the group")).toEqual([]);
+    // A minute later the next check sends the one update.
+    now = new Date(now.getTime() + 60_000);
+    await say("check_now", { googleEvents: googleList([today, moved]) });
     const corrected = await labelled("Time correction to the group");
     expect(corrected).toHaveLength(1);
     expect(corrected[0]?.body).toContain("Oct 25 at 11:00 AM");

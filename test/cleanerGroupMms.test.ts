@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { groupInviteBody, groupOfferBody } from "../src/cleaner-core/cleanerTexts";
+import { groupIntroBody, groupInviteBody, groupOfferBody } from "../src/cleaner-core/cleanerTexts";
 import { openCleanerCore, type CleanerText } from "../src/cleaner-core/core";
 import { GroupNotConfirmed } from "../src/cleaner-core/groupThread";
 import { CLEANER_GROUP_IDENTITY, sendLiveGroup, setCleanerGroupFetch, setCleanerGroupPause, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
@@ -373,8 +373,13 @@ async function messages(wired: WiredApp): Promise<Kept[]> {
 describe("group texting: the conversation webhook", () => {
   it("takes Mike's YES in the group, confirms the job, and shows it to Grok as a group message", async () => {
     const { wired, conversationSid, fake } = await groupReady();
-    expect(fake.posts.filter((post) => post.body.startsWith("Turnover at"))).toEqual([
-      { conversationSid, to: [HOST, CLEANER].sort(), body: `Turnover at ${ADDRESS} on Sunday, Oct 18. Checkout 11:00 AM, next guest 4:00 PM. Mike, reply YES to schedule it.` },
+    // The first group text is the intro, then the offer, in one post.
+    expect(fake.posts.filter((post) => post.body.includes("Turnover at"))).toEqual([
+      {
+        conversationSid,
+        to: [HOST, CLEANER].sort(),
+        body: `${groupIntroBody(["Dana", "Mike"], "Dana", ADDRESS)}\n\nTurnover at ${ADDRESS} on Sunday, Oct 18. Checkout 11:00 AM, next guest 4:00 PM. Mike, reply YES to schedule it.`,
+      },
     ]);
     expect(wired.cleanerSent.filter((item) => item.body.startsWith("Turnover at"))).toEqual([]);
     expect(await turnStatus(wired)).toBe("offered");

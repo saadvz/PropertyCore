@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { groupInviteBody } from "../src/cleaner-core/cleanerTexts";
+import { groupInviteBody, groupIntroBody } from "../src/cleaner-core/cleanerTexts";
 import { openCleanerCore, type CleanerCoreOptions, type CleanerText } from "../src/cleaner-core/core";
 import { SCRATCH_TENANTS } from "../src/cleaner-core/tenants";
 
@@ -18,6 +18,8 @@ const FEED = readFileSync(join("src/cleaner-core/fixtures", "guesty-lite-scratch
 const OFFER_COPY = "Turnover at 12 Scratch Lane, Teaneck, NJ 07666 on Sunday, Oct 18. Checkout 11:00 AM, next guest 4:00 PM. The cleaner will reply to confirm.";
 /** The offer goes once into the group, asking the cleaner by name. */
 const GROUP_OFFER = "Turnover at 12 Scratch Lane, Teaneck, NJ 07666 on Sunday, Oct 18. Checkout 11:00 AM, next guest 4:00 PM. Maria, reply YES to schedule it.";
+/** The first group text: the intro, then the offer, in one post. */
+const introThenOffer = (names: string[]) => `${groupIntroBody(names, "Cory", ADDRESS)}\n\n${GROUP_OFFER}`;
 const READY = "The cleaner marked the cleaning at 12 Scratch Lane, Teaneck, NJ 07666 done.";
 const PRIVATE_PIN = `Guests have left ${ADDRESS}. Door code: ${PIN}. This code is only for you. Reply DONE when the cleaning is finished.`;
 const SOLO_OPT = "Hi, this is Scratch's cleaning scheduler for 12 Scratch Lane, Teaneck, NJ 07666. Reply YES to get cleaning texts, or STOP to opt out.";
@@ -81,7 +83,7 @@ describe("host group seat", () => {
       { to: CLEANER, body: CLEANER_OPT, kind: "opt-in" },
     ]);
     expect(sent.sent.filter((text) => text.kind === "offer")).toEqual([
-      { to: CLEANER, body: GROUP_OFFER, kind: "offer", channel: "group", audience: [OWNER, CLEANER] },
+      { to: CLEANER, body: introThenOffer(["Cory", "Maria"]), kind: "offer", channel: "group", audience: [OWNER, CLEANER] },
     ]);
     expect(sent.sent.filter((text) => text.body === READY)).toEqual([
       { to: CLEANER, body: READY, kind: "done", channel: "group", audience: [OWNER, CLEANER] },
@@ -227,7 +229,7 @@ describe("host group seat", () => {
     const bareTime = await bare.receive({ id: "bare-time", from: CLEANER, text: "Can we do 2:00 PM?", channel: "group" });
     const bareTimeMembers = bare.groupMembers();
     expect(bareTime.sent).toEqual([]);
-    expect(contacts.sent.filter((text) => text.to === OWNER || text.body === OFFER_COPY || text.body === GROUP_OFFER)).toEqual([]);
+    expect(contacts.sent.filter((text) => text.to === OWNER || text.body === OFFER_COPY || text.body.includes(GROUP_OFFER))).toEqual([]);
 
     const sent = box();
     const job = openCleanerCore(options(sent));
@@ -236,7 +238,7 @@ describe("host group seat", () => {
     await job.receive({ id: "setup-cleaner-yes", from: CLEANER, text: "YES" });
     expect(job.transcript().filter((line) => line.startsWith(`${OWNER}:`))).toEqual([]);
     expect(sent.sent.filter((text) => text.kind === "offer")).toEqual([
-      { to: CLEANER, body: GROUP_OFFER, kind: "offer", channel: "group", audience: [OWNER, CLEANER] },
+      { to: CLEANER, body: introThenOffer(["Cory", "Maria"]), kind: "offer", channel: "group", audience: [OWNER, CLEANER] },
     ]);
   });
 
@@ -256,7 +258,7 @@ describe("host group seat", () => {
       { to: EXTRA, body: EXTRA_OPT, kind: "opt-in" },
     ]);
     expect(sent.sent.filter((text) => text.kind === "offer")).toEqual([
-      { to: CLEANER, body: GROUP_OFFER, kind: "offer", channel: "group", audience: [OWNER, CLEANER, EXTRA] },
+      { to: CLEANER, body: introThenOffer(["Cory", "Maria", "Alex"]), kind: "offer", channel: "group", audience: [OWNER, CLEANER, EXTRA] },
     ]);
     expect(left.sent.filter((text) => text.kind === "pin")).toEqual([
       { to: CLEANER, body: PRIVATE_PIN, kind: "pin" },

@@ -598,9 +598,9 @@ describe("group thread on the desk", () => {
     // The group was made, but the offer's post failed. It may still have reached the group, so it
     // goes to review and is not sent again one-to-one, and the group is not tried again.
     const posts = calls.filter((url) => url.endsWith("/Messages"));
-    // One post for the intro, one for the offer, and one for the confirmation after Mike's YES. None is tried again,
+    // One post for the intro with the offer, and one for the confirmation after Mike's YES. None is tried again,
     // and none goes one-to-one.
-    expect(posts).toHaveLength(3);
+    expect(posts).toHaveLength(2);
     expect(sms.sent.filter((text) => text.body.startsWith("Turnover at"))).toEqual([]);
     const state = await desk.getState();
     expect(state.ok && (state.result.turns as { status: string }[])[0]?.status).toBe("host_confirmed");
@@ -708,8 +708,14 @@ describe("live group send", () => {
 
 /** The Conversations fake for group texting, with the posts each phone received. */
 /** The group posts without the intro, so a test can look at the offer and the texts after it. */
+/** The group's job texts. An intro alone is left out, and an intro posted ahead of a job text is cut off it. */
 function offerPosts<T extends { body: string }>(posts: T[]): T[] {
-  return posts.filter((post) => !(post.body.startsWith("Hi ") && post.body.includes("This is the cleaning group for")));
+  const intro = (body: string) => body.startsWith("Hi ") && body.includes("This is the cleaning group for");
+  return posts.flatMap((post) => {
+    if (!intro(post.body)) return [post];
+    const at = post.body.indexOf("\n\n");
+    return at < 0 ? [] : [{ ...post, body: post.body.slice(at + 2) }];
+  });
 }
 
 function groupFetch(options?: { failMessages?: boolean }) {
