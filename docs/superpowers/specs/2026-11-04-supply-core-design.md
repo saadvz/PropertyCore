@@ -37,7 +37,7 @@ Grok Bot's shopping release (0.75.2 on Oct 22 through 0.78.1 on Oct 27, plus the
 
 ## Not in this version
 
-Supply Core with Tour Core; more than one property per tenant; outside the US; returns and refunds (Grok's Order Concierge can help, but Supply Core records nothing about them); stock counts or inventory; texting the cleaner about deliveries; Supply Core buying through any store API.
+Supply Core with Tour Core; Claude, ChatGPT, and Muse (Supply Core's tools are listed only on Grok connections); more than one property per tenant; outside the US; returns and refunds (Grok's Order Concierge can help, but Supply Core records nothing about them); stock counts or inventory; texting the cleaner about deliveries; Supply Core buying through any store API.
 
 ## Rules that stay
 
@@ -64,7 +64,7 @@ Supply Core with Tour Core; more than one property per tenant; outside the US; r
 
 **How a host gets it.**
 
-- **Standalone.** `supplies` becomes a third `TenantService` beside `cleaning` and `touring` in `src/cleaner-core/hosted/registry.ts`, and a third choice in `src/hosted/serviceChoice.ts`: `Supply Core: supplies reordered for a property`. It is offered only while `SUPPLY_CORE=1`, the way touring waits on `TOUR_CORE_TENANTS=1`. A supplies tenant sends no texts, so it needs no Twilio number. `switch_service` and `stand_down_service` work as for the other two; an order on its way is not "live" for switching, but a held cart is cleared when the service stands down.
+- **Standalone.** `supplies` becomes a third `TenantService` beside `cleaning` and `touring` in `src/cleaner-core/hosted/registry.ts`, and a third choice in `src/hosted/serviceChoice.ts`: `Supply Core: supplies reordered for a property`. It is offered only while `SUPPLY_CORE=1`, the way touring waits on `TOUR_CORE_TENANTS=1`. A supplies tenant is created on `/admin` with a number like any tenant, and Supply Core never texts from it; texts to that number get no reply. `switch_service` and `stand_down_service` work as for the other two; an order on its way is not "live" for switching, but a held cart is cleared when the service stands down.
 - **With Cleaner Core.** A cleaning tenant turns Supply Core on as an add-on with `turn_on_supplies`. The tenant's `service` stays `cleaning`, so the one-active-service rule is unchanged. The registry entry gains `supplies: boolean`. With it on, `src/hosted/frontMcp.ts` adds Supply Core's tools to the cleaning tool list and sends `notifications/tools/list_changed`.
 
 **Who does what.**
@@ -75,7 +75,7 @@ Supply Core with Tour Core; more than one property per tenant; outside the US; r
 
 **Templates and routines.**
 
-- `supply-template/` (mirrored in `src/hosted/supply-template/`, like the cleaner template): `template.json`, `bot-profile.md`, `SETUP_PROMPT.md`, `README.md`, and `routines/supply-core-check.md`.
+- `supply-template/`: `template.json`, `bot-profile.md`, `SETUP_PROMPT.md`, `README.md`, and `routines/supply-core-check.md`.
 - `SUPPLY_CORE_BOOTSTRAP.md` at the repository root, the entry point like `CLEANER_CORE_BOOTSTRAP.md`.
 - **Supply Core Check**, a scheduled Grok routine, daily at a time the landlord picks (default 10:00 in the property's time zone, so an approval card isn't waiting overnight). Allowed tools: `get_supply_state`, `check_supplies`, `check_cart`, `approve_cart` (first call only, never with a code), `record_order`, `record_problem`, `mark_delivered`.
 - A cleaning tenant with supplies on gets **no second bot**. The Cleaner Core Check and Alerts routines gain one step: after `check_now`, pass any `supplyReport` to `report_low`, then run the Supply Core Check steps. The landlord still creates the daily Supply Core Check routine, so scheduled items are ordered on days with no cleaning.
@@ -187,7 +187,7 @@ The same `get_state` → `ask` pattern as Cleaner Core, one question per message
    - per cart, **hold** when the total is over `perOrderCapCents`, when `monthSpentCents + total` is over `perMonthCapCents`, when the delivery date misses any item's deadline, or when the mode is `checkout`;
    - **go** when nothing holds and the mode is hands-off.
 
-   The answer carries a `cartToken` bound to the exact store, items, quantities, prices, and total, good for 30 minutes. Any change needs a new `check_cart`. A cart with held items gives a token for the items that pass, so Grok can place the rest.
+   Holds come in two kinds. **Approvable** (a price jump, a cap, a missed deadline, `checkout` mode): the answer carries a `cartToken` with status `held`, and the landlord can approve it. **Remove first** (not due, on its way, in another open cart, not on the list): no token; Grok takes those items out and checks again. The token is bound to the exact store, items, quantities, prices, and total, good for 30 minutes, and any change needs a new `check_cart`. To place the rest of a cart around a held item, Grok removes the held item and checks the smaller cart, so the total checked is always the total paid.
 4. **Go.** Grok places the order with the landlord's saved Vault card, then calls `record_order` with the token, the order number, `chargedCents`, and the expected delivery. The landlord gets one chat line: `Ordered from Target: paper towels ×2, dish soap. $39.11, arriving Thursday.`
 5. **Hold.** Grok stops before Place Order and shows the landlord the cart and why. `approve_cart` without a code returns the question and a code. After the landlord's yes, Grok calls it again with the code, places the order, then calls `record_order` with the code.
    - A price-jump hold asks: `Paper towels went from $24 to $31. Buy anyway, switch to your backup, or skip?` Buy anyway is `approve_cart`. Backup is a new `check_cart`. Skip is `skip_item`, which clears it until the next due date.
