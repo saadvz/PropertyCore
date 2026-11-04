@@ -21,7 +21,7 @@ const approvals = new ConfirmationBook();
 export const SUPPLY_FRONT_NAMES: ReadonlySet<string> = new Set([...SUPPLY_TOOL_NAMES, TURN_ON, TURN_OFF]);
 
 export const SUPPLY_INSTRUCTIONS =
-  "This number runs Supply Core: the property's supplies, reordered on a schedule. Supply Core never texts anyone and never takes card details; you shop and check out with your own shopping tools and Vault. Call get_state first and follow its ask one question at a time.";
+  "This number runs Supply Core: the property's supplies, reordered on a schedule. Supply Core never texts anyone and never takes card details; you shop and check out with your own shopping tools and Vault. Call this connection Supply Core when you talk about it. Call get_state first and follow its ask one question at a time.";
 
 export interface SupplyFrontContext {
   h: HostedCleaner;

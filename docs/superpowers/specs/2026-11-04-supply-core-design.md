@@ -168,6 +168,17 @@ The same `get_state` → `ask` pattern as Cleaner Core, one question per message
 
 **After Activate**, every change (add, change, or remove an item; mode; caps; check time) uses the two-call approval that `send_message` uses: the first call saves nothing and returns the question and a code bound to that exact change; the second call, with the code, saves after the landlord's yes.
 
+## 2a. Setup order, revised after the first dev test (2026-11-04)
+
+Saad's first run on dev changed the setup order. This section overrides the setup list in Part 2.
+
+1. **Property:** the delivery address first. Grok works out the time zone from it and asks only when it's ambiguous. The name is optional and defaults to the street address.
+2. **The whole list at once** (`save_supply_list`): "What do you want restocked regularly? List everything, up to 30 items." Saved as a draft of names.
+3. **Where to buy** (`save_supply_stores`), before any product search, with the whole list in hand. Only delivery that works at an empty rental: shipped to the door from the store's own site (`shipping`), or a same-day driver who leaves it at the door (`same-day`). Never pickup, signature, marketplace third-party sellers, or local stores that don't deliver. Only stores Grok can check out with now. One main store that covers the list in time, or the fewest that do, plus an optional same-day store (Saad chose A) used only when the main store can't make a deadline.
+4. **Products** from the plan's stores only (`save_supply_item` refuses a product from any other store). One question first: the same schedule for everything, or each its own. The store note is optional.
+
+`check_supplies` returns the plan as `stores`, and Grok uses the same-day store for an item whose deadline the main store can't make.
+
 ## 3. Ordering
 
 **What's due.** `check_supplies` returns:

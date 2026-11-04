@@ -6,7 +6,7 @@ import type { SupplyFile } from "./store";
  * fields and choices, and Grok asks one short question per message in its own words.
  */
 
-export type SupplyStep = "property" | "items" | "sources" | "mode" | "caps" | "check-time" | "routine" | "review";
+export type SupplyStep = "property" | "list" | "stores" | "products" | "sources" | "mode" | "caps" | "check-time" | "routine" | "review";
 
 export interface SupplyAsk {
   step: SupplyStep;
@@ -14,13 +14,52 @@ export interface SupplyAsk {
   questions: AskQuestion[];
 }
 
+const LIST_QUESTION: AskQuestion = {
+  field: "names",
+  ask: "What do you want restocked regularly? List everything, up to 30 items.",
+  required: true,
+  example: "Paper towels, dish soap, coffee pods",
+  how: "Ask in one message. Split their answer into items, read the list back once to confirm, then call save_supply_list with the names.",
+};
+
+const STORE_QUESTIONS: AskQuestion[] = [
+  {
+    field: "primary",
+    ask: "which one store to buy the whole list from",
+    required: true,
+    how:
+      "Before searching for products, look at the whole draft list, the delivery address, and how soon things are needed. The property is usually empty, so offer only stores that ship to the door from their own site (like Walmart, Target, Sam's Club, or Costco) or same-day services whose driver can leave it at the door (like Instacart, Uber Eats, DoorDash, or Walmart and Target same-day). Never offer pickup, anything that needs a signature, a third-party seller inside a marketplace, or a local store that doesn't deliver to the address. Offer only stores you can actually check out with now, through a connector or the store's own checkout. Suggest the one store that covers the whole list in time; if none does, the fewest that do. Name any membership it needs and ask whether the host has it. Save its name and channel: shipping or same-day.",
+  },
+  {
+    field: "fast",
+    ask: "whether to add a same-day store for when the main store can't make a deadline, like a cleaner's report the day before the next guest",
+    required: false,
+    options: [
+      { value: "yes", label: "Add a same-day store" },
+      { value: "no", label: "No, just the main store" },
+    ],
+    default: "yes",
+    how: "Use the same rules. Save it as fast with channel same-day.",
+  },
+];
+
+const SAME_SCHEDULE: AskQuestion = {
+  field: "sameSchedule",
+  ask: "whether one schedule fits every item on the list, or each gets its own",
+  required: true,
+  options: [
+    { value: "same", label: "Same for everything" },
+    { value: "each", label: "Set each one" },
+  ],
+  how: "With the same for everything, ask the schedule once and use it for every save_supply_item.",
+};
+
 const ITEM_QUESTIONS: AskQuestion[] = [
-  { field: "name", ask: "an item the property always needs restocked", required: true, example: "Paper towels" },
   {
     field: "preferred",
     ask: "which product the host prefers",
     required: true,
-    how: "Search with your shopping tools and show 3 to 4 product cards. Save the one they pick: its title, store, https link, pack size, and price in cents.",
+    how: "Search only the stores in the plan and show 3 to 4 product cards from them. Save the one they pick: its title, store, https link, pack size, and price in cents.",
   },
   {
     field: "backup",
@@ -30,15 +69,9 @@ const ITEM_QUESTIONS: AskQuestion[] = [
       { value: "yes", label: "Pick a backup" },
       { value: "no", label: "No backup" },
     ],
-    how: "Show the remaining cards, or search again.",
+    how: "Show the remaining cards from the plan's stores, or search them again.",
   },
   { field: "qtyPerOrder", ask: "how many to buy each time", required: true, default: "1" },
-  {
-    field: "storeNote",
-    ask: "which store to buy it from",
-    required: true,
-    how: "If the host prefers a store, use it and note its caveats. Otherwise suggest one with the reason: price per unit, delivery time, membership or minimum order, and whether you can check out there. Save one line under 160 characters.",
-  },
   {
     field: "schedule",
     ask: "how often to reorder it",
@@ -60,7 +93,7 @@ const MORE: AskQuestion = {
     { value: "yes", label: "Add another" },
     { value: "no", label: "That's all" },
   ],
-  how: "That's all calls save_supply_item with { done: true }.",
+  how: "Add another: call save_supply_list with the new names, then pick their products. That's all calls save_supply_item with { done: true }.",
 };
 
 export function supplySetupAsk(file: SupplyFile, standalone: boolean): SupplyAsk | undefined {
@@ -71,14 +104,17 @@ export function supplySetupAsk(file: SupplyFile, standalone: boolean): SupplyAsk
       step: "property",
       tool: "save_supply_settings",
       questions: [
-        { field: "property.name", ask: "the property's name", required: true },
-        { field: "property.address", ask: "the delivery address", required: true },
-        { field: "property.timeZone", ask: "the property's time zone", required: true, example: "America/New_York" },
+        { field: "property.address", ask: "the property's delivery address", required: true },
+        { field: "property.timeZone", ask: "nothing: work out the time zone from the address", required: true, example: "America/New_York", how: "Ask only if the address could be in more than one time zone." },
+        { field: "property.name", ask: "nothing unless the host offers one: the name defaults to the street address", required: false },
       ],
     };
   }
   if (!file.setup.itemsDone || file.items.length === 0) {
-    return { step: "items", tool: "save_supply_item", questions: file.items.length > 0 ? [MORE, ...ITEM_QUESTIONS] : ITEM_QUESTIONS };
+    if (file.items.length === 0 && file.draft.length === 0) return { step: "list", tool: "save_supply_list", questions: [LIST_QUESTION] };
+    if (!s.stores) return { step: "stores", tool: "save_supply_stores", questions: STORE_QUESTIONS };
+    if (file.draft.length > 0) return { step: "products", tool: "save_supply_item", questions: file.items.length === 0 ? [SAME_SCHEDULE, ...ITEM_QUESTIONS] : ITEM_QUESTIONS };
+    return { step: "products", tool: "save_supply_item", questions: [MORE] };
   }
   if (standalone && !file.setup.sourcesDone && file.items.some((item) => item.schedule.kind === "bookings")) {
     return {

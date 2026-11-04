@@ -10,7 +10,7 @@ import { refuseCards } from "./cards";
 import { cartFingerprint, checkCart, type CartInput, type GateContext, type Hold, type Mode } from "./gate";
 import { deadlineFor, dueOn, nextDates, scheduleProblem, type Schedule } from "./schedule";
 import { supplySetupAsk } from "./setupAsk";
-import { monthSpentCents, onItsWay, readSupply, writeSupply, type Cart, type Item, type Order, type Product, type SupplyFile } from "./store";
+import { monthSpentCents, onItsWay, readSupply, writeSupply, type Cart, type Item, type Order, type PlanStore, type Product, type SupplyFile } from "./store";
 
 /**
  * Supply Core's desk: every tool's behaviour over one tenant's `supply.json`. One call at a time.
@@ -99,7 +99,7 @@ export interface ItemInput {
 }
 
 export interface SettingsInput {
-  property?: { name: string; address: string; timeZone: string };
+  property?: { name?: string; address: string; timeZone: string };
   mode?: Mode;
   perOrderCapCents?: number | null;
   perMonthCapCents?: number | null;
@@ -222,7 +222,10 @@ export class SupplyDesk {
     return this.serial(() => {
       const file = this.read();
       const ask = supplySetupAsk(file, this.deps.standalone);
-      if (ask) return ok({ ask, next: askNext(ask.tool), items: file.items.map((item) => item.name) });
+      if (ask) {
+        const next = ask.step === "products" && file.draft.length > 0 ? `${askNext(ask.tool)} Next item: ${file.draft[0]}.` : askNext(ask.tool);
+        return ok({ ask, next, items: file.items.map((item) => item.name), ...(file.draft.length > 0 ? { draft: file.draft } : {}), ...(file.settings.stores ? { stores: file.settings.stores } : {}) });
+      }
       const tz = this.timeZone(file);
       const now = this.deps.now();
       return ok({
@@ -247,7 +250,8 @@ export class SupplyDesk {
       if (input.property) {
         if (!this.deps.standalone) return fail("This property's details come from Cleaner Core.");
         const p = input.property;
-        if (!isText(p.name, 80) || !isText(p.address, 200)) return fail("The property needs a name and a delivery address.");
+        if (!isText(p.address, 200)) return fail("The property needs its delivery address.");
+        if (p.name !== undefined && !isText(p.name, 80)) return fail("Keep the property's name under 80 characters.");
         if (!isValidTimeZone(p.timeZone)) return fail("That time zone isn't one I know. Use a name like America/New_York.");
       }
       if (input.mode !== undefined && input.mode !== "hands-off" && input.mode !== "checkout") return fail("The mode is hands-off or checkout.");
@@ -258,7 +262,8 @@ export class SupplyDesk {
       if (input.checkTime !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.checkTime)) return fail("The check time has to be 24-hour HH:MM, like 10:00.");
       const gate = this.approved(file, "supply-settings", "settings", input, "Save these settings?");
       if (gate !== "go") return gate;
-      if (input.property) s.property = { name: input.property.name.trim(), address: input.property.address.trim(), timeZone: input.property.timeZone };
+      // The name defaults to the street address: the part before the first comma.
+      if (input.property) s.property = { name: input.property.name?.trim() || input.property.address.split(",")[0]!.trim(), address: input.property.address.trim(), timeZone: input.property.timeZone };
       if (input.mode) s.mode = input.mode;
       for (const key of ["perOrderCapCents", "perMonthCapCents"] as const) {
         if (input[key] === null) delete s[key];
@@ -280,6 +285,7 @@ export class SupplyDesk {
       if (input.done) {
         if (file.items.length === 0) return fail("Add at least one item first.");
         file.setup.itemsDone = true;
+        file.draft = [];
         this.write(file);
         return ok({ saved: true, next: "Call get_supply_state for the next step." });
       }
@@ -290,7 +296,13 @@ export class SupplyDesk {
       if (!isInt(input.qtyPerOrder, 1, 50)) return fail("How many per order has to be from 1 to 50.");
       const problem = productProblem(input.preferred, "preferred") ?? (input.backup ? productProblem(input.backup, "backup") : undefined);
       if (problem) return fail(problem);
-      if (typeof input.storeNote !== "string" || input.storeNote.length >= 160) return fail("The store note has to be under 160 characters.");
+      if (input.storeNote !== undefined && (typeof input.storeNote !== "string" || input.storeNote.length >= 160)) return fail("The store note has to be under 160 characters.");
+      const plan = file.settings.stores;
+      if (plan) {
+        const allowed = [plan.primary.name, ...(plan.fast ? [plan.fast.name] : [])];
+        const inPlan = (store: string) => allowed.some((name) => name.trim().toLowerCase() === store.trim().toLowerCase());
+        if (!inPlan(input.preferred!.store) || (input.backup && !inPlan(input.backup.store))) return fail(`Pick products from your stores: ${allowed.join(" or ")}. To use another store, change the store plan with save_supply_stores.`);
+      }
       if (!input.schedule) return fail("The item needs a schedule.");
       const scheduleIssue = scheduleProblem(input.schedule);
       if (scheduleIssue) return fail(scheduleIssue);
@@ -313,7 +325,7 @@ export class SupplyDesk {
         name: input.name.trim(),
         qtyPerOrder: input.qtyPerOrder,
         preferred: product(input.preferred!, existing?.preferred),
-        storeNote: input.storeNote.trim(),
+        storeNote: (input.storeNote ?? "").trim(),
         schedule: input.schedule,
         savedAt: existing?.savedAt ?? now,
       };
@@ -321,8 +333,49 @@ export class SupplyDesk {
       else delete item.backup;
       if (existing) file.items[file.items.indexOf(existing)] = item;
       else file.items.push(item);
+      file.draft = file.draft.filter((name) => name.trim().toLowerCase() !== item.name.toLowerCase());
       this.write(file);
       return ok({ saved: true, itemId: item.id, ...(file.settings.activatedAt ? {} : { next: "Ask whether there's anything else to add." }) });
+    });
+  }
+
+  /** The host's whole list, saved as a draft: names only, until their products are picked. */
+  saveList(input: { names?: string[] }): Promise<SupplyReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const names = (input.names ?? []).map((name) => (typeof name === "string" ? name.trim() : "")).filter(Boolean);
+      if (names.length === 0) return fail("Send the list of items to restock.");
+      if (names.some((name) => name.length > 60)) return fail("Keep each item's name under 60 characters.");
+      const known = new Set([...file.items.map((item) => item.name), ...file.draft].map((name) => name.toLowerCase()));
+      const fresh = [...new Map(names.filter((name) => !known.has(name.toLowerCase())).map((name) => [name.toLowerCase(), name])).values()];
+      if (file.items.length + file.draft.length + fresh.length > MAX_ITEMS) return fail(`The list holds up to ${MAX_ITEMS} items.`);
+      file.draft = [...file.draft, ...fresh];
+      if (fresh.length > 0) delete file.setup.itemsDone;
+      this.write(file);
+      return ok({ draft: file.draft, next: "Call get_supply_state for the next step." });
+    });
+  }
+
+  /** Where the list is bought: one main store, and an optional same-day store. */
+  saveStores(input: { primary?: { name?: string; channel?: string; note?: string }; fast?: { name?: string; channel?: string; note?: string } | null; confirmation?: string }): Promise<SupplyReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const store = (raw: { name?: string; channel?: string; note?: string } | undefined, which: string): PlanStore | string => {
+        if (!raw || !isText(raw.name, 60)) return `Name the ${which} store.`;
+        if (raw.channel !== "shipping" && raw.channel !== "same-day") return `The ${which} store has to ship to the door or deliver same-day to the door.`;
+        if (raw.note !== undefined && (typeof raw.note !== "string" || raw.note.length >= 160)) return "Keep the store's note under 160 characters.";
+        return { name: raw.name.trim(), channel: raw.channel, ...(raw.note?.trim() ? { note: raw.note.trim() } : {}) };
+      };
+      const primary = store(input.primary, "main");
+      if (typeof primary === "string") return fail(primary);
+      const fast = input.fast ? store(input.fast, "same-day") : undefined;
+      if (typeof fast === "string") return fail(fast);
+      const names = `${primary.name}${fast ? ` and ${fast.name} for same-day` : ""}`;
+      const gate = this.approved(file, "supply-stores", "stores", input, `Buy from ${names}?`);
+      if (gate !== "go") return gate;
+      file.settings.stores = { primary, ...(fast ? { fast } : {}) };
+      this.write(file);
+      return ok({ saved: true, stores: file.settings.stores, next: "Call get_supply_state for the next step." });
     });
   }
 
@@ -615,6 +668,7 @@ export class SupplyDesk {
       this.write(file);
       return ok({
         due,
+        ...(file.settings.stores ? { stores: file.settings.stores } : {}),
         ...(sourcesFailed ? { sourcesFailed: true, next: "Tell the host a booking calendar couldn't be read, so by-bookings items wait for the next check." } : {}),
         unconfirmed: file.orders.filter((order) => order.status === "unconfirmed"),
         held: file.carts.filter((cart) => cart.status === "held").map((cart) => ({ cartToken: cart.token, store: cart.cart.store, totalCents: cart.cart.totalCents, holds: cart.holds })),

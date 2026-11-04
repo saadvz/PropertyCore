@@ -66,9 +66,13 @@ describe("setup", () => {
     const { desk } = standalone();
     expect(await step(desk)).toBe("property");
     await desk.saveSettings({ property: PROPERTY });
-    expect(await step(desk)).toBe("items");
+    expect(await step(desk)).toBe("list");
+    await desk.saveList({ names: ["Paper towels"] });
+    expect(await step(desk)).toBe("stores");
+    await desk.saveStores({ primary: { name: "Example Mart", channel: "shipping" } });
+    expect(await step(desk)).toBe("products");
     await desk.saveItem(towels);
-    expect(await step(desk)).toBe("items");
+    expect(await step(desk)).toBe("products");
     await desk.saveItem({ done: true });
     expect(await step(desk)).toBe("mode");
     await desk.saveSettings({ mode: "checkout" });
@@ -87,7 +91,7 @@ describe("setup", () => {
 
   it("skips property for a cleaning tenant and reads Cleaner Core's", async () => {
     const { desk } = cleaning();
-    expect(await step(desk)).toBe("items");
+    expect(await step(desk)).toBe("list");
     await desk.saveItem(towels);
     await desk.saveItem({ done: true });
     await desk.saveSettings({ mode: "hands-off", perOrderCapCents: null, perMonthCapCents: null, checkTime: "10:00", routineCreated: true });
@@ -111,8 +115,11 @@ describe("setup", () => {
 
   it("asks 'Anything else to add?' until the host says that's all", async () => {
     const { desk } = cleaning();
+    await desk.saveList({ names: ["Paper towels"] });
+    await desk.saveStores({ primary: { name: "Example Mart", channel: "shipping" } });
     await desk.saveItem(towels);
-    const ask = (await desk.state()).structured?.ask as { questions: { field: string; ask: string }[] };
+    const ask = (await desk.state()).structured?.ask as { step: string; questions: { field: string; ask: string }[] };
+    expect(ask.step).toBe("products");
     expect(ask.questions[0]).toMatchObject({ field: "more", ask: "Anything else to add?" });
   });
 
@@ -216,5 +223,79 @@ describe("monthSpentCents", () => {
     const file = { ...emptySupply(), orders: [order({ at: "2026-11-01T03:30:00.000Z", chargedCents: 4000 })] };
     expect(monthSpentCents(file, "America/New_York", new Date("2026-11-04T15:00:00Z"))).toBe(0);
     expect(monthSpentCents(file, "America/New_York", new Date("2026-10-31T20:00:00Z"))).toBe(4000);
+  });
+});
+
+describe("address first, the whole list, then where to buy", () => {
+  it("asks the delivery address first; the name is optional and defaults to the street address", async () => {
+    const { desk, root } = standalone();
+    const ask = (await desk.state()).structured?.ask as { questions: { field: string; required: boolean }[] };
+    expect(ask.questions.map((q) => q.field)).toEqual(["property.address", "property.timeZone", "property.name"]);
+    expect(ask.questions.find((q) => q.field === "property.name")?.required).toBe(false);
+    expect((await desk.saveSettings({ property: { address: PROPERTY.address, timeZone: PROPERTY.timeZone } })).isError).toBe(false);
+    expect(readSupply(root).settings.property).toEqual({ name: "12 Scratch Lane", address: PROPERTY.address, timeZone: PROPERTY.timeZone });
+  });
+
+  it("asks for the whole list at once, up to 30, and saves them as a draft", async () => {
+    const { desk, root } = cleaning();
+    const ask = (await desk.state()).structured?.ask as { step: string; questions: { field: string; ask: string }[] };
+    expect(ask.step).toBe("list");
+    expect(ask.questions[0]!.ask).toContain("List everything");
+    expect((await desk.saveList({ names: ["Paper towels", "Dish soap", "Coffee pods"] })).isError).toBe(false);
+    expect(readSupply(root).draft).toEqual(["Paper towels", "Dish soap", "Coffee pods"]);
+    expect((await desk.saveList({ names: Array.from({ length: 31 }, (_, i) => `Item ${i}`) })).isError).toBe(true);
+    expect((await desk.saveList({ names: [] })).isError).toBe(true);
+  });
+
+  it("asks where to buy with the whole list in hand, before any product", async () => {
+    const { desk } = cleaning();
+    await desk.saveList({ names: ["Paper towels", "Dish soap"] });
+    const ask = (await desk.state()).structured?.ask as { step: string; questions: { field: string; how?: string }[] };
+    expect(ask.step).toBe("stores");
+    expect((await desk.state()).structured?.draft).toEqual(["Paper towels", "Dish soap"]);
+    expect(ask.questions.map((q) => q.field)).toEqual(["primary", "fast"]);
+    expect(ask.questions[0]!.how).toContain("leave it at the door");
+  });
+
+  it("saves a main store and an optional same-day store, and refuses a store with no delivery channel", async () => {
+    const { desk, root } = cleaning();
+    await desk.saveList({ names: ["Paper towels"] });
+    expect((await desk.saveStores({ primary: { name: "Example Mart", channel: "pickup" as never } })).isError).toBe(true);
+    expect((await desk.saveStores({ primary: { name: "Example Mart", channel: "shipping" }, fast: { name: "Example Now", channel: "same-day" } })).isError).toBe(false);
+    expect(readSupply(root).settings.stores).toEqual({ primary: { name: "Example Mart", channel: "shipping" }, fast: { name: "Example Now", channel: "same-day" } });
+  });
+
+  it("refuses a product from a store outside the plan", async () => {
+    const { desk } = cleaning();
+    await desk.saveList({ names: ["Paper towels"] });
+    await desk.saveStores({ primary: { name: "Example Mart", channel: "shipping" } });
+    const other = await desk.saveItem({ ...towels, preferred: { ...towels.preferred, store: "Random Shop" } });
+    expect(other.isError).toBe(true);
+    expect(other.text).toContain("Example Mart");
+    expect((await desk.saveItem({ ...towels, backup: { ...towels.backup, store: "Random Shop" } })).isError).toBe(true);
+    expect((await desk.saveItem({ ...towels, preferred: { ...towels.preferred, store: "example mart" }, backup: null })).isError).toBe(false);
+  });
+
+  it("works down the draft, asks once about one schedule for all, and the store note is optional", async () => {
+    const { desk, root } = cleaning();
+    await desk.saveList({ names: ["Paper towels", "Dish soap"] });
+    await desk.saveStores({ primary: { name: "Example Mart", channel: "shipping" } });
+    const first = (await desk.state()).structured?.ask as { questions: { field: string }[] };
+    expect(first.questions[0]!.field).toBe("sameSchedule");
+    const { storeNote: _note, ...noNote } = towels;
+    expect((await desk.saveItem(noNote)).isError).toBe(false);
+    expect(readSupply(root).draft).toEqual(["Dish soap"]);
+    const next = (await desk.state()).structured?.ask as { questions: { field: string }[]; next?: string };
+    expect(next.questions.map((q) => q.field)).not.toContain("sameSchedule");
+    expect((await desk.state()).structured?.next).toContain("Dish soap");
+  });
+
+  it("check_supplies carries the store plan so Grok can use the same-day store for a tight deadline", async () => {
+    const made = await activated();
+    const plan = { primary: { name: "Example Mart", channel: "shipping" as const }, fast: { name: "Example Now", channel: "same-day" as const } };
+    const ask = await made.desk.saveStores(plan);
+    await made.desk.saveStores({ ...plan, confirmation: (ask.structured!.confirmation as { code: string }).code });
+    const check = await made.desk.checkSupplies({});
+    expect(check.structured!.stores).toEqual(plan);
   });
 });

@@ -14,6 +14,8 @@ Supply Core runs on its own, or as an add-on in a Cleaner Core bot, where the cl
 
 ## Connect
 
+In chat, call this connection Supply Core.
+
 Read `supply-template/template.json`. If `hostedSupplyCoreUrl` is an https address, that service is the product.
 
 - **On its own:** connect to `<hostedSupplyCoreUrl>/mcp` as a custom MCP server. The host types the invite code from Saad on the page and picks Supply Core. If the number has no service yet, call `get_state` and then `choose_service` with `supplies`.
@@ -25,22 +27,20 @@ The clone is only for reading these instructions. Do not run anything from it. N
 
 Call `get_state` (on its own) or `get_supply_state` (with Cleaner Core) first and follow its `ask`. Ask one question per message, in your own short words. When a question has options, show them as a choice card. Then call the step's tool.
 
-1. **Property** (on its own only): name, delivery address, time zone. `save_supply_settings` with `property`.
-2. **Items**, one at a time, with `save_supply_item`:
-   1. The host names an item.
-   2. Search with your shopping tools and show 3 to 4 product cards.
-   3. The host picks a preferred product, then, if they want, a backup.
-   4. How many to buy each time.
-   5. Which store. With a preference, use it and put its caveats in `storeNote`. Without one, suggest the best store for when it's needed and say why: price per unit, delivery time, a membership or minimum order, and whether you can check out there. Stores can block automated shopping; say so when you know.
-   6. The schedule, as a choice card: **Every…** (days, or a day of the month), **By bookings** (once every so many stays), or **Other**. For Other, write an RRULE from the host's words, call `preview_schedule`, and read the next 3 dates back before saving.
+1. **Property** (on its own only): the delivery address first. Work out the time zone from it, and ask only if the address could be in more than one. The name is optional and defaults to the street address. `save_supply_settings` with `property`.
+2. **The whole list:** ask once, "What do you want restocked regularly? List everything, up to 30 items." Split the answer into items, read it back once, and call `save_supply_list` with the names.
+3. **Where to buy**, before any product search, with `save_supply_stores`. Look at the whole list, the address, and how soon things are needed. The property is usually empty, so offer only:
+   - stores that ship to the door from their own site, like Walmart, Target, Sam's Club, or Costco (channel `shipping`);
+   - same-day services whose driver can leave it at the door, like Instacart, Uber Eats, DoorDash, or Walmart and Target same-day (channel `same-day`).
 
-   Ask "Anything else to add?" until the host says that's all, then call `save_supply_item` with `{ done: true }`.
-3. **Booking calendars** (on its own, only for by-bookings items): `save_supply_sources`. A calendar link goes on your secure card: call it with `uploadLink: { name }`, then POST JSON `{"url": "<calendar link>"}` to `uploadUrl` from your own cloud computer. For Google Calendar, call it with `google: true`, and pass that calendar's events as `googleEvents` to every `check_supplies`. Then `done: true`.
-4. **Mode:** hands-off, or stop at checkout for the host's yes.
-5. **Caps:** "Want a spending cap?" Per order, per month, both, or no cap. No cap saves both as `null`. Monthly spending is tracked either way.
-6. **Check time:** when the daily routine runs. 10:00 unless the host picks another time.
-7. **Routine:** create the Supply Core Check routine yourself from [supply-template/routines/supply-core-check.md](supply-template/routines/supply-core-check.md), daily at the check time, then `save_supply_settings` with `routineCreated: true`.
-8. **Review and Activate:** summarize the list, mode, caps, and check time in your own words. On the host's Activate, call `activate_supplies`.
+   Never offer pickup, anything that needs a signature, a third-party seller inside a marketplace, or a local store that doesn't deliver to the address. Offer only stores you can actually check out with now. Suggest the one store that covers the whole list in time, or the fewest that do, and name any membership it needs. Then ask whether to add a same-day store for deadlines the main store can't make, like a cleaner's report the day before the next guest.
+4. **Products**, one item from the list at a time, with `save_supply_item`. First ask once whether one schedule fits everything. Then for each item: show 3 to 4 product cards from the plan's stores only, the host picks a preferred one and, if they want, a backup; ask how many to buy each time; and the schedule (unless it's the same for everything): **Every…** (days, or a day of the month), **By bookings** (once every so many stays), or **Other**. For Other, write an RRULE from the host's words, call `preview_schedule`, and read the next 3 dates back before saving. When the list is done, ask "Anything else to add?"; new names go to `save_supply_list`, and that's all is `save_supply_item` with `{ done: true }`.
+5. **Booking calendars** (on its own, only for by-bookings items): `save_supply_sources`. A calendar link goes on your secure card: call it with `uploadLink: { name }`, then POST JSON `{"url": "<calendar link>"}` to `uploadUrl` from your own cloud computer. For Google Calendar, call it with `google: true`, and pass that calendar's events as `googleEvents` to every `check_supplies`. Then `done: true`.
+6. **Mode:** hands-off, or stop at checkout for the host's yes.
+7. **Caps:** "Want a spending cap?" Per order, per month, both, or no cap. No cap saves both as `null`. Monthly spending is tracked either way.
+8. **Check time:** when the daily routine runs. 10:00 unless the host picks another time.
+9. **Routine:** create the Supply Core Check routine yourself from [supply-template/routines/supply-core-check.md](supply-template/routines/supply-core-check.md), daily at the check time, then `save_supply_settings` with `routineCreated: true`.
+10. **Review and Activate:** summarize the list, mode, caps, and check time in your own words. On the host's Activate, call `activate_supplies`.
 
 After Activate, every change (an item, the mode, a cap, the check time) takes the host's yes: call the tool without `confirmation` to get the question and a code, ask the host, and call again with the code only after their yes.
 
@@ -49,7 +49,7 @@ After Activate, every change (an item, the mode, a cap, the check time) takes th
 The Supply Core Check routine runs this, and you run it whenever the host says "we're low on…" (call `report_low` with `source: "host"` first).
 
 1. Call `check_supplies`. Look up each `unconfirmed` order in your own order history first: found, `record_order` with its `orderId` and details; not found, `record_problem` with `not-placed`.
-2. For each `due` item, open the preferred product. Out of stock, a changed listing, or no delivery by the deadline: try the backup. Both fail: `record_problem`, and tell the host.
+2. Use the main store in `stores`. When it can't deliver by an item's deadline, use the same-day store for that item. When neither can, tell the host instead of ordering late. For each `due` item, open the preferred product. Out of stock, a changed listing, or no delivery by the deadline: try the backup. Both fail: `record_problem`, and tell the host.
 3. Group items by store and go through checkout to the final page, where tax, shipping, and the delivery date show.
 4. Call check_cart before Place Order, every time. Pass the store, each item, shipping, tax, the final total, and the delivery date.
    - **go:** place the order with the saved Vault card, then `record_order` with the cart token, the order number, `chargedCents`, and `expectedBy`. Post the line it returns.

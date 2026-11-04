@@ -18,7 +18,7 @@ another). A daytime run means an approval card isn't left waiting overnight.
    first. Found: `record_order` with its `orderId`, order number,
    `chargedCents`, and `expectedBy`. Not found: `record_problem` with
    `not-placed`. Never order those items again until this is done.
-3. For each `due` item, open the preferred product. Out of stock, a changed
+3. Use the main store in `stores`. When it can't deliver by an item's deadline, use the same-day store for that item. When neither can, tell the host instead of ordering late. For each `due` item, open the preferred product. Out of stock, a changed
    listing, or no delivery by the deadline: try the backup. Both fail:
    `record_problem` with the reason, and tell the host.
 4. Group items by store. Go through checkout to the final page, where tax,

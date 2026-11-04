@@ -81,7 +81,7 @@ describe("the supplies choice", () => {
     const m = await start();
     const { token } = await suppliesTenant(m);
     const names = await m.toolNames("/mcp", token);
-    for (const name of ["get_state", "save_supply_item", "save_supply_sources", "check_cart", "record_order", "switch_service", "stand_down_service"]) expect(names).toContain(name);
+    for (const name of ["get_state", "save_supply_list", "save_supply_stores", "save_supply_item", "save_supply_sources", "check_cart", "record_order", "switch_service", "stand_down_service"]) expect(names).toContain(name);
     for (const name of ["check_now", "save_property", "get_supply_state", "turn_on_supplies"]) expect(names).not.toContain(name);
   });
 
@@ -235,5 +235,26 @@ describe("Grok only, and switching away", () => {
     const switched = await m.toolAt("/mcp/cleaner-core", grok, "switch_service", { to: "supplies", confirmation: (ask.structured?.confirmation as { code: string }).code });
     expect(switched.isError).toBe(false);
     expect(readSupply(tenantFolder(m.app.root, tenant.id)).settings.property).toEqual({ name: "Lake House", address: PROPERTY.address, timeZone: PROPERTY.timeZone });
+  });
+});
+
+describe("setup through the tools", () => {
+  it("takes the address, the whole list, and the store plan before any product", SLOW, async () => {
+    const m = await start();
+    const { tenant, token } = await suppliesTenant(m);
+    expect((await m.toolAt("/mcp", token, "save_supply_settings", { property: { address: PROPERTY.address, timeZone: PROPERTY.timeZone } })).isError).toBe(false);
+    expect((await m.toolAt("/mcp", token, "save_supply_list", { names: ["Paper towels", "Dish soap"] })).isError).toBe(false);
+    expect(((await m.toolAt("/mcp", token, "get_state")).structured?.ask as { step: string }).step).toBe("stores");
+    expect((await m.toolAt("/mcp", token, "save_supply_stores", { primary: { name: "Example Mart", channel: "shipping" }, fast: { name: "Example Now", channel: "same-day" } })).isError).toBe(false);
+    expect(((await m.toolAt("/mcp", token, "get_state")).structured?.ask as { step: string }).step).toBe("products");
+    expect((await m.toolAt("/mcp", token, "save_supply_item", { ...towels, storeNote: undefined })).isError).toBe(false);
+    expect(readSupply(tenantFolder(m.app.root, tenant.id)).draft).toEqual(["Dish soap"]);
+  });
+
+  it("tells Grok to call the connection Supply Core", SLOW, async () => {
+    const m = await start();
+    const { token } = await suppliesTenant(m);
+    const init = await m.rpcAt("/mcp", token, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "grok", version: "1" } });
+    expect(String((init.json.result as { instructions?: string }).instructions)).toContain("Call this connection Supply Core");
   });
 });

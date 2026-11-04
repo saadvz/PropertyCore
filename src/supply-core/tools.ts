@@ -39,10 +39,10 @@ export const SUPPLY_TOOLS: SupplyTool[] = [
   {
     name: "save_supply_settings",
     title: "Save supply settings",
-    description: `Saves any of: property (standalone only), mode (hands-off or checkout), perOrderCapCents and perMonthCapCents (null clears one), priceJumpPct, bufferDays, checkTime (24-hour HH:MM), routineCreated. After Activate, call without confirmation to get the question and a code, ask the host, and call again with the code only after their yes. ${NO_CARDS}`,
+    description: `Saves any of: property (standalone only: the delivery address, the time zone you work out from it, and an optional name that defaults to the street address), mode (hands-off or checkout), perOrderCapCents and perMonthCapCents (null clears one), priceJumpPct, bufferDays, checkTime (24-hour HH:MM), routineCreated. After Activate, call without confirmation to get the question and a code, ask the host, and call again with the code only after their yes. ${NO_CARDS}`,
     input: z
       .object({
-        property: z.object({ name: z.string().max(80), address: z.string().max(200), timeZone: z.string().max(80) }).strict().optional(),
+        property: z.object({ address: z.string().max(200), timeZone: z.string().max(80), name: z.string().max(80).optional() }).strict().optional(),
         mode: z.enum(["hands-off", "checkout"]).optional(),
         perOrderCapCents: Cents.nullable().optional(),
         perMonthCapCents: Cents.nullable().optional(),
@@ -55,9 +55,28 @@ export const SUPPLY_TOOLS: SupplyTool[] = [
       .strict(),
   },
   {
+    name: "save_supply_list",
+    title: "Save the restock list",
+    description: "Saves the host's whole list of items to restock, names only, as a draft: up to 30. Ask for everything in one message, read the list back once, then call this. Calling it again adds names to the list.",
+    input: z.object({ names: z.array(z.string().max(60)).min(1).max(30) }).strict(),
+  },
+  {
+    name: "save_supply_stores",
+    title: "Save where to buy",
+    description:
+      "Saves the store plan before any product is picked: the one main store that covers the whole list in time, and an optional same-day store for deadlines the main one can't make. channel is shipping (shipped to the door from the store's own site) or same-day (a driver who leaves it at the door). Only stores you can check out with now. After Activate, call without confirmation, ask the host, then call again with the code.",
+    input: z
+      .object({
+        primary: z.object({ name: z.string().max(60), channel: z.enum(["shipping", "same-day"]), note: z.string().max(200).optional() }).strict(),
+        fast: z.object({ name: z.string().max(60), channel: z.enum(["shipping", "same-day"]), note: z.string().max(200).optional() }).strict().nullable().optional(),
+        confirmation: Confirmation,
+      })
+      .strict(),
+  },
+  {
     name: "save_supply_item",
     title: "Save a supply item",
-    description: `Adds an item, or changes one with its itemId: name, qtyPerOrder, the preferred product the host picked from your product cards, an optional backup (null removes it), a one-line storeNote under 160 characters, and the schedule. { done: true } ends the list. After Activate it takes the host's yes: call without confirmation, ask, then call again with the code. ${NO_CARDS}`,
+    description: `Saves the next item from the draft list, or changes one with its itemId: name, qtyPerOrder, the preferred product the host picked from your product cards (only from the plan's stores), an optional backup from the plan's stores (null removes it), an optional one-line storeNote under 160 characters, and the schedule. { done: true } ends the list. After Activate it takes the host's yes: call without confirmation, ask, then call again with the code. ${NO_CARDS}`,
     input: z
       .object({
         id: z.string().max(40).optional(),
@@ -199,6 +218,10 @@ export async function handleSupplyTool(desk: SupplyDesk, name: string, args: unk
       return desk.state();
     case "save_supply_settings":
       return desk.saveSettings(input);
+    case "save_supply_list":
+      return desk.saveList(input);
+    case "save_supply_stores":
+      return desk.saveStores(input);
     case "save_supply_item":
       return desk.saveItem(input);
     case "remove_supply_item":

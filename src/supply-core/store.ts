@@ -75,6 +75,21 @@ export interface LowReport {
   jobId?: string;
 }
 
+/** How a store gets things to an empty rental: shipped to the door, or a same-day driver who leaves it at the door. */
+export type StoreChannel = "shipping" | "same-day";
+
+export interface PlanStore {
+  name: string;
+  channel: StoreChannel;
+  note?: string;
+}
+
+/** Where the list is bought: one main store, and an optional same-day store for deadlines the main one can't make. */
+export interface StorePlan {
+  primary: PlanStore;
+  fast?: PlanStore;
+}
+
 export interface SupplySettings {
   mode?: Mode;
   perOrderCapCents?: number;
@@ -83,6 +98,7 @@ export interface SupplySettings {
   bufferDays: number;
   checkTime?: string;
   property?: { name: string; address: string; timeZone: string };
+  stores?: StorePlan;
   activatedAt?: string;
 }
 
@@ -97,6 +113,8 @@ export interface SupplyFile {
   /** Setup steps the host finished that leave no other trace. */
   setup: { itemsDone?: boolean; sourcesDone?: boolean; capsDone?: boolean; routineCreated?: boolean };
   items: Item[];
+  /** Item names from the host's list that don't have products picked yet, in their order. */
+  draft: string[];
   orders: Order[];
   carts: Cart[];
   lowReports: LowReport[];
@@ -109,7 +127,7 @@ export interface SupplyFile {
 }
 
 export function emptySupply(): SupplyFile {
-  return { settings: { priceJumpPct: 20, bufferDays: 3 }, setup: {}, items: [], orders: [], carts: [], lowReports: [], sources: [] };
+  return { settings: { priceJumpPct: 20, bufferDays: 3 }, setup: {}, items: [], draft: [], orders: [], carts: [], lowReports: [], sources: [] };
 }
 
 export function readSupply(root: string): SupplyFile {
@@ -123,6 +141,7 @@ export function readSupply(root: string): SupplyFile {
     settings: { ...empty.settings, ...raw.settings },
     setup: { ...raw.setup },
     items: raw.items ?? [],
+    draft: raw.draft ?? [],
     orders: raw.orders ?? [],
     carts: raw.carts ?? [],
     lowReports: raw.lowReports ?? [],
