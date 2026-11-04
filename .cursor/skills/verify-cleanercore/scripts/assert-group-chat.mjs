@@ -31,6 +31,9 @@ const PRIVATE_PIN = `Guests have left ${ADDRESS}. Door code: [redacted]. This co
 const READY = `The cleaner marked the cleaning at ${ADDRESS} done.`;
 /** With only Cory and Maria in the group, the offer and the door code go into the group, addressed to Maria. */
 const GROUP_OFFER = `Turnover at ${ADDRESS} on Sunday, Oct 18. Checkout 11:00 AM, next guest 4:00 PM. Maria, reply YES to schedule it.`;
+/** The group's first text carries the intro, then the offer, in one post, so the two can't arrive out of order. */
+const INTRO = `Hi Cory and Maria! This is the cleaning group for ${ADDRESS}. I'm Cory's cleaning assistant, and I'll post cleaning times and updates here. Reply STOP anytime to leave.`;
+const OFFER_BODIES = new Set([GROUP_OFFER, `${INTRO}\n\n${GROUP_OFFER}`]);
 const GROUP_PIN = `Guests have left ${ADDRESS}. Door code: [redacted]. Maria, reply DONE when the cleaning is finished.`;
 const PAIR = JSON.stringify([OWNER, CLEANER]);
 const HURT = "If someone is hurt, call 911 now. I've let the host know.";
@@ -94,7 +97,7 @@ const checks = {
   },
   held() {
     if (pins.length !== 0) fail("pin sent");
-    if (!groups.some((text) => text.body === GROUP_OFFER && toPair(text))) fail("group offer");
+    if (!groups.some((text) => OFFER_BODIES.has(text.body) && toPair(text))) fail("group offer");
     const stop = sent.findIndex((text) => text.kind === "stop");
     if (stop < 0 || sent.slice(stop + 1).some((text) => text.channel === "group")) fail("group text after STOP");
     if (!sent.some((text) => text.to === OWNER && text.body === STOP_HOLD)) fail("stop hold");
@@ -117,7 +120,7 @@ const checks = {
   },
   time() {
     if (!clock || clock.checkoutTime !== "11:00 AM") fail("clock moved");
-    const offers = groups.filter((text) => text.body === GROUP_OFFER);
+    const offers = groups.filter((text) => OFFER_BODIES.has(text.body));
     if (offers.length !== 1 || !toPair(offers[0])) fail("group offer");
     if (sent.some((text) => text.body === REMOVED_TIME_REPLY)) fail("time reply");
   },
