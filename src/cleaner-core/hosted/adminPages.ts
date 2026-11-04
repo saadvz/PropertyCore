@@ -105,7 +105,8 @@ export function tenantsPage(tenants: Tenant[], csrf: string, error?: string, hea
  */
 function serviceSection(t: Tenant, base: string, csrf: string): string {
   if (!t.service) return "<p>Not chosen yet. The host's chat picks touring or cleaning when it connects with the invite code.</p>";
-  const other = t.service === "touring" ? "cleaning" : "touring";
+  // A supplies number switches back to cleaning; touring and cleaning switch to each other.
+  const other = t.service === "cleaning" ? "touring" : "cleaning";
   return `<form method="post" action="${escape(`${base}/service`)}">
         ${csrfField(csrf)}
         <input type="hidden" name="to" value="${other}" />

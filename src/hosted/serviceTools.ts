@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ASSISTANT_PROFILES, type CleanerAssistant } from "../cleaner-core/assistant";
-import { tourCoreTenants } from "../cleaner-core/flag";
+import { supplyCoreOn, tourCoreTenants } from "../cleaner-core/flag";
 import { scratchToolsOn } from "../cleaner-core/scratchQa";
 import type { Tenant, TenantService } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
@@ -32,13 +32,21 @@ interface FrontTool {
   input: z.ZodObject;
 }
 
-const Service = z.enum(["touring", "cleaning"]);
+const Service = z.enum(["touring", "cleaning", "supplies"]);
 
-import { SERVICE_CHOICES, SERVICE_QUESTION } from "./serviceChoice";
+import { SERVICE_CHOICES, SERVICE_QUESTION, serviceChoices, serviceQuestion, type ServiceChoice } from "./serviceChoice";
 export { SERVICE_CHOICES, SERVICE_QUESTION };
 
+const buttons = (choices: readonly ServiceChoice[]) => `${choices.length === 2 ? "two" : choices.length === 3 ? "three" : String(choices.length)} buttons: ${choices.map((choice) => `"${choice.label}"`).join(choices.length === 2 ? " and " : ", ")}`;
+
 /** Said in the tool descriptions too, so a chat that reads only its tool list still asks the question. */
-const ASK_ON_CONNECT = `Right after connecting, before anything else, ask the host exactly "${SERVICE_QUESTION}" with two buttons: "${SERVICE_CHOICES[0].label}" and "${SERVICE_CHOICES[1].label}". Don't describe what you can do instead.`;
+const askOnConnect = (choices: readonly ServiceChoice[]) =>
+  `Right after connecting, before anything else, ask the host exactly "${serviceQuestion(choices)}" with ${buttons(choices)}. Don't describe what you can do instead.`;
+
+/** The services a new number can choose here: touring and Supply Core only while their flags are on. */
+export function choicesFor(h: HostedCleaner): ServiceChoice[] {
+  return serviceChoices({ touring: tourCoreTenants(h.baseEnv()) && !!h.touring, supplies: supplyCoreOn(h.baseEnv()) });
+}
 
 /** The same tools where touring is off: a new number can only run cleaning. */
 const ASK_CLEANING_ONLY = "This number runs Cleaner Core: turnover cleanings from the host's booking calendar. Don't ask the host to pick a service.";
@@ -55,18 +63,21 @@ const CHOOSE_CLEANING: FrontTool = {
   input: z.object({ service: Service }),
 };
 
-const GET_STATE: FrontTool = {
+const getStateFor = (choices: readonly ServiceChoice[]): FrontTool => ({
   name: "get_state",
   title: "What's next",
-  description: `${ASK_ON_CONNECT} This gives that question and its choices. Then call choose_service with their answer.`,
+  description: `${askOnConnect(choices)} This gives that question and its choices. Then call choose_service with their answer.`,
   input: z.object({}),
-};
-const CHOOSE: FrontTool = {
+});
+const PICK_WORDS: Record<ServiceChoice["service"], string> = { touring: "touring for Tour Core", cleaning: "cleaning for Cleaner Core", supplies: "supplies for Supply Core" };
+const chooseFor = (choices: readonly ServiceChoice[]): FrontTool => ({
   name: "choose_service",
   title: "Choose a service",
-  description: `${ASK_ON_CONNECT} Call this with their pick: touring for Tour Core, cleaning for Cleaner Core. The number answers for that service only until the host asks to switch.`,
+  description: `${askOnConnect(choices)} Call this with their pick: ${choices.map((choice) => PICK_WORDS[choice.service]).join(", ")}. The number answers for that service only until the host asks to switch.`,
   input: z.object({ service: Service }),
-};
+});
+const GET_STATE = getStateFor(SERVICE_CHOICES);
+const CHOOSE = chooseFor(SERVICE_CHOICES);
 const SWITCH: FrontTool = {
   name: "switch_service",
   title: "Switch the number's service",
@@ -121,6 +132,7 @@ const BY_STATE: Record<ToolState, FrontTool[]> = {
   unset: [GET_STATE, CHOOSE],
   cleaning: [SWITCH, STAND_DOWN],
   touring: [SAVE_ALERT_ROUTINE, SAVE_HOST_TEXTS, GET_UPDATES, SWITCH, STAND_DOWN],
+  supplies: [SWITCH, STAND_DOWN],
 };
 
 /** Every name the front answers in some state. A call to one of them in another state is refused, never forwarded. */
@@ -135,9 +147,9 @@ export function frontToolsFor(state: ToolState, scratch = false): FrontTool[] {
   return state === "touring" && scratch ? [...BY_STATE.touring, ...SCRATCH] : BY_STATE[state];
 }
 
-/** The front tools as tools/list shows them. */
-export function listedFrontTools(state: ToolState, scratch = false, cleaningOnly = false): Record<string, unknown>[] {
-  const tools = state === "unset" && cleaningOnly ? [GET_STATE_CLEANING, CHOOSE_CLEANING] : frontToolsFor(state, scratch);
+/** The front tools as tools/list shows them. `choices` are the services a new number can pick. */
+export function listedFrontTools(state: ToolState, scratch = false, choices: readonly ServiceChoice[] = SERVICE_CHOICES): Record<string, unknown>[] {
+  const tools = state !== "unset" ? frontToolsFor(state, scratch) : choices.length < 2 ? [GET_STATE_CLEANING, CHOOSE_CLEANING] : [getStateFor(choices), chooseFor(choices)];
   return tools.map((tool) => {
     const { $schema: _schema, ...inputSchema } = z.toJSONSchema(tool.input) as Record<string, unknown>;
     return { name: tool.name, title: tool.title, description: tool.description, inputSchema };
@@ -149,8 +161,13 @@ export const wrongServiceLine = (service: TenantService) => `This number is set 
 
 export const CHOSEN_LINE = (service: TenantService) => `Set up for ${service}. Your tools have changed. If you don't see the new ones, start a new chat.`;
 
-const UNSET_BOTH =
-  "This number isn't set up yet. Ask the host the question in say right away, with the two choices as buttons. Touring: visitors text this number to book a self-guided tour of a rental unit. Cleaning: turnover cleanings from the host's booking calendar. Then call choose_service with the service they picked.";
+const WHAT: Record<ServiceChoice["service"], string> = {
+  touring: "Touring: visitors text this number to book a self-guided tour of a rental unit.",
+  cleaning: "Cleaning: turnover cleanings from the host's booking calendar.",
+  supplies: "Supplies: the property's supplies reordered on a schedule. Supply Core sends no texts.",
+};
+const unsetNext = (choices: readonly ServiceChoice[]) =>
+  `This number isn't set up yet. Ask the host the question in say right away, with the ${choices.length === 2 ? "two" : "three"} choices as buttons. ${choices.map((choice) => WHAT[choice.service]).join(" ")} Then call choose_service with the service they picked.`;
 
 const UNSET_CLEANING_ONLY = "This number isn't set up yet. It can run cleaning: turnover cleanings from the host's booking calendar. Call choose_service with cleaning.";
 
@@ -173,8 +190,9 @@ export const CLAUDE_TASK_PROMPT = [
 ].join("\n");
 
 /** The initialize instructions for a tenant that hasn't chosen yet. */
-export const UNSET_INSTRUCTIONS =
-  `As soon as you're connected, without waiting for the host to ask, ask exactly "${SERVICE_QUESTION}" with two buttons: "${SERVICE_CHOICES[0].label}" and "${SERVICE_CHOICES[1].label}". Do nothing else first. Then call choose_service with their pick.`;
+export const unsetInstructions = (choices: readonly ServiceChoice[]) =>
+  `As soon as you're connected, without waiting for the host to ask, ask exactly "${serviceQuestion(choices)}" with ${buttons(choices)}. Do nothing else first. Then call choose_service with their pick.`;
+export const UNSET_INSTRUCTIONS = unsetInstructions(SERVICE_CHOICES);
 
 /** The initialize instructions for a tenant that hasn't chosen yet, where touring is off. */
 export const UNSET_CLEANING_INSTRUCTIONS =
@@ -220,14 +238,15 @@ export async function handleFrontTool(ctx: FrontContext, name: string, args: unk
   if (!tool) return undefined;
   const parsed = tool.input.safeParse(args ?? {});
   if (!parsed.success) return fail("That was missing something I need.");
-  const touringOn = tourCoreTenants(ctx.h.baseEnv()) && !!ctx.h.touring;
+  const choices = choicesFor(ctx.h);
   if (name === "get_state") {
-    if (!touringOn) return done({ next: UNSET_CLEANING_ONLY, services: ["cleaning"] });
-    return done({ next: UNSET_BOTH, say: SERVICE_QUESTION, choices: SERVICE_CHOICES, services: ["touring", "cleaning"] });
+    if (choices.length < 2) return done({ next: UNSET_CLEANING_ONLY, services: ["cleaning"] });
+    return done({ next: unsetNext(choices), say: serviceQuestion(choices), choices, services: choices.map((choice) => choice.service) });
   }
   if (name === "choose_service") {
     const service = (parsed.data as { service: TenantService }).service;
-    if (service === "touring" && !touringOn) return fail("Touring isn't available on this service yet. Choose cleaning.");
+    if (service === "touring" && !choices.some((c) => c.service === "touring")) return fail("Touring isn't available on this service yet. Choose cleaning.");
+    if (service === "supplies" && !choices.some((c) => c.service === "supplies")) return fail("Supply Core isn't available on this service yet. Choose cleaning.");
     ctx.h.registry.setService(ctx.tenant.id, service);
     if (service === "touring") {
       const tenant = ctx.h.registry.get(ctx.tenant.id)!;

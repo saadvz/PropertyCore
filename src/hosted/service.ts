@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { tourCoreTenants } from "../cleaner-core/flag";
+import { supplyCoreOn, tourCoreTenants } from "../cleaner-core/flag";
+import { supplyDesk } from "../supply-core/hosted";
 import { tenantFolder, type Tenant, type TenantService } from "../cleaner-core/hosted/registry";
 import { tenantContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
@@ -72,6 +73,7 @@ export async function switchService(
   if (!from) return fail("Choose a service first. Call get_state.");
   if (to === from) return fail(`This number is already set up for ${to}.`);
   if (to === "touring" && !(tourCoreTenants(h.baseEnv()) && h.touring)) return fail("Touring isn't available on this service yet.");
+  if (to === "supplies" && !supplyCoreOn(h.baseEnv())) return fail("Supply Core isn't available on this service yet.");
   const forced = input.force === true;
   if (!forced) {
     const live = await (deps.live ?? liveOf)(h, tenant);
@@ -122,6 +124,12 @@ export async function standDownService(ctx: SwitchContext, input: { confirmation
     if (!reply.ok) return fail(reply.error);
     const result = reply.result ?? {};
     return { text: typeof result.next === "string" ? result.next : JSON.stringify(result), structured: result, isError: false };
+  }
+  if (tenant.service === "supplies") {
+    // Nothing on Supply Core texts anyone. Open carts close; orders on their way stay recorded.
+    const cleared = await supplyDesk(h, tenant).clearCarts();
+    h.log(`${tenant.id} stood Supply Core down.`);
+    return { text: "Supply Core is stood down. Nothing is live, so you can switch now.", structured: { cartsCleared: cleared }, isError: false };
   }
   if (tenant.service !== "touring") return fail("Choose a service first. Call get_state.");
   const target = h.touring?.supervisor.target(tenant.id);

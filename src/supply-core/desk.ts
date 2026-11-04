@@ -435,6 +435,44 @@ export class SupplyDesk {
     });
   }
 
+  /** The host's one-line summary, or the setup line while setup is open. */
+  summaryLine(): string {
+    const file = this.read();
+    if (file.offAt) return "Supplies: off.";
+    return file.settings.activatedAt ? this.line(file) : "Supplies: setup not finished.";
+  }
+
+  /** Turned off: no new orders, no supplies question to the cleaner, and every open cart closed. */
+  turnOff(): Promise<void> {
+    return this.serial(() => {
+      const file = this.read();
+      file.offAt = this.deps.now().toISOString();
+      file.carts = [];
+      this.write(file);
+    });
+  }
+
+  /** Turned back on: setup and the list are as they were. */
+  turnOn(): Promise<void> {
+    return this.serial(() => {
+      const file = this.read();
+      if (!file.offAt) return;
+      delete file.offAt;
+      this.write(file);
+    });
+  }
+
+  /** Stand-down: every open cart closes. Orders on their way stay recorded. */
+  clearCarts(): Promise<number> {
+    return this.serial(() => {
+      const file = this.read();
+      const count = file.carts.length;
+      file.carts = [];
+      this.write(file);
+      return count;
+    });
+  }
+
   activate(input: Record<string, unknown>): Promise<SupplyReply> {
     return this.guarded(input, () => {
       const file = this.read();

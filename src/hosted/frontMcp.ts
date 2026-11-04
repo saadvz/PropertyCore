@@ -8,7 +8,8 @@ import { promoteRoutineOwner, tenantContext, type HostedCleaner, type HostedRequ
 import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
 import { OPERATOR_TOOL_NAMES } from "../operator/tools";
 import { ServiceNotices } from "./crossService";
-import { FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsFor, UNSET_CLEANING_INSTRUCTIONS, UNSET_INSTRUCTIONS, wrongServiceLine, type FrontReply, type ToolState } from "./serviceTools";
+import { choicesFor, FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsFor, UNSET_CLEANING_INSTRUCTIONS, unsetInstructions, wrongServiceLine, type FrontReply, type ToolState } from "./serviceTools";
+import { handleSupplyFront, listedSupplyFront, SUPPLY_INSTRUCTIONS, suppliesLine } from "../supply-core/hosted";
 import { taskWarning } from "./touringAlerts";
 import { callWorkerMcp, forwardMcp, type WorkerTarget } from "./touringForward";
 
@@ -69,7 +70,7 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
   const state = toolsFor(tenant);
   h.registry.touch(tenant.id);
 
-  if (r.method === "GET" && state === "unset") {
+  if (r.method === "GET" && (state === "unset" || state === "supplies")) {
     // A chat that holds a stream hears tools/list_changed the moment it chooses.
     if (!String(r.req.headers.accept ?? "").includes("text/event-stream")) return r.send(405, JSON_TYPE, JSON.stringify({ error: { message: "Send MCP requests with POST." } }), { Allow: "POST, GET" });
     r.res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive" });
@@ -78,6 +79,7 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
   }
   if (r.method !== "POST") {
     if (state === "touring") return touringPass(h, r, tenant, caller);
+    if (state === "supplies") return r.send(405, JSON_TYPE, JSON.stringify({ error: { message: "Send MCP requests with POST." } }), { Allow: "POST, GET" });
     return cleaningPass(h, r, tenant, caller, Buffer.alloc(0));
   }
 
@@ -91,17 +93,19 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
   }
   if (message?.method === "initialize") initializes.set(caller.grantId, raw);
 
-  // While touring is off here, a new number can only run cleaning, so nothing offers Tour Core.
-  const cleaningOnly = !(tourCoreTenants(h.baseEnv()) && !!h.touring);
+  // While touring and Supply Core are off here, a new number can only run cleaning, so nothing offers a pick.
+  const choices = choicesFor(h);
+  const cleaningOnly = choices.length < 2;
+  if (state === "supplies") return suppliesAnswer(h, r, tenant, caller, sessionKey, message);
   if (state === "unset") {
     if (!message) return r.send(400, JSON_TYPE, rpcError(null, -32600, "That isn't a valid request."));
     if (message.id === undefined) return r.send(202, JSON_TYPE, "");
     if (message.method === "initialize") {
       const version = typeof message.params?.protocolVersion === "string" ? message.params.protocolVersion : "2025-03-26";
-      return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "tour-core-shared", title: "Tour Core and Cleaner Core", version: "0.1.0" }, instructions: cleaningOnly ? UNSET_CLEANING_INSTRUCTIONS : UNSET_INSTRUCTIONS }));
+      return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "tour-core-shared", title: "Tour Core and Cleaner Core", version: "0.1.0" }, instructions: cleaningOnly ? UNSET_CLEANING_INSTRUCTIONS : unsetInstructions(choices) }));
     }
     if (message.method === "ping") return r.send(200, JSON_TYPE, rpcResult(message.id, {}));
-    if (message.method === "tools/list") return r.send(200, JSON_TYPE, rpcResult(message.id, { tools: listedFrontTools("unset", false, cleaningOnly) }));
+    if (message.method === "tools/list") return r.send(200, JSON_TYPE, rpcResult(message.id, { tools: listedFrontTools("unset", false, choices) }));
     if (message.method !== "tools/call") return r.send(200, JSON_TYPE, rpcError(message.id, -32601, "I don't support that."));
   }
 
@@ -109,6 +113,10 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
     const name = typeof message.params?.name === "string" ? message.params.name : "";
     const reply = await handleFrontTool({ h, tenant, caller, noteToolsChanged: () => noteInitialized(sessionKey) }, name, message.params?.arguments);
     if (reply) return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult(reply)));
+    if (state === "cleaning") {
+      const supply = await handleSupplyFront({ h, tenant, caller, noteToolsChanged: () => noteInitialized(sessionKey) }, name, message.params?.arguments);
+      if (supply) return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult(supply)));
+    }
     if (state === "unset") return r.send(200, JSON_TYPE, rpcError(message.id, -32602, "Ask the host which service to set up first. Call get_state."));
     if (refusedHere(state, name)) return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult({ text: wrongServiceLine(state), isError: true })));
   }
@@ -124,7 +132,7 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
       listed = undefined;
     }
     if (!listed?.result || !Array.isArray(listed.result.tools)) return r.send(answer.status, JSON_TYPE, answer.body);
-    listed.result.tools = [...listed.result.tools, ...listedFrontTools(state, scratchFor(h, tenant))];
+    listed.result.tools = [...listed.result.tools, ...listedFrontTools(state, scratchFor(h, tenant)), ...(state === "cleaning" ? listedSupplyFront(tenant, caller.assistant) : [])];
     return r.send(200, JSON_TYPE, JSON.stringify(listed));
   }
 
@@ -136,7 +144,47 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
     return r.send(answer.status, JSON_TYPE, withNotices(answer.body, new ServiceNotices(h.dataRoot).take(tenant.id), warn));
   }
   if (state === "touring") return touringPass(h, r, tenant, caller, raw, message?.method === "initialize");
+  // Cleaner Core's get_state carries one Supply Core line while the add-on is on.
+  const line = state === "cleaning" && message?.method === "tools/call" && message.id !== undefined && message.params?.name === "get_state" ? suppliesLine(h, tenant) : undefined;
+  if (line) {
+    const answer = await cleaningCall(h, tenant, caller, raw, r);
+    if (!answer) return;
+    return r.send(answer.status, JSON_TYPE, withFields(answer.body, { supplies: line }), answer.headers);
+  }
   return cleaningPass(h, r, tenant, caller, raw);
+}
+
+/** A supplies tenant: Supply Core answers every message in this process. Nothing is forwarded. */
+async function suppliesAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: { grantId: string; assistant: CleanerAssistant }, sessionKey: string, message: RpcMessage | undefined): Promise<void> {
+  if (!message) return r.send(400, JSON_TYPE, rpcError(null, -32600, "That isn't a valid request."));
+  if (message.id === undefined) return r.send(202, JSON_TYPE, "");
+  if (message.method === "initialize") {
+    const version = typeof message.params?.protocolVersion === "string" ? message.params.protocolVersion : "2025-03-26";
+    return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "supply-core", title: "Supply Core", version: "0.1.0" }, instructions: SUPPLY_INSTRUCTIONS }));
+  }
+  if (message.method === "ping") return r.send(200, JSON_TYPE, rpcResult(message.id, {}));
+  if (message.method === "tools/list") return r.send(200, JSON_TYPE, rpcResult(message.id, { tools: [...listedSupplyFront(tenant, caller.assistant), ...listedFrontTools("supplies")] }));
+  if (message.method !== "tools/call") return r.send(200, JSON_TYPE, rpcError(message.id, -32601, "I don't support that."));
+  const name = typeof message.params?.name === "string" ? message.params.name : "";
+  const ctx = { h, tenant, caller, noteToolsChanged: () => noteInitialized(sessionKey) };
+  const reply = (await handleFrontTool(ctx, name, message.params?.arguments)) ?? (await handleSupplyFront(ctx, name, message.params?.arguments));
+  if (reply) return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult(reply)));
+  return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult({ text: wrongServiceLine("supplies"), isError: true })));
+}
+
+/** Adds fields to a tools/call reply's structured content and its JSON text. Unchanged when it has none. */
+function withFields(body: string, fields: Record<string, unknown>): string {
+  try {
+    const reply = JSON.parse(body) as { result?: { structuredContent?: Record<string, unknown>; content?: { type: string; text?: string }[] } };
+    const result = reply.result;
+    if (!result?.structuredContent) return body;
+    result.structuredContent = { ...result.structuredContent, ...fields };
+    const first = result.content?.[0];
+    if (first?.type === "text") first.text = JSON.stringify(result.structuredContent);
+    return JSON.stringify(reply);
+  } catch {
+    return body;
+  }
 }
 
 /** True when touring's get_state says the publish milestone is done. */

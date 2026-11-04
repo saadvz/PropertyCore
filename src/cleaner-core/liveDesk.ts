@@ -1811,6 +1811,25 @@ export class LiveDesk {
     return jobs.find((item) => item.checkoutDate === wanted || dayOf(item) === wanted || item.id.toLowerCase() === wanted);
   }
 
+  /** Supply Core's view of this property, from the saved details. Undefined until they're saved. */
+  propertyForSupplies(): { name: string; address: string; timeZone: string } | undefined {
+    if (!this.file.address || !this.file.timeZone) return undefined;
+    return { name: this.file.nickname ?? this.file.business ?? this.file.address, address: this.file.address, timeZone: this.file.timeZone };
+  }
+
+  /** The checkout dates of every turnover that isn't called off, for Supply Core's by-bookings items. */
+  turnoverDates(): Promise<{ checkoutYmd: string }[]> {
+    return this.serial(async () => {
+      this.resume();
+      return (this.engine?.jobs() ?? []).filter((job) => job.status !== "canceled").map((job) => ({ checkoutYmd: job.checkoutDate }));
+    });
+  }
+
+  /** Supply Core turned on, off, or activated: the engine reopens before the next step and reads it. */
+  refreshSupplyAsk(): void {
+    this.stale = true;
+  }
+
   getTurns(): Promise<ToolReply> {
     return this.serial(async () => this.getTurnsNow());
   }
