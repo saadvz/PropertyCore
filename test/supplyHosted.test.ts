@@ -258,3 +258,22 @@ describe("setup through the tools", () => {
     expect(String((init.json.result as { instructions?: string }).instructions)).toContain("Call this connection Supply Core");
   });
 });
+
+describe("choose_supplies, the Cleaner Core setup question", () => {
+  it("Yes turns Supply Core on; Not now leaves it off; both close the question; Claude never sees it", SLOW, async () => {
+    const m = await start({});
+    const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+    const grok = await m.joinAt(tenant.id, "grok", "/mcp/cleaner-core");
+    const claude = await m.joinAt(tenant.id, "claude", "/mcp/cleaner-core");
+    expect(await m.toolNames("/mcp/cleaner-core", grok)).toContain("choose_supplies");
+    expect(await m.toolNames("/mcp/cleaner-core", claude)).not.toContain("choose_supplies");
+    const no = await m.toolAt("/mcp/cleaner-core", grok, "choose_supplies", { on: false });
+    expect(no.isError).toBe(false);
+    expect(no.text).toContain("later");
+    expect(m.registry.get(tenant.id)?.supplies).toBeFalsy();
+    const yes = await m.toolAt("/mcp/cleaner-core", grok, "choose_supplies", { on: true });
+    expect(yes.isError).toBe(false);
+    expect(yes.text).toContain("get_supply_state");
+    expect(m.registry.get(tenant.id)?.supplies).toBe(true);
+  });
+});

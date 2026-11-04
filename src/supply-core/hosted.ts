@@ -13,12 +13,14 @@ import { handleSupplyTool, listedSupplyTools, STANDALONE_ONLY, SUPPLY_TOOL_NAMES
 
 export const TURN_ON = "turn_on_supplies";
 export const TURN_OFF = "turn_off_supplies";
+/** Cleaner Core's setup question: set up Supply Core now, or not now. */
+export const CHOOSE = "choose_supplies";
 const NOT_ON = "Supply Core isn't on for this property.";
 const STALE = "That approval has expired or doesn't match. Ask the host again.";
 const approvals = new ConfirmationBook();
 
 /** Every name Supply Core answers in some state, so one called where it isn't on is refused, never forwarded. */
-export const SUPPLY_FRONT_NAMES: ReadonlySet<string> = new Set([...SUPPLY_TOOL_NAMES, TURN_ON, TURN_OFF]);
+export const SUPPLY_FRONT_NAMES: ReadonlySet<string> = new Set([...SUPPLY_TOOL_NAMES, TURN_ON, TURN_OFF, CHOOSE]);
 
 export const SUPPLY_INSTRUCTIONS =
   "This number runs Supply Core: the property's supplies, reordered on a schedule. Supply Core never texts anyone and never takes card details; you shop and check out with your own shopping tools and Vault. Call this connection Supply Core when you talk about it. Call get_state first and follow its ask one question at a time.";
@@ -66,8 +68,8 @@ function available(tenant: Tenant, assistant: CleanerAssistant): string[] {
   if (tenant.service === "supplies" && !grok(assistant)) return [];
   if (tenant.service === "supplies") return SUPPLY_TOOLS.map((tool) => tool.name).filter((name) => name !== "get_supply_state");
   if (tenant.service === "cleaning" && grok(assistant)) {
-    if (!tenant.supplies) return [TURN_ON];
-    return [...SUPPLY_TOOLS.map((tool) => tool.name).filter((name) => !STANDALONE_ONLY.has(name)), TURN_OFF];
+    if (!tenant.supplies) return [TURN_ON, CHOOSE];
+    return [...SUPPLY_TOOLS.map((tool) => tool.name).filter((name) => !STANDALONE_ONLY.has(name)), TURN_OFF, CHOOSE];
   }
   return [];
 }
@@ -78,6 +80,12 @@ const TURN_TOOLS: Record<string, Record<string, unknown>> = {
     title: "Turn on Supply Core",
     description: "Adds Supply Core to this property: supplies reordered on a schedule, and the cleaner asked what's running low after each DONE once it's active. Only when the host asks. Then call get_supply_state.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  [CHOOSE]: {
+    name: CHOOSE,
+    title: "Set up Supply Core now?",
+    description: "The host's answer to Cleaner Core's setup question about Supply Core: on true sets it up now, on false leaves it for later. Either way, setup doesn't ask again.",
+    inputSchema: { type: "object", properties: { on: { type: "boolean" } }, required: ["on"], additionalProperties: false },
   },
   [TURN_OFF]: {
     name: TURN_OFF,
@@ -108,6 +116,15 @@ export function suppliesLine(h: HostedCleaner, tenant: Tenant): string | undefin
 }
 
 /** Answers a Supply Core tool for this chat. Undefined when the name isn't Supply Core's. */
+/** Turns the add-on on: the registry flag, the record, and Cleaner Core's engine. */
+async function turnOn(ctx: SupplyFrontContext, tenant: Tenant): Promise<void> {
+  ctx.h.registry.setSupplies(tenant.id, true);
+  await supplyDesk(ctx.h, tenant).turnOn();
+  cleaningDesk(ctx.h, tenant).refreshSupplyAsk();
+  ctx.h.log(`${tenant.id} turned Supply Core on.`);
+  ctx.noteToolsChanged();
+}
+
 export async function handleSupplyFront(ctx: SupplyFrontContext, name: string, args: unknown): Promise<SupplyReply | undefined> {
   const { h } = ctx;
   const tenant = h.registry.get(ctx.tenant.id) ?? ctx.tenant;
@@ -118,12 +135,17 @@ export async function handleSupplyFront(ctx: SupplyFrontContext, name: string, a
   if (supplies && name === "get_state") return supplyDesk(h, tenant).state();
   if (!SUPPLY_FRONT_NAMES.has(name)) return undefined;
   if (!available(tenant, ctx.caller.assistant).includes(name)) return { text: NOT_ON, isError: true };
+  if (name === CHOOSE) {
+    const on = (args as { on?: unknown } | undefined)?.on;
+    if (typeof on !== "boolean") return { text: "Pass on: true to set Supply Core up now, or on: false for later.", isError: true };
+    await cleaningDesk(h, tenant).noteSuppliesChoice();
+    if (!on) return { text: "Okay, no Supply Core for now. Tell the host they can set it up later by asking you to reorder supplies. Then call get_state for Cleaner Core's next step.", structured: { supplies: false }, isError: false };
+    if (!tenant.supplies) await turnOn(ctx, tenant);
+    return { text: "Supply Core is on. Set it up now: call get_supply_state and follow its ask. When it's activated, call get_state for Cleaner Core's next step. If the new tools don't appear, start a new chat.", structured: { supplies: true }, isError: false };
+  }
   if (name === TURN_ON) {
-    h.registry.setSupplies(tenant.id, true);
-    await supplyDesk(h, tenant).turnOn();
-    cleaningDesk(h, tenant).refreshSupplyAsk();
-    h.log(`${tenant.id} turned Supply Core on.`);
-    ctx.noteToolsChanged();
+    await cleaningDesk(h, tenant).noteSuppliesChoice();
+    await turnOn(ctx, tenant);
     return { text: "Supply Core is on. Call get_supply_state for the first setup step. If the new tools don't appear, start a new chat.", structured: { supplies: true }, isError: false };
   }
   if (name === TURN_OFF) {

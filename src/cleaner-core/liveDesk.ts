@@ -15,11 +15,11 @@ import { spokenTimes } from "../core/spokenTime";
 import { formatWhen, zonedInstant } from "./calendar";
 import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink, venmoProfileLink, venmoUsername, type PaymentSettings, type PayRecord } from "./payments";
 import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
-import { groupChatEnabled } from "./flag";
+import { cleanerMultiTenant, groupChatEnabled } from "./flag";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
 import { calendarUrlAllowed, readPublicCalendar, type CalendarFetch } from "./fetchLimits";
-import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, PAYMENTS_STEP, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, type SetupAsk } from "./setupAsk";
+import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, PAYMENTS_STEP, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, SUPPLIES_STEP, type SetupAsk } from "./setupAsk";
 import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jobHoldLine, optedOutCodeLine, resumeNote } from "./cleanerTexts";
 import { isInjuryReport } from "./injury";
 import { GroupNotConfirmed } from "./groupThread";
@@ -363,6 +363,8 @@ interface LiveFile {
   preferences?: Preferences;
   /** Set once the host answered the Payments step, or turned payments on later. */
   payments?: PaymentSettings;
+  /** Set once the host answered whether to set up Supply Core, or turned it on. */
+  suppliesAsked?: boolean;
   /** Each finished cleaning's pay, by job id, once it became owed. */
   pay?: Record<string, PayRecord>;
   /** Legacy single link from save_calendar_link. It reads as one calendar named Guesty Lite. */
@@ -1826,6 +1828,20 @@ export class LiveDesk {
     });
   }
 
+  /** Supply Core is offered at setup only to a Grok chat on the shared service, where the add-on lives. */
+  private offersSupplies(): boolean {
+    return this.assistant() === "grok" && cleanerMultiTenant(this.env());
+  }
+
+  /** The host answered the Supply Core question, or turned it on another way: setup doesn't ask again. */
+  noteSuppliesChoice(): Promise<void> {
+    return this.serial(async () => {
+      if (this.file.suppliesAsked) return;
+      this.file.suppliesAsked = true;
+      this.persist();
+    });
+  }
+
   /** Supply Core turned on, off, or activated: the engine reopens before the next step and reads it. */
   refreshSupplyAsk(): void {
     this.stale = true;
@@ -2721,6 +2737,7 @@ export class LiveDesk {
     else if (!this.codeSaved()) ask = DOOR_CODE_STEP;
     else if (!this.file.texting && !preferences) ask = PREFERENCES_STEP;
     else if (!this.file.texting && !this.file.payments) ask = PAYMENTS_STEP;
+    else if (!this.file.texting && !this.file.suppliesAsked && this.offersSupplies()) ask = SUPPLIES_STEP;
     if (ask) next = askNext(ask.tool);
     // The routines come before the review, so the cleaner's first reply already wakes Grok.
     else if (!this.file.texting && !this.routineReady()) next = this.words().routineAsk;

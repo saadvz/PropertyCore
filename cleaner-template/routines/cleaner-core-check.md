@@ -3,7 +3,7 @@
 Wakes the cleaning Grok Bot on a schedule. It re-reads the host's calendars,
 so a new, moved, or removed stay reaches the host without anyone asking "check
 my calendars". It also sends any reminder that is due. This is the cleaning
-bot's routine, not Tour Core's.
+bot's routine, and its alerts come from Cleaner Core.
 
 ## Trigger
 

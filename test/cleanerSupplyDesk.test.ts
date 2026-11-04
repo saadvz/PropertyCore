@@ -31,7 +31,7 @@ function ok(reply: ToolReply): Record<string, unknown> {
   return reply.result;
 }
 
-function openDesk() {
+function openDesk(extra: NodeJS.ProcessEnv = {}) {
   const root = mkdtempSync(join(tmpdir(), "cleaner-supply-desk-"));
   roots.push(root);
   const sms = fakeSms();
@@ -48,6 +48,7 @@ function openDesk() {
     CLEANER_CORE_TWILIO_PHONE_NUMBER: CLEANER_LINE,
     CLEANER_CORE_ROUTINE_URL: ROUTINE.url,
     CLEANER_CORE_ROUTINE_KEY: ROUTINE.token,
+    ...extra,
   };
   return { root, sms, desk: liveDeskFor(root, () => env, () => new Date(FROZEN)) };
 }
@@ -99,5 +100,47 @@ describe("the live desk and Supply Core", () => {
     const report = messages.find((m) => m.handled === "supply-report");
     expect(report?.text).toContain("paper towels");
     expect(report?.text).not.toContain("4812");
+  });
+});
+
+describe("the Supply Core question in Cleaner Core's setup", () => {
+  async function throughPayments(desk: LiveDesk) {
+    ok(await desk.getState("cleaners"));
+    ok(await desk.saveProperty({ business: BUSINESS, nickname: "Lake House", address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
+    ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
+    ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" }));
+    ok(await desk.saveSchedule({ firstText: "when-confirmed" }));
+    ok(await desk.saveDoorCode({ code: DOOR_CODE, lockLocation: "back door" }, PIN_KEY));
+    ok(await desk.savePreferences({}));
+    ok(await desk.savePayments({ on: false }));
+  }
+  const stepOf = async (desk: LiveDesk) => ((ok(await desk.getState()).ask as { step?: string } | undefined) ?? {}).step;
+
+  it("asks a Grok host on the shared service after Payments, explains it, and offers Yes or Not now", async () => {
+    const { desk } = openDesk({ CLEANER_CORE_MULTI_TENANT: "1", CLEANER_CORE_ASSISTANT: "grok" });
+    await throughPayments(desk);
+    const ask = ok(await desk.getState()).ask as { step: string; tool: string; questions: { field: string; ask: string; options: { label: string }[]; how: string }[] };
+    expect(ask.step).toBe("supplies");
+    expect(ask.tool).toBe("choose_supplies");
+    expect(ask.questions[0]!.options.map((o) => o.label)).toEqual(["Yes, set it up", "Not now"]);
+    expect(ask.questions[0]!.how).toContain("Anything running low?");
+    expect(ask.questions[0]!.how).toContain("set it up later");
+    await desk.noteSuppliesChoice();
+    expect(await stepOf(desk)).toBeUndefined();
+  });
+
+  it("never asks a Claude, ChatGPT, or Muse host", async () => {
+    for (const assistant of ["claude", "chatgpt", "muse"]) {
+      resetLiveDesks();
+      const { desk } = openDesk({ CLEANER_CORE_MULTI_TENANT: "1", CLEANER_CORE_ASSISTANT: assistant });
+      await throughPayments(desk);
+      expect(await stepOf(desk), assistant).not.toBe("supplies");
+    }
+  });
+
+  it("isn't asked off the shared service, where the add-on doesn't exist", async () => {
+    const { desk } = openDesk({ CLEANER_CORE_ASSISTANT: "grok" });
+    await throughPayments(desk);
+    expect(await stepOf(desk)).not.toBe("supplies");
   });
 });

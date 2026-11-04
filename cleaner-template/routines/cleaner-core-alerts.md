@@ -2,7 +2,7 @@
 
 Wakes the cleaning Grok Bot the moment something happens on a turnover, for
 example the cleaner texts YES, a question, or DONE, so the host hears about it
-without asking. This is the cleaning bot's routine, not Tour Core's.
+without asking. This is the cleaning bot's routine. Its alerts come from Cleaner Core, so call it Cleaner Core.
 
 ## Trigger
 
