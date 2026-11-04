@@ -63,7 +63,7 @@ Cleaner Core never pauses a cleaning because of how a message sounds; the host d
 
 ## Messages
 
-Read every item in `messages`. Tell the host in your own words when one needs them: running late, a question, a problem, supplies, an arrival time, a decline, STOP, or an injury. Stay quiet on routine replies. When a message has `photos`, open each link (good for one hour) and look at it before you tell the host about the message.
+Read every item in `messages`. Tell the host in your own words when one needs them: running late, a question, a problem, supplies, an arrival time, a decline, STOP, or an injury. Stay quiet on routine replies. When a message has `photos`, open each link (good for one hour) and look at it before you tell the host about the message. With Supply Core on, a message handled supply-report is the cleaner's answer to Anything running low? after DONE: match it to the list and call report_low with the item ids, as SUPPLY_CORE_BOOTSTRAP.md says.
 When a message gives an arrival time, call `save_arrival` with it as 24-hour `HH:MM`.
 To reply, draft one short text and show the host the exact words. Call `send_message` without a code to get the approval code. Call it again with the code only after the host says yes.
 With a group, `send_message` posts to the group: `to` is `group`. Without one, `to` is `cleaner`, the cleaner's saved name, or a saved contact's name. Never a phone number.

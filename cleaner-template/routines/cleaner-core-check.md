@@ -60,6 +60,12 @@ webhook address, no key, and no secret.
    asked to confirm the checklist: tell the host the cleaning isn't marked
    done until the cleaner replies YES. With `checklist-not-done`, tell the
    host the cleaner said the checklist isn't finished.
+   A message handled `supply-report` is the cleaner's answer to `Anything
+   running low?` after DONE. When Supply Core is on, match their words to the
+   list yourself and call `report_low` with those item ids and
+   `source: "cleaner"`, then follow the Supply Core Check steps in
+   `supply-template/routines/supply-core-check.md`. Ask the host about
+   anything not on the list. Never pass the cleaner's words to Supply Core.
 9. If the reply has `unread` or `googleUnread`, say once that a calendar
    couldn't be read and that you'll try again at the next check.
 10. If the reply has `needsTimes`, ask the host for the checkout time and the

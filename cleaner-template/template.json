@@ -33,6 +33,7 @@
       "trigger": "scheduled",
       "schedule": "Every 5 minutes for a demo, and hourly otherwise.",
       "allowedTools": ["check_now", "confirm_times", "get_state", "save_arrival", "get_job_photos"],
+      "supplyTools": ["get_supply_state", "report_low", "check_supplies", "check_cart", "approve_cart", "record_order", "record_problem", "mark_delivered"],
       "credentialsTravelWithTemplate": false
     },
     {
@@ -40,6 +41,7 @@
       "doc": "routines/cleaner-core-alerts.md",
       "trigger": "authenticated-webhook",
       "allowedTools": ["check_now", "confirm_times", "get_state", "save_arrival", "get_job_photos"],
+      "supplyTools": ["get_supply_state", "report_low", "check_supplies", "check_cart", "approve_cart", "record_order", "record_problem", "mark_delivered"],
       "credentialsTravelWithTemplate": false
     }
   ],

@@ -9,6 +9,7 @@ import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
 import { askNext } from "../src/cleaner-core/setupAsk";
 import { DOOR_CODE } from "./wiringProof";
 import { filesUnder } from "./files";
+import { SUPPLY_TOOL_NAMES } from "../src/supply-core/tools";
 
 /** The Cleaner Core paste-in prompt, setup guide, and Grok Bot template: pinned, consistent with the tools, and free of secrets. */
 
@@ -320,8 +321,8 @@ describe("Cleaner Core initialize instructions", () => {
 describe("Cleaner Core template docs", () => {
   const docs = () => [BOOTSTRAP, ...filesUnder(TEMPLATE)].map((f) => ({ f, text: read(f) }));
 
-  it("name only real Cleaner Core tools", async () => {
-    const tools = await toolNames();
+  it("name only real Cleaner Core tools, or Supply Core's when the add-on is on", async () => {
+    const tools = [...(await toolNames()), ...SUPPLY_TOOL_NAMES];
     for (const { f, text } of docs()) {
       for (const m of text.matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) expect(tools, `${f}: ${m[1]}`).toContain(m[1]);
     }

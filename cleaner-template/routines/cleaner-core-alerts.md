@@ -83,9 +83,15 @@ routine runs, it wakes once, and `check_now` returns all of them.
    asked to confirm the checklist: tell the host the cleaning isn't marked
    done until the cleaner replies YES. With `checklist-not-done`, tell the
    host the cleaner said the checklist isn't finished.
-8. If the reply has `needsTimes`, ask the host for the checkout time and the
+8. A message handled `supply-report` is the cleaner's answer to `Anything
+   running low?` after DONE. When Supply Core is on, match their words to the
+   list yourself and call `report_low` with those item ids and
+   `source: "cleaner"`, then follow the Supply Core Check steps in
+   `supply-template/routines/supply-core-check.md`. Ask the host about
+   anything not on the list. Never pass the cleaner's words to Supply Core.
+9. If the reply has `needsTimes`, ask the host for the checkout time and the
    next check-in time, then call `confirm_times` with each as 24-hour HH:MM.
-9. Never show a door code, an id, or the webhook payload.
+10. Never show a door code, an id, or the webhook payload.
 
 ## Connecting it
 

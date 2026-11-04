@@ -1,0 +1,48 @@
+{
+  "name": "Supply Core",
+  "version": "0.1.0",
+  "distribution": "team",
+  "profile": "bot-profile.md",
+  "setupPrompt": "SETUP_PROMPT.md",
+  "readme": "README.md",
+  "hostedSupplyCoreUrl": "https://tourcore-production-8b80.up.railway.app",
+  "repository": {
+    "url": "https://github.com/saadvz/TourCore",
+    "bootstrap": "SUPPLY_CORE_BOOTSTRAP.md",
+    "note": "The public repository. Grok clones it only to read SUPPLY_CORE_BOOTSTRAP.md and these files. It never runs Supply Core from the clone."
+  },
+  "integrations": [
+    {
+      "name": "Supply Core",
+      "type": "custom-mcp-server",
+      "url": "hostedSupplyCoreUrl/mcp",
+      "auth": "OAuth 2.1 discovered from the service. The host types the invite code from Saad on the page and picks Supply Core. Grok cannot approve itself.",
+      "travelsWithTemplate": false
+    },
+    {
+      "name": "Grok shopping and Vault",
+      "type": "first-party",
+      "auth": "The host's own Grok shopping tools and Vault. Saved cards, Shop Pay, Link, and X Money stay in the host's Vault. Supply Core never sees them.",
+      "travelsWithTemplate": false
+    }
+  ],
+  "routines": [
+    {
+      "name": "Supply Core Check",
+      "doc": "routines/supply-core-check.md",
+      "trigger": "scheduled",
+      "schedule": "Daily at the check time the host picked (10:00 unless they chose another).",
+      "allowedTools": ["get_supply_state", "check_supplies", "check_cart", "approve_cart", "record_order", "record_problem", "mark_delivered"],
+      "credentialsTravelWithTemplate": false
+    }
+  ],
+  "suggestedPrompts": ["Set up Supply Core", "What's due?", "We're low on paper towels", "Show this month's spending", "Change my spending cap"],
+  "neverIncluded": [
+    "card numbers, expiry dates, or security codes",
+    "Vault contents: saved cards, Shop Pay, Link, or X Money",
+    "calendar links",
+    "order numbers or live order records",
+    "Supply Core connector or OAuth tokens",
+    "addresses or phone numbers from a real setup"
+  ]
+}
