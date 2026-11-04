@@ -101,6 +101,10 @@ export interface SupplyFile {
   carts: Cart[];
   lowReports: LowReport[];
   sources: BookingCalendar[];
+  /** The pending one-time calendar upload: only the code's sha256 is kept. */
+  calendarUpload?: { hash: string; name: string; expiresAt: string };
+  /** Checkout dates from the last good read of the standalone calendars. */
+  checkouts?: { dates: string[]; at?: string; failedAt?: string };
   offAt?: string;
 }
 

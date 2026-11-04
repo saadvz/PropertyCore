@@ -446,6 +446,11 @@ export function setCleanerCalendarFetch(fetchImpl: CalendarFetch | undefined): v
   calendarFetch = fetchImpl;
 }
 
+/** The calendar read Cleaner Core uses, so Supply Core's booking calendars read the same way. */
+export function cleanerCalendarFetch(): CalendarFetch {
+  return calendarFetch ?? fetch;
+}
+
 type AlertFetch = NonNullable<NonNullable<ConstructorParameters<typeof GrokRoutineWebhookSink>[1]>["fetch"]>;
 
 let alertFetch: AlertFetch | undefined;

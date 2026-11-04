@@ -1,9 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { supplyDeskFor, type SupplyDeps, type SupplyDesk } from "../src/supply-core/desk";
 import { readSupply } from "../src/supply-core/store";
+import { interpretFeed } from "../src/cleaner-core/calendar";
+import { setCleanerCalendarFetch } from "../src/cleaner-core/liveDesk";
 
 /** Supply Core's ordering tools on a made-up property. Made-up stores, links, and order numbers only. */
 
@@ -238,5 +240,107 @@ describe("problems, skips, and deliveries", () => {
     expect((await desk.reportLow({ itemIds: [ids.towels], source: "cleaner", jobId: card })).isError).toBe(true);
     expect((await desk.approveCart({ cartToken: card })).isError).toBe(true);
     expect((await desk.recordProblem({ reason: "store-blocked", itemIds: [card] })).isError).toBe(true);
+  });
+});
+
+describe("bookings", () => {
+  const FEED_URL = "https://calendar.example/feed.ics";
+  const FEED = readFileSync(join("src/cleaner-core/fixtures", "guesty-lite-scratch.ics"), "utf8");
+  afterEach(() => setCleanerCalendarFetch(undefined));
+
+  async function bookingsDesk(now: Date) {
+    const root = mkdtempSync(join(tmpdir(), "supply-book-"));
+    dirs.push(root);
+    const clock = { now };
+    const deps: SupplyDeps = { now: () => clock.now, standalone: true, uploadBase: () => "https://supply.example/t/tnt_scratch000" };
+    const desk = supplyDeskFor(root, deps);
+    await desk.saveSettings({ property: PROPERTY });
+    await desk.saveItem({ ...towels, schedule: { kind: "bookings", stays: 1 } });
+    await desk.saveItem({ done: true });
+    return { root, desk, clock };
+  }
+
+  async function finish(desk: SupplyDesk) {
+    await desk.saveSettings({ mode: "hands-off", perOrderCapCents: null, perMonthCapCents: null, checkTime: "10:00", routineCreated: true });
+    expect((await desk.activate({})).isError).toBe(false);
+  }
+
+  it("an upload link saves one calendar, a second adds to it, and no reply repeats the link", async () => {
+    let fetched = 0;
+    setCleanerCalendarFetch(async () => {
+      fetched += 1;
+      return { status: 200, url: FEED_URL, async text() { return FEED; } };
+    });
+    const { desk, root } = await bookingsDesk(START);
+    const first = await desk.saveSources({ uploadLink: { name: "Airbnb" } });
+    const url = first.structured!.uploadUrl as string;
+    expect(url).toMatch(/^https:\/\/supply\.example\/t\/tnt_scratch000\/supply\/calendar\/[A-Za-z0-9_-]{43}$/);
+    const code = url.slice(url.lastIndexOf("/") + 1);
+    expect((await desk.uploadCalendarLink(code, { url: FEED_URL })).status).toBe(200);
+    expect((await desk.uploadCalendarLink(code, { url: FEED_URL })).status).toBe(404);
+    const second = await desk.saveSources({ uploadLink: { name: "Vrbo" } });
+    const code2 = (second.structured!.uploadUrl as string).split("/").pop()!;
+    expect((await desk.uploadCalendarLink(code2, { url: "https://calendar.example/vrbo.ics" })).status).toBe(200);
+    expect(readSupply(root).sources.map((s) => s.name)).toEqual(["Airbnb", "Vrbo"]);
+    const state = await desk.state();
+    expect(JSON.stringify(state)).not.toContain("calendar.example");
+    expect((await desk.saveSources({ done: true })).isError).toBe(false);
+    expect(fetched).toBe(0);
+  });
+
+  it("checkouts from a fetched feed make a by-bookings item due", async () => {
+    setCleanerCalendarFetch(async () => ({ status: 200, url: FEED_URL, async text() { return FEED; } }));
+    const read = interpretFeed(FEED);
+    const checkout = read.turnovers.map((t) => t.checkoutDate).sort()[0]!;
+    const { desk } = await bookingsDesk(new Date(`${checkout}T12:00:00.000Z`));
+    const up = await desk.saveSources({ uploadLink: { name: "Airbnb" } });
+    await desk.uploadCalendarLink((up.structured!.uploadUrl as string).split("/").pop()!, { url: FEED_URL });
+    await desk.saveSources({ done: true });
+    await finish(desk);
+    // Activate is the checkout's own day, and a checkout on Activate's day counts.
+    const check = await desk.checkSupplies({});
+    expect(check.structured!.sourcesFailed).toBeUndefined();
+    expect(check.structured!.due).toEqual([expect.objectContaining({ name: "Paper towels" })]);
+  });
+
+  it("googleEvents passed to check_supplies drive a by-bookings item", async () => {
+    const { desk, clock } = await bookingsDesk(START);
+    await desk.saveSources({ google: true, done: true });
+    await finish(desk);
+    clock.now = new Date("2026-11-10T15:00:00.000Z");
+    const googleEvents = { timeZone: "America/New_York", items: [{ id: "ev1", status: "confirmed", summary: "Guest stay", start: { date: "2026-11-05" }, end: { date: "2026-11-08" } }] };
+    const check = await desk.checkSupplies({ googleEvents });
+    expect(check.structured!.due).toEqual([expect.objectContaining({ name: "Paper towels" })]);
+  });
+
+  it("a failed fetch leaves the item not due, with sourcesFailed", async () => {
+    setCleanerCalendarFetch(async () => ({ status: 500, url: FEED_URL, async text() { return ""; } }));
+    const { desk } = await bookingsDesk(START);
+    const up = await desk.saveSources({ uploadLink: { name: "Airbnb" } });
+    await desk.uploadCalendarLink((up.structured!.uploadUrl as string).split("/").pop()!, { url: FEED_URL });
+    await desk.saveSources({ done: true });
+    await finish(desk);
+    const check = await desk.checkSupplies({});
+    expect(check.structured!.sourcesFailed).toBe(true);
+    expect(check.structured!.due).toEqual([]);
+  });
+
+  it("a cleaning tenant takes checkouts from Cleaner Core and never fetches", async () => {
+    let fetched = 0;
+    setCleanerCalendarFetch(async () => {
+      fetched += 1;
+      return { status: 200, url: FEED_URL, async text() { return FEED; } };
+    });
+    const root = mkdtempSync(join(tmpdir(), "supply-book-"));
+    dirs.push(root);
+    const clock = { now: START };
+    const desk = supplyDeskFor(root, { now: () => clock.now, standalone: false, cleaning: { property: () => PROPERTY, turnovers: async () => [{ checkoutYmd: "2026-11-06" }, { checkoutYmd: "2026-11-20" }] } });
+    await desk.saveItem({ ...towels, schedule: { kind: "bookings", stays: 1 } });
+    await desk.saveItem({ done: true });
+    await finish(desk);
+    clock.now = new Date("2026-11-07T15:00:00.000Z");
+    const check = await desk.checkSupplies({});
+    expect(check.structured!.due).toEqual([expect.objectContaining({ name: "Paper towels", deadline: "2026-11-19" })]);
+    expect(fetched).toBe(0);
   });
 });

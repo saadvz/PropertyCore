@@ -1,4 +1,8 @@
-import { createHash, randomInt } from "node:crypto";
+import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { interpretFeed } from "../cleaner-core/calendar";
+import { calendarUrlAllowed, readPublicCalendar } from "../cleaner-core/fetchLimits";
+import { cleanerCalendarFetch } from "../cleaner-core/liveDesk";
+import { googleCalendarSource, type GoogleEventList } from "../cleaner-core/sources";
 import { isValidTimeZone, localDateOf } from "../core/timezone";
 import { askNext } from "../cleaner-core/setupAsk";
 import { ConfirmationBook } from "../operator/confirmations";
@@ -27,6 +31,28 @@ export interface SupplyDeps {
     property(): { name: string; address: string; timeZone: string } | undefined;
     turnovers(): Promise<{ checkoutYmd: string }[]>;
   };
+  /** This tenant's public base, like https://host/t/tnt_x, for one-time upload links. */
+  uploadBase?(): string | undefined;
+}
+
+/** Where Grok's own computer posts a booking calendar link, under the tenant's /t/<id>/ prefix. */
+export const SUPPLY_CALENDAR_PREFIX = "/supply/calendar/";
+const UPLOAD_MINUTES = 10;
+const MAX_CALENDARS = 8;
+const UPLOAD_CODE = /^[A-Za-z0-9_-]{43}$/;
+
+/** The one-time code in a Supply Core calendar upload path, or undefined. */
+export function supplyCalendarCode(pathname: string): string | undefined {
+  if (!pathname.startsWith(SUPPLY_CALENDAR_PREFIX)) return undefined;
+  const code = pathname.slice(SUPPLY_CALENDAR_PREFIX.length);
+  return UPLOAD_CODE.test(code) ? code : undefined;
+}
+
+const hashOf = (code: string) => createHash("sha256").update(code).digest("hex");
+function sameHash(a: string, b: string): boolean {
+  const left = Buffer.from(a, "hex");
+  const right = Buffer.from(b, "hex");
+  return left.length === 32 && right.length === 32 && timingSafeEqual(left, right);
 }
 
 export const MAX_ITEMS = 30;
@@ -326,11 +352,87 @@ export class SupplyDesk {
     });
   }
 
-  /** Checkout dates: Cleaner Core's turnovers for a cleaning tenant. Standalone sources come in Task 5. */
+  /**
+   * Checkout dates. A cleaning tenant reads Cleaner Core's turnovers. A standalone tenant uses the
+   * dates its last check_supplies read from its saved calendars.
+   */
   protected async checkouts(file: SupplyFile): Promise<string[]> {
-    void file;
     if (this.deps.cleaning) return (await this.deps.cleaning.turnovers()).map((turn) => turn.checkoutYmd);
-    return [];
+    return file.checkouts?.dates ?? [];
+  }
+
+  /** Reads every saved calendar now. Any failed read marks the read failed, and nothing is kept from it. */
+  protected async readCalendars(file: SupplyFile, googleEvents: GoogleEventList | undefined): Promise<{ dates: string[]; failed: boolean }> {
+    const dates = new Set<string>();
+    let failed = false;
+    for (const source of file.sources) {
+      if (source.kind === "google-calendar") {
+        if (!googleEvents) {
+          failed = true;
+          continue;
+        }
+        const read = await googleCalendarSource(googleEvents, "supply").read();
+        for (const turn of read.turnovers) dates.add(turn.checkoutDate);
+        continue;
+      }
+      const read = await readPublicCalendar(source.url ?? "", cleanerCalendarFetch());
+      if (!read.ok) {
+        failed = true;
+        continue;
+      }
+      for (const turn of interpretFeed(read.body).turnovers) dates.add(turn.checkoutDate);
+    }
+    return { dates: [...dates].sort(), failed };
+  }
+
+  saveSources(input: { uploadLink?: { name?: string }; google?: boolean; done?: true }): Promise<SupplyReply> {
+    return this.guarded(input, () => {
+      if (!this.deps.standalone) return fail("Booking dates come from Cleaner Core for this property.");
+      const file = this.read();
+      if (input.uploadLink) {
+        const name = input.uploadLink.name?.trim() ?? "";
+        if (!isText(name, 40)) return fail("Give the calendar a short name, like Airbnb.");
+        if (file.sources.filter((s) => s.kind === "ical" && s.name.toLowerCase() !== name.toLowerCase()).length >= MAX_CALENDARS) return fail(`I can keep up to ${MAX_CALENDARS} calendar links.`);
+        const base = this.deps.uploadBase?.();
+        if (!base) return fail("I can't make an upload link until the server's public address is saved.");
+        const code = randomBytes(32).toString("base64url");
+        file.calendarUpload = { hash: hashOf(code), name, expiresAt: new Date(this.deps.now().getTime() + UPLOAD_MINUTES * 60_000).toISOString() };
+        this.write(file);
+        return ok({
+          uploadUrl: `${base}${SUPPLY_CALENDAR_PREFIX}${code}`,
+          expiresInMinutes: UPLOAD_MINUTES,
+          next: 'From your own cloud computer, POST JSON {"url": "<calendar link>"} to uploadUrl with Content-Type: application/json. Never send the link or uploadUrl to the host. Then call get_supply_state.',
+        });
+      }
+      if (input.google && !file.sources.some((s) => s.kind === "google-calendar")) file.sources.push({ name: "Google Calendar", kind: "google-calendar" });
+      if (input.done) {
+        if (file.sources.length === 0) return fail("Save at least one booking calendar first.");
+        file.setup.sourcesDone = true;
+      }
+      this.write(file);
+      return ok({ calendars: file.sources.map((s) => s.name) });
+    });
+  }
+
+  /** Saves a calendar link posted to its upload link. The link is never repeated or logged. */
+  uploadCalendarLink(code: string, body: Record<string, unknown>): Promise<{ status: 200 | 400 | 404; body: { ok: boolean; message?: string; error?: string } }> {
+    return this.serial(() => {
+      const gone = { status: 404 as const, body: { ok: false, error: "This upload link isn't valid anymore. Call save_supply_sources for a new one." } };
+      const file = this.read();
+      const pending = file.calendarUpload;
+      if (!pending || !sameHash(hashOf(code), pending.hash)) return gone;
+      if (this.deps.now().getTime() >= Date.parse(pending.expiresAt)) {
+        delete file.calendarUpload;
+        this.write(file);
+        return gone;
+      }
+      const url = typeof body.url === "string" ? body.url.trim() : "";
+      if (!url || !calendarUrlAllowed(url) || url.length > 2000 || refuseCards(url)) return { status: 400 as const, body: { ok: false, error: "Send the calendar's public https link as url." } };
+      file.sources = [...file.sources.filter((s) => s.name.toLowerCase() !== pending.name.toLowerCase()), { name: pending.name, kind: "ical" as const, url }];
+      delete file.calendarUpload;
+      this.write(file);
+      return { status: 200 as const, body: { ok: true, message: "Saved the calendar link." } };
+    });
   }
 
   activate(input: Record<string, unknown>): Promise<SupplyReply> {
@@ -416,17 +518,26 @@ export class SupplyDesk {
     return out;
   }
 
-  checkSupplies(input: { googleEvents?: unknown }): Promise<SupplyReply> {
+  checkSupplies(input: { googleEvents?: GoogleEventList }): Promise<SupplyReply> {
     return this.guarded(input, async () => {
       const file = this.read();
       if (!file.settings.activatedAt || file.offAt) return fail("Supply Core isn't active yet. Call get_supply_state.");
       this.sweep(file);
+      let sourcesFailed = false;
+      if (this.deps.standalone && file.sources.length > 0) {
+        const read = await this.readCalendars(file, input.googleEvents);
+        sourcesFailed = read.failed;
+        // A failed read keeps nothing: an under-read would never order early, but it could skip a due item.
+        file.checkouts = read.failed ? { dates: file.checkouts?.dates ?? [], failedAt: this.deps.now().toISOString() } : { dates: read.dates, at: this.deps.now().toISOString() };
+      }
       const now = this.deps.now();
       const away = onItsWay(file, now);
       const inCart = this.openCartItems(file);
       const due: DueItem[] = [];
       for (const { item, why, deadline } of (await this.dueItems(file)).values()) {
         if (away.has(item.id) || inCart.has(item.id)) continue;
+        // After a failed calendar read, a by-bookings item waits for a good read.
+        if (sourcesFailed && why === "schedule" && item.schedule.kind === "bookings") continue;
         due.push({
           itemId: item.id,
           name: item.name,
@@ -444,6 +555,7 @@ export class SupplyDesk {
       this.write(file);
       return ok({
         due,
+        ...(sourcesFailed ? { sourcesFailed: true, next: "Tell the host a booking calendar couldn't be read, so by-bookings items wait for the next check." } : {}),
         unconfirmed: file.orders.filter((order) => order.status === "unconfirmed"),
         held: file.carts.filter((cart) => cart.status === "held").map((cart) => ({ cartToken: cart.token, store: cart.cart.store, totalCents: cart.cart.totalCents, holds: cart.holds })),
         late: late.map((order) => ({ orderId: order.id, store: order.store, deadline: order.deadline, ...(order.expectedBy ? { expectedBy: order.expectedBy } : {}) })),
