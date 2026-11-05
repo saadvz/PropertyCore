@@ -1,6 +1,6 @@
 {
   "name": "Cleaner Core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "distribution": "team",
   "profile": "bot-profile.md",
   "setupPrompt": "SETUP_PROMPT.md",
@@ -23,6 +23,12 @@
       "name": "Google Calendar",
       "type": "first-party-connector",
       "auth": "The host connects their own Google account to Grok's built-in Google Calendar connector. Grok reads the events and passes them to Cleaner Core. Cleaner Core never gets a Google approval.",
+      "travelsWithTemplate": false
+    },
+    {
+      "name": "Grok shopping and Vault",
+      "type": "first-party",
+      "auth": "Only when the host turns on Supply Core. The host's own Grok shopping tools and Vault. Saved cards, Shop Pay, Link, and X Money stay in the host's Vault. Supply Core never sees them.",
       "travelsWithTemplate": false
     }
   ],
@@ -47,11 +53,11 @@
   ],
   "marketplace": {
     "ships": ["the bot profile and standing instructions, which name the repository and the hosted address"],
-    "neverShips": ["memories from a real setup", "the Alerts routine's webhook address or token", "Cleaner Core OAuth tokens", "Google OAuth tokens", "Twilio credentials", "a door code", "phone numbers", "live booking or cleaning records"],
+    "neverShips": ["memories from a real setup", "the Alerts routine's webhook address or token", "Cleaner Core OAuth tokens", "Google OAuth tokens", "Twilio credentials", "a door code", "card details or Vault contents", "phone numbers", "live booking or cleaning records"],
     "activation": "A teammate adds the bot from the team template link and says Set up Cleaner Core, or pastes the prompt into a new bot. Either way it connects to the hosted Cleaner Core named by hostedCleanerCoreUrl, and the host types their invite code from Saad on the Cleaner Core page and clicks Allow. They never run a server.",
     "build": "README.md#build-the-team-template"
   },
-  "suggestedPrompts": ["Set up Cleaner Core", "Check my calendars", "Show the upcoming cleanings", "The guests have left", "Text the cleaner", "Show the last cleaning's photos"],
+  "suggestedPrompts": ["Set up Cleaner Core", "Check my calendars", "Show the upcoming cleanings", "The guests have left", "Text the cleaner", "Show the last cleaning's photos", "Help me pay the cleaner", "Set up Supply Core"],
   "neverIncluded": [
     "the door code",
     "the Alerts routine's webhook address or token",
@@ -60,6 +66,8 @@
     "Twilio account details or keys",
     "host, cleaner, or contact phone numbers",
     "calendar links",
+    "card numbers, expiry dates, security codes, or Vault contents",
+    "the cleaner's Venmo username",
     "live booking, cleaning, message, or photo records"
   ]
 }

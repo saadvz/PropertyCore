@@ -1,4 +1,4 @@
-# Cleaner Core Grok Bot template (v0.1.0)
+# Cleaner Core Grok Bot template (v0.2.0)
 
 Everything a Grok Bot needs to set up and run Cleaner Core, versioned with the
 code. The Grok Bot is the host's chat. Cleaner Core is the hosted service that
