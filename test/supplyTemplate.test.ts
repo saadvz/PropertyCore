@@ -28,7 +28,7 @@ const RULES = [
   "Place an order only on go, or after the landlord's yes and approve_cart's code.",
   "A routine run never calls approve_cart with a code.",
   "Never type, paste, or pass a card number, expiry, or security code to Supply Core.",
-  "Until the hands-off probe passes, prepare the order with Buy now and ask the landlord to tap Pay.",
+  "On go, check out with the saved Vault card. If the store or Grok raises its own approval card, prepare the order with Buy now and ask the landlord to tap Pay.",
 ];
 
 describe("Supply Core template", () => {
@@ -60,7 +60,8 @@ describe("Supply Core template", () => {
       expect(bootstrap, rule).toContain(rule);
       expect(routine, rule).toContain(rule);
     }
-    expect(bootstrap).toContain("Hands-off probe: not run yet.");
+    expect(bootstrap).toContain("Hands-off ordering: on.");
+    expect(bootstrap).not.toContain("Until the hands-off probe passes");
   });
 
   it("the routine covers the fallback, unconfirmed, and late steps", () => {

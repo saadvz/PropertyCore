@@ -12,4 +12,4 @@ These gates have to stay green before Supply Core places a live order for anyone
 | No real shopping in tests | Tests use made-up stores, `https://shop.example/…` links, and made-up order numbers, and 555 numbers only. Calendar reads are stubbed. | every `test/supply*.test.ts` |
 | Tenants apart | Two tenants never see each other's lists, orders, or spending. A supplies tenant's number answers no text. | `test/supplyHosted.test.ts` |
 
-The hands-off probe, a real purchase from a Grok routine with a saved Vault card, spends real money, so only Saad runs it. Until it passes, `SUPPLY_CORE_BOOTSTRAP.md` tells Grok to prepare orders with Buy now and ask the landlord to tap Pay.
+Hands-off ordering is on: Saad turned it on on 2026-11-05. In hands-off mode, Grok places a go cart with the saved Vault card. Only when the store or Grok raises its own approval card does Grok prepare the order with Buy now and ask the landlord to tap Pay. A live purchase spends real money, so only Saad runs one.
