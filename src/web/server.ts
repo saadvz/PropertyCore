@@ -17,11 +17,11 @@ import { LOCAL_WEBHOOK_PATH } from "../messaging/local/provider";
 import { resetLocalSmsOutbox } from "../messaging/local/outbox";
 import { PHOTON_WEBHOOK_PATH } from "../messaging/photon/provider";
 import { readTwilioEnv, TWILIO_WEBHOOK_PATH } from "../messaging/twilio/provider";
-import { cleanerCoreEnabled, cleanerMultiTenant, tourCoreTenants } from "../cleaner-core/flag";
+import { cleanerCoreEnabled, cleanerMultiTenant, supplyCoreOn, tourCoreTenants } from "../cleaner-core/flag";
 import type { TouringFront } from "../hosted/serviceTools";
 import type { OperatorServices } from "../operator/services";
 import { DeliveryError } from "../alerts/operatorEvents";
-import type { ServicePick } from "../hosted/serviceChoice";
+import { serviceChoices, type ServicePick } from "../hosted/serviceChoice";
 import { deliverTouringEvent, refreshTouringAlerts } from "../hosted/touringAlerts";
 import { buildTouringEnv, touringScratch } from "../hosted/touringEnv";
 import { standDownTouring, TOURING_LIVE_PATH, TOURING_STAND_DOWN_PATH, touringLiveWork } from "../hosted/touringLive";
@@ -516,7 +516,9 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
                   connected: (tenantId: string, grantId: string, assistant: CleanerAssistant) =>
                     tenants.connect(tenantId, { grantId, assistant, connectedAt: (options.now?.() ?? new Date()).toISOString() }),
                   refusal: (reason: InviteRefusal) => INVITE_REFUSALS[reason],
-                  offersPick: () => tourCoreTenants(installation.env()) && !!touringFront,
+                  // Supply Core is offered to Grok chats only: the others have no shopping tools or Vault.
+                  offersPick: (assistant?: CleanerAssistant) => serviceChoices({ touring: tourCoreTenants(installation.env()) && !!touringFront, supplies: supplyCoreOn(installation.env()) && assistant === "grok" }).length > 1,
+                  choices: (assistant?: CleanerAssistant) => serviceChoices({ touring: tourCoreTenants(installation.env()) && !!touringFront, supplies: supplyCoreOn(installation.env()) && assistant === "grok" }),
                   // The host's pick on the Allow page sets a new number's service before its chat lists any tools.
                   choose: (tenantId: string, service: ServicePick) => {
                     const tenant = tenants.get(tenantId);

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { tourCoreTenants } from "../cleaner-core/flag";
+import { supplyCoreOn, tourCoreTenants } from "../cleaner-core/flag";
+import { supplyDesk } from "../supply-core/hosted";
 import { tenantFolder, type Tenant, type TenantService } from "../cleaner-core/hosted/registry";
 import { tenantContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
@@ -72,6 +73,7 @@ export async function switchService(
   if (!from) return fail("Choose a service first. Call get_state.");
   if (to === from) return fail(`This number is already set up for ${to}.`);
   if (to === "touring" && !(tourCoreTenants(h.baseEnv()) && h.touring)) return fail("Touring isn't available on this service yet.");
+  if (to === "supplies" && !supplyCoreOn(h.baseEnv())) return fail("Supply Core isn't available on this service yet.");
   const forced = input.force === true;
   if (!forced) {
     const live = await (deps.live ?? liveOf)(h, tenant);
@@ -94,7 +96,16 @@ export async function switchService(
       }
     }
   }
+  // Cleaner Core's property, read before the switch, so a number moving to Supply Core keeps it.
+  const cleaningProperty = from === "cleaning" && to === "supplies" ? cleaningPropertyOf(h, tenant) : undefined;
   h.registry.setService(tenant.id, to);
+  const switched = h.registry.get(tenant.id) ?? tenant;
+  // Leaving Supply Core: no new orders and no supplies question to a cleaner. The list is kept.
+  if (from === "supplies") await supplyDesk(h, switched).turnOff();
+  if (to === "supplies") {
+    await supplyDesk(h, switched).adoptProperty(cleaningProperty);
+    await supplyDesk(h, switched).turnOn();
+  }
   if (from === "touring") {
     h.touring?.supervisor.stop(tenant.id);
     // Texts that waited for touring are not replayed into a later touring setup.
@@ -111,6 +122,11 @@ export async function switchService(
   return { text: CHOSEN_LINE(to), structured: { service: to }, isError: false };
 }
 
+function cleaningPropertyOf(h: HostedCleaner, tenant: Tenant) {
+  const ctx = tenantContext(h, tenant);
+  return liveDeskFor(ctx.root, ctx.env, () => h.now()).propertyForSupplies();
+}
+
 export async function standDownService(ctx: SwitchContext, input: { confirmation?: string }): Promise<FrontReply> {
   const { h, tenant } = ctx;
   if (tenant.service === "cleaning") {
@@ -122,6 +138,12 @@ export async function standDownService(ctx: SwitchContext, input: { confirmation
     if (!reply.ok) return fail(reply.error);
     const result = reply.result ?? {};
     return { text: typeof result.next === "string" ? result.next : JSON.stringify(result), structured: result, isError: false };
+  }
+  if (tenant.service === "supplies") {
+    // Nothing on Supply Core texts anyone. Open carts close; orders on their way stay recorded.
+    const cleared = await supplyDesk(h, tenant).clearCarts();
+    h.log(`${tenant.id} stood Supply Core down.`);
+    return { text: "Supply Core is stood down. Nothing is live, so you can switch now.", structured: { cartsCleared: cleared }, isError: false };
   }
   if (tenant.service !== "touring") return fail("Choose a service first. Call get_state.");
   const target = h.touring?.supervisor.target(tenant.id);

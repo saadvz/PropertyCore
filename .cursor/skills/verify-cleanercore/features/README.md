@@ -106,3 +106,4 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Step G tenants](./g-tenant-isolation.md) covers Lane and Court reviews, backups, replays, and health counts. `prove-step-g.sh`.
 - [STOP, HELP, and injury under step G](./g-stop-help-injury.md) covers the step F safety replies again. `prove-step-g.sh`.
 - [Group thread for the host and the cleaner](./group-chat.md) covers opt-in, the group door code, the private fallback, STOP, resume, a group time, injury, and a hold. `prove-group-chat.sh`.
+- [Supplies](./supplies.md) covers the DONE supplies question, the cleaner's answer, report_low, a go cart, and a made-up order. `prove-supplies.ts`.

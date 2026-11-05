@@ -8,17 +8,18 @@ import { OperatorEventOutbox } from "../alerts/outbox";
 import { parsePhone } from "../core/phone";
 import { FileRuntimeStore } from "../storage/runtimeStore";
 import { ConfirmationBook } from "../operator/confirmations";
+import { supplyAskOn } from "../supply-core/store";
 import { messagingKeyword, normalize } from "../intent";
 import { stripFiller } from "../intent/normalize";
 import { spokenTimes } from "../core/spokenTime";
 import { formatWhen, zonedInstant } from "./calendar";
 import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink, venmoProfileLink, venmoUsername, type PaymentSettings, type PayRecord } from "./payments";
 import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
-import { groupChatEnabled } from "./flag";
+import { cleanerMultiTenant, groupChatEnabled } from "./flag";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
 import { calendarUrlAllowed, readPublicCalendar, type CalendarFetch } from "./fetchLimits";
-import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, PAYMENTS_STEP, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, type SetupAsk } from "./setupAsk";
+import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, PAYMENTS_STEP, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, SUPPLIES_STEP, type SetupAsk } from "./setupAsk";
 import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jobHoldLine, optedOutCodeLine, resumeNote } from "./cleanerTexts";
 import { isInjuryReport } from "./injury";
 import { GroupNotConfirmed } from "./groupThread";
@@ -362,6 +363,8 @@ interface LiveFile {
   preferences?: Preferences;
   /** Set once the host answered the Payments step, or turned payments on later. */
   payments?: PaymentSettings;
+  /** Set once the host answered whether to set up Supply Core, or turned it on. */
+  suppliesAsked?: boolean;
   /** Each finished cleaning's pay, by job id, once it became owed. */
   pay?: Record<string, PayRecord>;
   /** Legacy single link from save_calendar_link. It reads as one calendar named Guesty Lite. */
@@ -444,6 +447,11 @@ let calendarFetch: CalendarFetch | undefined;
 /** Tests stub the calendar read. Unset uses the platform fetch. */
 export function setCleanerCalendarFetch(fetchImpl: CalendarFetch | undefined): void {
   calendarFetch = fetchImpl;
+}
+
+/** The calendar read Cleaner Core uses, so Supply Core's booking calendars read the same way. */
+export function cleanerCalendarFetch(): CalendarFetch {
+  return calendarFetch ?? fetch;
 }
 
 type AlertFetch = NonNullable<NonNullable<ConstructorParameters<typeof GrokRoutineWebhookSink>[1]>["fetch"]>;
@@ -1806,6 +1814,39 @@ export class LiveDesk {
     return jobs.find((item) => item.checkoutDate === wanted || dayOf(item) === wanted || item.id.toLowerCase() === wanted);
   }
 
+  /** Supply Core's view of this property, from the saved details. Undefined until they're saved. */
+  propertyForSupplies(): { name: string; address: string; timeZone: string } | undefined {
+    if (!this.file.address || !this.file.timeZone) return undefined;
+    return { name: this.file.nickname ?? this.file.business ?? this.file.address, address: this.file.address, timeZone: this.file.timeZone };
+  }
+
+  /** The checkout dates of every turnover that isn't called off, for Supply Core's by-bookings items. */
+  turnoverDates(): Promise<{ checkoutYmd: string }[]> {
+    return this.serial(async () => {
+      this.resume();
+      return (this.engine?.jobs() ?? []).filter((job) => job.status !== "canceled").map((job) => ({ checkoutYmd: job.checkoutDate }));
+    });
+  }
+
+  /** Supply Core is offered at setup only to a Grok chat on the shared service, where the add-on lives. */
+  private offersSupplies(): boolean {
+    return this.assistant() === "grok" && cleanerMultiTenant(this.env());
+  }
+
+  /** The host answered the Supply Core question, or turned it on another way: setup doesn't ask again. */
+  noteSuppliesChoice(): Promise<void> {
+    return this.serial(async () => {
+      if (this.file.suppliesAsked) return;
+      this.file.suppliesAsked = true;
+      this.persist();
+    });
+  }
+
+  /** Supply Core turned on, off, or activated: the engine reopens before the next step and reads it. */
+  refreshSupplyAsk(): void {
+    this.stale = true;
+  }
+
   getTurns(): Promise<ToolReply> {
     return this.serial(async () => this.getTurnsNow());
   }
@@ -2696,6 +2737,7 @@ export class LiveDesk {
     else if (!this.codeSaved()) ask = DOOR_CODE_STEP;
     else if (!this.file.texting && !preferences) ask = PREFERENCES_STEP;
     else if (!this.file.texting && !this.file.payments) ask = PAYMENTS_STEP;
+    else if (!this.file.texting && !this.file.suppliesAsked && this.offersSupplies()) ask = SUPPLIES_STEP;
     if (ask) next = askNext(ask.tool);
     // The routines come before the review, so the cleaner's first reply already wakes Grok.
     else if (!this.file.texting && !this.routineReady()) next = this.words().routineAsk;
@@ -2873,9 +2915,12 @@ export class LiveDesk {
 
   /** The engine options for the saved preferences. The cleaning note is set only when instructions are saved. */
   private preferenceOptions(): Partial<Parameters<typeof openCleanerCore>[0]> {
+    // Supply Core on and active: the done text also asks what's running low.
+    const supplies = supplyAskOn(this.root) ? { supplyAsk: true } : {};
     const preferences = this.file.preferences;
-    if (!preferences) return {};
+    if (!preferences) return supplies;
     return {
+      ...supplies,
       ...(preferences.checklist.length > 0 ? { checklist: { name: this.file.nickname ?? this.file.address ?? "the property", items: [...preferences.checklist] } } : {}),
       ...(preferences.photosRequired ? { photosRequired: true } : {}),
       ...(preferences.supplyNotes ? { supplyNotes: true } : {}),

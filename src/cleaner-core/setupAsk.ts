@@ -28,7 +28,7 @@ export interface AskQuestion {
 }
 
 export interface SetupAsk {
-  step: "start" | "property" | "sources" | "people" | "schedule" | "door-code" | "preferences" | "payments" | "times";
+  step: "start" | "property" | "sources" | "people" | "schedule" | "door-code" | "preferences" | "payments" | "supplies" | "times";
   tool: string;
   questions: AskQuestion[];
 }
@@ -282,6 +282,25 @@ export const PAYMENTS_STEP: SetupAsk = {
       when: "on is yes",
       example: "@maria-cleans",
       how: "Call save_payments without confirmation, show the host the profile link and the question, and call again with the code only after the host says yes.",
+    },
+  ],
+};
+
+/** Optional, Grok on the shared service only: Supply Core as an add-on, set up now or later. */
+export const SUPPLIES_STEP: SetupAsk = {
+  step: "supplies",
+  tool: "choose_supplies",
+  questions: [
+    {
+      field: "on",
+      ask: "whether the host wants Supply Core to keep the property stocked",
+      required: true,
+      options: [
+        { value: "yes", label: "Yes, set it up" },
+        { value: "no", label: "Not now" },
+      ],
+      how:
+        'Explain it in two or three short sentences, in your own words: Supply Core reorders the supplies the property always needs, like paper towels and coffee pods, on a schedule, from stores that deliver to the door. After each cleaning, the cleaner is asked "Anything running low?", and what they name gets ordered. You stop for the host\'s yes before checkout unless they choose hands-off, and their cards stay in their Vault. Tell them they can set it up later by asking you. Then call choose_supplies with on true or false.',
     },
   ],
 };

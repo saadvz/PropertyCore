@@ -24,7 +24,7 @@ export interface TenantInvite {
 }
 
 /** Which service a tenant's number answers for. Unset until the host's chat chooses one. */
-export type TenantService = "cleaning" | "touring";
+export type TenantService = "cleaning" | "touring" | "supplies";
 
 export interface Tenant {
   id: string;
@@ -35,6 +35,8 @@ export interface Tenant {
   invites: TenantInvite[];
   disabled?: boolean;
   service?: TenantService;
+  /** Supply Core as an add-on on a cleaning tenant. */
+  supplies?: boolean;
   serviceChangedAt?: string;
   createdAt: string;
   lastActivityAt?: string;
@@ -230,6 +232,12 @@ export class TenantRegistry {
     this.update(id, (tenant) => {
       tenant.service = service;
       tenant.serviceChangedAt = this.stamp();
+    });
+  }
+
+  setSupplies(id: string, on: boolean): void {
+    this.update(id, (tenant) => {
+      tenant.supplies = on;
     });
   }
 

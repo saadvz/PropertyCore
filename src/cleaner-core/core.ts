@@ -25,7 +25,7 @@ import {
 } from "./sources";
 import { fingerprintOf, freshnessOf, GUESTY_POLL_MS, staleAfterMs, type SourceRecord } from "./freshness";
 import { containsCodeToken, redactLine, redactPhone } from "./redact";
-import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
+import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, SUPPLY_DONE_ASK, SUPPLY_NOTED, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
 import { codeRoute, GroupNotConfirmed, type GroupSeat } from "./groupThread";
 import { GROK_HELPER } from "./assistant";
 import { codeHandlingText, HEALTH_NOTE, isReviewKind, reviewAlert, reviewId, type AuditEvent, type ReviewDetail, type ReviewItem, type ReviewKind } from "./review";
@@ -120,6 +120,14 @@ export interface JobView {
   checklist?: string[];
   /** When the cleaner answered YES to the checklist question, as an instant. */
   checklistConfirmedAt?: string;
+  /** The cleaner's answer to the supplies question after DONE, redacted, or none. */
+  supplyReport?: SupplyReport;
+}
+
+export interface SupplyReport {
+  text?: string;
+  none?: true;
+  at: string;
 }
 
 export interface OutboxView {
@@ -240,7 +248,7 @@ export type ReceiveReason =
   | "retry";
 
 /** What Cleaner Core did with an inbound text, for Grok to read beside the message. */
-export type MessageHandled = "opted-in" | "confirmed" | "declined" | "done" | "stop" | "start" | "injury" | "code-held" | "checklist-asked" | "checklist-not-done" | "none" | "sent";
+export type MessageHandled = "opted-in" | "confirmed" | "declined" | "done" | "stop" | "start" | "injury" | "code-held" | "checklist-asked" | "checklist-not-done" | "supply-report" | "none" | "sent";
 
 export interface ReceiveResult {
   handled: boolean;
@@ -380,6 +388,8 @@ export interface CleanerCoreOptions {
   photosRequired?: boolean;
   /** The cleaner's other texts during the cleaning are kept as job notes. */
   supplyNotes?: boolean;
+  /** Supply Core is on: the done text also asks what's running low, and the next reply is the answer. */
+  supplyAsk?: boolean;
   /**
    * The host's other instructions, added to the end of the door code text, so the cleaner reads them
    * as the cleaning starts. LiveDesk sets it only when instructions are saved, so the Scratch CLI and
@@ -658,6 +668,10 @@ interface Job {
   checklistAskId?: string;
   /** When the cleaner answered YES to the checklist question. */
   checklistConfirmedAt?: string;
+  /** When the done text asked what's running low. */
+  supplyAskedAt?: string;
+  /** The cleaner's supplies answer. */
+  supplyReport?: SupplyReport;
 }
 
 interface Clearance {
@@ -1092,6 +1106,8 @@ class Engine implements CleanerCore {
       }
     }
     if (from === this.owner && stripFiller(normalize(input.text)) === "retry") return this.retryUncertain(input.id);
+    const supplyJob = this.supplyWaiting(from, input.text);
+    if (supplyJob) return this.answerSupplies(supplyJob, from, input.id, input.text);
     const asked = this.pin && from === this.cleanerPhone && this.cleanerConsent === "in" ? this.progressJob() : undefined;
     if (asked && this.checklistWaiting(asked) && (isYes(input.text) || isNo(input.text))) return this.answerChecklist(asked, from, input.id, isYes(input.text));
     if (this.pin && from === this.cleanerPhone && isYes(input.text) && this.awaitingOptIn()) return this.optInCleaner(input.id);
@@ -1881,18 +1897,49 @@ class Engine implements CleanerCore {
 
   /** Marks the cleaning done once the cleaner's acknowledgement went out, and tells the host. */
   private async markDone(job: Job, from: string, id: string): Promise<ReceiveResult & { label?: MessageHandled }> {
-    const result = await this.reply(from, "Thanks, cleaning marked done.", "done", "done", id, job.id);
+    const body = this.options.supplyAsk ? SUPPLY_DONE_ASK : "Thanks, cleaning marked done.";
+    const result = await this.reply(from, body, "done", "done", id, job.id);
     const acked = result.sent.length > 0 || this.delivery(`done:${id}`) === "sent";
     if (acked) {
       job.started = true;
       job.done = true;
       job.doneAt = this.now().toISOString();
+      if (this.options.supplyAsk && !job.supplyAskedAt) job.supplyAskedAt = job.doneAt;
       if (!this.inboundIds.includes(id)) this.inboundIds.push(id);
       await this.tellHostDone(job);
     }
     this.save();
     // The job is done only once the cleaner's acknowledgement went out.
     return acked ? result : { ...result, label: "none" };
+  }
+
+  /**
+   * The finished cleaning whose supplies question this text answers: from the cleaner's own phone,
+   * within 12 hours of the question, not yet answered, and not a keyword, YES, DONE, an injury, a
+   * plain-language stop, or a code-like text, which keep their own meaning.
+   */
+  private supplyWaiting(from: string, raw: string): Job | undefined {
+    if (!this.options.supplyAsk || !from || from !== this.cleanerPhone || this.cleanerConsent !== "in") return undefined;
+    const text = raw.trim();
+    if (!text || keywordOf(text) !== undefined || isYes(text) || isDone(text) || isInjuryReport(text) || isPlainLanguageStop(text) || this.looksLikeCode(text)) return undefined;
+    // A bare NO while the next cleaning's offer waits declines that offer.
+    if (isNo(text) && this.ordered().some((item) => this.derive(item) === "offered")) return undefined;
+    const job = [...this.ordered()].reverse().find((item) => item.done && item.supplyAskedAt);
+    if (!job || job.supplyReport) return undefined;
+    if (this.now().getTime() - Date.parse(job.supplyAskedAt!) > SUPPLY_ANSWER_MS) return undefined;
+    return job;
+  }
+
+  /** Saves the cleaner's supplies answer, redacted, and thanks them once. */
+  private async answerSupplies(job: Job, from: string, id: string, raw: string): Promise<ReceiveResult & { label?: MessageHandled }> {
+    if (this.inboundIds.includes(id)) return { handled: true, reason: "duplicate", sent: [] };
+    const at = this.now().toISOString();
+    const words = raw.trim().toLowerCase().replace(/[^a-z ]+/g, "").trim();
+    job.supplyReport = NOTHING_LOW.has(words) ? { none: true, at } : { text: this.noteText(raw), at };
+    const replied = await this.reply(from, SUPPLY_NOTED, "next", "ignored", id, job.id);
+    this.inboundIds.push(id);
+    this.save();
+    return { ...replied, label: "supply-report" };
   }
 
   /** The cleaning in progress: the code went to the cleaner and it isn't done, called off, or declined. */
@@ -3154,6 +3201,7 @@ class Engine implements CleanerCore {
       ...(job.notes ? { notes: [...job.notes] } : {}),
       ...(job.checklist ? { checklist: [...job.checklist] } : {}),
       ...(job.checklistConfirmedAt ? { checklistConfirmedAt: job.checklistConfirmedAt } : {}),
+      ...(job.supplyReport ? { supplyReport: { ...job.supplyReport } } : {}),
     };
   }
 
@@ -3874,6 +3922,10 @@ class Engine implements CleanerCore {
     return stripped.length === 0;
   }
 }
+
+/** How long after DONE the cleaner's reply still answers the supplies question. */
+const SUPPLY_ANSWER_MS = 12 * 60 * 60_000;
+const NOTHING_LOW = new Set(["none", "no", "nothing", "nope", "none thanks", "nothing thanks"]);
 
 function emptyCounters(): Counters {
   return { sent: 0, failed: 0, uncertain: 0, canceled: 0, injury: 0, stop: 0, help: 0, polls: 0, pollFails: 0, pollDurationMs: 0 };
