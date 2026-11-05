@@ -89,39 +89,56 @@ with the owner now." The pause still needs its own yes through `hold_job`.
 For each message that needs one, the assistant's summary shows:
 
 1. Who wrote and their words, quoted.
-2. The draft. It is the exact text `send_message` previewed, so what the host
-   approves is what gets sent.
+2. The draft, exactly as Cleaner Core saved it, so what the host approves is
+   what gets sent.
 3. A choice card: **Send**, **Edit**, **Skip**.
 
-- **Send** calls `send_message` again with the code.
-- **Edit**: the host says what to change, the assistant previews the new
-  text, and shows the card again.
-- **Skip** sends nothing. Ignoring the card sends nothing either.
+- **Send**: the assistant calls `send_message` with the draft's id. It shows
+  the host the saved text and returns a code. The host's Send was the yes to
+  that exact text, so the assistant then calls again with the code in the
+  same turn.
+- **Edit**: the host says what to change, the assistant saves the new text
+  as the draft for the same message, and shows the card again.
+- **Skip** drops the draft and sends nothing. Ignoring the card sends nothing
+  either.
 
 One draft per open message. Several open messages from the same person get
-one combined draft.
+one combined draft, saved against the newest of them.
 
-**Drafting means a preview call.** The assistant calls `send_message` with
-`to`, `text`, and a new `replyTo` (section 3) and no confirmation. That call
-sends nothing and returns the preview and code.
+**Drafts are saved on the server.** The routine that a cleaner text wakes
+can't hold `send_message`, because a routine runs with no one watching (the
+template test holds routines to tools that need no yes). So drafting uses a
+new tool, **`save_draft`**, that sends nothing:
 
-**A draft doesn't expire.** A routine run often drafts while the host is
-away, so a draft's code (a preview with `replyTo`) has no time limit. The
-host can tap Send an hour or a day later. Only these void it:
+- Input: `replyTo` (the message id from `check_now`), `text`, or
+  `drop: true`.
+- It works out who the reply goes to from `replyTo`: the group when there is
+  one, otherwise the person who wrote.
+- It's refused when the text carries the door code, is longer than a
+  `send_message` text (600 characters), or when `replyTo` isn't an open
+  cleaner or contact message.
+- A new draft for the same `replyTo` replaces the old one.
+
+`check_now` returns the drafts waiting for the host as `drafts`, so any chat
+with the host sees them, even when a routine made them.
+
+**A draft doesn't expire.** It is kept in the live-desk file, so a restart
+doesn't lose it, and it has no time limit. The host can tap Send an hour or a
+day later. The approval code for a draft has no time limit either. A code
+lost to a restart is just asked for again: the saved text hasn't changed.
+Only these stop a draft from going out:
 
 - something new in the thread (section 3);
 - a change to who is in the group;
-- the reply being answered some other way.
+- the message being answered some other way.
 
-Other approvals, such as `hold_job`, `mark_paid`, or a `send_message`
-without `replyTo`, keep today's 10 minutes.
+Other approvals, such as `hold_job`, `mark_paid`, or a `send_message` with
+`to` and `text`, keep today's 10 minutes.
 
-**After a restart.** Approvals live only in the running process, so a
-restart loses a draft's code. When the host taps Send after one, the
-assistant calls `send_message` for a new preview. If the new preview's text
-and recipient are word for word what the host approved, it sends with the new
-code. If anything differs, or the preview is refused (section 3), it shows
-the host what changed and asks again.
+**When the host writes the reply in chat** ("tell her the bins are out
+back"), the assistant saves it with `save_draft` against the cleaner's
+message, then sends it the same way. That keeps the answered tracking and
+the staleness check for every reply.
 
 **Wording by assistant.** Grok and Claude are woken by the routine, so a
 draft can be ready within a minute or so. Cleaner Core can't wake ChatGPT or
@@ -166,19 +183,27 @@ assistant reads the host's actual words.
 
 ### What the server enforces
 
-`send_message` gains an optional `replyTo`: the id of the message being
-answered, as `check_now` returned it.
+Each draft has a `status` in `check_now`:
 
-- With `replyTo`, the approval is also bound to the newest kept message at
-  preview time. If anything new arrives before the Send (a host group text,
-  or another text from the cleaner), the code no longer matches, and the
-  send is refused with `newSince: true`. The assistant reads the new
-  messages, then drafts again or drops the draft.
-- A preview with `replyTo` for a message that is already `answered` is
-  refused with `alreadyAnswered: true` and its `by`. The assistant tells the
-  host it was already answered and offers nothing.
-- Without `replyTo`, `send_message` works as today. That covers a message
-  the host writes from scratch.
+- **`ready`**: nothing has happened in the thread since it was saved.
+- **`stale`**: a new message was kept after it was saved (a host group text,
+  or another text from the cleaner or a contact). The assistant reads the new
+  messages, then saves a new draft or drops this one.
+- A draft whose message became `answered` is removed by Cleaner Core and
+  isn't returned.
+
+`send_message` gains `draft`: a draft's id, in place of `to` and `text`.
+
+- A stale draft is refused with `newSince: true`, both for the preview and
+  for the send.
+- A draft whose message was answered is refused with `alreadyAnswered: true`
+  and its `by`. The assistant tells the host it was already answered and
+  offers nothing.
+- The code is bound to the draft, its text, and, for a group, who is in it,
+  like every `send_message` code.
+- Once a draft is sent, it is removed.
+- `send_message` with `to` and `text` works as today. That covers a message
+  that answers nothing, such as "Running 10 minutes late, sorry".
 
 ### What the assistant can't see
 
@@ -214,8 +239,9 @@ phone, or house quirks. It never asks about time-bound or one-off replies
 
 **How saved answers are used:**
 
-- `check_now` returns `savedAnswers` (topic and answer) beside any message
-  that's open.
+- `check_now` returns `savedAnswers` (topic and answer) whenever any are
+  saved, so the assistant can draft from them and answer "what have you
+  saved?".
 - When one answers the cleaner's question, the assistant's draft is that
   answer word for word, maybe with the cleaner's name in front. The host still
   taps Send.
@@ -229,10 +255,15 @@ of the backup and are reset by `reset_property`.
 
 ## 5. Where it changes
 
-- `src/cleaner-core/liveDesk.ts`: `replyTo` on `send_message`, `earlier` and
-  `reply` on `check_now`, `savedAnswers`, and `save_answer`.
-- `src/cleaner-core/mcp.ts`: the `send_message` and `save_answer` tool
-  descriptions and the instructions.
+- `src/operator/confirmations.ts`: a book whose codes don't expire.
+- `src/cleaner-core/liveDesk.ts`: `save_draft`, `draft` on `send_message`,
+  `earlier`, `reply` and `drafts` on `check_now`, `savedAnswers`, and
+  `save_answer`.
+- `src/cleaner-core/mcp.ts`: the `save_draft`, `send_message`, and
+  `save_answer` tool descriptions and the instructions.
+- `cleaner-template/template.json`: `save_draft` joins both Grok routines'
+  tools. It sends nothing, so a routine may hold it. `save_answer` needs the
+  host's yes, so it doesn't.
 - `src/cleaner-core/assistant.ts`: the routine prompt and the
   message-reading lines for all four assistants. Grok's wording changes only
   by the added draft lines.
@@ -245,18 +276,18 @@ of the backup and are reset by `reset_property`.
 
 | Gate | What it holds | Proof |
 | --- | --- | --- |
-| Draft needs Send | No reply goes to anyone without the host's code from the preview of that exact text. A draft the host never answers sends nothing. A draft's code has no time limit, and something new in the thread or a group change voids it. | `test/cleanerReplyDrafts.test.ts` |
-| Group reply wins | After the host's group text, a preview with `replyTo` for the message it answered is refused with `alreadyAnswered`, and a code issued before it is refused with `newSince`. | `test/cleanerReplyDrafts.test.ts` |
+| Draft needs Send | `save_draft` sends nothing, and no routine holds `send_message`. A draft goes out only with the code from the preview of its saved text. A draft the host never answers sends nothing. A draft and its code have no time limit; something new in the thread or a group change stops it. | `test/cleanerReplyDrafts.test.ts`, `test/cleanerTemplate.test.ts` |
+| Group reply wins | After the host's group text, a draft for the message it answered is removed and refused with `alreadyAnswered`, and any other draft saved before it is refused with `newSince`. | `test/cleanerReplyDrafts.test.ts` |
 | Group text acts on nothing | A host group text never holds, resumes, sets times, or releases the door code. | `test/cleanerReplyDrafts.test.ts` |
 | Saved answers | A saved answer can't hold the door code. Saving and removing need the host's code. A saved answer is never sent by itself. | `test/cleanerSavedAnswers.test.ts` |
 
 ## 7. Testing and verification
 
 - Unit tests on a 555 Scratch tenant, with a 555 host number:
-  - preview and Send;
-  - a draft's code still sends a day later, while a code without `replyTo`
-    still expires after 10 minutes;
-  - after a restart, Send with an identical text;
+  - `save_draft`, then preview and Send;
+  - a draft and its code still send a day later, while a `send_message` code
+    with `to` and `text` still expires after 10 minutes;
+  - a draft survives a restart and sends with a new code;
   - `newSince` after a host group text, after a second cleaner text, and
     after a group change;
   - `alreadyAnswered`;
@@ -281,8 +312,9 @@ of the backup and are reset by `reset_property`.
 
 ## Decided in review
 
-1. A draft's approval has no time limit. Something new in the thread, a
-   group change, or a restart voids it (section 2).
+1. A draft's approval has no time limit. Something new in the thread or a
+   group change stops it, and a restart only means asking for a new code
+   (section 2).
 2. Everything in the text wakes the assistant, the host's own group replies
    included (section 3).
 3. No limit on how many answers are saved. A repeated topic replaces its
