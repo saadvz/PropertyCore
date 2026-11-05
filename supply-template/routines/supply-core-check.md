@@ -31,6 +31,6 @@ another). A daytime run means an approval card isn't left waiting overnight.
    - **refused:** take those items out and check the smaller cart again.
    - A go cart you then can't place: `record_problem` with its `cartToken`, so the items are free for the backup or another store.
 6. Place an order only on go, or after the landlord's yes and approve_cart's code. A routine run never calls approve_cart with a code. The host's yes comes in chat.
-7. Until the hands-off probe passes, prepare the order with Buy now and ask the landlord to tap Pay. When they've paid, call `record_order` with `approvedBy: "grok-card"`. If the card expired unpaid, try once more on the next run, then tell the host.
+7. On go, check out with the saved Vault card. If the store or Grok raises its own approval card, prepare the order with Buy now and ask the landlord to tap Pay. When they've paid, call `record_order` with `approvedBy: "grok-card"`. If the card expired unpaid, try once more on the next run, then tell the host.
 8. For each order in `late`, tell the host once. When tracking shows an order arrived, call `mark_delivered`.
 9. Never type, paste, or pass a card number, expiry, or security code to Supply Core. Post nothing when there's nothing due, held, unconfirmed, or late.
