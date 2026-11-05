@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { resetAdminSessions } from "../src/cleaner-core/hosted/admin";
 import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
+import { FileRuntimeStore } from "../src/storage/runtimeStore";
 import { setTwilioNumbersFetch } from "../src/cleaner-core/hosted/twilioNumbers";
 import { hashSecret, OAuthGrantStore } from "../src/mcp/oauth/store";
 import { BASE, closeHostedApps } from "./cleanerOauthHarness";
@@ -262,6 +263,28 @@ describe("the admin page", () => {
     expect(list).toMatch(/Mill<\/a>.*<td>touring<\/td><td>up<\/td>/);
     expect(list).toMatch(/Court<\/a>.*<td>cleaning<\/td><td>—<\/td>/);
     expect(list).toMatch(/Lane<\/a>.*<td>not chosen<\/td><td>—<\/td>/);
+  });
+
+  it("shows whether a cleaning tenant's wake-ups reach its alert routine, without its token", async () => {
+    const m = await start();
+    const admin = await signIn(m);
+    const court = m.registry.create({ label: "Court", twilioNumber: "+15555550160" }).tenant;
+    m.registry.setService(court.id, "cleaning");
+    expect((await admin.page("/admin")).html).toMatch(/Court<\/a>.*<td>cleaning<\/td><td>—<\/td><td>—<\/td>/);
+    // The refusal a Claude task's wrong token leaves, as the outbox records it.
+    const refused = "The Claude scheduled task refused its token. Make a new token and save it again.";
+    new FileRuntimeStore(join(tenantFolder(m.app.root, court.id), "cleaner-alerts")).put("operator-events", "evt_madeupwakehealth01", {
+      schemaVersion: 1,
+      event: { schemaVersion: 1, eventId: "evt_madeupwakehealth01", eventType: "cleaning.update", occurredAt: "2026-11-03T18:36:58.000Z" },
+      status: "failed",
+      attempts: 20,
+      createdAt: "2026-11-03T18:36:58.000Z",
+      nextAttemptAt: "2026-11-03T22:00:00.000Z",
+      lastAttemptAt: "2026-11-03T21:45:00.000Z",
+      lastError: refused,
+    });
+    expect((await admin.page("/admin")).html).toContain(`<td>failing: ${refused}</td>`);
+    expect((await admin.page(`/admin/tenants/${court.id}`)).html).toContain(`Alerts: failing: ${refused}.`);
   });
 
   it("shows a touring tenant's restarts and waiting texts on its page", SLOW, async () => {

@@ -59,10 +59,10 @@ The Supply Core Check routine runs this, and you run it whenever the host says "
    - **refused:** take those items out and check again. To place the rest of a cart around a held item, take the held item out and check the smaller cart.
    - A go cart you then can't place (the store blocks you, or the item sold out at the last step): `record_problem` with its `cartToken`, so the items are free for the backup or another store.
 5. Place an order only on go, or after the landlord's yes and approve_cart's code. A routine run never calls approve_cart with a code. It shows the host the question and waits for their yes in chat.
-6. Until the hands-off probe passes, prepare the order with Buy now and ask the landlord to tap Pay. After they pay, call `record_order` with `approvedBy: "grok-card"` and the same cart token. If your card expires unpaid, try once more on the next run, then tell the host.
+6. On go, check out with the saved Vault card. If the store or Grok raises its own approval card, prepare the order with Buy now and ask the landlord to tap Pay. After they pay, call `record_order` with `approvedBy: "grok-card"` and the same cart token. If your card expires unpaid, try once more on the next run, then tell the host.
 7. When tracking shows an order arrived, `mark_delivered`. Tell the host once about each order in `late`.
 
-Hands-off probe: not run yet.
+Hands-off ordering: on. Saad turned it on on 2026-11-05.
 
 ## With Cleaner Core
 
