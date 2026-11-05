@@ -640,6 +640,8 @@ export class LiveDesk {
   private readonly alerts: OperatorEventOutbox;
   /** Approvals for host messages. They live only in this process, so a restart means asking again. */
   private readonly approvals: ConfirmationBook;
+  /** Approvals for saved drafts. They never expire; a restart means asking for a new code. */
+  private readonly draftApprovals: ConfirmationBook;
   /** The door-code key of the call that made the pending upload link. Only in memory. */
   private uploadKey: Buffer | undefined;
 
@@ -650,6 +652,7 @@ export class LiveDesk {
   ) {
     this.path = join(root, "cleaner-live.json");
     this.approvals = new ConfirmationBook(10 * 60_000, () => this.now().getTime());
+    this.draftApprovals = new ConfirmationBook(Number.POSITIVE_INFINITY, () => this.now().getTime());
     this.load();
     // With the server's key, a saved code opens at load, so a redeploy doesn't ask for it again.
     this.openSeal();
@@ -2182,8 +2185,58 @@ export class LiveDesk {
    * With the code it sends through the engine, and only when the recipient and the text are the
    * ones the host approved. The door code never goes out this way.
    */
-  sendMessage(input: { to?: string; text?: string; confirmation?: string }, pinKey?: Buffer): Promise<ToolReply> {
-    return this.serial(() => this.sendMessageNow(input, pinKey));
+  sendMessage(input: { to?: string; text?: string; draft?: string; confirmation?: string }, pinKey?: Buffer): Promise<ToolReply> {
+    return this.serial(() => (input.draft !== undefined ? this.sendDraftNow(input.draft, input.confirmation, pinKey) : this.sendMessageNow(input, pinKey)));
+  }
+
+  /**
+   * Sends a saved draft: its text, to its recipient, with the host's code. The code never expires,
+   * and is bound to the draft, its text, and who is in the group. A draft that is stale, answered,
+   * or gone is refused, both for the preview and for the send.
+   */
+  private async sendDraftNow(id: string, confirmation: string | undefined, pinKey: Buffer | undefined): Promise<ToolReply> {
+    const draft = (this.file.drafts ?? []).find((item) => item.id === id.trim());
+    if (!draft) return this.fail(DRAFT_GONE);
+    const kept = this.file.messages ?? [];
+    const status = draftStatus(draft, kept);
+    if (status === "gone") return this.fail(DRAFT_GONE);
+    if (status === "answered") {
+      const state = replyStateAt(kept, kept.findIndex((message) => message.id === draft.replyTo));
+      return this.failWith(ALREADY_ANSWERED, { alreadyAnswered: true, by: state?.reply === "answered" ? state.by : "group" });
+    }
+    if (status === "stale") return this.failWith(DRAFT_NEW_SINCE, { newSince: true });
+    this.openSeal(pinKey);
+    if (this.carriesCode(draft.text)) return this.fail(DOOR_CODE_IN_CHAT);
+    const recipient = this.recipientOf(draft.to);
+    if ("error" in recipient) return this.fail(recipient.error);
+    const cant = `I can't text ${recipient.name} right now.`;
+    this.resume();
+    const engine = this.engine;
+    if (this.pin) engine?.rememberPin(this.pin);
+    if (!this.file.checked || !engine || !this.reachable(recipient.send, engine)) return this.fail(cant);
+    if (engine.hostMessagesSince(new Date(this.now().getTime() - HOUR_MS)) >= HOST_MESSAGES_PER_HOUR) return this.fail(TOO_MANY);
+    const bound = recipient.send === "group" ? `group:${engine.groupMembers().join(",")}` : recipient.key;
+    const fingerprint = createHash("sha256").update(`${bound}|draft:${draft.id}|${draft.text}`).digest("hex");
+    const code = confirmation?.trim() ?? "";
+    if (!code) {
+      const question = `Send to ${recipient.name}: "${draft.text}"?`;
+      return this.reply({ preview: { to: recipient.name, text: draft.text }, confirmation: this.draftApprovals.issue(SEND_ACTION, recipient.key, fingerprint, question) });
+    }
+    try {
+      this.draftApprovals.redeem(code, SEND_ACTION, recipient.key, fingerprint);
+    } catch {
+      return this.fail(APPROVAL_STALE);
+    }
+    let sent: CleanerText | null;
+    try {
+      sent = await engine.sendHostMessage({ to: recipient.send, body: draft.text });
+    } catch {
+      sent = null;
+    }
+    if (!sent) return this.fail(cant);
+    this.file.drafts = (this.file.drafts ?? []).filter((item) => item.id !== draft.id);
+    this.keepSent(recipient.name, draft.text);
+    return this.reply({ next: `Sent to ${recipient.name}.` });
   }
 
   private async sendMessageNow(input: { to?: string; text?: string; confirmation?: string }, pinKey: Buffer | undefined): Promise<ToolReply> {

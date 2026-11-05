@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { liveDeskFor, resetLiveDesks, setCleanerAlertFetch, setCleanerCalendarFetch, type LiveDesk, type ToolReply } from "../src/cleaner-core/liveDesk";
 import { setCleanerGroupFetch, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import { fakeConversations } from "./fakeConversations";
-import { ADDRESS, BUSINESS, CALENDAR_ICS, CALENDAR_URL, CLEANER, CLEANER_LINE, DOOR_CODE, FROZEN, HOST, TEST_PIN_KEY, fakeSms } from "./wiringProof";
+import { ADDRESS, BUSINESS, CALENDAR_ICS, CALENDAR_URL, CLEANER, CLEANER_LINE, DOOR_CODE, FROZEN, HOST, OBSERVER, TEST_PIN_KEY, fakeSms } from "./wiringProof";
 
 /** A live desk on 555 numbers for the reply-draft and saved-answer tests. Nothing here texts a real phone. */
 
@@ -61,6 +61,7 @@ export function openDesk(phones: string[], groupChat: "0" | "1", now: () => Date
     CLEANER_CORE_TWILIO_PHONE_NUMBER: CLEANER_LINE,
     CLEANER_CORE_ROUTINE_URL: ROUTINE.url,
     CLEANER_CORE_ROUTINE_KEY: ROUTINE.token,
+    PUBLIC_BASE_URL: "https://cleaner.example",
   };
   const desk = liveDeskFor(root, () => env, now);
   return { desk, sms, groups, root, env, now, reopen: () => (resetLiveDesks(), liveDeskFor(root, () => env, now)) };
@@ -90,12 +91,15 @@ export async function setUp(desk: LiveDesk, people: Partial<PeopleInput>, prefer
   ok(await desk.confirmTimes({ checkout: "11:00", checkIn: "16:00" }));
 }
 
-/** A group of the host and Ana, both opted in. */
+/** A group of the host and Ana, both opted in, with the first cleaning taken. */
 export async function liveGroup(now?: () => Date, preferences: Parameters<LiveDesk["savePreferences"]>[0] = {}) {
-  const opened = openDesk([HOST, CLEANER], "1", now);
-  await setUp(opened.desk, { groupChat: "cleaner-and-host" }, preferences);
+  // With only the host and Ana, the engine keeps texts one-to-one, so a saved observer makes it a group.
+  const opened = openDesk([HOST, CLEANER, OBSERVER], "1", now);
+  await setUp(opened.desk, { contacts: [{ name: "Sam", role: "observer", phone: OBSERVER }], groupChat: "cleaner-and-host" }, preferences);
   await opened.desk.inbound({ id: "yes-host", from: HOST, text: "YES" });
   await opened.desk.inbound({ id: "yes-cleaner", from: CLEANER, text: "YES" });
+  // The group thread starts once Ana takes the first cleaning.
+  await opened.desk.inbound({ id: "yes-schedule", from: CLEANER, text: "YES" });
   return opened;
 }
 
