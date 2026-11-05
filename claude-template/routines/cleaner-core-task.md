@@ -28,6 +28,12 @@ web can add the API trigger.
 Cleaner Core then sends one `installation.test`. The task replies "Cleaner
 Core alerts are connected."
 
+Activate waits until that test gets through. If the task refuses it (a wrong or
+regenerated token, or a deleted task), Activate texts nobody and says why, and
+the host saves the Fire URL and a new token again from a fresh private link.
+After Activate, a wake-up the task refuses shows as `warning` in `get_state`,
+once in `check_now`'s `alerts`, and on the admin page.
+
 The token belongs to the host. It never travels with this template, never goes
 in chat or a tool argument, and Cleaner Core never returns it. Regenerate it
 on the task's page if it was ever shown anywhere else, then save it again the

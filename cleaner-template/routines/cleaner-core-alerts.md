@@ -109,7 +109,9 @@ routines. Then:
    wrong, and the link still works. A 404 means ask for a new link.
 4. Call `get_state` to confirm. Cleaner Core sends one `installation.test`.
    Grok posts "Cleaner Core alerts are connected." and `get_state` moves on to
-   the review.
+   the review. Activate waits until that test gets through. If the routine
+   refuses it, Activate texts nobody and says why; save the address and a new
+   key again.
 
 If a value was pasted in chat anyway, Grok doesn't repeat it and asks the host
 to rotate the key.
