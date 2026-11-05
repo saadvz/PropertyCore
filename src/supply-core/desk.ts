@@ -9,7 +9,7 @@ import { ConfirmationBook } from "../operator/confirmations";
 import { refuseCards } from "./cards";
 import { cartFingerprint, checkCart, type CartInput, type GateContext, type Hold, type Mode } from "./gate";
 import { deadlineFor, dueOn, nextDates, scheduleProblem, type Schedule } from "./schedule";
-import { supplySetupAsk } from "./setupAsk";
+import { planStores, supplySetupAsk } from "./setupAsk";
 import { monthSpentCents, onItsWay, readSupply, writeSupply, type Cart, type Item, type Order, type PlanStore, type Product, type SupplyFile } from "./store";
 
 /**
@@ -107,6 +107,10 @@ export interface SettingsInput {
   bufferDays?: number;
   checkTime?: string;
   routineCreated?: true;
+  /** One schedule for every item; null means each item gets its own. */
+  sharedSchedule?: Schedule | null;
+  /** Plan stores Grok checked it can check out with. */
+  storesReady?: string[];
   confirmation?: string;
 }
 
@@ -260,6 +264,13 @@ export class SupplyDesk {
       if (input.priceJumpPct !== undefined && !isInt(input.priceJumpPct, 5, 100)) return fail("The price-jump check has to be from 5% to 100%.");
       if (input.bufferDays !== undefined && !isInt(input.bufferDays, 0, 14)) return fail("The delivery buffer has to be from 0 to 14 days.");
       if (input.checkTime !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.checkTime)) return fail("The check time has to be 24-hour HH:MM, like 10:00.");
+      if (input.sharedSchedule) {
+        const problem = scheduleProblem(input.sharedSchedule);
+        if (problem) return fail(problem);
+      }
+      const plan = planStores(file);
+      const unknown = (input.storesReady ?? []).filter((name) => !plan.some((store) => store.toLowerCase() === String(name).trim().toLowerCase()));
+      if (unknown.length > 0) return fail(plan.length > 0 ? `Only the plan's stores can be checked: ${plan.join(" or ")}.` : "Save the store plan first.");
       const gate = this.approved(file, "supply-settings", "settings", input, "Save these settings?");
       if (gate !== "go") return gate;
       // The name defaults to the street address: the part before the first comma.
@@ -274,6 +285,15 @@ export class SupplyDesk {
       if (input.bufferDays !== undefined) s.bufferDays = input.bufferDays;
       if (input.checkTime) s.checkTime = input.checkTime;
       if (input.routineCreated) file.setup.routineCreated = true;
+      if (input.sharedSchedule !== undefined) {
+        if (input.sharedSchedule) s.sharedSchedule = input.sharedSchedule;
+        else delete s.sharedSchedule;
+        file.setup.scheduleAsked = true;
+      }
+      if (input.storesReady) {
+        const names = input.storesReady.map((name) => plan.find((store) => store.toLowerCase() === String(name).trim().toLowerCase())!);
+        s.storesReady = [...new Set([...(s.storesReady ?? []), ...names])];
+      }
       this.write(file);
       return ok({ saved: true, ...(supplySetupAsk(file, this.deps.standalone) ? { next: "Call get_supply_state for the next step." } : {}) });
     });
@@ -303,8 +323,10 @@ export class SupplyDesk {
         const inPlan = (store: string) => allowed.some((name) => name.trim().toLowerCase() === store.trim().toLowerCase());
         if (!inPlan(input.preferred!.store) || (input.backup && !inPlan(input.backup.store))) return fail(`Pick products from your stores: ${allowed.join(" or ")}. To use another store, change the store plan with save_supply_stores.`);
       }
-      if (!input.schedule) return fail("The item needs a schedule.");
-      const scheduleIssue = scheduleProblem(input.schedule);
+      // The shared schedule fills in an item saved without one.
+      const schedule = input.schedule ?? file.settings.sharedSchedule;
+      if (!schedule) return fail("The item needs a schedule.");
+      const scheduleIssue = scheduleProblem(schedule);
       if (scheduleIssue) return fail(scheduleIssue);
       const gate = this.approved(file, "supply-item", existing?.id ?? "new", input, `Save ${input.name}: ${input.qtyPerOrder} × ${input.preferred!.title} from ${input.preferred!.store}?`);
       if (gate !== "go") return gate;
@@ -326,7 +348,7 @@ export class SupplyDesk {
         qtyPerOrder: input.qtyPerOrder,
         preferred: product(input.preferred!, existing?.preferred),
         storeNote: (input.storeNote ?? "").trim(),
-        schedule: input.schedule,
+        schedule,
         savedAt: existing?.savedAt ?? now,
       };
       if (input.backup) item.backup = product(input.backup, existing?.backup);
@@ -374,6 +396,9 @@ export class SupplyDesk {
       const gate = this.approved(file, "supply-stores", "stores", input, `Buy from ${names}?`);
       if (gate !== "go") return gate;
       file.settings.stores = { primary, ...(fast ? { fast } : {}) };
+      // A store that left the plan isn't ready anymore; a new one has to be checked.
+      const kept = [primary.name, ...(fast ? [fast.name] : [])].map((name) => name.toLowerCase());
+      if (file.settings.storesReady) file.settings.storesReady = file.settings.storesReady.filter((name) => kept.includes(name.toLowerCase()));
       this.write(file);
       return ok({ saved: true, stores: file.settings.stores, next: "Call get_supply_state for the next step." });
     });
@@ -544,6 +569,8 @@ export class SupplyDesk {
       if (!file.settings.mode) return fail("Choose hands-off or stop at checkout first.");
       if (!file.settings.checkTime) return fail("Choose the daily check time first.");
       if (!this.property(file)) return fail(this.deps.standalone ? "Save the property first." : "Finish Cleaner Core's property step first.");
+      const unready = planStores(file).filter((name) => !(file.settings.storesReady ?? []).some((ready) => ready.toLowerCase() === name.toLowerCase()));
+      if (unready.length > 0) return fail(`Check that you can check out at ${unready.join(" and ")} first: signed in, delivering to the property, and a payment method ready. Then save storesReady.`);
       file.settings.activatedAt = this.deps.now().toISOString();
       delete file.offAt;
       this.write(file);

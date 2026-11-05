@@ -99,6 +99,10 @@ export interface SupplySettings {
   checkTime?: string;
   property?: { name: string; address: string; timeZone: string };
   stores?: StorePlan;
+  /** One schedule for every item, when the host chose the same for everything. */
+  sharedSchedule?: Schedule;
+  /** Plan stores Grok checked it can check out with: signed in, delivering to the property, a payment method in Vault. */
+  storesReady?: string[];
   activatedAt?: string;
 }
 
@@ -111,7 +115,7 @@ export interface BookingCalendar {
 export interface SupplyFile {
   settings: SupplySettings;
   /** Setup steps the host finished that leave no other trace. */
-  setup: { itemsDone?: boolean; sourcesDone?: boolean; capsDone?: boolean; routineCreated?: boolean };
+  setup: { itemsDone?: boolean; sourcesDone?: boolean; capsDone?: boolean; routineCreated?: boolean; scheduleAsked?: boolean };
   items: Item[];
   /** Item names from the host's list that don't have products picked yet, in their order. */
   draft: string[];

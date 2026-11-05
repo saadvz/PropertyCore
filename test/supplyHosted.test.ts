@@ -246,9 +246,12 @@ describe("setup through the tools", () => {
     expect((await m.toolAt("/mcp", token, "save_supply_list", { names: ["Paper towels", "Dish soap"] })).isError).toBe(false);
     expect(((await m.toolAt("/mcp", token, "get_state")).structured?.ask as { step: string }).step).toBe("stores");
     expect((await m.toolAt("/mcp", token, "save_supply_stores", { primary: { name: "Example Mart", channel: "shipping" }, fast: { name: "Example Now", channel: "same-day" } })).isError).toBe(false);
-    expect(((await m.toolAt("/mcp", token, "get_state")).structured?.ask as { step: string }).step).toBe("products");
-    expect((await m.toolAt("/mcp", token, "save_supply_item", { ...towels, storeNote: undefined })).isError).toBe(false);
+    expect(((await m.toolAt("/mcp", token, "get_state")).structured?.ask as { step: string }).step).toBe("schedule");
+    expect((await m.toolAt("/mcp", token, "save_supply_settings", { sharedSchedule: { kind: "every", days: 21 } })).isError).toBe(false);
+    expect((await m.toolAt("/mcp", token, "save_supply_item", { ...towels, storeNote: undefined, schedule: undefined })).isError).toBe(false);
     expect(readSupply(tenantFolder(m.app.root, tenant.id)).draft).toEqual(["Dish soap"]);
+    expect((await m.toolAt("/mcp", token, "save_supply_settings", { storesReady: ["Example Mart", "Example Now"] })).isError).toBe(false);
+    expect(readSupply(tenantFolder(m.app.root, tenant.id)).settings.storesReady).toEqual(["Example Mart", "Example Now"]);
   });
 
   it("tells Grok to call the connection Supply Core", SLOW, async () => {

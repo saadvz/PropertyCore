@@ -6,7 +6,7 @@ import type { SupplyFile } from "./store";
  * fields and choices, and Grok asks one short question per message in its own words.
  */
 
-export type SupplyStep = "property" | "list" | "stores" | "products" | "sources" | "mode" | "caps" | "check-time" | "routine" | "review";
+export type SupplyStep = "property" | "list" | "stores" | "schedule" | "products" | "sources" | "accounts" | "mode" | "caps" | "check-time" | "routine" | "review";
 
 export interface SupplyAsk {
   step: SupplyStep;
@@ -43,23 +43,47 @@ const STORE_QUESTIONS: AskQuestion[] = [
   },
 ];
 
-const SAME_SCHEDULE: AskQuestion = {
-  field: "sameSchedule",
-  ask: "whether one schedule fits every item on the list, or each gets its own",
-  required: true,
-  options: [
-    { value: "same", label: "Same for everything" },
-    { value: "each", label: "Set each one" },
-  ],
-  how: "With the same for everything, ask the schedule once and use it for every save_supply_item.",
-};
+const SCHEDULE_HOW =
+  "Every: a number of days (1 to 365) or a day of the month (1 to 28). By bookings: once every so many stays (1 to 50). Other: write an RRULE from their words, call preview_schedule, and read the next 3 dates back before saving.";
+
+const SCHEDULE_OPTIONS = [
+  { value: "every", label: "Every…" },
+  { value: "bookings", label: "By bookings" },
+  { value: "custom", label: "Other" },
+];
+
+/** Asked before any product, so a shared schedule never interrupts the product picks. */
+const SCHEDULE_QUESTIONS: AskQuestion[] = [
+  {
+    field: "sameSchedule",
+    ask: "whether one schedule fits every item on the list, or each gets its own",
+    required: true,
+    options: [
+      { value: "same", label: "Same for everything" },
+      { value: "each", label: "Set each one" },
+    ],
+    how: "Set each one saves save_supply_settings { sharedSchedule: null }, and each item's schedule is asked with its product.",
+  },
+  {
+    field: "sharedSchedule",
+    ask: "how often to reorder everything",
+    required: false,
+    when: "sameSchedule is same",
+    options: SCHEDULE_OPTIONS,
+    how: `${SCHEDULE_HOW} Save it with save_supply_settings { sharedSchedule }. Every item then uses it.`,
+  },
+];
+
+/** Product cards first, then a choice card the host can tap: cards alone have no button. */
+const CARDS =
+  "Show 3 to 4 product cards from the plan's stores only. Then, right after the cards, show a choice card with one option per product, by its short name, so the host can tap their pick. Never list products as text.";
 
 const ITEM_QUESTIONS: AskQuestion[] = [
   {
     field: "preferred",
     ask: "which product the host prefers",
     required: true,
-    how: "Search only the stores in the plan and show 3 to 4 product cards from them. Save the one they pick: its title, store, https link, pack size, and price in cents.",
+    how: `${CARDS} Save the one they pick: its title, store, https link, pack size, and price in cents.`,
   },
   {
     field: "backup",
@@ -69,19 +93,15 @@ const ITEM_QUESTIONS: AskQuestion[] = [
       { value: "yes", label: "Pick a backup" },
       { value: "no", label: "No backup" },
     ],
-    how: "Show the remaining cards from the plan's stores, or search them again.",
+    how: `For a backup: ${CARDS} Use the products they didn't pick, or search again.`,
   },
   { field: "qtyPerOrder", ask: "how many to buy each time", required: true, default: "1" },
   {
     field: "schedule",
     ask: "how often to reorder it",
     required: true,
-    options: [
-      { value: "every", label: "Every…" },
-      { value: "bookings", label: "By bookings" },
-      { value: "custom", label: "Other" },
-    ],
-    how: "Every: a number of days (1 to 365) or a day of the month (1 to 28). By bookings: once every so many stays (1 to 50). Other: write an RRULE from their words, call preview_schedule, and read the next 3 dates back before saving.",
+    options: SCHEDULE_OPTIONS,
+    how: SCHEDULE_HOW,
   },
 ];
 
@@ -95,6 +115,12 @@ const MORE: AskQuestion = {
   ],
   how: "Add another: call save_supply_list with the new names, then pick their products. That's all calls save_supply_item with { done: true }.",
 };
+
+/** The plan's store names: the main store, then the same-day one. */
+export function planStores(file: SupplyFile): string[] {
+  const plan = file.settings.stores;
+  return plan ? [plan.primary.name, ...(plan.fast ? [plan.fast.name] : [])] : [];
+}
 
 export function supplySetupAsk(file: SupplyFile, standalone: boolean): SupplyAsk | undefined {
   if (file.settings.activatedAt) return undefined;
@@ -113,7 +139,9 @@ export function supplySetupAsk(file: SupplyFile, standalone: boolean): SupplyAsk
   if (!file.setup.itemsDone || file.items.length === 0) {
     if (file.items.length === 0 && file.draft.length === 0) return { step: "list", tool: "save_supply_list", questions: [LIST_QUESTION] };
     if (!s.stores) return { step: "stores", tool: "save_supply_stores", questions: STORE_QUESTIONS };
-    if (file.draft.length > 0) return { step: "products", tool: "save_supply_item", questions: file.items.length === 0 ? [SAME_SCHEDULE, ...ITEM_QUESTIONS] : ITEM_QUESTIONS };
+    if (file.items.length === 0 && file.draft.length >= 2 && !file.setup.scheduleAsked) return { step: "schedule", tool: "save_supply_settings", questions: SCHEDULE_QUESTIONS };
+    const perItem = s.sharedSchedule ? ITEM_QUESTIONS.filter((q) => q.field !== "schedule") : ITEM_QUESTIONS;
+    if (file.draft.length > 0) return { step: "products", tool: "save_supply_item", questions: perItem };
     return { step: "products", tool: "save_supply_item", questions: [MORE] };
   }
   if (standalone && !file.setup.sourcesDone && file.items.some((item) => item.schedule.kind === "bookings")) {
@@ -189,6 +217,19 @@ export function supplySetupAsk(file: SupplyFile, standalone: boolean): SupplyAsk
           how: "Create the scheduled routine in supply-template/routines/supply-core-check.md, daily at checkTime, then call save_supply_settings with routineCreated: true.",
         },
       ],
+    };
+  }
+  const unready = planStores(file).filter((name) => !(s.storesReady ?? []).some((ready) => ready.toLowerCase() === name.toLowerCase()));
+  if (unready.length > 0) {
+    return {
+      step: "accounts",
+      tool: "save_supply_settings",
+      questions: unready.map((name) => ({
+        field: "storesReady",
+        ask: `whether you can check out at ${name}`,
+        required: true,
+        how: `Check it yourself, without placing an order: open ${name}, confirm you're signed in (a saved login in Vault or its connector), that the delivery address is the property's, and that a payment method is ready (a saved card, Shop Pay, Link, or X Money). If anything is missing, tell the host what and help them connect it: hand them your computer for the sign-in, or ask them to add a payment method in Vault. Never ask for a password or card number in chat. When it's ready, call save_supply_settings with storesReady: ["${name}"].`,
+      })),
     };
   }
   return {
