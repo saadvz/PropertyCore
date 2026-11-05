@@ -76,7 +76,7 @@ Secrets never go in the chat. For a calendar link and the door code, Claude send
 
 ## Step 4: Make the scheduled task
 
-The task comes before Activate, so the cleaner's first reply already wakes it. It checks your calendar every hour and wakes when the cleaner texts. Activate is refused until it's connected.
+The task comes before Activate, so the cleaner's first reply already wakes it. It checks your calendar every hour and wakes when the cleaner texts. Activate is refused until it's connected and Cleaner Core's test wake-up has reached it.
 
 1. Open [claude.ai/code/routines](https://claude.ai/code/routines) and click **New task**, then **Set up manually**.
 2. Fill it in as below and click **Create**.
