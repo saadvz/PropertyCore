@@ -32,14 +32,14 @@
       "doc": "routines/cleaner-core-check.md",
       "trigger": "scheduled",
       "schedule": "Every 5 minutes for a demo, and hourly otherwise.",
-      "allowedTools": ["check_now", "confirm_times", "get_state", "save_arrival", "get_job_photos"],
+      "allowedTools": ["check_now", "confirm_times", "get_state", "save_arrival", "get_job_photos", "save_draft"],
       "credentialsTravelWithTemplate": false
     },
     {
       "name": "Cleaner Core Alerts",
       "doc": "routines/cleaner-core-alerts.md",
       "trigger": "authenticated-webhook",
-      "allowedTools": ["check_now", "confirm_times", "get_state", "save_arrival", "get_job_photos"],
+      "allowedTools": ["check_now", "confirm_times", "get_state", "save_arrival", "get_job_photos", "save_draft"],
       "credentialsTravelWithTemplate": false
     }
   ],

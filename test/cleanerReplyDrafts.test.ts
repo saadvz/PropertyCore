@@ -3,8 +3,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ALREADY_ANSWERED, DOOR_CODE_IN_CHAT, DRAFT_GONE, DRAFT_NEW_SINCE, DRAFT_UNKNOWN, setCleanerAlertFetch, type LiveDesk } from "../src/cleaner-core/liveDesk";
 import { approvedOnDesk } from "./hostApproval";
+import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
 import { CLEANER, DOOR_CODE, HOST } from "./wiringProof";
-import { cleanupDesks, idOf, liveGroup, liveOneToOne, ok, openDesk, refused, setUp, testClock, type OutMessage } from "./cleanerDeskHarness";
+import { PIN_KEY, cleanupDesks, idOf, liveGroup, liveOneToOne, ok, openDesk, refused, setUp, testClock, type OutMessage } from "./cleanerDeskHarness";
 
 afterEach(() => cleanupDesks());
 
@@ -302,5 +303,52 @@ describe("send_message with a draft", () => {
     ok(await approvedOnDesk((confirmation) => desk.sendMessage({ draft: id, ...(confirmation ? { confirmation } : {}) })));
     for (const replyTo of [first, idOfKept(root, "And the vacuum?")])
       expect(refused(await desk.saveDraft({ replyTo, text: "again" })).result).toEqual({ alreadyAnswered: true, by: "assistant" });
+  });
+});
+
+describe("MCP route for reply drafts and saved answers", () => {
+  async function mcp(desk: LiveDesk, method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const reply = await handleCleanerMcpMessage(desk, { jsonrpc: "2.0", id: 1, method, ...(params ? { params } : {}) }, PIN_KEY);
+    return (reply.body as { result: Record<string, unknown> }).result;
+  }
+  const tool = (desk: LiveDesk, name: string, args: Record<string, unknown>) => mcp(desk, "tools/call", { name, arguments: args });
+  const structured = (result: Record<string, unknown>) => result.structuredContent as Record<string, unknown>;
+
+  it("lists save_draft and save_answer, and sends a draft through the MCP route", async () => {
+    const { desk, groups } = await liveGroup();
+    const names = ((await mcp(desk, "tools/list")).tools as { name: string }[]).map((item) => item.name);
+    expect(names).toEqual(expect.arrayContaining(["save_draft", "save_answer"]));
+    const replyTo = await asked(desk);
+    const saved = await tool(desk, "save_draft", { replyTo, text: ANSWER });
+    expect(saved.isError).toBe(false);
+    const draft = (structured(saved).draft as { id: string }).id;
+    const preview = await tool(desk, "send_message", { draft });
+    expect(structured(preview).preview).toEqual({ to: "the group", text: ANSWER });
+    const code = (structured(preview).confirmation as { code: string }).code;
+    const sent = await tool(desk, "send_message", { draft, confirmation: code });
+    expect(sent.isError).toBe(false);
+    expect(groups.posts.at(-1)?.body).toContain(ANSWER);
+  });
+
+  it("refuses the door code split like 80-88 in save_draft and save_answer", async () => {
+    const { desk } = await liveGroup();
+    const replyTo = await asked(desk);
+    for (const split of ["80-88", "8 0 8 8"]) {
+      const draft = await tool(desk, "save_draft", { replyTo, text: `Lockbox is ${split}` });
+      expect(draft.isError).toBe(true);
+      expect((draft.content as { text: string }[])[0]?.text).toBe(DOOR_CODE_IN_CHAT);
+      const answer = await tool(desk, "save_answer", { topic: "Lockbox", answer: `It opens with ${split}` });
+      expect(answer.isError).toBe(true);
+      expect((answer.content as { text: string }[])[0]?.text).toBe(DOOR_CODE_IN_CHAT);
+    }
+    expect(ok(await desk.checkNow()).drafts).toBeUndefined();
+  });
+
+  it("saves an answer through the MCP route only with the code", async () => {
+    const { desk } = await liveGroup();
+    const asked = await tool(desk, "save_answer", { topic: "Trash day", answer: "Tuesday night." });
+    const code = (structured(asked).confirmation as { code: string }).code;
+    expect((await tool(desk, "save_answer", { topic: "Trash day", answer: "Tuesday night.", confirmation: code })).isError).toBe(false);
+    expect(ok(await desk.checkNow()).savedAnswers).toEqual([{ topic: "Trash day", answer: "Tuesday night." }]);
   });
 });

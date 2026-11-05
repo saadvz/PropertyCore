@@ -12,6 +12,7 @@ import { isScratchTestNumber } from "../src/cleaner-core/scratch";
 import { setCleanerGroupFetch, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import { fakeConversations } from "./fakeConversations";
 import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
+import { REPLY_INSTRUCTIONS } from "../src/cleaner-core/replyWording";
 import { photoKey, servePhoto, setCleanerPhotoFetch } from "../src/cleaner-core/photos";
 import { containsCodeToken } from "../src/cleaner-core/redact";
 import type { GoogleEventList } from "../src/cleaner-core/sources";
@@ -1599,12 +1600,10 @@ describe("Cleaner Core send_message: the host approves first", () => {
     const { desk, sms } = await confirmedCleaner();
     const tools = ((await mcp(desk, "tools/list")).tools as { name: string; description: string }[]) ?? [];
     expect(tools.find((tool) => tool.name === "send_message")?.description).toBe(
-      "Sends the host's own message. With a group, messages go only to the group (to: group). Without one, to is the cleaner or a saved contact. Call once without confirmation to get a preview and code, show the host the exact text, and call again with the code only after the host says yes.",
+      "Sends the host's own message. With a group, messages go only to the group (to: group). Without one, to is the cleaner or a saved contact. Call once without confirmation to get a preview and code, show the host the exact text, and call again with the code only after the host says yes. To send a saved draft, pass draft with its id instead of to and text.",
     );
     const text = String((await mcp(desk, "initialize")).instructions);
-    expect(text).toContain(
-      "When a message needs a reply Cleaner Core doesn't send itself, draft one short reply and offer it to the host. Send it only with send_message after the host says yes.",
-    );
+    for (const line of REPLY_INSTRUCTIONS) expect(text).toContain(line);
     const first = await mcp(desk, "tools/call", { name: "send_message", arguments: { to: "cleaner", text: LATE } });
     expect(first.isError).toBe(false);
     const code = (first.structuredContent as { confirmation: Approval }).confirmation.code;
