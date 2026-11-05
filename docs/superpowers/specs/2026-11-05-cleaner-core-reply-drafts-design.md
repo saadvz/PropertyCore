@@ -1,6 +1,6 @@
 # Cleaner Core: reply drafts, group replies, and saved answers
 
-Date: 2026-11-05. Status: draft for Saad's review.
+Date: 2026-11-05. Status: draft; the open questions were decided in review with Saad on 2026-11-05.
 
 ## Goal
 
@@ -54,7 +54,7 @@ question uses the host's own words. There is no new setup step.
   host's phone straight to the cleaner's phone never reaches Cleaner Core.
 - `check_now` returns only the messages it hasn't returned before.
 - Any newly kept message, the host's own group reply included, wakes the
-  alert routine.
+  alert routine. This stays: everything in the text wakes the assistant.
 
 ## 1. Which messages get a draft
 
@@ -105,10 +105,21 @@ one combined draft.
 `to`, `text`, and a new `replyTo` (section 3) and no confirmation. That call
 sends nothing and returns the preview and code.
 
-**A late Send.** A routine run often drafts while the host is away, and the
-code expires after 10 minutes. When the host taps Send later, the assistant
-calls `send_message` for a new preview. If the new preview's text and
-recipient are word for word what the host approved, it sends with the new
+**A draft doesn't expire.** A routine run often drafts while the host is
+away, so a draft's code (a preview with `replyTo`) has no time limit. The
+host can tap Send an hour or a day later. Only these void it:
+
+- something new in the thread (section 3);
+- a change to who is in the group;
+- the reply being answered some other way.
+
+Other approvals, such as `hold_job`, `mark_paid`, or a `send_message`
+without `replyTo`, keep today's 10 minutes.
+
+**After a restart.** Approvals live only in the running process, so a
+restart loses a draft's code. When the host taps Send after one, the
+assistant calls `send_message` for a new preview. If the new preview's text
+and recipient are word for word what the host approved, it sends with the new
 code. If anything differs, or the preview is refused (section 3), it shows
 the host what changed and asks again.
 
@@ -148,8 +159,10 @@ assistant reads the host's actual words.
   A group text changes nothing in Cleaner Core, so the assistant asks the
   host whether to do it: `hold_job`, `confirm_times`, or `mark_guests_left`,
   each with its own yes as today. It never acts on the group text alone.
-- **Only the host's own reply is new.** When nothing else needs the host, the
-  routine summary stays "Nothing new.", apart from any save offer.
+- **Only the host's own reply is new.** Every text in the group wakes the
+  assistant, the host's own included, so it can drop a draft the host
+  already answered and offer to save the answer. When nothing else needs the
+  host, the routine summary stays "Nothing new.", apart from any save offer.
 
 ### What the server enforces
 
@@ -190,8 +203,12 @@ phone, or house quirks. It never asks about time-bound or one-off replies
 - It uses the same two-call approval as `send_message`: the first call
   returns the exact topic and answer with a code, and the second call saves.
 - It is refused when the answer carries the door code (`carriesCode`, as
-  `save_preferences` does), when it is over 300 characters, or when 40 are
-  already saved.
+  `save_preferences` does), or when it's longer than a `send_message` text
+  (600 characters), since a saved answer is sent as one.
+- There's no limit on how many are saved. Each save needs the host's yes, so
+  the list only grows as fast as the host answers. Saving a topic that
+  already exists replaces its answer, so the list doesn't fill with old
+  copies.
 - The assistant saves the host's words. It may cut the reply down to the
   sentence that answers the question, but it never rewrites it.
 
@@ -228,7 +245,7 @@ of the backup and are reset by `reset_property`.
 
 | Gate | What it holds | Proof |
 | --- | --- | --- |
-| Draft needs Send | No reply goes to anyone without the host's code from the preview of that exact text. A draft the host never answers sends nothing. | `test/cleanerReplyDrafts.test.ts` |
+| Draft needs Send | No reply goes to anyone without the host's code from the preview of that exact text. A draft the host never answers sends nothing. A draft's code has no time limit, and something new in the thread or a group change voids it. | `test/cleanerReplyDrafts.test.ts` |
 | Group reply wins | After the host's group text, a preview with `replyTo` for the message it answered is refused with `alreadyAnswered`, and a code issued before it is refused with `newSince`. | `test/cleanerReplyDrafts.test.ts` |
 | Group text acts on nothing | A host group text never holds, resumes, sets times, or releases the door code. | `test/cleanerReplyDrafts.test.ts` |
 | Saved answers | A saved answer can't hold the door code. Saving and removing need the host's code. A saved answer is never sent by itself. | `test/cleanerSavedAnswers.test.ts` |
@@ -237,11 +254,16 @@ of the backup and are reset by `reset_property`.
 
 - Unit tests on a 555 Scratch tenant, with a 555 host number:
   - preview and Send;
-  - a late Send with an identical text;
-  - `newSince` after a host group text and after a second cleaner text;
+  - a draft's code still sends a day later, while a code without `replyTo`
+    still expires after 10 minutes;
+  - after a restart, Send with an identical text;
+  - `newSince` after a host group text, after a second cleaner text, and
+    after a group change;
   - `alreadyAnswered`;
   - `earlier` and `reply` in `check_now`;
-  - `save_answer`'s approval, the door-code refusal, and the 40-answer limit;
+  - the host's own group text wakes the alert routine;
+  - `save_answer`'s approval, the door-code refusal, the 600-character limit,
+    and a repeated topic replacing its answer;
   - a saved answer shows up in `savedAnswers` and is never sent on its own.
 - Template tests: the four prompts carry the draft, group-reply, and save
   wording.
@@ -257,12 +279,11 @@ of the backup and are reset by `reset_property`.
 - **Gemini as the matcher** for that automatic path, so ChatGPT and Muse
   hosts get an instant answer without waiting for the next scheduled check.
 
-## Open questions
+## Decided in review
 
-1. Is 10 minutes the right lifetime for a draft's code? The late-Send rule
-   covers it, but a longer one for drafts with `replyTo` would mean fewer new
-   previews.
-2. Should the host's own group reply wake the routine at all? It does today.
-   Waking is what lets the assistant drop a draft and offer to save, at the
-   cost of an extra run.
-3. Is 40 saved answers per property enough?
+1. A draft's approval has no time limit. Something new in the thread, a
+   group change, or a restart voids it (section 2).
+2. Everything in the text wakes the assistant, the host's own group replies
+   included (section 3).
+3. No limit on how many answers are saved. A repeated topic replaces its
+   answer (section 4).
