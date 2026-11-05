@@ -142,6 +142,19 @@ const MESSAGE_NEEDED = `Write the message in 1 to ${MAX_HOST_MESSAGE} characters
 export const DRAFT_UNKNOWN = "I don't have that message. Call check_now and use a message id it returned.";
 export const DRAFT_GONE = "That draft was sent, dropped, or already answered. Call check_now for the drafts still waiting.";
 export const ALREADY_ANSWERED = "The host already answered that message. Drop the draft and tell the host nothing more about it.";
+export const ANSWER_NEEDED = "Tell me the topic and the answer, in the host's words.";
+export const ANSWER_TOO_LONG = `Keep the answer to ${MAX_HOST_MESSAGE} characters.`;
+export const TOPIC_TOO_LONG = "Keep the topic to a few words.";
+export const NO_SUCH_ANSWER = "There's no saved answer for that topic.";
+const MAX_TOPIC = 60;
+const SAVE_ANSWER_ACTION = "cleaner-saved-answer";
+
+/** An answer the host saved for next time. */
+interface SavedAnswer {
+  topic: string;
+  answer: string;
+}
+
 export const DRAFT_NEW_SINCE = "Something new came in since this draft. Read it with check_now, then save a new draft or drop this one.";
 const RECIPIENT_NEEDED = "Say who to text: the cleaner, the group, or a saved contact's name.";
 const NO_GROUP = "There's no group chat for this property.";
@@ -405,6 +418,8 @@ interface LiveFile {
   messagesShown?: string[];
   /** Reply drafts waiting for the host's Send. They send nothing by themselves and never expire. */
   drafts?: StoredDraft[];
+  /** The host's own answers, saved on their yes, for the next draft to use word for word. */
+  savedAnswers?: SavedAnswer[];
   /** Ids of the finished cleanings `check_now` has already returned as completed. */
   completedShown?: string[];
   released?: boolean;
@@ -1501,6 +1516,7 @@ export class LiveDesk {
     this.file.completedShown = [...shownDone, ...finished.map((job) => job.id)];
     const payDue = this.payDueNow(jobs);
     const drafts = this.waitingDrafts();
+    const savedAnswers = this.savedAnswersOut();
     prunePhotos(this.root, jobs, this.now());
     this.pruneMessagePhotos();
     this.noteCheck();
@@ -1509,6 +1525,7 @@ export class LiveDesk {
       alerts: fresh.map((note) => note.body),
       messages: this.messagesOut(newMessages, save),
       ...(drafts.length > 0 ? { drafts } : {}),
+      ...(savedAnswers.length > 0 ? { savedAnswers } : {}),
       ...(earlier.length > 0 ? { earlier: earlier.map(({ photos: _photos, photosAt: _photosAt, ...message }) => this.withReply(message)) } : {}),
       ...(finished.length > 0 ? { completed: finished.map((job) => this.completedFacts(job)) } : {}),
       ...(payDue.length > 0 ? { payDue } : {}),
@@ -2180,6 +2197,54 @@ export class LiveDesk {
   }
 
   /**
+   * Saves, or with remove forgets, the host's own answer for a topic, on the host's yes. It sends
+   * nothing. Saving a topic already saved (ignoring case) replaces its answer. There is no count limit.
+   */
+  saveAnswer(input: { topic?: string; answer?: string; remove?: boolean; confirmation?: string }, pinKey?: Buffer): Promise<ToolReply> {
+    return this.serial(async () => this.saveAnswerNow(input, pinKey));
+  }
+
+  private saveAnswerNow(input: { topic?: string; answer?: string; remove?: boolean; confirmation?: string }, pinKey: Buffer | undefined): ToolReply {
+    const topic = input.topic?.trim() ?? "";
+    const answer = input.remove ? "" : (input.answer?.trim() ?? "");
+    if (!topic || (!input.remove && !answer)) return this.fail(ANSWER_NEEDED);
+    this.openSeal(pinKey);
+    if (this.carriesCode(topic) || this.carriesCode(answer)) return this.fail(DOOR_CODE_IN_CHAT);
+    if (topic.length > MAX_TOPIC) return this.fail(TOPIC_TOO_LONG);
+    if (answer.length > MAX_HOST_MESSAGE) return this.fail(ANSWER_TOO_LONG);
+    const key = topic.toLowerCase();
+    const saved = this.file.savedAnswers ?? [];
+    if (input.remove && !saved.some((item) => item.topic.toLowerCase() === key)) return this.fail(NO_SUCH_ANSWER);
+    const fingerprint = createHash("sha256").update(`${key}|${answer}|${input.remove ? 1 : 0}`).digest("hex");
+    const code = input.confirmation?.trim() ?? "";
+    if (!code) {
+      const question = input.remove ? `Forget the saved answer for ${topic}?` : `Save for next time, ${topic}: "${answer}"?`;
+      return this.reply({ preview: input.remove ? { topic, remove: true } : { topic, answer }, confirmation: this.approvals.issue(SAVE_ANSWER_ACTION, "answers", fingerprint, question) });
+    }
+    try {
+      this.approvals.redeem(code, SAVE_ANSWER_ACTION, "answers", fingerprint);
+    } catch {
+      return this.fail(APPROVAL_STALE);
+    }
+    const others = saved.filter((item) => item.topic.toLowerCase() !== key);
+    const next = input.remove ? others : [...others, { topic, answer }];
+    if (next.length > 0) this.file.savedAnswers = next;
+    else delete this.file.savedAnswers;
+    this.persist();
+    return this.reply({ next: input.remove ? "Forgotten." : "Saved." });
+  }
+
+  /** The host's saved answers, then the checklist and the cleaning note, as check_now returns them. */
+  private savedAnswersOut(): SavedAnswer[] {
+    const preferences = this.file.preferences;
+    return [
+      ...(this.file.savedAnswers ?? []),
+      ...(preferences?.checklist?.length ? [{ topic: "Checklist", answer: preferences.checklist.join("; ") }] : []),
+      ...(preferences?.instructions ? [{ topic: "Cleaning note", answer: preferences.instructions }] : []),
+    ];
+  }
+
+  /**
    * Sends the host's own message to the cleaner, the group, or a saved contact. Without a
    * confirmation it only checks the message and returns the exact text with an approval code.
    * With the code it sends through the engine, and only when the recipient and the text are the
@@ -2397,6 +2462,7 @@ export class LiveDesk {
     delete this.file.messages;
     delete this.file.messagesShown;
     delete this.file.drafts;
+    delete this.file.savedAnswers;
     delete this.file.completedShown;
     delete this.file.timedJobs;
     this.approvals.clear();
