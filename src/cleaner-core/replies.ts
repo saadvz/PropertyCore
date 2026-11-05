@@ -39,3 +39,31 @@ export function replyStateAt(messages: readonly ThreadMessage[], index: number):
 export function earlierThan<T>(messages: readonly T[], firstNew: number, max = 6): T[] {
   return messages.slice(Math.max(0, firstNew - max), Math.max(0, firstNew));
 }
+
+/** A reply the assistant saved for the host to send. It sends nothing by itself. */
+export interface StoredDraft {
+  id: string;
+  /** The cleaner or contact message it answers. */
+  replyTo: string;
+  /** What recipientOf takes: "group", or the name of the person who wrote. */
+  to: string;
+  text: string;
+  /** The newest kept message when it was saved. */
+  base: string;
+}
+
+export type DraftStatus = "ready" | "stale" | "answered" | "gone";
+
+/**
+ * gone: its message or base is no longer kept. answered: the host has replied to its message.
+ * stale: something came in after it was saved. A send through the assistant isn't new to read,
+ * so it leaves a draft ready.
+ */
+export function draftStatus(draft: StoredDraft, messages: readonly ThreadMessage[]): DraftStatus {
+  const at = messages.findIndex((message) => message.id === draft.replyTo);
+  const base = messages.findIndex((message) => message.id === draft.base);
+  if (at < 0 || base < 0) return "gone";
+  if (replyStateAt(messages, at)?.reply === "answered") return "answered";
+  const newer = messages.slice(base + 1).some((message) => !(message.from === "host" && message.handled === "sent"));
+  return newer ? "stale" : "ready";
+}

@@ -15,7 +15,7 @@ import { formatWhen, zonedInstant } from "./calendar";
 import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink, venmoProfileLink, venmoUsername, type PaymentSettings, type PayRecord } from "./payments";
 import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
 import { groupChatEnabled } from "./flag";
-import { earlierThan, replyStateAt, type ReplyState } from "./replies";
+import { GROUP_RECIPIENT, draftStatus, earlierThan, replyStateAt, type ReplyState, type StoredDraft } from "./replies";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
 import { calendarUrlAllowed, readPublicCalendar, type CalendarFetch } from "./fetchLimits";
@@ -139,6 +139,10 @@ const SECOND_COPY_MS = 5 * 60_000;
 /** The approval action for a host message. Its target is the recipient, its fingerprint the recipient and the exact text. */
 const SEND_ACTION = "cleaner-message";
 const MESSAGE_NEEDED = `Write the message in 1 to ${MAX_HOST_MESSAGE} characters.`;
+export const DRAFT_UNKNOWN = "I don't have that message. Call check_now and use a message id it returned.";
+export const DRAFT_GONE = "That draft was sent, dropped, or already answered. Call check_now for the drafts still waiting.";
+export const ALREADY_ANSWERED = "The host already answered that message. Drop the draft and tell the host nothing more about it.";
+export const DRAFT_NEW_SINCE = "Something new came in since this draft. Read it with check_now, then save a new draft or drop this one.";
 const RECIPIENT_NEEDED = "Say who to text: the cleaner, the group, or a saved contact's name.";
 const NO_GROUP = "There's no group chat for this property.";
 const GROUP_ONLY = "Messages go to the group. Send it with to: group.";
@@ -399,6 +403,8 @@ interface LiveFile {
   messages?: Message[];
   /** Ids of the messages `check_now` has already returned. */
   messagesShown?: string[];
+  /** Reply drafts waiting for the host's Send. They send nothing by themselves and never expire. */
+  drafts?: StoredDraft[];
   /** Ids of the finished cleanings `check_now` has already returned as completed. */
   completedShown?: string[];
   released?: boolean;
@@ -1491,6 +1497,7 @@ export class LiveDesk {
     const finished = jobs.filter((job) => job.doneAt && !shownDone.has(job.id));
     this.file.completedShown = [...shownDone, ...finished.map((job) => job.id)];
     const payDue = this.payDueNow(jobs);
+    const drafts = this.waitingDrafts();
     prunePhotos(this.root, jobs, this.now());
     this.pruneMessagePhotos();
     this.noteCheck();
@@ -1498,6 +1505,7 @@ export class LiveDesk {
     return this.reply({
       alerts: fresh.map((note) => note.body),
       messages: this.messagesOut(newMessages, save),
+      ...(drafts.length > 0 ? { drafts } : {}),
       ...(earlier.length > 0 ? { earlier: earlier.map(({ photos: _photos, photosAt: _photosAt, ...message }) => this.withReply(message)) } : {}),
       ...(finished.length > 0 ? { completed: finished.map((job) => this.completedFacts(job)) } : {}),
       ...(payDue.length > 0 ? { payDue } : {}),
@@ -2119,6 +2127,56 @@ export class LiveDesk {
   }
 
   /**
+   * Saves one reply draft for a cleaner or contact message, by its id. It sends nothing, so a
+   * routine may call it. The reply goes to the group when there is one, otherwise to the person
+   * who wrote. A new draft for the same message replaces the old one; drop removes it.
+   */
+  saveDraft(input: { replyTo?: string; text?: string; drop?: boolean }, pinKey?: Buffer): Promise<ToolReply> {
+    return this.serial(async () => this.saveDraftNow(input, pinKey));
+  }
+
+  private saveDraftNow(input: { replyTo?: string; text?: string; drop?: boolean }, pinKey: Buffer | undefined): ToolReply {
+    const replyTo = input.replyTo?.trim() ?? "";
+    const kept = this.file.messages ?? [];
+    const at = kept.findIndex((message) => message.id === replyTo);
+    const message = kept[at];
+    if (input.drop) {
+      this.file.drafts = (this.file.drafts ?? []).filter((draft) => draft.replyTo !== replyTo);
+      this.persist();
+      return this.reply({ dropped: true });
+    }
+    if (!message || message.from === "host") return this.fail(DRAFT_UNKNOWN);
+    const text = input.text?.trim() ?? "";
+    if (!text || text.length > MAX_HOST_MESSAGE) return this.fail(MESSAGE_NEEDED);
+    this.openSeal(pinKey);
+    if (this.carriesCode(text)) return this.fail(DOOR_CODE_IN_CHAT);
+    const state = replyStateAt(kept, at);
+    if (state?.reply === "answered") return this.failWith(ALREADY_ANSWERED, { alreadyAnswered: true, by: state.by });
+    const draft: StoredDraft = { id: messageId(), replyTo, to: this.groupOn() ? "group" : message.name, text, base: kept.at(-1)!.id };
+    this.file.drafts = [...(this.file.drafts ?? []).filter((item) => item.replyTo !== replyTo), draft];
+    this.persist();
+    return this.reply({ draft: this.draftOut(draft, "ready") });
+  }
+
+  /** A draft as check_now and save_draft show it: the recipient by name. */
+  private draftOut(draft: StoredDraft, status: "ready" | "stale"): Record<string, unknown> {
+    return { id: draft.id, replyTo: draft.replyTo, to: draft.to === "group" ? GROUP_RECIPIENT : draft.to, text: draft.text, status };
+  }
+
+  /** The drafts still waiting, as check_now returns them. Answered and gone drafts are removed from the file. */
+  private waitingDrafts(): Record<string, unknown>[] {
+    const kept = this.file.messages ?? [];
+    const waiting: { draft: StoredDraft; status: "ready" | "stale" }[] = [];
+    for (const draft of this.file.drafts ?? []) {
+      const status = draftStatus(draft, kept);
+      if (status === "ready" || status === "stale") waiting.push({ draft, status });
+    }
+    if (waiting.length !== (this.file.drafts ?? []).length) this.file.drafts = waiting.map((item) => item.draft);
+    if (this.file.drafts?.length === 0) delete this.file.drafts;
+    return waiting.map((item) => this.draftOut(item.draft, item.status));
+  }
+
+  /**
    * Sends the host's own message to the cleaner, the group, or a saved contact. Without a
    * confirmation it only checks the message and returns the exact text with an approval code.
    * With the code it sends through the engine, and only when the recipient and the text are the
@@ -2285,6 +2343,7 @@ export class LiveDesk {
     delete this.file.alertsQueued;
     delete this.file.messages;
     delete this.file.messagesShown;
+    delete this.file.drafts;
     delete this.file.completedShown;
     delete this.file.timedJobs;
     this.approvals.clear();

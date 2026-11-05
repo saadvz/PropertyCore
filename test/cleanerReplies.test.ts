@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { earlierThan, replyStateAt, type ThreadMessage } from "../src/cleaner-core/replies";
+import { draftStatus, earlierThan, replyStateAt, type StoredDraft, type ThreadMessage } from "../src/cleaner-core/replies";
 
 const ana = (id: string): ThreadMessage => ({ id, from: "cleaner", name: "Ana", handled: "none" });
 
@@ -42,5 +42,27 @@ describe("earlierThan", () => {
 
   it("gives nothing before the first message", () => {
     expect(earlierThan([ana("a")], 0)).toEqual([]);
+  });
+});
+
+describe("draftStatus", () => {
+  const draft: StoredDraft = { id: "d", replyTo: "a", to: "group", text: "Hall closet", base: "a" };
+  it("is ready when nothing came after it", () => {
+    expect(draftStatus(draft, [ana("a")])).toBe("ready");
+  });
+  it("is stale after another inbound message", () => {
+    expect(draftStatus(draft, [ana("a"), ana("b")])).toBe("stale");
+  });
+  it("stays ready after an assistant send to someone else", () => {
+    expect(draftStatus(draft, [ana("a"), { id: "s", from: "host", name: "Host", to: "Sam", handled: "sent" }])).toBe("ready");
+  });
+  it("is answered after the host's group text", () => {
+    expect(draftStatus(draft, [ana("a"), { id: "h", from: "host", name: "Host", channel: "group", handled: "none" }])).toBe("answered");
+  });
+  it("is gone when its message is no longer kept", () => {
+    expect(draftStatus(draft, [ana("b")])).toBe("gone");
+  });
+  it("is gone when its base is no longer kept", () => {
+    expect(draftStatus({ ...draft, base: "z" }, [ana("a")])).toBe("gone");
   });
 });
