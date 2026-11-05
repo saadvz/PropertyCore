@@ -15,6 +15,7 @@ import { formatWhen, zonedInstant } from "./calendar";
 import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink, venmoProfileLink, venmoUsername, type PaymentSettings, type PayRecord } from "./payments";
 import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
 import { groupChatEnabled } from "./flag";
+import { earlierThan, replyStateAt, type ReplyState } from "./replies";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
 import { calendarUrlAllowed, readPublicCalendar, type CalendarFetch } from "./fetchLimits";
@@ -1480,6 +1481,9 @@ export class LiveDesk {
     const messages = this.file.messages ?? [];
     const seen = new Set(this.file.messagesShown ?? []);
     const newMessages = messages.filter((message) => !seen.has(message.id));
+    const firstNew = messages.findIndex((message) => !seen.has(message.id));
+    // Already-shown messages just before the new ones, so a reply can be read against its question.
+    const earlier = firstNew > 0 ? earlierThan(messages, firstNew) : [];
     // Only ids still kept, so the list stays as short as the messages.
     this.file.messagesShown = messages.map((message) => message.id);
     const jobs = engine.jobs();
@@ -1494,6 +1498,7 @@ export class LiveDesk {
     return this.reply({
       alerts: fresh.map((note) => note.body),
       messages: this.messagesOut(newMessages, save),
+      ...(earlier.length > 0 ? { earlier: earlier.map(({ photos: _photos, photosAt: _photosAt, ...message }) => this.withReply(message)) } : {}),
       ...(finished.length > 0 ? { completed: finished.map((job) => this.completedFacts(job)) } : {}),
       ...(payDue.length > 0 ? { payDue } : {}),
       turns: this.turns(),
@@ -2576,11 +2581,19 @@ export class LiveDesk {
     const withPhotos = messages.some((message) => message.photos);
     const base = withPhotos ? publicBaseUrl(this.env()) : undefined;
     const key = base ? photoKey(this.env(), save) : undefined;
-    return messages.map(({ photos, photosAt: _photosAt, ...message }) => {
+    return messages.map(({ photos, photosAt: _photosAt, ...kept }) => {
+      const message = this.withReply(kept);
       if (!photos || !base || !key) return message;
       const links = photoLinks(this.root, messagePhotoId(message.id), base, key, this.now());
       return links.length > 0 ? { ...message, photos: links } : message;
     });
+  }
+
+  /** A cleaner or contact message with whether the host has answered it, read against every kept message. */
+  private withReply<T extends Omit<Message, "photos" | "photosAt">>(message: T): T & Partial<ReplyState> {
+    const kept = this.file.messages ?? [];
+    const state = replyStateAt(kept, kept.findIndex((item) => item.id === message.id));
+    return state ? { ...message, ...state } : message;
   }
 
   /** A kept message's text: every run of 4 or more digits redacted, split or not, trimmed to 300 characters. */
