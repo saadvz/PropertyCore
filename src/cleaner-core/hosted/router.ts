@@ -373,7 +373,7 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
   const supplyCalendar = supplyCalendarCode(rest);
   if (supplyCalendar) {
     const read = await uploadBody(contentType, () => r.readCapped(ALERT_UPLOAD_MAX_BYTES));
-    const saved = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : await supplyDesk(h, tenant).uploadCalendarLink(supplyCalendar, read.parsed);
+    const saved = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : await supplyDesk(h, tenant, property).uploadCalendarLink(supplyCalendar, read.parsed);
     r.send(saved.status, JSON_TYPE, JSON.stringify(saved.body), saved.status === 413 ? { Connection: "close" } : {});
     return true;
   }
