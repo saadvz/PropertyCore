@@ -11,6 +11,7 @@ import { REPLY_INSTRUCTIONS, ROUTINE_REPLY_SENTENCE } from "../src/cleaner-core/
 import { askNext } from "../src/cleaner-core/setupAsk";
 import { DOOR_CODE } from "./wiringProof";
 import { filesUnder } from "./files";
+import { SUPPLY_FRONT_NAMES } from "../src/supply-core/hosted";
 
 /** The Cleaner Core paste-in prompt, setup guide, and Grok Bot template: pinned, consistent with the tools, and free of secrets. */
 
@@ -163,6 +164,22 @@ describe("Cleaner Core template manifest", () => {
     expect(profile).toMatch(/use\s+your\s+secure\s+card\s+for\s+the\s+door\s+code/i);
     expect(profile).toMatch(/only\s+to\s+the\s+one-time\s+upload\s+link,\s+from\s+your\s+own\s+computer/);
     expect(profile).not.toMatch(/webhook\s+addresses, or door codes\. Use your secure card\./);
+  });
+
+  it("knows the Venmo payments step and the Supply Core add-on", () => {
+    const profile = read(join(TEMPLATE, manifest().profile));
+    const instructions = profile.slice(profile.indexOf("## Standing instructions"));
+    expect(profile.slice(0, profile.indexOf("## Standing instructions"))).toMatch(/Venmo[\s\S]*Supply Core/);
+    for (const tool of ["save_payments", "mark_paid", "choose_supplies", "turn_on_supplies", "get_supply_state", "report_low", "check_cart", "approve_cart", "turn_off_supplies"]) {
+      expect(instructions, tool).toContain(`\`${tool}\``);
+    }
+    expect(instructions).toContain("`SUPPLY_CORE_BOOTSTRAP.md`");
+    expect(instructions).toContain("`supply-template/routines/`");
+    const flat = instructions.replace(/\s+/g, " ");
+    expect(flat).toMatch(/Call `check_cart` before Place Order, every time/);
+    expect(flat).toMatch(/Never type, paste, or pass a card number, expiry, or security code to Supply Core/);
+    expect(flat).toMatch(/A cleaner's words only mark list items low/);
+    expect(flat).toMatch(/A routine run never calls `approve_cart` with a code/);
   });
 
   it("leaves the Tour Core template alone", () => {
@@ -322,8 +339,8 @@ describe("Cleaner Core initialize instructions", () => {
 describe("Cleaner Core template docs", () => {
   const docs = () => [BOOTSTRAP, ...filesUnder(TEMPLATE)].map((f) => ({ f, text: read(f) }));
 
-  it("name only real Cleaner Core tools", async () => {
-    const tools = await toolNames();
+  it("name only real Cleaner Core tools, or Supply Core's when the add-on is on", async () => {
+    const tools = [...(await toolNames()), ...SUPPLY_FRONT_NAMES];
     for (const { f, text } of docs()) {
       for (const m of text.matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) expect(tools, `${f}: ${m[1]}`).toContain(m[1]);
     }

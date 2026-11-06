@@ -92,8 +92,10 @@ with `choice: "cleaners"`, which picks scheduling cleaners.
    https://github.com/saadvz/TourCore. When the API trigger shows its Fire URL
    and token, call `save_alert_routine` with no arguments and send the host
    the `uploadUrl`. They paste both on that page, never in chat. Then call
-   `get_state` to confirm. Activate is refused until the task is connected, so
-   no reply from the cleaner goes unheard.
+   `get_state` to confirm. Activate is refused until the task is connected and
+   Cleaner Core's test wake-up has reached it, so no reply from the cleaner
+   goes unheard. If `get_state` or Activate says the task refused the test,
+   ask the host to make a new token and save both again from a fresh link.
 9. Review and Activate: summarize `setup` in your own words. When the host
    replies Activate, call `activate`. Pass Google Calendar's events when the
    host uses it.

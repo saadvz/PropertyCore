@@ -22,6 +22,8 @@ import {
   uploadPageOf,
 } from "../http";
 import { drainCleanerAlerts, liveDeskFor } from "../liveDesk";
+import { supplyCalendarCode } from "../../supply-core/desk";
+import { supplyDesk } from "../../supply-core/hosted";
 import type { DeleteSecrets, SaveSecrets } from "../mcp";
 import { CLEANER_PHOTO_PREFIX, photoKey, servePhoto } from "../photos";
 import { handleCleanerUploadPage, isFormPost } from "../uploadPage";
@@ -164,6 +166,13 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
       r.send(200, "text/xml", EMPTY_TWIML);
       return true;
     }
+    if (tenant.service === "supplies") {
+      // Supply Core never texts, so its number keeps nothing and answers nothing.
+      h.log(`A text reached ${tenant.id}, which runs Supply Core. Nothing was sent.`);
+      h.registry.touch(tenant.id);
+      r.send(200, "text/xml", EMPTY_TWIML);
+      return true;
+    }
     if (tenant.service && h.touring) {
       // The shared token signs every tenant's texts. Checked first, so a forged STOP never changes an opt-out.
       if (!signedByTwilio(h, r, rawBody, signed(path))) {
@@ -196,6 +205,7 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
     path.startsWith(CLEANER_PHOTO_PREFIX) ||
     alertUploadCode(path) ||
     calendarUploadCode(path) ||
+    supplyCalendarCode(path) ||
     doorCodeUploadCode(path) ||
     uploadPageOf(path)
   ) {
@@ -319,6 +329,13 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
   const alert = alertUploadCode(rest);
   const calendar = calendarUploadCode(rest);
   const door = doorCodeUploadCode(rest);
+  const supplyCalendar = supplyCalendarCode(rest);
+  if (supplyCalendar) {
+    const read = await uploadBody(contentType, () => r.readCapped(ALERT_UPLOAD_MAX_BYTES));
+    const saved = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : await supplyDesk(h, tenant).uploadCalendarLink(supplyCalendar, read.parsed);
+    r.send(saved.status, JSON_TYPE, JSON.stringify(saved.body), saved.status === 413 ? { Connection: "close" } : {});
+    return true;
+  }
   const result = alert
     ? await handleCleanerAlertUpload({ ...upload, code: alert, saveSecrets: ctx.saveSecrets })
     : calendar

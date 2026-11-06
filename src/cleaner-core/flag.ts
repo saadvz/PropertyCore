@@ -16,6 +16,12 @@ export function cleanerMultiTenant(env: NodeJS.ProcessEnv = process.env): boolea
   return raw === "1" || raw === "true";
 }
 
+/** Supply Core as a service choice on the multi-tenant service. Off unless SUPPLY_CORE is exactly "1" or "true". */
+export function supplyCoreOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.SUPPLY_CORE?.trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
 /** Touring tenants on the multi-tenant service. Off unless TOUR_CORE_TENANTS is exactly "1" or "true". */
 export function tourCoreTenants(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.TOUR_CORE_TENANTS?.trim().toLowerCase();

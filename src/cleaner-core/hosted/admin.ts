@@ -2,12 +2,12 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { rmSync } from "node:fs";
 import { parsePhone } from "../../core/phone";
-import { forgetLiveDesk } from "../liveDesk";
+import { forgetLiveDesk, liveDeskFor } from "../liveDesk";
 import { switchService } from "../../hosted/service";
 import { refreshTouringAlerts as tellTouringAlerts } from "../../hosted/touringAlerts";
 import { ADMIN_HEADERS, invitePage, loginPage, messagePage, tenantPage, tenantsPage, type TenantHealth } from "./adminPages";
 import { RegistryError, tenantFolder, type Tenant, type TenantService } from "./registry";
-import type { HostedCleaner } from "./router";
+import { tenantContext, type HostedCleaner } from "./router";
 import { findIncomingNumber, pointSmsWebhook } from "./twilioNumbers";
 
 /**
@@ -260,12 +260,20 @@ async function createTenant(deps: AdminDeps, form: URLSearchParams, csrf: string
   return html(200, invitePage(created.tenant, created.inviteCode, connectorUrl(h)));
 }
 
-/** The service column, the touring process, its restarts, and the texts waiting for it. Nothing secret. */
+/**
+ * The service column, the touring process, its restarts, the texts waiting for it, and whether a
+ * cleaning tenant's wake-ups reach its alert routine. Nothing secret.
+ */
 function healthOf(h: HostedCleaner, tenant: Tenant): TenantHealth {
   const service = tenant.service ?? "not chosen";
-  if (tenant.service !== "touring" || !h.touring) return { service, process: "—", restartsLastDay: 0, queuedTexts: 0 };
+  if (tenant.service === "cleaning") {
+    const ctx = tenantContext(h, tenant);
+    const alerts = liveDeskFor(ctx.root, ctx.env, () => h.now()).wakeHealth();
+    return { service, process: "—", restartsLastDay: 0, queuedTexts: 0, alerts };
+  }
+  if (tenant.service !== "touring" || !h.touring) return { service, process: "—", restartsLastDay: 0, queuedTexts: 0, alerts: "—" };
   const health = h.touring.supervisor.health(tenant.id);
-  return { service, process: health.up ? "up" : "down", restartsLastDay: health.restartsLastDay, queuedTexts: h.touring.inbox.pending(tenant.id).length };
+  return { service, process: health.up ? "up" : "down", restartsLastDay: health.restartsLastDay, queuedTexts: h.touring.inbox.pending(tenant.id).length, alerts: "—" };
 }
 
 /**

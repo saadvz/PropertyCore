@@ -108,6 +108,11 @@ export const PHOTO_FIRST = "Please send a photo of the finished rooms, then repl
 export const CHECKLIST_ASK = "Before I mark it done: is everything on the checklist I sent finished? Reply YES or NO.";
 
 /** The reply to NO: the cleaning stays open. */
+/** The done text when Supply Core is on: the cleaner is asked once what's running low. */
+export const SUPPLY_DONE_ASK = "Thanks, cleaning marked done. Anything running low? Reply with what's low, or NONE.";
+/** The reply to the cleaner's supplies answer. */
+export const SUPPLY_NOTED = "Thanks, noted.";
+
 export const CHECKLIST_NOT_DONE = "No problem. Finish up and reply DONE when everything's done.";
 
 export function reminderBody(address: string, when: { day: string; time: string }, privateTurn: boolean): string {

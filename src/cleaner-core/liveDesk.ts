@@ -8,18 +8,19 @@ import { OperatorEventOutbox } from "../alerts/outbox";
 import { parsePhone } from "../core/phone";
 import { FileRuntimeStore } from "../storage/runtimeStore";
 import { ConfirmationBook } from "../operator/confirmations";
+import { supplyAskOn } from "../supply-core/store";
 import { messagingKeyword, normalize } from "../intent";
 import { stripFiller } from "../intent/normalize";
 import { spokenTimes } from "../core/spokenTime";
 import { formatWhen, zonedInstant } from "./calendar";
 import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink, venmoProfileLink, venmoUsername, type PaymentSettings, type PayRecord } from "./payments";
 import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
-import { groupChatEnabled } from "./flag";
+import { cleanerMultiTenant, groupChatEnabled } from "./flag";
 import { GROUP_RECIPIENT, draftStatus, earlierThan, replyStateAt, type ReplyState, type StoredDraft } from "./replies";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
 import { calendarUrlAllowed, readPublicCalendar, type CalendarFetch } from "./fetchLimits";
-import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, PAYMENTS_STEP, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, type SetupAsk } from "./setupAsk";
+import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, PAYMENTS_STEP, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, SUPPLIES_STEP, type SetupAsk } from "./setupAsk";
 import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jobHoldLine, optedOutCodeLine, resumeNote } from "./cleanerTexts";
 import { isInjuryReport } from "./injury";
 import { GroupNotConfirmed } from "./groupThread";
@@ -69,6 +70,10 @@ const PIN_REENTER = "Please enter the door code again in the private box. Don't 
 export const DOOR_CODE_IN_CHAT = "Please don't send the door code in chat. Use the private box instead.";
 const DIRECT_TEXT_REPLY = "Got it. To send the door code, tell your Grok Bot the guests have left. The cleaner is still waiting for the OK.";
 const ROUTINE_SAVED = "Alerts are connected. I queued a test alert for the routine.";
+/** Activate's refusal while the routine's test wake-up hasn't gone through. The reason and the fix follow. */
+const ACTIVATE_WAITS_FOR_WAKE = "Nothing was texted: Activate waits until Cleaner Core's test wake-up reaches the alert routine.";
+/** A test wake-up that is saved but hasn't been tried yet. */
+const WAKE_NOT_TRIED = "The test wake-up hasn't gone through yet.";
 const ROUTINE_SAVED_IN_SETUP = `${ROUTINE_SAVED} Then call get_state for the review.`;
 const NOT_ACTIVE_YET = "Cleaner Core isn't active yet. Post nothing.";
 const ROUTINE_NEEDED =
@@ -384,6 +389,8 @@ interface LiveFile {
   preferences?: Preferences;
   /** Set once the host answered the Payments step, or turned payments on later. */
   payments?: PaymentSettings;
+  /** Set once the host answered whether to set up Supply Core, or turned it on. */
+  suppliesAsked?: boolean;
   /** Each finished cleaning's pay, by job id, once it became owed. */
   pay?: Record<string, PayRecord>;
   /** Legacy single link from save_calendar_link. It reads as one calendar named Guesty Lite. */
@@ -416,6 +423,8 @@ interface LiveFile {
   alertsShown?: string[];
   /** Ids of the host notes that already woke the cleaning routine. */
   alertsQueued?: string[];
+  /** The failed wake-up check_now already told the host about, so each problem is told once. */
+  wakeProblemShown?: string;
   /** The last 200 inbound messages, oldest first. */
   messages?: Message[];
   /** Ids of the messages `check_now` has already returned. */
@@ -470,6 +479,11 @@ let calendarFetch: CalendarFetch | undefined;
 /** Tests stub the calendar read. Unset uses the platform fetch. */
 export function setCleanerCalendarFetch(fetchImpl: CalendarFetch | undefined): void {
   calendarFetch = fetchImpl;
+}
+
+/** The calendar read Cleaner Core uses, so Supply Core's booking calendars read the same way. */
+export function cleanerCalendarFetch(): CalendarFetch {
+  return calendarFetch ?? fetch;
 }
 
 type AlertFetch = NonNullable<NonNullable<ConstructorParameters<typeof GrokRoutineWebhookSink>[1]>["fetch"]>;
@@ -837,6 +851,75 @@ export class LiveDesk {
 
   private startDrain(): void {
     void this.drainAlerts().catch(() => undefined);
+  }
+
+  /**
+   * The newest wake-up that didn't reach the alert routine, unless a later one got through. A
+   * ChatGPT or Muse task can't be woken, so it never has one. The error is plain words, never the
+   * address or key.
+   */
+  private wakeProblem(): { eventId: string; error: string } | undefined {
+    if (this.polledTask(this.primaryAssistant())) return undefined;
+    const records = this.alerts.records();
+    const lastDelivered = records
+      .map((record) => (record.status === "delivered" ? record.deliveredAt : undefined))
+      .filter((at): at is string => Boolean(at))
+      .sort()
+      .at(-1);
+    const missed = records
+      .filter((record) => record.status === "failed" || (record.status === "pending" && record.attempts > 0))
+      .filter((record) => !lastDelivered || (record.lastAttemptAt ?? "") > lastDelivered)
+      .sort((a, b) => (a.lastAttemptAt ?? "").localeCompare(b.lastAttemptAt ?? ""))
+      .at(-1);
+    if (!missed) return undefined;
+    return { eventId: missed.event.eventId, error: missed.lastError ?? "The last wake-up didn't go through." };
+  }
+
+  /**
+   * Activate's check: undefined once a test wake-up reached the routine and none failed since, else
+   * why not and how to fix it. Tries any wake-up that is due first. A setup with no test saved gets one.
+   */
+  private async wakeTestRefusal(): Promise<string | undefined> {
+    if (this.polledTask(this.primaryAssistant())) return undefined;
+    const tests = () => this.alerts.records().filter((record) => record.event.eventType === "installation.test");
+    if (tests().length === 0) this.alerts.enqueue(testEvent(this.now()));
+    await this.alerts.drain().catch(() => undefined);
+    const problem = this.wakeProblem();
+    if (!problem && tests().some((record) => record.status === "delivered")) return undefined;
+    return `${ACTIVATE_WAITS_FOR_WAKE} ${problem?.error ?? WAKE_NOT_TRIED} ${this.words().routineNeeded}`;
+  }
+
+  /**
+   * The admin page's word on this tenant's wake-ups: "failing: <why>", "working" once one got
+   * through, or "—" before any was tried. Never the address or key.
+   */
+  wakeHealth(): string {
+    const problem = this.wakeProblem();
+    if (problem) return `failing: ${problem.error}`;
+    return this.alerts.records().some((record) => record.status === "delivered") ? "working" : "—";
+  }
+
+  /** get_state's warning for the assistant while wake-ups aren't getting through, with the fix. */
+  private wakeWarning(): string | undefined {
+    if (!this.file.routineConnected) return undefined;
+    const problem = this.wakeProblem();
+    if (!problem) return undefined;
+    return `Cleaner Core couldn't wake the alert routine. ${problem.error} Until it's fixed, a text from the cleaner shows up only at the next scheduled check. ${this.words().routineNeeded}`;
+  }
+
+  /**
+   * check_now's one line for the host about a wake-up that didn't get through, the first time
+   * check_now sees that problem. The scheduled run reads it, so it names the chat, not a tool. The caller persists.
+   */
+  private wakeAlert(): string | undefined {
+    const problem = this.file.routineConnected ? this.wakeProblem() : undefined;
+    if (!problem) {
+      delete this.file.wakeProblemShown;
+      return undefined;
+    }
+    if (this.file.wakeProblemShown === problem.eventId) return undefined;
+    this.file.wakeProblemShown = problem.eventId;
+    return `Cleaner Core couldn't wake your alerts, so a text from the cleaner waits for the next scheduled check. ${problem.error} Ask ${this.hostWords().helper} to reconnect Cleaner Core's alerts.`;
   }
 
   /** Ids of the host notes visible now. Taken before a path Grok doesn't see, so only that path's notes wake the routine. */
@@ -1434,6 +1517,12 @@ export class LiveDesk {
         const task = this.task();
         return task ? this.failWith(this.words().routineAsk, { routine: task }) : this.fail(ROUTINE_ASK);
       }
+      // A routine that refuses its wake-ups would leave the cleaner's replies unheard, so its test has to get through first.
+      const unwoken = await this.wakeTestRefusal();
+      if (unwoken) {
+        const task = this.task();
+        return task ? this.failWith(unwoken, { routine: task }) : this.fail(unwoken);
+      }
       // Already inside the serial queue, so the inner steps, never runChecks.
       const texting = this.setUpTextingNow();
       if (!texting.ok) return texting;
@@ -1521,12 +1610,13 @@ export class LiveDesk {
     const payDue = this.payDueNow(jobs);
     const drafts = this.waitingDrafts();
     const savedAnswers = this.savedAnswersOut();
+    const wake = this.wakeAlert();
     prunePhotos(this.root, jobs, this.now());
     this.pruneMessagePhotos();
     this.noteCheck();
     this.persist();
     return this.reply({
-      alerts: fresh.map((note) => note.body),
+      alerts: [...fresh.map((note) => note.body), ...(wake ? [wake] : [])],
       messages: this.messagesOut(newMessages, save),
       ...(drafts.length > 0 ? { drafts } : {}),
       ...(savedAnswers.length > 0 ? { savedAnswers } : {}),
@@ -1841,6 +1931,39 @@ export class LiveDesk {
     const zone = this.file.timeZone ?? "UTC";
     const dayOf = (job: JobView) => formatWhen(zonedInstant(job.checkoutDate, "12:00", zone), zone).day.toLowerCase();
     return jobs.find((item) => item.checkoutDate === wanted || dayOf(item) === wanted || item.id.toLowerCase() === wanted);
+  }
+
+  /** Supply Core's view of this property, from the saved details. Undefined until they're saved. */
+  propertyForSupplies(): { name: string; address: string; timeZone: string } | undefined {
+    if (!this.file.address || !this.file.timeZone) return undefined;
+    return { name: this.file.nickname ?? this.file.business ?? this.file.address, address: this.file.address, timeZone: this.file.timeZone };
+  }
+
+  /** The checkout dates of every turnover that isn't called off, for Supply Core's by-bookings items. */
+  turnoverDates(): Promise<{ checkoutYmd: string }[]> {
+    return this.serial(async () => {
+      this.resume();
+      return (this.engine?.jobs() ?? []).filter((job) => job.status !== "canceled").map((job) => ({ checkoutYmd: job.checkoutDate }));
+    });
+  }
+
+  /** Supply Core is offered at setup only to a Grok chat on the shared service, where the add-on lives. */
+  private offersSupplies(): boolean {
+    return this.assistant() === "grok" && cleanerMultiTenant(this.env());
+  }
+
+  /** The host answered the Supply Core question, or turned it on another way: setup doesn't ask again. */
+  noteSuppliesChoice(): Promise<void> {
+    return this.serial(async () => {
+      if (this.file.suppliesAsked) return;
+      this.file.suppliesAsked = true;
+      this.persist();
+    });
+  }
+
+  /** Supply Core turned on, off, or activated: the engine reopens before the next step and reads it. */
+  refreshSupplyAsk(): void {
+    this.stale = true;
   }
 
   getTurns(): Promise<ToolReply> {
@@ -2924,6 +3047,7 @@ export class LiveDesk {
     else if (!this.codeSaved()) ask = DOOR_CODE_STEP;
     else if (!this.file.texting && !preferences) ask = PREFERENCES_STEP;
     else if (!this.file.texting && !this.file.payments) ask = PAYMENTS_STEP;
+    else if (!this.file.texting && !this.file.suppliesAsked && this.offersSupplies()) ask = SUPPLIES_STEP;
     if (ask) next = askNext(ask.tool);
     // The routines come before the review, so the cleaner's first reply already wakes Grok.
     else if (!this.file.texting && !this.routineReady()) next = this.words().routineAsk;
@@ -2947,7 +3071,7 @@ export class LiveDesk {
     // Muse shows choice cards, as Grok does. Claude and ChatGPT show a short list.
     if (ask && asking && (assistant === "claude" || assistant === "chatgpt")) next = claudeAskNext(ask.tool);
     const task = this.task();
-    const warning = this.taskWarning();
+    const warning = this.taskWarning() ?? this.wakeWarning();
     return {
       done,
       next,
@@ -3101,9 +3225,12 @@ export class LiveDesk {
 
   /** The engine options for the saved preferences. The cleaning note is set only when instructions are saved. */
   private preferenceOptions(): Partial<Parameters<typeof openCleanerCore>[0]> {
+    // Supply Core on and active: the done text also asks what's running low.
+    const supplies = supplyAskOn(this.root) ? { supplyAsk: true } : {};
     const preferences = this.file.preferences;
-    if (!preferences) return {};
+    if (!preferences) return supplies;
     return {
+      ...supplies,
       ...(preferences.checklist.length > 0 ? { checklist: { name: this.file.nickname ?? this.file.address ?? "the property", items: [...preferences.checklist] } } : {}),
       ...(preferences.photosRequired ? { photosRequired: true } : {}),
       ...(preferences.supplyNotes ? { supplyNotes: true } : {}),

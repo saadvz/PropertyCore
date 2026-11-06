@@ -19,7 +19,7 @@ import { consentPage, PAGE_HEADERS, problemPage } from "./pages";
 import { hashSecret, newSecret, type OAuthGrantStore } from "./store";
 import { assistantForRedirect, type CleanerAssistant } from "../../cleaner-core/assistant";
 import type { InviteRefusal } from "../../cleaner-core/hosted/registry";
-import { servicePick, type ServicePick } from "../../hosted/serviceChoice";
+import { servicePick, type ServiceChoice, type ServicePick } from "../../hosted/serviceChoice";
 
 /**
  * Tour Core's authorization server, behind the official MCP SDK's OAuth
@@ -138,8 +138,10 @@ export interface InviteBook {
   connected(tenantId: string, grantId: string, assistant: CleanerAssistant): void;
   /** The host picked a service on the shared address's page. Sets it only when the number has none yet. */
   choose?(tenantId: string, service: ServicePick): void;
-  /** Whether the shared address's page offers the pick: both services run here. */
-  offersPick?(): boolean;
+  /** Whether the shared address's page offers the pick: more than one service runs here. */
+  offersPick?(assistant?: CleanerAssistant): boolean;
+  /** The services on offer to this chat, when the page shows the pick. */
+  choices?(assistant?: CleanerAssistant): readonly ServiceChoice[];
   /** The words for each refusal. */
   refusal(reason: InviteRefusal): string;
 }
@@ -357,7 +359,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
       label: ep.label,
       // On the multi-tenant service every address takes an invite code.
       ...(this.options.invites
-        ? { assistant: assistantForRedirect(request.redirectUri), invite: true, services: ep.label === "Tour Core and Cleaner Core" && (this.options.invites.offersPick?.() ?? false) }
+        ? { assistant: assistantForRedirect(request.redirectUri), invite: true, services: ep.label === "Tour Core and Cleaner Core" && (this.options.invites.offersPick?.(assistantForRedirect(request.redirectUri)) ?? false), ...(this.options.invites.choices ? { serviceChoices: this.options.invites.choices(assistantForRedirect(request.redirectUri)) } : {}) }
         : ep.label === "Cleaner Core" && this.options.cleanerAssistant
           ? { assistant: this.options.cleanerAssistant() }
           : {}),
@@ -399,9 +401,9 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
     request.tenantId = claim.tenantId;
     if (!this.decide(id, "approved")) return refused;
     // Only the shared address offers the pick, and only while both services run.
-    const pick = servicePick(service);
+    const pick = servicePick(service, invites.choices?.(assistantForRedirect(request.redirectUri)));
     const shared = this.options.endpoints()?.find((ep) => ep.path === request.resourcePath)?.label === "Tour Core and Cleaner Core";
-    if (pick && shared && invites.offersPick?.()) invites.choose?.(claim.tenantId, pick);
+    if (pick && shared && invites.offersPick?.(assistantForRedirect(request.redirectUri))) invites.choose?.(claim.tenantId, pick);
     this.log(`A Cleaner Core approval used an invite for ${claim.tenantId}.`);
     return { ok: true };
   }

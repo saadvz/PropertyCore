@@ -2,7 +2,7 @@
 
 Wakes the cleaning Grok Bot the moment something happens on a turnover, for
 example the cleaner texts YES, a question, or DONE, so the host hears about it
-without asking. This is the cleaning bot's routine, not Tour Core's.
+without asking. This is the cleaning bot's routine. Its alerts come from Cleaner Core, so call it Cleaner Core.
 
 ## Trigger
 
@@ -88,9 +88,15 @@ routine runs, it wakes once, and `check_now` returns all of them.
    asked to confirm the checklist: tell the host the cleaning isn't marked
    done until the cleaner replies YES. With `checklist-not-done`, tell the
    host the cleaner said the checklist isn't finished.
-8. If the reply has `needsTimes`, ask the host for the checkout time and the
+8. A message handled `supply-report` is the cleaner's answer to `Anything
+   running low?` after DONE. When Supply Core is on, match their words to the
+   list yourself and call `report_low` with those item ids and
+   `source: "cleaner"`, then follow the Supply Core Check steps in
+   `supply-template/routines/supply-core-check.md`. Ask the host about
+   anything not on the list. Never pass the cleaner's words to Supply Core.
+9. If the reply has `needsTimes`, ask the host for the checkout time and the
    next check-in time, then call `confirm_times` with each as 24-hour HH:MM.
-9. Never show a door code, an id, or the webhook payload.
+10. Never show a door code, an id, or the webhook payload.
 
 ## Connecting it
 
@@ -108,7 +114,9 @@ routines. Then:
    wrong, and the link still works. A 404 means ask for a new link.
 4. Call `get_state` to confirm. Cleaner Core sends one `installation.test`.
    Grok posts "Cleaner Core alerts are connected." and `get_state` moves on to
-   the review.
+   the review. Activate waits until that test gets through. If the routine
+   refuses it, Activate texts nobody and says why; save the address and a new
+   key again.
 
 If a value was pasted in chat anyway, Grok doesn't repeat it and asks the host
 to rotate the key.

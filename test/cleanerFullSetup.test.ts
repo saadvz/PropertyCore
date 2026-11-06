@@ -2098,6 +2098,8 @@ describe("Cleaner Core full diagram", () => {
     await say("save_door_code", { code: DOOR_CODE, lockLocation: LOCK });
     await say("save_preferences", PREFERENCES);
     await say("save_payments", { on: false });
+    // On Grok on the shared service, setup asks once whether to set up Supply Core too.
+    await say("choose_supplies", { on: false });
     await safe("2 setup");
 
     // 3. The alert routine, before the review, with a stubbed webhook. A Grok Bot's secure card can't
