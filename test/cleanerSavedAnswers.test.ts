@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ANSWER_NEEDED, ANSWER_TOO_LONG, DOOR_CODE_IN_CHAT, NO_SUCH_ANSWER, TOPIC_TOO_LONG, type LiveDesk } from "../src/cleaner-core/liveDesk";
+import { ANSWER_NEEDED, ANSWER_TOO_LONG, CODE_IN_DRAFT, CODE_IN_SAVED_ANSWER, DOOR_CODE_IN_CHAT, NO_SUCH_ANSWER, TOPIC_TOO_LONG, type LiveDesk } from "../src/cleaner-core/liveDesk";
 import { approvedOnDesk } from "./hostApproval";
 import { CLEANER, DOOR_CODE } from "./wiringProof";
-import { cleanupDesks, liveGroup, ok, refused } from "./cleanerDeskHarness";
+import { PIN_KEY, cleanupDesks, idOf, liveGroup, ok, refused } from "./cleanerDeskHarness";
 
 afterEach(() => cleanupDesks());
 
@@ -102,5 +102,39 @@ describe("save_answer", () => {
     ok(await approvedOnDesk((confirmation) => desk.resetProperty(confirmation ? { confirmation } : {}, () => undefined)));
     const file = join(root, "cleaner-live.json");
     expect(existsSync(file) ? readFileSync(file, "utf8") : "").not.toContain("Bins go out");
+  });
+});
+
+describe("Saved answers and the door code", () => {
+  it("refuses a long number in an answer while the door code is sealed and can't be checked", async () => {
+    const opened = await liveGroup();
+    const desk = opened.reopen();
+    expect(refused(await desk.saveAnswer({ topic: "Gate", answer: "The gate code is 4417." })).error).toBe(DOOR_CODE_IN_CHAT);
+    expect(ok(await desk.saveAnswer({ topic: "Gate", answer: "The gate code is 4417." }, PIN_KEY)).preview).toEqual({ topic: "Gate", answer: "The gate code is 4417." });
+  });
+
+  it("says a new door code's digits are in a saved answer, without repeating them", async () => {
+    const { desk } = await liveGroup();
+    ok(await approvedOnDesk((confirmation) => desk.saveAnswer({ topic: "Gate", answer: "The side gate opens with 4417.", ...(confirmation ? { confirmation } : {}) }, PIN_KEY)));
+    const error = refused(await desk.saveDoorCode({ code: "4417" }, PIN_KEY)).error;
+    expect(error).toBe(CODE_IN_SAVED_ANSWER("Gate"));
+    expect(error).not.toContain("4417");
+  });
+
+  it("names no topic when the topic itself holds the digits", async () => {
+    const { desk } = await liveGroup();
+    ok(await approvedOnDesk((confirmation) => desk.saveAnswer({ topic: "Box 4417", answer: "By the back door.", ...(confirmation ? { confirmation } : {}) }, PIN_KEY)));
+    const error = refused(await desk.saveDoorCode({ code: "4417" }, PIN_KEY)).error;
+    expect(error).toBe(CODE_IN_SAVED_ANSWER());
+    expect(error).not.toContain("4417");
+  });
+
+  it("says a new door code's digits are in a waiting draft", async () => {
+    const { desk } = await liveGroup();
+    await desk.inbound({ id: "q", from: CLEANER, text: "How do I get in the side gate?", channel: "group" });
+    ok(await desk.saveDraft({ replyTo: await idOf(desk, "How do I get in the side gate?"), text: "It opens with 4417." }, PIN_KEY));
+    const error = refused(await desk.saveDoorCode({ code: "4417" }, PIN_KEY)).error;
+    expect(error).toBe(CODE_IN_DRAFT);
+    expect(error).not.toContain("4417");
   });
 });
