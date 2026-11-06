@@ -3359,7 +3359,8 @@ export class LiveDesk {
         ? {
             groupChat: {
               hostName: file.hostName ?? file.business,
-              cleanerName: file.cleanerName ?? "Maria",
+              // No saved name: address them by their role, never by a made-up name.
+              cleanerName: file.cleanerName ?? "Cleaner",
               ...(extra.length > 0 ? { extra } : {}),
               ...(file.doorCodeTo ? { doorCodeTo: file.doorCodeTo } : {}),
             },
