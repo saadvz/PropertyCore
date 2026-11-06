@@ -182,7 +182,10 @@ describe("the cleaning add-on", () => {
     const ask = await m.toolAt("/mcp/cleaner-core", grok, "turn_off_supplies");
     expect(m.registry.get(tenant.id)?.supplies).toBe(true);
     const code = (ask.structured?.confirmation as { code: string }).code;
+    // The pending code is kept in the tenant's folder, so a restart between the two calls keeps it.
+    expect(existsSync(join(tenantFolder(m.app.root, tenant.id), "supply-approvals-front.json"))).toBe(true);
     expect((await m.toolAt("/mcp/cleaner-core", grok, "turn_off_supplies", { confirmation: code })).isError).toBe(false);
+    expect((await m.toolAt("/mcp/cleaner-core", grok, "turn_off_supplies", { confirmation: code })).isError).toBe(true);
     expect(m.registry.get(tenant.id)?.supplies).toBe(false);
     expect(await m.toolNames("/mcp/cleaner-core", grok)).not.toContain("save_supply_item");
     expect(readSupply(tenantFolder(m.app.root, tenant.id)).offAt).toBeDefined();

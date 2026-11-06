@@ -676,12 +676,10 @@ export class LiveDesk {
   private held = false;
   private readonly path: string;
   private readonly alerts: OperatorEventOutbox;
-  /** Approvals for host messages. They live only in this process, so a restart means asking again. */
+  /** Approvals for host messages, payments and other changes. Kept in the folder, so a restart keeps them. */
   private readonly approvals: ConfirmationBook;
-  /** Approvals for saved drafts. They never expire; a restart means asking for a new code. */
+  /** Approvals for saved drafts. They never expire and are tagged with the draft's id, so they leave with it. */
   private readonly draftApprovals: ConfirmationBook;
-  /** The codes issued for each draft, by draft id, so they leave the book with the draft. */
-  private readonly draftCodes = new Map<string, string[]>();
   /** The door-code key of the call that made the pending upload link. Only in memory. */
   private uploadKey: Buffer | undefined;
 
@@ -691,8 +689,8 @@ export class LiveDesk {
     private readonly now: () => Date,
   ) {
     this.path = join(root, "cleaner-live.json");
-    this.approvals = new ConfirmationBook(10 * 60_000, () => this.now().getTime());
-    this.draftApprovals = new ConfirmationBook(Number.POSITIVE_INFINITY, () => this.now().getTime());
+    this.approvals = new ConfirmationBook(10 * 60_000, () => this.now().getTime(), { file: join(root, "cleaner-approvals.json") });
+    this.draftApprovals = new ConfirmationBook(Number.POSITIVE_INFINITY, () => this.now().getTime(), { file: join(root, "cleaner-draft-approvals.json") });
     this.load();
     // With the server's key, a saved code opens at load, so a redeploy doesn't ask for it again.
     this.openSeal();
@@ -2373,8 +2371,7 @@ export class LiveDesk {
     const keep = new Set(next.map((draft) => draft.id));
     for (const draft of this.file.drafts ?? []) {
       if (keep.has(draft.id)) continue;
-      for (const code of this.draftCodes.get(draft.id) ?? []) this.draftApprovals.drop(code);
-      this.draftCodes.delete(draft.id);
+      this.draftApprovals.dropTagged(draft.id);
     }
     if (next.length > 0) this.file.drafts = next;
     else delete this.file.drafts;
@@ -2484,8 +2481,7 @@ export class LiveDesk {
     const code = confirmation?.trim() ?? "";
     if (!code) {
       const question = `Send to ${recipient.name}: "${draft.text}"?`;
-      const issued = this.draftApprovals.issue(SEND_ACTION, recipient.key, fingerprint, question);
-      this.draftCodes.set(draft.id, [...(this.draftCodes.get(draft.id) ?? []), issued.code]);
+      const issued = this.draftApprovals.issue(SEND_ACTION, recipient.key, fingerprint, question, draft.id);
       return this.reply({ preview: { to: recipient.name, text: draft.text }, confirmation: issued });
     }
     try {
@@ -2633,7 +2629,6 @@ export class LiveDesk {
       this.held = false;
       this.approvals.clear();
       this.draftApprovals.clear();
-      this.draftCodes.clear();
     }
     if (!wiped) return this.fail(RESET_UNFINISHED);
     return this.reply({ next: `Cleaner Core is reset for ${address}. Start setup again whenever you're ready.` });
@@ -2670,7 +2665,6 @@ export class LiveDesk {
     delete this.file.timedJobs;
     this.approvals.clear();
     this.draftApprovals.clear();
-    this.draftCodes.clear();
     this.held = false;
     this.persist();
     return this.reply({ next: groupGone ? SCRATCH_RESET_LINE : `${SCRATCH_RESET_LINE} ${SCRATCH_GROUP_KEPT}` });

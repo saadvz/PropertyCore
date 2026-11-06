@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { CleanerAssistant } from "../cleaner-core/assistant";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import { tenantContext, type HostedCleaner } from "../cleaner-core/hosted/router";
@@ -17,7 +18,11 @@ export const TURN_OFF = "turn_off_supplies";
 export const CHOOSE = "choose_supplies";
 const NOT_ON = "Supply Core isn't on for this property.";
 const STALE = "That approval has expired or doesn't match. Ask the host again.";
-const approvals = new ConfirmationBook();
+
+/** The tenant's turn-off approvals, read from its folder on each call so a restart keeps them. */
+function frontApprovals(h: HostedCleaner, tenant: Tenant): ConfirmationBook {
+  return new ConfirmationBook(10 * 60_000, () => h.now().getTime(), { file: join(tenantContext(h, tenant).root, "supply-approvals-front.json") });
+}
 
 /** Every name Supply Core answers in some state, so one called where it isn't on is refused, never forwarded. */
 export const SUPPLY_FRONT_NAMES: ReadonlySet<string> = new Set([...SUPPLY_TOOL_NAMES, TURN_ON, TURN_OFF, CHOOSE]);
@@ -151,9 +156,9 @@ export async function handleSupplyFront(ctx: SupplyFrontContext, name: string, a
   if (name === TURN_OFF) {
     const code = typeof (args as { confirmation?: unknown } | undefined)?.confirmation === "string" ? (args as { confirmation: string }).confirmation.trim() : "";
     const question = "Turn off Supply Core? No new orders, and the cleaner isn't asked about supplies. Your list is kept. Reply yes to turn it off.";
-    if (!code) return { text: question, structured: { question, confirmation: approvals.issue("supplies-off", tenant.id, "off", question) }, isError: false };
+    if (!code) return { text: question, structured: { question, confirmation: frontApprovals(h, tenant).issue("supplies-off", tenant.id, "off", question) }, isError: false };
     try {
-      approvals.redeem(code, "supplies-off", tenant.id, "off");
+      frontApprovals(h, tenant).redeem(code, "supplies-off", tenant.id, "off");
     } catch {
       return { text: STALE, isError: true };
     }

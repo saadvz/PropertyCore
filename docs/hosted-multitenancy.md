@@ -33,7 +33,8 @@ The un-prefixed upload, photo and group paths answer 404 on this service.
 Each tenant has:
 
 - its own folder, `/data/tenants/<id>/`, which is the root of an ordinary
-  Cleaner Core desk (state, job store, alert queue, photos);
+  Cleaner Core desk (state, job store, alert queue, photos, and the host's
+  pending approval codes, kept as hashes so a restart doesn't lose them);
 - its own secrets in that folder (`secrets.json`, mode 600): the door-code and
   photo keys, and each connection's alert routine;
 - its own environment, built per request: the process environment minus every
