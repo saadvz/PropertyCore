@@ -58,9 +58,22 @@ const ADD_PROPERTY = {
   inputSchema: { type: "object", properties: { label: { type: "string", maxLength: LABEL_MAX } }, required: ["label"], additionalProperties: false },
 };
 
+const SET_FLOWS = {
+  name: "set_flows",
+  title: "Turn flows on or off",
+  description:
+    "Turns Cleaner Core (cleaning), Supply Core (supplies) or Fixer Core (fixer) on or off for one property, only when the host asks. Turning one on starts its setup and texts nobody. Turning one off with anything live gives the exact texts and stops first, with a code: show the host, and call again with the code only after their yes. The setup is kept.",
+  inputSchema: {
+    type: "object",
+    properties: { property: PROPERTY_ARG, cleaning: { type: "boolean" }, supplies: { type: "boolean" }, fixer: { type: "boolean" }, confirmation: { type: "string", maxLength: 40 } },
+    required: ["property"],
+    additionalProperties: false,
+  },
+};
+
 /** The account's own tools as tools/list shows them. */
 export function accountTools(): Record<string, unknown>[] {
-  return [GET_STATE, ADD_PROPERTY];
+  return [GET_STATE, ADD_PROPERTY, SET_FLOWS];
 }
 
 /** One line per property, as get_state lists it. */

@@ -201,32 +201,27 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
       r.send(200, "text/xml", EMPTY_TWIML);
       return true;
     }
-    if (tenant.service === "supplies") {
-      // Supply Core never texts, so its number keeps nothing and answers nothing.
-      h.log(`A text reached ${tenant.id}, which runs Supply Core. Nothing was sent.`);
-      h.registry.touch(tenant.id);
-      r.send(200, "text/xml", EMPTY_TWIML);
-      return true;
-    }
-    if (tenant.service && h.touring) {
+    if (tenant.service === "touring") {
       // The shared token signs every tenant's texts. Checked first, so a forged STOP never changes an opt-out.
-      if (!signedByTwilio(h, r, rawBody, signed(path))) {
+      if (h.touring && !signedByTwilio(h, r, rawBody, signed(path))) {
         r.send(403, "text/plain", "Forbidden");
         return true;
       }
-      if ((await screenText(h, tenant, formParams(rawBody))) === "drop") {
+      if (h.touring && (await screenText(h, tenant, formParams(rawBody))) === "drop") {
         h.registry.touch(tenant.id);
         r.send(200, "text/xml", EMPTY_TWIML);
         return true;
       }
+      return touringText(h, r, tenant, rawBody, signed(path));
     }
-    if (tenant.service === "touring") return touringText(h, r, tenant, rawBody, signed(path));
-    if (tenant.service !== "cleaning") {
-      h.log(`A text reached ${tenant.id}, which has no service yet. Nothing was sent.`);
+    const property = tenant.properties.find((p) => p.flows.cleaning.on);
+    if (!property) {
+      h.log(`A text reached ${tenant.id}, which has no property running Cleaner Core. Nothing was sent.`);
+      h.registry.touch(tenant.id);
       r.send(200, "text/xml", EMPTY_TWIML);
       return true;
     }
-    const ctx = tenantContext(h, tenant);
+    const ctx = propertyContext(h, tenant, property);
     const result = await handleCleanerTwilioWebhook({ rawBody, headers: r.req.headers, url: signed(path), env: ctx.env, root: ctx.root, now });
     h.registry.touch(tenant.id);
     r.send(result.status, result.contentType ?? JSON_TYPE, result.body);

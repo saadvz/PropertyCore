@@ -9,6 +9,7 @@ import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
 import { OPERATOR_TOOL_NAMES } from "../operator/tools";
 import { ServiceNotices } from "./crossService";
 import { FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsFor, wrongServiceLine, type FrontReply } from "./serviceTools";
+import { setFlows, type FlowInput } from "./service";
 import { accountState, accountTools, addProperty, flowOff, resolveProperty, withPropertyArg, type PropertyStates } from "./propertyTools";
 import { listedSupplyFront, SUPPLY_FRONT_NAMES, suppliesLine, supplyCall, supplyDesk } from "../supply-core/hosted";
 import { taskWarning } from "./touringAlerts";
@@ -164,6 +165,7 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
     if (!reply.isError) noteToolsChanged();
     return reply;
   }
+  if (name === "set_flows") return setFlows({ h, tenant, actor: "host", noteToolsChanged }, (args ?? {}) as FlowInput);
   const front = await handleFrontTool({ h, tenant, caller, noteToolsChanged }, name, args);
   if (front) return front;
   const supply = SUPPLY_FRONT_NAMES.has(name);

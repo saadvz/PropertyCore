@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resetAdminSessions } from "../src/cleaner-core/hosted/admin";
+import { liveDeskFor } from "../src/cleaner-core/liveDesk";
+import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
 import { FileRuntimeStore } from "../src/storage/runtimeStore";
@@ -57,7 +59,7 @@ async function start(options: { password?: string | null; env?: NodeJS.ProcessEn
 /** A touring tenant whose touring process is running. */
 async function touringTenant(m: MultiTenantApp, label: string, number: string) {
   const { tenant } = m.registry.create({ label, twilioNumber: number });
-  m.registry.setService(tenant.id, "touring");
+  m.registry.setTouring(tenant.id);
   await m.touring()!.start(m.registry.get(tenant.id)!);
   return m.registry.get(tenant.id)!;
 }
@@ -207,9 +209,12 @@ describe("the admin page", () => {
     const admin = await signIn(m);
     await admin.post("/admin/tenants", { label: "Lane", number: LANE_LINE });
     const lane = m.registry.list()[0]!;
+    const property = m.registry.addProperty(lane.id, "12 Scratch Lane");
+    m.registry.setFlow(lane.id, property.id, "cleaning", true);
     const token = await m.join(lane.id, "grok");
     await m.tool(token, "get_state", { choice: "cleaners" });
-    expect(existsSync(tenantFolder(m.app.root, lane.id))).toBe(true);
+    expect(existsSync(propertyFolder(m.app.root, lane.id, property))).toBe(true);
+    const cached = liveDeskFor(propertyFolder(m.app.root, lane.id, property), () => ({}), () => new Date());
     const refused = await admin.post(`/admin/tenants/${lane.id}/delete`, { confirm: "lane" });
     expect(refused.html).toContain("Type the label to delete.");
     expect(m.registry.get(lane.id)).toBeDefined();
@@ -219,8 +224,9 @@ describe("the admin page", () => {
     expect(calls.at(-1)).toEqual({ method: "POST", url: "https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/IncomingPhoneNumbers/PN1.json", body: new URLSearchParams({ SmsUrl: "", SmsMethod: "POST" }).toString() });
     expect((await m.tool(token, "get_state")).status).toBe(401);
     expect((await m.app.http(`/t/${lane.id}/cleaner-core/photos/x`)).status).toBe(404);
-    // Nothing recreates the deleted folder on the next drain.
+    // Nothing recreates the deleted folder on the next drain, and no desk for its property stays cached.
     expect(existsSync(tenantFolder(m.app.root, lane.id))).toBe(false);
+    expect(liveDeskFor(propertyFolder(m.app.root, lane.id, property), () => ({}), () => new Date())).not.toBe(cached);
   });
 
   it("never renders a routine key, a cleaner phone, or a door-code key", async () => {
@@ -251,29 +257,31 @@ describe("the admin page", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
-  it("shows each tenant's service and touring process", SLOW, async () => {
+  it("shows each account's properties and the touring process", SLOW, async () => {
     const m = await start(TOURING);
     const admin = await signIn(m);
     await touringTenant(m, "Mill", "+15555550170");
     const court = m.registry.create({ label: "Court", twilioNumber: "+15555550160" }).tenant;
-    m.registry.setService(court.id, "cleaning");
+    m.registry.addProperty(court.id, "8 Scratch Court");
+    m.registry.addProperty(court.id, "9 Scratch Annex");
     m.registry.create({ label: "Lane", twilioNumber: LANE_LINE });
     const list = (await admin.page("/admin")).html;
-    expect(list).toContain("<th>Service</th><th>Touring process</th>");
+    expect(list).toContain("<th>Properties</th><th>Touring process</th>");
     expect(list).toMatch(/Mill<\/a>.*<td>touring<\/td><td>up<\/td>/);
-    expect(list).toMatch(/Court<\/a>.*<td>cleaning<\/td><td>—<\/td>/);
-    expect(list).toMatch(/Lane<\/a>.*<td>not chosen<\/td><td>—<\/td>/);
+    expect(list).toMatch(/Court<\/a>.*<td>2 properties<\/td><td>—<\/td>/);
+    expect(list).toMatch(/Lane<\/a>.*<td>no properties<\/td><td>—<\/td>/);
   });
 
-  it("shows whether a cleaning tenant's wake-ups reach its alert routine, without its token", async () => {
+  it("shows whether a property's wake-ups reach its alert routine, without its token", async () => {
     const m = await start();
     const admin = await signIn(m);
     const court = m.registry.create({ label: "Court", twilioNumber: "+15555550160" }).tenant;
-    m.registry.setService(court.id, "cleaning");
-    expect((await admin.page("/admin")).html).toMatch(/Court<\/a>.*<td>cleaning<\/td><td>—<\/td><td>—<\/td>/);
+    const property = m.registry.addProperty(court.id, "8 Scratch Court");
+    m.registry.setFlow(court.id, property.id, "cleaning", true);
+    expect((await admin.page("/admin")).html).toMatch(/Court<\/a>.*<td>1 property<\/td><td>—<\/td><td>—<\/td>/);
     // The refusal a Claude task's wrong token leaves, as the outbox records it.
     const refused = "The Claude scheduled task refused its token. Make a new token and save it again.";
-    new FileRuntimeStore(join(tenantFolder(m.app.root, court.id), "cleaner-alerts")).put("operator-events", "evt_madeupwakehealth01", {
+    new FileRuntimeStore(join(propertyFolder(m.app.root, court.id, property), "cleaner-alerts")).put("operator-events", "evt_madeupwakehealth01", {
       schemaVersion: 1,
       event: { schemaVersion: 1, eventId: "evt_madeupwakehealth01", eventType: "cleaning.update", occurredAt: "2026-11-03T18:36:58.000Z" },
       status: "failed",
@@ -295,43 +303,52 @@ describe("the admin page", () => {
     expect(page).toContain("Service: touring. Touring process: up. Restarts in the last day: 0. Texts waiting: 0.");
   });
 
-  it("refuses a switch it can't check, and doesn't change the service", SLOW, async () => {
-    const m = await start(TOURING);
+  it("admin page lists properties and never shows a phone or door code", SLOW, async () => {
+    const m = await start();
     const admin = await signIn(m);
-    const mill = await touringTenant(m, "Mill", "+15555550170");
-    m.touring()!.supervisor.stop(mill.id);
-    const page = (await admin.page(`/admin/tenants/${mill.id}`)).html;
-    expect(page).toContain("Switch to cleaning");
-    expect(page).not.toContain("<select");
-    const refused = await admin.post(`/admin/tenants/${mill.id}/service`, { to: "cleaning" });
-    expect(refused.status).toBe(400);
-    expect(refused.html).toContain(html("Touring isn't answering right now. Try again in a minute."));
-    expect(m.registry.get(mill.id)?.service).toBe("touring");
+    const court = m.registry.create({ label: "Court", twilioNumber: "+15555550160" }).tenant;
+    const property = m.registry.addProperty(court.id, "8 Scratch Court");
+    m.registry.setFlow(court.id, property.id, "cleaning", true);
+    mkdirSync(propertyFolder(m.app.root, court.id, property), { recursive: true });
+    writeFileSync(join(propertyFolder(m.app.root, court.id, property), "cleaner-live.json"), JSON.stringify({ address: "8 Scratch Court", host: "+15555550100", cleaner: "+15555550101" }));
+    const page = (await admin.page(`/admin/tenants/${court.id}`)).html;
+    expect(page).toContain("8 Scratch Court");
+    expect(page).toContain(property.id);
+    expect(page).toContain("Cleaner Core: on");
+    expect(page).toContain("Supply Core: off");
+    expect(page).toContain("Turn off Cleaner Core");
+    expect(page).not.toContain("+15555550100");
+    expect(page).not.toContain("+15555550101");
   });
 
-  it("force-switches, sends nothing, and records it", SLOW, async () => {
-    const m = await start(TOURING);
+  it("admin force-off sends nothing and records it", SLOW, async () => {
+    const m = await start();
     const admin = await signIn(m);
-    const mill = await touringTenant(m, "Mill", "+15555550170");
-    m.touring()!.supervisor.stop(mill.id);
-    const forced = await admin.post(`/admin/tenants/${mill.id}/service`, { to: "cleaning", force: "1" });
-    expect(forced.status).toBe(303);
-    expect(m.registry.get(mill.id)?.service).toBe("cleaning");
+    const court = m.registry.create({ label: "Court", twilioNumber: "+15555550160" }).tenant;
+    const property = m.registry.addProperty(court.id, "8 Scratch Court");
+    m.registry.setFlow(court.id, property.id, "cleaning", true);
+    const off = await admin.post(`/admin/tenants/${court.id}/flows`, { property: property.id, flow: "cleaning" });
+    expect(off.status).toBe(303);
+    expect(m.registry.get(court.id)?.properties[0]?.flows.cleaning.on).toBe(false);
     expect(m.sms.sent).toEqual([]);
-    const audit = readFileSync(join(tenantFolder(m.app.root, mill.id), "service-audit.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
-    expect(audit.at(-1)).toMatchObject({ actor: "admin", from: "touring", to: "cleaning", forced: true });
+    const audit = readFileSync(join(tenantFolder(m.app.root, court.id), "service-audit.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(audit.at(-1)).toMatchObject({ actor: "admin", property: property.id, flow: "cleaning", on: false, forced: true });
+    expect((await admin.post(`/admin/tenants/${court.id}/flows`, { property: "prp_nothere000", flow: "cleaning" })).status).toBe(400);
   });
 
-  it("leaves a new tenant's service to the host's chat: no form, and a post sets nothing", SLOW, async () => {
+  it("makes an account with no properties a touring account, and refuses one with properties", SLOW, async () => {
     const m = await start(TOURING);
     const admin = await signIn(m);
-    const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE_LINE });
-    const page = (await admin.page(`/admin/tenants/${tenant.id}`)).html;
-    expect(page).toContain("Not chosen yet.");
-    expect(page).not.toContain(`/admin/tenants/${tenant.id}/service`);
-    await admin.post(`/admin/tenants/${tenant.id}/service`, { to: "touring" });
-    expect(m.registry.get(tenant.id)?.service).toBeUndefined();
-    expect(m.touring()!.supervisor.target(tenant.id)).toBeUndefined();
+    const lane = m.registry.create({ label: "Lane", twilioNumber: LANE_LINE }).tenant;
+    expect((await admin.page(`/admin/tenants/${lane.id}`)).html).toContain("Make touring");
+    expect((await admin.post(`/admin/tenants/${lane.id}/touring`, {})).status).toBe(303);
+    expect(m.registry.get(lane.id)?.service).toBe("touring");
+    expect(m.touring()!.supervisor.target(lane.id)).toBeDefined();
+    const court = m.registry.create({ label: "Court", twilioNumber: "+15555550160" }).tenant;
+    m.registry.addProperty(court.id, "8 Scratch Court");
+    expect((await admin.page(`/admin/tenants/${court.id}`)).html).not.toContain("Make touring");
+    expect((await admin.post(`/admin/tenants/${court.id}/touring`, {})).status).toBe(400);
+    expect(m.registry.get(court.id)?.service).toBeUndefined();
   });
 
   it("stops a touring process when its tenant is turned off, and starts it when turned on", SLOW, async () => {
