@@ -27,6 +27,7 @@ import { supplyDesk } from "../../supply-core/hosted";
 import type { DeleteSecrets, SaveSecrets } from "../mcp";
 import { CLEANER_PHOTO_PREFIX, photoKey, servePhoto } from "../photos";
 import { handleCleanerUploadPage, isFormPost } from "../uploadPage";
+import { isPropertyId, propertyFolder, type Property } from "./properties";
 import { isTenantId, tenantFolder, type Tenant, type TenantRegistry } from "./registry";
 import { screenText } from "../../hosted/crossService";
 import { handleTenantMcp } from "../../hosted/frontMcp";
@@ -78,25 +79,58 @@ const UNLINKED = "This connection isn't linked to a Cleaner Core account. Reconn
 const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 const TOUR_CORE_PATHS = new Set(["/mcp/ops", "/mcp/qa"]);
 const TENANT_PATH = /^\/t\/([^/]+)(\/.+)$/;
+const PROPERTY_PATH = /^\/p\/([^/]+)(\/.+)$/;
 
-export function splitTenantPath(pathname: string): { tenantId: string; rest: string } | undefined {
+/** /t/<id>/<rest>, for the account's migrated property, or /t/<id>/p/<pid>/<rest>. */
+export function splitTenantPath(pathname: string): { tenantId: string; propertyId?: string; rest: string } | undefined {
   const match = TENANT_PATH.exec(pathname);
   if (!match || !isTenantId(match[1]!)) return undefined;
-  return { tenantId: match[1]!, rest: match[2]! };
+  const rest = match[2]!;
+  if (rest === "/p" || rest.startsWith("/p/")) {
+    const scoped = PROPERTY_PATH.exec(rest);
+    if (!scoped || !isPropertyId(scoped[1]!)) return undefined;
+    return { tenantId: match[1]!, propertyId: scoped[1]!, rest: scoped[2]! };
+  }
+  return { tenantId: match[1]!, rest };
 }
 
-/** A tenant's folder, its environment (rebuilt on every read, so a saved secret is seen at once), and its secret saver. */
+/**
+ * One property's desk folder, its environment (rebuilt on every read, so a saved secret is seen at
+ * once), and the account's secret saver. The line, secrets and routines are the account's.
+ */
+export function propertyContext(h: HostedCleaner, tenant: Tenant, property: Property): TenantContext {
+  return accountContext(h, tenant, propertyFolder(h.dataRoot, tenant.id, property), property.id);
+}
+
+/**
+ * Until every caller names a property: the account's first property with cleaning on, else its first
+ * property, else the account folder.
+ */
 export function tenantContext(h: HostedCleaner, tenant: Tenant): TenantContext {
+  const property = tenant.properties.find((p) => p.flows.cleaning.on) ?? tenant.properties[0];
+  return property ? propertyContext(h, tenant, property) : accountContext(h, tenant, tenantFolder(h.dataRoot, tenant.id), undefined);
+}
+
+function accountContext(h: HostedCleaner, tenant: Tenant, root: string, propertyId: string | undefined): TenantContext {
   const id = tenant.id;
   return {
-    root: tenantFolder(h.dataRoot, id),
+    root,
     env: () => {
       const current = h.registry.get(id);
+      const property = propertyId ? current?.properties.find((p) => p.id === propertyId) : undefined;
       const primary = h.registry.primary(id, (grantId) => h.grantLive(grantId));
       const serviceLines = h.registry.list().map((each) => each.twilioNumber);
-      const env = buildTenantEnv({ base: h.baseEnv(), tenant: current ?? tenant, secrets: h.secrets, primary, origin: h.origin() ?? "", serviceLines });
-      // Deleted or turned off while a request or drain was under way: nothing more is sent for it.
-      if (!current || current.disabled) env.CLEANER_CORE_ENABLED = "0";
+      const env = buildTenantEnv({
+        base: h.baseEnv(),
+        tenant: current ?? tenant,
+        secrets: h.secrets,
+        primary,
+        origin: h.origin() ?? "",
+        serviceLines,
+        ...(property ? { property, propertyCount: current?.properties.length ?? 1 } : {}),
+      });
+      // Deleted, turned off, or the property gone or its cleaning off while a request or drain was under way: nothing more is sent for it.
+      if (!current || current.disabled || (propertyId && !property?.flows.cleaning.on)) env.CLEANER_CORE_ENABLED = "0";
       return env;
     },
     // A routine belongs to the connection that saved it. Everything else is the tenant's.
@@ -249,8 +283,11 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
     h.registry.touch(tenant.id);
     return true;
   }
-  if (tenant.service !== "cleaning") return notFound();
-  const handled = await handleTenantPath(h, r, tenant, scoped.rest, signed(path), now);
+  if (tenant.service === "touring") return notFound();
+  // The migrated property answers the old /t/<id>/ links; every other property its /t/<id>/p/<pid>/ ones.
+  const property = scoped.propertyId ? tenant.properties.find((p) => p.id === scoped.propertyId) : tenant.properties.find((p) => p.legacyPaths);
+  if (!property) return notFound();
+  const handled = await handleTenantPath(h, r, tenant, property, scoped.rest, signed(path), now);
   if (!handled) return notFound();
   h.registry.touch(tenant.id);
   promoteRoutineOwner(h, tenant.id);
@@ -287,9 +324,12 @@ async function touringText(h: HostedCleaner, r: HostedRequest, tenant: Tenant, r
   return true;
 }
 
-async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tenant, rest: string, signedUrl: string | undefined, now: () => Date): Promise<boolean> {
+async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tenant, property: Property, rest: string, signedUrl: string | undefined, now: () => Date): Promise<boolean> {
   const { method } = r;
-  const ctx = tenantContext(h, tenant);
+  const ctx = propertyContext(h, tenant, property);
+  // Supply Core's calendar upload needs supplies on for this property; every other link needs cleaning on.
+  const supplyCalendarLink = method === "POST" ? supplyCalendarCode(rest) : undefined;
+  if (supplyCalendarLink ? !property.flows.supplies.on : !property.flows.cleaning.on) return false;
   const contentType = String(r.req.headers["content-type"] ?? "");
   if (method === "POST" && rest === CLEANER_TWILIO_STATUS_PATH) {
     const result = await handleCleanerTwilioStatus({ rawBody: await r.readRaw(), headers: r.req.headers, url: signedUrl, env: ctx.env, root: ctx.root, now });
@@ -358,8 +398,14 @@ export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
   const tenant = h.registry.get(tenantId);
   if (!tenant || tenant.disabled) return;
   const live = (grantId: string) => h.grantLive(grantId) && tenant.connections.some((c) => c.grantId === grantId);
-  const ctx = tenantContext(h, tenant);
-  const connected = liveDeskFor(ctx.root, ctx.env, () => h.now()).routineConnectionIds().filter(live);
+  // A routine connected through any of the account's properties counts, in the order they were connected.
+  const ids = tenant.properties
+    .filter((p) => p.flows.cleaning.on)
+    .flatMap((p) => {
+      const ctx = propertyContext(h, tenant, p);
+      return liveDeskFor(ctx.root, ctx.env, () => h.now()).routineConnectionIds();
+    });
+  const connected = [...new Set(ids)].filter(live);
   const primary = h.registry.primary(tenantId, (grantId) => h.grantLive(grantId));
   if (connected.length === 0 || (primary && connected.includes(primary.grantId))) return;
   const next = connected.at(-1)!;
@@ -370,14 +416,17 @@ export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
 /** Delivers every enabled tenant's waiting wake-ups. One tenant's failure never stops the rest. */
 export async function drainAllTenants(h: HostedCleaner): Promise<void> {
   for (const listed of h.registry.list()) {
-    // Read again: a tenant deleted, turned off, or moved off cleaning while this round runs is skipped.
+    // Read again: a tenant deleted or turned off, or a property whose cleaning went off, while this round runs is skipped.
     const tenant = h.registry.get(listed.id);
-    if (!tenant || tenant.disabled || tenant.service !== "cleaning") continue;
-    const ctx = tenantContext(h, tenant);
-    try {
-      await drainCleanerAlerts(ctx.root, ctx.env, () => h.now());
-    } catch {
-      h.log(`Cleaner Core couldn't deliver ${tenant.id}'s alerts this round.`);
+    if (!tenant || tenant.disabled) continue;
+    for (const property of tenant.properties) {
+      if (!property.flows.cleaning.on) continue;
+      const ctx = propertyContext(h, tenant, property);
+      try {
+        await drainCleanerAlerts(ctx.root, ctx.env, () => h.now());
+      } catch {
+        h.log(`Cleaner Core couldn't deliver ${tenant.id}/${property.id}'s alerts this round.`);
+      }
     }
   }
 }
