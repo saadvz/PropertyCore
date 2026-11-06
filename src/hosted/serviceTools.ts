@@ -1,11 +1,9 @@
 import { z } from "zod";
 import { ASSISTANT_PROFILES, type CleanerAssistant } from "../cleaner-core/assistant";
-import { supplyCoreOn, tourCoreTenants } from "../cleaner-core/flag";
 import { scratchToolsOn } from "../cleaner-core/scratchQa";
 import type { Tenant, TenantService } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
 import { HOST_TEXT_CHOICES, hostTextsAsk, saveHostTexts, type HostTextChoice } from "./hostTexts";
-import { standDownService, switchService } from "./service";
 import { issueTouringAlertLink, refreshTouringAlerts, TOURING_ALERT_LINK_MINUTES, TOURING_TASK_NAME } from "./touringAlerts";
 import { takeUpdates } from "./touringUpdates";
 import { touringScratch } from "./touringEnv";
@@ -14,15 +12,15 @@ import type { TouringInbox } from "./touringForward";
 import type { TouringSupervisor } from "./touringSupervisor";
 
 /**
- * The tools the shared service answers itself, around whichever service a tenant's number runs:
- * choosing a service, switching it, standing it down, and the touring alert routine. Everything else
- * goes to the active service.
+ * The tools the shared service answers itself for a parked touring account: the touring alert
+ * routine, texts to the host, updates, and Scratch QA. Everything else goes to its touring process.
  */
 
-export type ToolState = "unset" | TenantService;
+/** A parked touring account, or an account of properties. */
+export type ToolState = "touring" | "properties";
 
 export function toolsFor(tenant: Tenant): ToolState {
-  return tenant.service ?? "unset";
+  return tenant.service === "touring" ? "touring" : "properties";
 }
 
 interface FrontTool {
@@ -32,66 +30,6 @@ interface FrontTool {
   input: z.ZodObject;
 }
 
-const Service = z.enum(["touring", "cleaning", "supplies"]);
-
-import { SERVICE_CHOICES, SERVICE_QUESTION, serviceChoices, serviceQuestion, type ServiceChoice } from "./serviceChoice";
-export { SERVICE_CHOICES, SERVICE_QUESTION };
-
-const buttons = (choices: readonly ServiceChoice[]) => `${choices.length === 2 ? "two" : choices.length === 3 ? "three" : String(choices.length)} buttons: ${choices.map((choice) => `"${choice.label}"`).join(choices.length === 2 ? " and " : ", ")}`;
-
-/** Said in the tool descriptions too, so a chat that reads only its tool list still asks the question. */
-const askOnConnect = (choices: readonly ServiceChoice[]) =>
-  `Right after connecting, before anything else, ask the host exactly "${serviceQuestion(choices)}" with ${buttons(choices)}. Don't describe what you can do instead.`;
-
-/** The services a new number can choose here: touring and Supply Core only while their flags are on, and Supply Core only for Grok. */
-export function choicesFor(h: HostedCleaner, assistant?: CleanerAssistant): ServiceChoice[] {
-  return serviceChoices({ touring: tourCoreTenants(h.baseEnv()) && !!h.touring, supplies: supplyCoreOn(h.baseEnv()) && assistant === "grok" });
-}
-
-/** The same tools where touring is off: a new number can only run cleaning. */
-const ASK_CLEANING_ONLY = "This number runs Cleaner Core: turnover cleanings from the host's booking calendar. Don't ask the host to pick a service.";
-const GET_STATE_CLEANING: FrontTool = {
-  name: "get_state",
-  title: "What's next",
-  description: `${ASK_CLEANING_ONLY} Call this first, then choose_service with cleaning.`,
-  input: z.object({}),
-};
-const CHOOSE_CLEANING: FrontTool = {
-  name: "choose_service",
-  title: "Choose a service",
-  description: `${ASK_CLEANING_ONLY} Call this with cleaning, then start a new chat if Cleaner Core's tools don't appear.`,
-  input: z.object({ service: Service }),
-};
-
-const getStateFor = (choices: readonly ServiceChoice[]): FrontTool => ({
-  name: "get_state",
-  title: "What's next",
-  description: `${askOnConnect(choices)} This gives that question and its choices. Then call choose_service with their answer.`,
-  input: z.object({}),
-});
-const PICK_WORDS: Record<ServiceChoice["service"], string> = { touring: "touring for Tour Core", cleaning: "cleaning for Cleaner Core", supplies: "supplies for Supply Core" };
-const chooseFor = (choices: readonly ServiceChoice[]): FrontTool => ({
-  name: "choose_service",
-  title: "Choose a service",
-  description: `${askOnConnect(choices)} Call this with their pick: ${choices.map((choice) => PICK_WORDS[choice.service]).join(", ")}. The number answers for that service only until the host asks to switch.`,
-  input: z.object({ service: Service }),
-});
-const GET_STATE = getStateFor(SERVICE_CHOICES);
-const CHOOSE = chooseFor(SERVICE_CHOICES);
-const SWITCH: FrontTool = {
-  name: "switch_service",
-  title: "Switch the number's service",
-  description:
-    "Moves this number to the other service, only when the host asks and nothing is live. Call once without confirmation to get what's still live or the question and a code, ask the host that question, and call again with the code only after the host says yes. No texts go out.",
-  input: z.object({ to: Service, confirmation: z.string().max(40).optional() }),
-};
-const STAND_DOWN: FrontTool = {
-  name: "stand_down_service",
-  title: "Stand the service down",
-  description:
-    "Stops what's live on this number's service so it can switch, keeping the setup. Call once without confirmation to get a preview of what stops and the exact texts that go out, show the host, and call again with the code only after the host says yes.",
-  input: z.object({ confirmation: z.string().max(40).optional() }),
-};
 const SAVE_ALERT_ROUTINE: FrontTool = {
   name: "save_alert_routine",
   title: "Connect touring alerts",
@@ -129,14 +67,12 @@ const SCRATCH: FrontTool[] = [
 ];
 
 const BY_STATE: Record<ToolState, FrontTool[]> = {
-  unset: [GET_STATE, CHOOSE],
-  cleaning: [SWITCH, STAND_DOWN],
-  touring: [SAVE_ALERT_ROUTINE, SAVE_HOST_TEXTS, GET_UPDATES, SWITCH, STAND_DOWN],
-  supplies: [SWITCH, STAND_DOWN],
+  touring: [SAVE_ALERT_ROUTINE, SAVE_HOST_TEXTS, GET_UPDATES],
+  properties: [],
 };
 
-/** Every name the front answers in some state. A call to one of them in another state is refused, never forwarded. */
-export const FRONT_TOOL_NAMES = new Set([GET_STATE, CHOOSE, SWITCH, STAND_DOWN, SAVE_ALERT_ROUTINE, SAVE_HOST_TEXTS, GET_UPDATES, ...SCRATCH].map((tool) => tool.name));
+/** Every name the front answers for touring. A call to one of them on an account of properties is refused, never forwarded. */
+export const FRONT_TOOL_NAMES = new Set([SAVE_ALERT_ROUTINE, SAVE_HOST_TEXTS, GET_UPDATES, ...SCRATCH].map((tool) => tool.name));
 
 /** True when a touring tenant gets the Scratch tools: the flag is on and its number is a 555 number. */
 export function scratchFor(h: HostedCleaner, tenant: Tenant): boolean {
@@ -147,29 +83,17 @@ export function frontToolsFor(state: ToolState, scratch = false): FrontTool[] {
   return state === "touring" && scratch ? [...BY_STATE.touring, ...SCRATCH] : BY_STATE[state];
 }
 
-/** The front tools as tools/list shows them. `choices` are the services a new number can pick. */
-export function listedFrontTools(state: ToolState, scratch = false, choices: readonly ServiceChoice[] = SERVICE_CHOICES): Record<string, unknown>[] {
-  const tools = state !== "unset" ? frontToolsFor(state, scratch) : choices.length < 2 ? [GET_STATE_CLEANING, CHOOSE_CLEANING] : [getStateFor(choices), chooseFor(choices)];
+/** The front tools as tools/list shows them. */
+export function listedFrontTools(state: ToolState, scratch = false): Record<string, unknown>[] {
+  const tools = frontToolsFor(state, scratch);
   return tools.map((tool) => {
     const { $schema: _schema, ...inputSchema } = z.toJSONSchema(tool.input) as Record<string, unknown>;
     return { name: tool.name, title: tool.title, description: tool.description, inputSchema };
   });
 }
 
-/** A chat still holding the other service's tools after a choice or a switch. */
+/** A chat calling a tool this account doesn't run. */
 export const wrongServiceLine = (service: TenantService) => `This number is set up for ${service} now. Start a new chat to see its tools.`;
-
-export const CHOSEN_LINE = (service: TenantService) => `Set up for ${service}. Your tools have changed. If you don't see the new ones, start a new chat.`;
-
-const WHAT: Record<ServiceChoice["service"], string> = {
-  touring: "Touring: visitors text this number to book a self-guided tour of a rental unit.",
-  cleaning: "Cleaning: turnover cleanings from the host's booking calendar.",
-  supplies: "Supplies: the property's supplies reordered on a schedule. Supply Core sends no texts.",
-};
-const unsetNext = (choices: readonly ServiceChoice[]) =>
-  `This number isn't set up yet. Ask the host the question in say right away, with the ${choices.length === 2 ? "two" : "three"} choices as buttons. ${choices.map((choice) => WHAT[choice.service]).join(" ")} Then call choose_service with the service they picked.`;
-
-const UNSET_CLEANING_ONLY = "This number isn't set up yet. It can run cleaning: turnover cleanings from the host's booking calendar. Call choose_service with cleaning.";
 
 /** Like Cleaner Core's: Grok posts the routine it made from its own computer. The host never opens the link. */
 const ALERT_UPLOAD_NEXT =
@@ -188,15 +112,6 @@ export const CLAUDE_TASK_PROMPT = [
   "For a tour booked, started, finished, or cancelled, call get_tours and tell me in one line.",
   "Never text anyone yourself, and never change anything without my yes.",
 ].join("\n");
-
-/** The initialize instructions for a tenant that hasn't chosen yet. */
-export const unsetInstructions = (choices: readonly ServiceChoice[]) =>
-  `As soon as you're connected, without waiting for the host to ask, ask exactly "${serviceQuestion(choices)}" with ${buttons(choices)}. Do nothing else first. Then call choose_service with their pick.`;
-export const UNSET_INSTRUCTIONS = unsetInstructions(SERVICE_CHOICES);
-
-/** The initialize instructions for a tenant that hasn't chosen yet, where touring is off. */
-export const UNSET_CLEANING_INSTRUCTIONS =
-  "This number runs Cleaner Core: turnover cleanings from the host's booking calendar. Don't ask the host to pick a service. As soon as you're connected, call choose_service with cleaning, then follow get_state.";
 
 /** What the shared service holds for touring tenants. Absent until the service runs touring at all. */
 export interface TouringFront {
@@ -228,9 +143,6 @@ export interface FrontReply {
 const fail = (text: string): FrontReply => ({ text, isError: true });
 const done = (structured: Record<string, unknown>): FrontReply => ({ text: JSON.stringify(structured), structured, isError: false });
 
-/** How long a choice waits for a touring process before answering anyway. */
-const START_WAIT_MS = 30_000;
-
 /** Answers a front tool. Undefined when the name isn't one of this state's front tools. */
 export async function handleFrontTool(ctx: FrontContext, name: string, args: unknown): Promise<FrontReply | undefined> {
   const state = toolsFor(ctx.tenant);
@@ -238,32 +150,6 @@ export async function handleFrontTool(ctx: FrontContext, name: string, args: unk
   if (!tool) return undefined;
   const parsed = tool.input.safeParse(args ?? {});
   if (!parsed.success) return fail("That was missing something I need.");
-  const choices = choicesFor(ctx.h, ctx.caller.assistant);
-  if (name === "get_state") {
-    if (choices.length < 2) return done({ next: UNSET_CLEANING_ONLY, services: ["cleaning"] });
-    return done({ next: unsetNext(choices), say: serviceQuestion(choices), choices, services: choices.map((choice) => choice.service) });
-  }
-  if (name === "choose_service") {
-    const service = (parsed.data as { service: TenantService }).service;
-    if (service === "touring" && !choices.some((c) => c.service === "touring")) return fail("Touring isn't available on this service yet. Choose cleaning.");
-    if (service === "supplies" && !choices.some((c) => c.service === "supplies")) return fail("Supply Core isn't available on this service yet. Choose cleaning.");
-    ctx.h.registry.setService(ctx.tenant.id, service);
-    if (service === "touring") {
-      const tenant = ctx.h.registry.get(ctx.tenant.id)!;
-      await Promise.race([ctx.h.touring!.start(tenant), new Promise((resolve) => setTimeout(resolve, START_WAIT_MS).unref())]);
-    }
-    ctx.h.log(`${ctx.tenant.id} chose ${service}.`);
-    ctx.noteToolsChanged();
-    return { text: CHOSEN_LINE(service), structured: { service }, isError: false };
-  }
-  if (name === "switch_service") {
-    const { to, confirmation } = parsed.data as { to: TenantService; confirmation?: string };
-    return switchService({ h: ctx.h, tenant: ctx.tenant, actor: "host", noteToolsChanged: ctx.noteToolsChanged }, { to, ...(confirmation ? { confirmation } : {}) });
-  }
-  if (name === "stand_down_service") {
-    const { confirmation } = parsed.data as { confirmation?: string };
-    return standDownService({ h: ctx.h, tenant: ctx.tenant, actor: "host", noteToolsChanged: ctx.noteToolsChanged }, confirmation ? { confirmation } : {});
-  }
   if (name === "send_test_text") {
     const sent = await sendScratchText(ctx.h, ctx.tenant, parsed.data as { from: string; text: string });
     return { text: sent.text, isError: !sent.ok };
