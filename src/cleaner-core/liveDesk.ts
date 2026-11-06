@@ -423,6 +423,11 @@ interface LiveFile {
   pinSeal?: PinSeal;
   pinSend?: PinSend;
   texting?: boolean;
+  /**
+   * Phones that texted STOP to the account's shared line before they were saved here. Nothing is sent
+   * to them until they text START or YES.
+   */
+  lineOptOuts?: string[];
   checked?: boolean;
   /** Ids of the host notes `check_now` has already returned, or that the host saw before it. */
   alertsShown?: string[];
@@ -2198,6 +2203,63 @@ export class LiveDesk {
     });
   }
 
+  /** The saved host, and every other person the property texts, as E.164. */
+  phonesOnProperty(): Promise<{ host?: string; people: string[] }> {
+    return this.serial(async () => {
+      const host = this.file.host ? parsePhone(this.file.host) : undefined;
+      const raw = [this.file.cleaner, this.file.observer, ...(this.file.contacts ?? []).map((contact) => contact.phone)];
+      const people = [...new Set(raw.map((phone) => (phone ? parsePhone(phone) : undefined)).filter((phone): phone is string => !!phone && phone !== host))];
+      return { ...(host ? { host } : {}), people };
+    });
+  }
+
+  /**
+   * Records that this phone opted out of the shared line before it was saved here. Nothing is sent to
+   * it, and nothing is sent by this call, until it texts START or YES.
+   */
+  markOptedOut(phone: string): Promise<void> {
+    return this.serial(async () => {
+      const e164 = parsePhone(phone);
+      if (!e164) return;
+      const out = this.file.lineOptOuts ?? [];
+      if (out.includes(e164)) return;
+      this.file.lineOptOuts = [...out, e164];
+      this.persist();
+    });
+  }
+
+  /**
+   * A text the host sent the shared line one-to-one, kept for the host's chat because the account has
+   * several properties and the text can't say which. Its digit runs are redacted. One wake-up.
+   */
+  noteUnusedHostText(text: string): Promise<boolean> {
+    const words = this.messageText(text);
+    return this.noteForHost(`unused-host:${randomUUID()}`, `The host texted the line: "${words}". It wasn't used, because this account has several properties. Ask them in chat which property.`);
+  }
+
+  /** Counts the account's alert routine, connected through another property, as connected here. */
+  markRoutineConnected(connectionIds: readonly string[]): void {
+    if (connectionIds.length === 0) return;
+    this.file.routineConnected = true;
+    const ids = this.file.routineConnections ?? [];
+    this.file.routineConnections = [...ids, ...connectionIds.filter((id) => !ids.includes(id))];
+    this.persist();
+  }
+
+  /** On a line shared by two or more properties, a text to the host, or in the group, names the property first. */
+  private labeled(to: string, body: string, group: boolean): string {
+    const env = this.env();
+    const label = env.CLEANER_CORE_PROPERTY_LABEL?.trim();
+    if (!label || Number(env.CLEANER_CORE_PROPERTY_COUNT ?? "1") < 2) return body;
+    if (!group && to !== this.file.host) return body;
+    return body.startsWith(`${label}: `) ? body : `${label}: ${body}`;
+  }
+
+  /** True while the phone opted out of the shared line before it was saved here. */
+  private lineOptedOut(phone: string): boolean {
+    return (this.file.lineOptOuts ?? []).includes(phone);
+  }
+
   /** A note for the host from the shared service, shown by check_now, with one wake-up. Nothing is texted. */
   noteForHost(id: string, body: string): Promise<boolean> {
     return this.serial(async () => {
@@ -2834,6 +2896,11 @@ export class LiveDesk {
       this.persist();
       return { sent: [] };
     }
+    // START or YES from a phone that opted out of the shared line before it was saved brings it back.
+    if (this.lineOptedOut(from) && (messagingKeyword(input.text) === "start" || normalize(input.text) === "yes")) {
+      this.file.lineOptOuts = (this.file.lineOptOuts ?? []).filter((phone) => phone !== from);
+      this.persist();
+    }
     this.claiming.add(input.id);
     try {
       // A photo from the cleaner or a contact is downloaded once: for the cleaning in progress, and for its message.
@@ -3028,14 +3095,15 @@ export class LiveDesk {
       : keyword === "stop"
         ? `You're opted out of cleaning texts for ${address}. You won't get cleaning offers or the door code. Reply START to opt back in. Reply HELP for help.`
         : "You're opted back in to cleaning texts. Reply YES if you still want this turnover. Reply STOP to opt out.";
+    const labeled = this.labeled(from, body, false);
     if (this.scratchCapture()) {
-      this.noteLocal(from, keyword, body);
-      return [{ to: from, body, kind: keyword }];
+      this.noteLocal(from, keyword, labeled);
+      return [{ to: from, body: labeled, kind: keyword }];
     }
     if (!liveSmsOn(this.env())) return [];
     try {
-      await sendLiveSms(this.env(), { to: from, body });
-      return [{ to: from, body, kind: keyword }];
+      await sendLiveSms(this.env(), { to: from, body: labeled });
+      return [{ to: from, body: labeled, kind: keyword }];
     } catch {
       return [];
     }
@@ -3409,6 +3477,12 @@ export class LiveDesk {
         : {}),
       sink: {
         send: async (text) => {
+          // A phone that opted out of the shared line gets nothing, group or not, until it texts START or YES.
+          const audience = text.channel === "group" && text.audience ? text.audience : [text.to];
+          if (audience.some((phone) => this.lineOptedOut(phone))) {
+            if (text.kind === "pin") throw new Error("opted out of the line");
+            return;
+          }
           const hostLine = text.to === file.host && text.channel !== "group";
           if (hostLine && text.kind !== "pin-notice" && text.kind !== "pin-failed") {
             this.engine?.keepHostNote(`host:${text.kind}:${text.body}`, text.body);
@@ -3424,7 +3498,7 @@ export class LiveDesk {
           if (hostLine && text.kind !== "pin-failed" && !SAFETY.has(text.kind) && !holdSms && !readySms && !inviteSms) return;
           if (text.channel === "group" && text.audience && text.audience.length > 0) {
             try {
-              const sent = await sendLiveGroup(env(), { audience: [...text.audience], body: text.body, conversationSid: this.file.conversationSid });
+              const sent = await sendLiveGroup(env(), { audience: [...text.audience], body: this.labeled(text.to, text.body, true), conversationSid: this.file.conversationSid });
               if (sent?.conversationSid) this.file.conversationSid = sent.conversationSid;
               if (text.kind === "pin" && sent?.sid) this.noteAccepted(sent.sid);
             } catch (err) {
@@ -3438,7 +3512,7 @@ export class LiveDesk {
             return;
           }
           const statusCallback = text.kind === "pin" ? cleanerPinStatusUrl(env()) : undefined;
-          const sid = await sendLiveSms(env(), { to: text.to, body: text.body, ...(statusCallback ? { statusCallback } : {}) });
+          const sid = await sendLiveSms(env(), { to: text.to, body: this.labeled(text.to, text.body, false), ...(statusCallback ? { statusCallback } : {}) });
           if (text.kind === "pin" && sid) this.noteAccepted(sid);
         },
       },
