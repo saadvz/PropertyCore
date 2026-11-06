@@ -62,6 +62,11 @@ describe("draftStatus", () => {
   it("is gone when its message is no longer kept", () => {
     expect(draftStatus(draft, [ana("b")])).toBe("gone");
   });
+  it("is changed when the group's members differ from when it was saved", () => {
+    const grouped: StoredDraft = { ...draft, members: "+15555550130,+15555550131" };
+    expect(draftStatus(grouped, [ana("a")], "+15555550131")).toBe("changed");
+    expect(draftStatus(grouped, [ana("a")], "+15555550130,+15555550131")).toBe("ready");
+  });
   it("is gone when its base is no longer kept", () => {
     expect(draftStatus({ ...draft, base: "z" }, [ana("a")])).toBe("gone");
   });

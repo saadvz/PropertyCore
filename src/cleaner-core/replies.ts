@@ -61,20 +61,23 @@ export interface StoredDraft {
   text: string;
   /** The newest kept message when it was saved. */
   base: string;
+  /** For a group draft, who was in the group when it was saved, as sorted phones joined by commas. */
+  members?: string;
 }
 
-export type DraftStatus = "ready" | "stale" | "answered" | "gone";
+export type DraftStatus = "ready" | "stale" | "answered" | "changed" | "gone";
 
 /**
  * gone: its message or base is no longer kept. answered: the host has replied to its message.
- * stale: something came in after it was saved. A send through the assistant isn't new to read,
- * so it leaves a draft ready.
+ * changed: a group draft's group no longer holds the same people. stale: something came in after
+ * it was saved. A send through the assistant isn't new to read, so it leaves a draft ready.
  */
-export function draftStatus(draft: StoredDraft, messages: readonly ThreadMessage[]): DraftStatus {
+export function draftStatus(draft: StoredDraft, messages: readonly ThreadMessage[], members?: string): DraftStatus {
   const at = messages.findIndex((message) => message.id === draft.replyTo);
   const base = messages.findIndex((message) => message.id === draft.base);
   if (at < 0 || base < 0) return "gone";
   if (replyStateAt(messages, at)?.reply === "answered") return "answered";
+  if (draft.members !== undefined && members !== undefined && draft.members !== members) return "changed";
   const newer = messages.slice(base + 1).some((message) => !(message.from === "host" && message.handled === "sent"));
   return newer ? "stale" : "ready";
 }
