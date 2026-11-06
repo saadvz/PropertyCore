@@ -10,6 +10,8 @@ export interface ThreadMessage {
   name: string;
   /** Who a host message the assistant sent went to, like Ana or "the group". */
   to?: string;
+  /** Who an assistant send reached: "group", "cleaner", or "contact:<name>". Older rows have only `to`. */
+  target?: string;
   channel?: "group";
   handled: string;
 }
@@ -20,17 +22,26 @@ export type ReplyState = { reply: "open" } | { reply: "answered"; by: "group" | 
 export const GROUP_RECIPIENT = "the group";
 
 /**
- * A cleaner or contact message is answered by the first later host message that reached them:
- * the host's own group text, or an assistant send to the group or to that person. Host messages
+ * A cleaner or contact message is answered by the first later host message that reached them: the
+ * host's own group text or an assistant send to the group, when the message came in the group or is
+ * the cleaner's (she is always in it); or an assistant send to that same person. A contact's
+ * one-to-one text isn't answered by the group, since the group may not hold them. Host messages
  * have no reply state.
  */
 export function replyStateAt(messages: readonly ThreadMessage[], index: number): ReplyState | undefined {
   const message = messages[index];
   if (!message || message.from === "host") return undefined;
+  const groupReaches = message.channel === "group" || message.from === "cleaner";
+  const self = message.from === "cleaner" ? "cleaner" : `contact:${message.name}`;
   for (const later of messages.slice(index + 1)) {
     if (later.from !== "host") continue;
-    if (later.channel === "group") return { reply: "answered", by: "group" };
-    if (later.handled === "sent" && (later.to === GROUP_RECIPIENT || later.to === message.name)) return { reply: "answered", by: "assistant" };
+    if (later.channel === "group") {
+      if (groupReaches) return { reply: "answered", by: "group" };
+      continue;
+    }
+    if (later.handled !== "sent") continue;
+    const target = later.target ?? (later.to === GROUP_RECIPIENT ? "group" : undefined);
+    if (target === "group" ? groupReaches : target ? target === self : later.to === message.name) return { reply: "answered", by: "assistant" };
   }
   return { reply: "open" };
 }
@@ -45,7 +56,7 @@ export interface StoredDraft {
   id: string;
   /** The cleaner or contact message it answers. */
   replyTo: string;
-  /** What recipientOf takes: "group", or the name of the person who wrote. */
+  /** Who it goes to: "group", "cleaner:<phone>", or "contact:<phone>". Never shown; check_now shows a name. */
   to: string;
   text: string;
   /** The newest kept message when it was saved. */

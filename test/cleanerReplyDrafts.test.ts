@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ALREADY_ANSWERED, DOOR_CODE_IN_CHAT, DRAFT_GONE, DRAFT_NEW_SINCE, DRAFT_UNKNOWN, setCleanerAlertFetch, type LiveDesk } from "../src/cleaner-core/liveDesk";
+import { ALREADY_ANSWERED, DOOR_CODE_IN_CHAT, DRAFT_GONE, DRAFT_NEW_SINCE, DRAFT_NOT_IN_GROUP, DRAFT_RECIPIENT_CHANGED, DRAFT_UNKNOWN, setCleanerAlertFetch, type LiveDesk } from "../src/cleaner-core/liveDesk";
 import { approvedOnDesk } from "./hostApproval";
 import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
-import { CLEANER, DOOR_CODE, HOST } from "./wiringProof";
+import { CLEANER, DOOR_CODE, HOST, OBSERVER } from "./wiringProof";
 import { PIN_KEY, cleanupDesks, idOf, liveGroup, liveOneToOne, ok, openDesk, refused, setUp, testClock, type OutMessage } from "./cleanerDeskHarness";
 
 afterEach(() => cleanupDesks());
@@ -350,5 +350,61 @@ describe("MCP route for reply drafts and saved answers", () => {
     const code = (structured(asked).confirmation as { code: string }).code;
     expect((await tool(desk, "save_answer", { topic: "Trash day", answer: "Tuesday night.", confirmation: code })).isError).toBe(false);
     expect(ok(await desk.checkNow()).savedAnswers).toEqual([{ topic: "Trash day", answer: "Tuesday night." }]);
+  });
+});
+
+describe("A draft goes only to the person it answers", () => {
+  const SECOND = "+15555550133";
+  const send = (desk: LiveDesk, draft: string) => approvedOnDesk((confirmation) => desk.sendMessage({ draft, ...(confirmation ? { confirmation } : {}) }));
+
+  it("sends a reply to a contact named like the cleaner to the contact, not the cleaner", async () => {
+    const opened = openDesk([HOST, CLEANER, OBSERVER], "0");
+    const { desk, sms } = opened;
+    await setUp(desk, { groupChat: "cleaner-only", contacts: [{ name: "Ana", role: "co-host", phone: OBSERVER }] });
+    await desk.inbound({ id: "yes-cleaner", from: CLEANER, text: "YES" });
+    await desk.inbound({ id: "yes-contact", from: OBSERVER, text: "YES" });
+    await desk.inbound({ id: "q", from: OBSERVER, text: "Is the pool open?" });
+    const draft = await savedDraft(desk, await idOf(desk, "Is the pool open?"), "Yes, until 9");
+    const result = await send(desk, draft);
+    // The contact may not be reachable one-to-one; then it's refused. Either way the cleaner never gets it.
+    if (result.ok) expect(sms.sent.at(-1)).toMatchObject({ to: OBSERVER, body: expect.stringContaining("Yes, until 9") });
+    else expect(result.error).toBe("I can't text Ana right now.");
+    expect(sms.sent.filter((item) => item.to === CLEANER && item.body.includes("Yes, until 9"))).toEqual([]);
+  });
+
+  it("won't send a draft for the old cleaner after the cleaner is replaced", async () => {
+    const opened = openDesk([HOST, CLEANER, SECOND], "0");
+    const { desk } = opened;
+    await setUp(desk, { groupChat: "cleaner-only", cleanerName: undefined });
+    await desk.inbound({ id: "yes-cleaner", from: CLEANER, text: "YES" });
+    await desk.inbound({ id: "q", from: CLEANER, text: QUESTION });
+    const draft = await savedDraft(desk, await idOf(desk, QUESTION));
+    ok(await desk.savePeople({ host: HOST, cleaner: SECOND, groupChat: "cleaner-only" }));
+    const before = sentCount(opened);
+    expect(refused(await desk.sendMessage({ draft })).error).toBe(DRAFT_RECIPIENT_CHANGED);
+    expect(sentCount(opened)).toBe(before);
+  });
+
+  it("marks both questions answered when the cleaner has no saved name", async () => {
+    const opened = openDesk([HOST, CLEANER], "0");
+    const { desk, root } = opened;
+    await setUp(desk, { groupChat: "cleaner-only", cleanerName: undefined });
+    await desk.inbound({ id: "yes-cleaner", from: CLEANER, text: "YES" });
+    await desk.inbound({ id: "q1", from: CLEANER, text: QUESTION });
+    await desk.inbound({ id: "q2", from: CLEANER, text: "And the vacuum?" });
+    const draft = await savedDraft(desk, idOfKept(root, "And the vacuum?"), "Both in the hall closet");
+    ok(await send(desk, draft));
+    expect(refused(await desk.saveDraft({ replyTo: idOfKept(root, QUESTION), text: "again" })).result).toEqual({ alreadyAnswered: true, by: "assistant" });
+  });
+
+  it("won't draft for a contact who texted one-to-one outside the group, and a host group text leaves it open", async () => {
+    const { desk, root } = await liveGroup();
+    await desk.inbound({ id: "sam", from: OBSERVER, text: "Is the cleaning still on?" });
+    const samId = idOfKept(root, "Is the cleaning still on?");
+    expect(refused(await desk.saveDraft({ replyTo: samId, text: "Yes" })).error).toBe(DRAFT_NOT_IN_GROUP);
+    await desk.inbound({ id: "h", from: HOST, text: "Thanks Ana!", channel: "group" });
+    const now = ok(await desk.checkNow());
+    const all = [...((now.earlier as OutMessage[]) ?? []), ...((now.messages as OutMessage[]) ?? [])];
+    expect(all.find((message) => message.id === samId)).toMatchObject({ reply: "open" });
   });
 });

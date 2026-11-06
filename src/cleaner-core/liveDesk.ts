@@ -155,6 +155,8 @@ interface SavedAnswer {
   answer: string;
 }
 
+export const DRAFT_RECIPIENT_CHANGED = "The person this draft was for has changed. Drop it, and draft again from the newest messages.";
+export const DRAFT_NOT_IN_GROUP = "That came to Cleaner Core one-to-one from someone outside the group, and with a group, replies go only to the group. Tell the host to answer them directly.";
 export const DRAFT_NEW_SINCE = "Something new came in since this draft. Read it with check_now, then save a new draft or drop this one.";
 const RECIPIENT_NEEDED = "Say who to text: the cleaner, the group, or a saved contact's name.";
 const NO_GROUP = "There's no group chat for this property.";
@@ -262,6 +264,8 @@ interface Message {
   name: string;
   /** Who a sent host message went to, like Ana or the group. */
   to?: string;
+  /** Who a sent host message reached, for reply tracking: "group", "cleaner", or "contact:<name>". Not shown. */
+  target?: string;
   /** Trimmed to 300 characters, with every run of 4 or more digits redacted. */
   text: string;
   /** Local time at the property, like "Wednesday, Oct 14, 11:00 AM". */
@@ -2172,15 +2176,47 @@ export class LiveDesk {
     if (this.carriesCode(text)) return this.fail(DOOR_CODE_IN_CHAT);
     const state = replyStateAt(kept, at);
     if (state?.reply === "answered") return this.failWith(ALREADY_ANSWERED, { alreadyAnswered: true, by: state.by });
-    const draft: StoredDraft = { id: messageId(), replyTo, to: this.groupOn() ? "group" : message.name, text, base: kept.at(-1)!.id };
+    const to = this.draftRecipientKey(message);
+    if ("error" in to) return this.fail(to.error);
+    const draft: StoredDraft = { id: messageId(), replyTo, to: to.key, text, base: kept.at(-1)!.id };
     this.file.drafts = [...(this.file.drafts ?? []).filter((item) => item.replyTo !== replyTo), draft];
     this.persist();
     return this.reply({ draft: this.draftOut(draft, "ready") });
   }
 
-  /** A draft as check_now and save_draft show it: the recipient by name. */
+  /**
+   * Who a reply to this message goes to, by phone, so a contact who shares the cleaner's name, or a
+   * cleaner replaced later, never gets someone else's reply. With a group, replies go only to the
+   * group, so a contact who texted one-to-one from outside it can't get one.
+   */
+  private draftRecipientKey(message: Message): { key: string } | { error: string } {
+    if (this.groupOn()) return message.from === "contact" && message.channel !== "group" ? { error: DRAFT_NOT_IN_GROUP } : { key: "group" };
+    if (message.from === "cleaner") return this.file.cleaner ? { key: `cleaner:${this.file.cleaner}` } : { error: DRAFT_RECIPIENT_CHANGED };
+    const contact = contactsOf(this.file).find((item) => item.name === message.name);
+    return contact ? { key: `contact:${contact.phone}` } : { error: DRAFT_RECIPIENT_CHANGED };
+  }
+
+  /** The recipient a draft's key names now, or why it can't be sent. */
+  private draftRecipient(key: string): { key: string; send: string; name: string } | { error: string } {
+    if (key === "group") return this.recipientOf("group");
+    if (this.groupOn()) return { error: GROUP_ONLY };
+    if (key.startsWith("cleaner:")) {
+      const phone = key.slice("cleaner:".length);
+      if (!this.file.cleaner || phone !== this.file.cleaner) return { error: DRAFT_RECIPIENT_CHANGED };
+      return { key, send: phone, name: this.file.cleanerName ?? "the cleaner" };
+    }
+    if (key.startsWith("contact:")) {
+      const contact = contactsOf(this.file).find((item) => `contact:${item.phone}` === key);
+      return contact ? { key, send: contact.phone, name: contact.name } : { error: DRAFT_RECIPIENT_CHANGED };
+    }
+    return { error: DRAFT_RECIPIENT_CHANGED };
+  }
+
+  /** A draft as check_now and save_draft show it: the recipient by name, never by phone. */
   private draftOut(draft: StoredDraft, status: "ready" | "stale"): Record<string, unknown> {
-    return { id: draft.id, replyTo: draft.replyTo, to: draft.to === "group" ? GROUP_RECIPIENT : draft.to, text: draft.text, status };
+    const recipient = this.draftRecipient(draft.to);
+    const to = draft.to === "group" ? GROUP_RECIPIENT : "error" in recipient ? "someone no longer saved" : recipient.name;
+    return { id: draft.id, replyTo: draft.replyTo, to, text: draft.text, status };
   }
 
   /** The drafts still waiting, as check_now returns them. Answered and gone drafts are removed from the file. */
@@ -2272,7 +2308,7 @@ export class LiveDesk {
     if (status === "stale") return this.failWith(DRAFT_NEW_SINCE, { newSince: true });
     this.openSeal(pinKey);
     if (this.carriesCode(draft.text)) return this.fail(DOOR_CODE_IN_CHAT);
-    const recipient = this.recipientOf(draft.to);
+    const recipient = this.draftRecipient(draft.to);
     if ("error" in recipient) return this.fail(recipient.error);
     const cant = `I can't text ${recipient.name} right now.`;
     this.resume();
@@ -2300,7 +2336,7 @@ export class LiveDesk {
     }
     if (!sent) return this.fail(cant);
     this.file.drafts = (this.file.drafts ?? []).filter((item) => item.id !== draft.id);
-    this.keepSent(recipient.name, draft.text);
+    this.keepSent(recipient.name, draft.text, sentTarget(recipient));
     return this.reply({ next: `Sent to ${recipient.name}.` });
   }
 
@@ -2340,7 +2376,7 @@ export class LiveDesk {
       sent = null;
     }
     if (!sent) return this.fail(cant);
-    this.keepSent(recipient.name, text);
+    this.keepSent(recipient.name, text, sentTarget(recipient));
     return this.reply({ next: `Sent to ${recipient.name}.` });
   }
 
@@ -2372,8 +2408,8 @@ export class LiveDesk {
   }
 
   /** Keeps a sent host message in the history. Grok sent it, so check_now doesn't return it as new. */
-  private keepSent(to: string, text: string): void {
-    const message: Message = { id: messageId(), from: "host", name: "Host", to, text: this.messageText(text), at: this.messageAt(), handled: "sent" };
+  private keepSent(to: string, text: string, target: string): void {
+    const message: Message = { id: messageId(), from: "host", name: "Host", to, target, text: this.messageText(text), at: this.messageAt(), handled: "sent" };
     this.file.messages = [...(this.file.messages ?? []), message].slice(-MAX_MESSAGES);
     this.file.messagesShown = [...(this.file.messagesShown ?? []), message.id];
     this.persist();
@@ -2768,9 +2804,10 @@ export class LiveDesk {
   }
 
   /** A cleaner or contact message with whether the host has answered it, read against every kept message. */
-  private withReply<T extends Omit<Message, "photos" | "photosAt">>(message: T): T & Partial<ReplyState> {
-    const kept = this.file.messages ?? [];
-    const state = replyStateAt(kept, kept.findIndex((item) => item.id === message.id));
+  private withReply<T extends Omit<Message, "photos" | "photosAt">>(kept: T): Omit<T, "target"> & Partial<ReplyState> {
+    const { target: _target, ...message } = kept;
+    const all = this.file.messages ?? [];
+    const state = replyStateAt(all, all.findIndex((item) => item.id === message.id));
     return state ? { ...message, ...state } : message;
   }
 
@@ -3523,4 +3560,11 @@ export class LiveDesk {
     if (this.scratchCapture()) this.noteLocal(from, "held");
     return { sent: [], handled: "none" };
   }
+}
+
+/** Who a send reached, as kept on the sent message: "group", "cleaner", or "contact:<name>". */
+function sentTarget(recipient: { key: string; name: string }): string {
+  if (recipient.key === "group") return "group";
+  if (recipient.key.startsWith("cleaner:")) return "cleaner";
+  return `contact:${recipient.name}`;
 }
