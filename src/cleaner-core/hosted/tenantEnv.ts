@@ -11,6 +11,7 @@ export const PER_TENANT_NAMES = [
   "CLEANER_CORE_PIN_KEY",
   "CLEANER_CORE_PHOTO_KEY",
   "CLEANER_CORE_TWILIO_PHONE_NUMBER",
+  "CLEANER_CORE_SERVICE_LINES",
   "CLEANER_CORE_ASSISTANT",
   "CLEANER_CORE_PRIMARY_CONNECTION",
   "CLEANER_CORE_MCP_TOKEN",
@@ -32,6 +33,8 @@ export function buildTenantEnv(input: {
   secrets: TenantSecrets;
   primary: TenantConnection | undefined;
   origin: string;
+  /** Every tenant's number on this service. None of them is ever texted, even when any number is allowed. */
+  serviceLines?: readonly string[];
 }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...input.base };
   for (const name of PER_TENANT_NAMES) delete env[name];
@@ -39,6 +42,7 @@ export function buildTenantEnv(input: {
   for (const name of ROUTINE_NAMES) delete own[name];
   Object.assign(env, own);
   env.CLEANER_CORE_TWILIO_PHONE_NUMBER = input.tenant.twilioNumber;
+  if (input.serviceLines?.length) env.CLEANER_CORE_SERVICE_LINES = input.serviceLines.join(",");
   env.PUBLIC_BASE_URL = `${input.origin.replace(/\/+$/, "")}/t/${input.tenant.id}`;
   if (input.primary) {
     env.CLEANER_CORE_ASSISTANT = input.primary.assistant;

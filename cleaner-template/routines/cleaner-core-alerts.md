@@ -123,5 +123,9 @@ to rotate the key.
 
 ## Allowed tools
 
-`check_now`, `confirm_times`, `get_state`, `save_arrival`, and
-`get_job_photos`.
+`check_now`, `confirm_times`, `get_state`, `save_arrival`, `get_job_photos`,
+and `save_draft`.
+
+When Supply Core is on, also `get_supply_state`, `report_low`,
+`check_supplies`, `check_cart`, `approve_cart`, `record_order`,
+`record_problem`, and `mark_delivered`.

@@ -118,6 +118,21 @@ describe("Cleaner Core template manifest", () => {
     }
   });
 
+  it("allows, in each routine doc, every tool the manifest gives it and every tool its steps call", () => {
+    const routines = (JSON.parse(read(join(TEMPLATE, "template.json"))) as { routines: { doc: string; allowedTools: string[]; supplyTools?: string[] }[] }).routines;
+    const ticked = (text: string) => new Set([...text.matchAll(/`([a-z_]+)`/g)].map((match) => match[1]!));
+    for (const routine of routines) {
+      const doc = read(join(TEMPLATE, routine.doc));
+      const at = doc.indexOf("## Allowed tools");
+      expect(at, routine.doc).toBeGreaterThan(-1);
+      const allowed = ticked(doc.slice(at));
+      const called = ticked(doc.slice(0, at));
+      const known = [...routine.allowedTools, ...(routine.supplyTools ?? [])];
+      for (const tool of routine.allowedTools) expect([...allowed], `${routine.doc} allows ${tool}`).toContain(tool);
+      for (const tool of known.filter((name) => called.has(name))) expect([...allowed], `${routine.doc} calls ${tool}`).toContain(tool);
+    }
+  });
+
   it("lets a bot from the team template start setup with no paste-in prompt", () => {
     const m = manifest();
     const profile = read(join(TEMPLATE, m.profile));
