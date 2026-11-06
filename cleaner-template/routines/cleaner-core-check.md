@@ -43,9 +43,14 @@ webhook address, no key, and no secret.
    it, with `hold_job`.
 6. When a message gives an arrival time, call `save_arrival` with it as 24-hour
    HH:MM, like 11:30.
-7. If a message needs a reply, draft one and offer it to the host. Don't send
-   it from the routine. It goes out with `send_message` only after the host's
-   yes in chat.
+7. When a message has reply open and needs an answer, save one short reply
+   with save_draft and show the host the message, the draft exactly as saved,
+   and Send, Edit, Skip. When a draft is stale, read the new messages, then
+   save a new draft or drop it. When a message has reply answered, the host
+   already replied: say nothing more about it, and if the reply answers
+   something likely to be asked again, ask once whether to save it for next
+   time. Don't send it from the routine. It goes out with `send_message` only
+   after the host taps Send in chat.
 8. If the reply has `completed`, call `get_job_photos`, look at the photos, and
    compare them with the checklist. Summarize the cleaning in your own words:
    arrival, start and done times, checklist, what the photos show, and notes.

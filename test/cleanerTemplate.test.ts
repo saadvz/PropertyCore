@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { liveDeskFor, resetLiveDesks, type LiveDesk } from "../src/cleaner-core/liveDesk";
-import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
+import { GROK_INSTRUCTIONS, handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
+import { CHATGPT_INSTRUCTIONS, CHATGPT_TASK_PROMPT, CLAUDE_INSTRUCTIONS, CLAUDE_TASK_PROMPT, MUSE_INSTRUCTIONS, MUSE_TASK_PROMPT } from "../src/cleaner-core/assistant";
+import { REPLY_INSTRUCTIONS, ROUTINE_REPLY_SENTENCE } from "../src/cleaner-core/replyWording";
 import { askNext } from "../src/cleaner-core/setupAsk";
 import { DOOR_CODE } from "./wiringProof";
 import { filesUnder } from "./files";
@@ -22,7 +24,7 @@ const ROUTINES = ["Cleaner Core Check", "Cleaner Core Alerts"];
 /** The setup order get_state asks for: the diagram's 8 steps, the checks once numbers are approved, then the routines and the first times. */
 const SETUP_TOOLS = ["get_state", "save_property", "save_sources", "save_people", "save_schedule", "save_door_code", "save_preferences", "save_alert_routine", "activate", "run_checks", "confirm_times"];
 /** Tools that need the host's yes in chat. A routine runs unattended, so it never holds them. */
-const NEEDS_HOST_YES = ["send_message", "mark_guests_left", "save_door_code", "save_sources", "activate", "retry_send", "hold_job", "resume_job", "reset_property"];
+const NEEDS_HOST_YES = ["send_message", "save_answer", "mark_guests_left", "save_door_code", "save_sources", "activate", "retry_send", "hold_job", "resume_job", "reset_property"];
 
 /** LF bytes, so the pin matches on a Windows (CRLF) checkout and on CI. */
 const read = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
@@ -365,5 +367,36 @@ describe("Cleaner Core template docs", () => {
       expect(text.includes(DOOR_CODE), f).toBe(false);
       for (const v of envValues) expect(text.includes(v), `${f} contains a value from .env`).toBe(false);
     }
+  });
+});
+
+describe("Cleaner Core reply drafts wording", () => {
+  const flat = (text: string) => text.replace(/\s+/g, " ");
+  const whole = (value: string | readonly string[]) => (typeof value === "string" ? value : value.join("\n"));
+
+  const manifestRoutines = () => (JSON.parse(read(join(TEMPLATE, "template.json"))) as { routines: { allowedTools: string[] }[] }).routines;
+
+  it("lets routines draft but never send or save an answer", () => {
+    for (const routine of manifestRoutines()) {
+      expect(routine.allowedTools).toContain("save_draft");
+      expect(routine.allowedTools).not.toContain("send_message");
+      expect(routine.allowedTools).not.toContain("save_answer");
+    }
+  });
+
+  it("carries the reply wording in every assistant's instructions and routine prompt", () => {
+    for (const lines of [GROK_INSTRUCTIONS, CLAUDE_INSTRUCTIONS, CHATGPT_INSTRUCTIONS, MUSE_INSTRUCTIONS]) for (const line of REPLY_INSTRUCTIONS) expect(whole(lines)).toContain(line);
+    for (const prompt of [CLAUDE_TASK_PROMPT, CHATGPT_TASK_PROMPT, MUSE_TASK_PROMPT]) expect(whole(prompt)).toContain(ROUTINE_REPLY_SENTENCE);
+  });
+
+  it("carries the reply wording in the template docs", () => {
+    for (const doc of ["cleaner-template/routines/cleaner-core-alerts.md", "cleaner-template/routines/cleaner-core-check.md", "claude-template/routines/cleaner-core-task.md", "chatgpt-template/routines/cleaner-core-task.md"])
+      expect(flat(read(join(ROOT, doc))), doc).toContain(ROUTINE_REPLY_SENTENCE);
+    for (const line of REPLY_INSTRUCTIONS) expect(flat(read(join(TEMPLATE, "bot-profile.md")))).toContain(line);
+  });
+
+  it("drops the old one-line draft rule", () => {
+    const old = "When a message needs a reply Cleaner Core doesn't send itself, draft one short reply and offer it to the host.";
+    for (const lines of [GROK_INSTRUCTIONS, CLAUDE_INSTRUCTIONS, CHATGPT_INSTRUCTIONS, MUSE_INSTRUCTIONS]) expect(whole(lines)).not.toContain(old);
   });
 });

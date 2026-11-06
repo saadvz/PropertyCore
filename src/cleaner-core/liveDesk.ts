@@ -16,6 +16,7 @@ import { formatWhen, zonedInstant } from "./calendar";
 import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink, venmoProfileLink, venmoUsername, type PaymentSettings, type PayRecord } from "./payments";
 import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
 import { cleanerMultiTenant, groupChatEnabled } from "./flag";
+import { GROUP_RECIPIENT, draftStatus, earlierThan, replyStateAt, type ReplyState, type StoredDraft } from "./replies";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
 import { calendarUrlAllowed, readPublicCalendar, type CalendarFetch } from "./fetchLimits";
@@ -143,6 +144,25 @@ const SECOND_COPY_MS = 5 * 60_000;
 /** The approval action for a host message. Its target is the recipient, its fingerprint the recipient and the exact text. */
 const SEND_ACTION = "cleaner-message";
 const MESSAGE_NEEDED = `Write the message in 1 to ${MAX_HOST_MESSAGE} characters.`;
+export const DRAFT_UNKNOWN = "I don't have that message. Call check_now and use a message id it returned.";
+export const DRAFT_GONE = "That draft was sent, dropped, or already answered. Call check_now for the drafts still waiting.";
+export const ALREADY_ANSWERED = "The host already answered that message. Drop the draft and tell the host nothing more about it.";
+export const ANSWER_NEEDED = "Tell me the topic and the answer, in the host's words.";
+export const ANSWER_TOO_LONG = `Keep the answer to ${MAX_HOST_MESSAGE} characters.`;
+export const TOPIC_TOO_LONG = "Keep the topic to a few words.";
+export const NO_SUCH_ANSWER = "There's no saved answer for that topic.";
+const MAX_TOPIC = 60;
+const SAVE_ANSWER_ACTION = "cleaner-saved-answer";
+
+/** An answer the host saved for next time. */
+interface SavedAnswer {
+  topic: string;
+  answer: string;
+}
+
+export const DRAFT_RECIPIENT_CHANGED = "The person this draft was for has changed. Drop it, and draft again from the newest messages.";
+export const DRAFT_NOT_IN_GROUP = "That came to Cleaner Core one-to-one from someone outside the group, and with a group, replies go only to the group. Tell the host to answer them directly.";
+export const DRAFT_NEW_SINCE = "Something new came in since this draft. Read it with check_now, then save a new draft or drop this one.";
 const RECIPIENT_NEEDED = "Say who to text: the cleaner, the group, or a saved contact's name.";
 const NO_GROUP = "There's no group chat for this property.";
 const GROUP_ONLY = "Messages go to the group. Send it with to: group.";
@@ -249,6 +269,8 @@ interface Message {
   name: string;
   /** Who a sent host message went to, like Ana or the group. */
   to?: string;
+  /** Who a sent host message reached, for reply tracking: "group", "cleaner", or "contact:<name>". Not shown. */
+  target?: string;
   /** Trimmed to 300 characters, with every run of 4 or more digits redacted. */
   text: string;
   /** Local time at the property, like "Wednesday, Oct 14, 11:00 AM". */
@@ -407,6 +429,10 @@ interface LiveFile {
   messages?: Message[];
   /** Ids of the messages `check_now` has already returned. */
   messagesShown?: string[];
+  /** Reply drafts waiting for the host's Send. They send nothing by themselves and never expire. */
+  drafts?: StoredDraft[];
+  /** The host's own answers, saved on their yes, for the next draft to use word for word. */
+  savedAnswers?: SavedAnswer[];
   /** Ids of the finished cleanings `check_now` has already returned as completed. */
   completedShown?: string[];
   released?: boolean;
@@ -647,6 +673,8 @@ export class LiveDesk {
   private readonly alerts: OperatorEventOutbox;
   /** Approvals for host messages. They live only in this process, so a restart means asking again. */
   private readonly approvals: ConfirmationBook;
+  /** Approvals for saved drafts. They never expire; a restart means asking for a new code. */
+  private readonly draftApprovals: ConfirmationBook;
   /** The door-code key of the call that made the pending upload link. Only in memory. */
   private uploadKey: Buffer | undefined;
 
@@ -657,6 +685,7 @@ export class LiveDesk {
   ) {
     this.path = join(root, "cleaner-live.json");
     this.approvals = new ConfirmationBook(10 * 60_000, () => this.now().getTime());
+    this.draftApprovals = new ConfirmationBook(Number.POSITIVE_INFINITY, () => this.now().getTime());
     this.load();
     // With the server's key, a saved code opens at load, so a redeploy doesn't ask for it again.
     this.openSeal();
@@ -1569,6 +1598,9 @@ export class LiveDesk {
     const messages = this.file.messages ?? [];
     const seen = new Set(this.file.messagesShown ?? []);
     const newMessages = messages.filter((message) => !seen.has(message.id));
+    const firstNew = messages.findIndex((message) => !seen.has(message.id));
+    // Already-shown messages just before the new ones, so a reply can be read against its question.
+    const earlier = firstNew > 0 ? earlierThan(messages, firstNew) : [];
     // Only ids still kept, so the list stays as short as the messages.
     this.file.messagesShown = messages.map((message) => message.id);
     const jobs = engine.jobs();
@@ -1576,6 +1608,8 @@ export class LiveDesk {
     const finished = jobs.filter((job) => job.doneAt && !shownDone.has(job.id));
     this.file.completedShown = [...shownDone, ...finished.map((job) => job.id)];
     const payDue = this.payDueNow(jobs);
+    const drafts = this.waitingDrafts();
+    const savedAnswers = this.savedAnswersOut();
     const wake = this.wakeAlert();
     prunePhotos(this.root, jobs, this.now());
     this.pruneMessagePhotos();
@@ -1584,6 +1618,9 @@ export class LiveDesk {
     return this.reply({
       alerts: [...fresh.map((note) => note.body), ...(wake ? [wake] : [])],
       messages: this.messagesOut(newMessages, save),
+      ...(drafts.length > 0 ? { drafts } : {}),
+      ...(savedAnswers.length > 0 ? { savedAnswers } : {}),
+      ...(earlier.length > 0 ? { earlier: earlier.map(({ photos: _photos, photosAt: _photosAt, ...message }) => this.withReply(message)) } : {}),
       ...(finished.length > 0 ? { completed: finished.map((job) => this.completedFacts(job)) } : {}),
       ...(payDue.length > 0 ? { payDue } : {}),
       turns: this.turns(),
@@ -2237,13 +2274,193 @@ export class LiveDesk {
   }
 
   /**
+   * Saves one reply draft for a cleaner or contact message, by its id. It sends nothing, so a
+   * routine may call it. The reply goes to the group when there is one, otherwise to the person
+   * who wrote. A new draft for the same message replaces the old one; drop removes it.
+   */
+  saveDraft(input: { replyTo?: string; text?: string; drop?: boolean }, pinKey?: Buffer): Promise<ToolReply> {
+    return this.serial(async () => this.saveDraftNow(input, pinKey));
+  }
+
+  private saveDraftNow(input: { replyTo?: string; text?: string; drop?: boolean }, pinKey: Buffer | undefined): ToolReply {
+    const replyTo = input.replyTo?.trim() ?? "";
+    const kept = this.file.messages ?? [];
+    const at = kept.findIndex((message) => message.id === replyTo);
+    const message = kept[at];
+    if (input.drop) {
+      this.file.drafts = (this.file.drafts ?? []).filter((draft) => draft.replyTo !== replyTo);
+      this.persist();
+      return this.reply({ dropped: true });
+    }
+    if (!message || message.from === "host") return this.fail(DRAFT_UNKNOWN);
+    const text = input.text?.trim() ?? "";
+    if (!text || text.length > MAX_HOST_MESSAGE) return this.fail(MESSAGE_NEEDED);
+    this.openSeal(pinKey);
+    if (this.carriesCode(text)) return this.fail(DOOR_CODE_IN_CHAT);
+    const state = replyStateAt(kept, at);
+    if (state?.reply === "answered") return this.failWith(ALREADY_ANSWERED, { alreadyAnswered: true, by: state.by });
+    const to = this.draftRecipientKey(message);
+    if ("error" in to) return this.fail(to.error);
+    const draft: StoredDraft = { id: messageId(), replyTo, to: to.key, text, base: kept.at(-1)!.id };
+    this.file.drafts = [...(this.file.drafts ?? []).filter((item) => item.replyTo !== replyTo), draft];
+    this.persist();
+    return this.reply({ draft: this.draftOut(draft, "ready") });
+  }
+
+  /**
+   * Who a reply to this message goes to, by phone, so a contact who shares the cleaner's name, or a
+   * cleaner replaced later, never gets someone else's reply. With a group, replies go only to the
+   * group, so a contact who texted one-to-one from outside it can't get one.
+   */
+  private draftRecipientKey(message: Message): { key: string } | { error: string } {
+    if (this.groupOn()) return message.from === "contact" && message.channel !== "group" ? { error: DRAFT_NOT_IN_GROUP } : { key: "group" };
+    if (message.from === "cleaner") return this.file.cleaner ? { key: `cleaner:${this.file.cleaner}` } : { error: DRAFT_RECIPIENT_CHANGED };
+    const contact = contactsOf(this.file).find((item) => item.name === message.name);
+    return contact ? { key: `contact:${contact.phone}` } : { error: DRAFT_RECIPIENT_CHANGED };
+  }
+
+  /** The recipient a draft's key names now, or why it can't be sent. */
+  private draftRecipient(key: string): { key: string; send: string; name: string } | { error: string } {
+    if (key === "group") return this.recipientOf("group");
+    if (this.groupOn()) return { error: GROUP_ONLY };
+    if (key.startsWith("cleaner:")) {
+      const phone = key.slice("cleaner:".length);
+      if (!this.file.cleaner || phone !== this.file.cleaner) return { error: DRAFT_RECIPIENT_CHANGED };
+      return { key, send: phone, name: this.file.cleanerName ?? "the cleaner" };
+    }
+    if (key.startsWith("contact:")) {
+      const contact = contactsOf(this.file).find((item) => `contact:${item.phone}` === key);
+      return contact ? { key, send: contact.phone, name: contact.name } : { error: DRAFT_RECIPIENT_CHANGED };
+    }
+    return { error: DRAFT_RECIPIENT_CHANGED };
+  }
+
+  /** A draft as check_now and save_draft show it: the recipient by name, never by phone. */
+  private draftOut(draft: StoredDraft, status: "ready" | "stale"): Record<string, unknown> {
+    const recipient = this.draftRecipient(draft.to);
+    const to = draft.to === "group" ? GROUP_RECIPIENT : "error" in recipient ? "someone no longer saved" : recipient.name;
+    return { id: draft.id, replyTo: draft.replyTo, to, text: draft.text, status };
+  }
+
+  /** The drafts still waiting, as check_now returns them. Answered and gone drafts are removed from the file. */
+  private waitingDrafts(): Record<string, unknown>[] {
+    const kept = this.file.messages ?? [];
+    const waiting: { draft: StoredDraft; status: "ready" | "stale" }[] = [];
+    for (const draft of this.file.drafts ?? []) {
+      const status = draftStatus(draft, kept);
+      if (status === "ready" || status === "stale") waiting.push({ draft, status });
+    }
+    if (waiting.length !== (this.file.drafts ?? []).length) this.file.drafts = waiting.map((item) => item.draft);
+    if (this.file.drafts?.length === 0) delete this.file.drafts;
+    return waiting.map((item) => this.draftOut(item.draft, item.status));
+  }
+
+  /**
+   * Saves, or with remove forgets, the host's own answer for a topic, on the host's yes. It sends
+   * nothing. Saving a topic already saved (ignoring case) replaces its answer. There is no count limit.
+   */
+  saveAnswer(input: { topic?: string; answer?: string; remove?: boolean; confirmation?: string }, pinKey?: Buffer): Promise<ToolReply> {
+    return this.serial(async () => this.saveAnswerNow(input, pinKey));
+  }
+
+  private saveAnswerNow(input: { topic?: string; answer?: string; remove?: boolean; confirmation?: string }, pinKey: Buffer | undefined): ToolReply {
+    const topic = input.topic?.trim() ?? "";
+    const answer = input.remove ? "" : (input.answer?.trim() ?? "");
+    if (!topic || (!input.remove && !answer)) return this.fail(ANSWER_NEEDED);
+    this.openSeal(pinKey);
+    if (this.carriesCode(topic) || this.carriesCode(answer)) return this.fail(DOOR_CODE_IN_CHAT);
+    if (topic.length > MAX_TOPIC) return this.fail(TOPIC_TOO_LONG);
+    if (answer.length > MAX_HOST_MESSAGE) return this.fail(ANSWER_TOO_LONG);
+    const key = topic.toLowerCase();
+    const saved = this.file.savedAnswers ?? [];
+    if (input.remove && !saved.some((item) => item.topic.toLowerCase() === key)) return this.fail(NO_SUCH_ANSWER);
+    const fingerprint = createHash("sha256").update(`${key}|${answer}|${input.remove ? 1 : 0}`).digest("hex");
+    const code = input.confirmation?.trim() ?? "";
+    if (!code) {
+      const question = input.remove ? `Forget the saved answer for ${topic}?` : `Save for next time, ${topic}: "${answer}"?`;
+      return this.reply({ preview: input.remove ? { topic, remove: true } : { topic, answer }, confirmation: this.approvals.issue(SAVE_ANSWER_ACTION, "answers", fingerprint, question) });
+    }
+    try {
+      this.approvals.redeem(code, SAVE_ANSWER_ACTION, "answers", fingerprint);
+    } catch {
+      return this.fail(APPROVAL_STALE);
+    }
+    const others = saved.filter((item) => item.topic.toLowerCase() !== key);
+    const next = input.remove ? others : [...others, { topic, answer }];
+    if (next.length > 0) this.file.savedAnswers = next;
+    else delete this.file.savedAnswers;
+    this.persist();
+    return this.reply({ next: input.remove ? "Forgotten." : "Saved." });
+  }
+
+  /** The host's saved answers, then the checklist and the cleaning note, as check_now returns them. */
+  private savedAnswersOut(): SavedAnswer[] {
+    const preferences = this.file.preferences;
+    return [
+      ...(this.file.savedAnswers ?? []),
+      ...(preferences?.checklist?.length ? [{ topic: "Checklist", answer: preferences.checklist.join("; ") }] : []),
+      ...(preferences?.instructions ? [{ topic: "Cleaning note", answer: preferences.instructions }] : []),
+    ];
+  }
+
+  /**
    * Sends the host's own message to the cleaner, the group, or a saved contact. Without a
    * confirmation it only checks the message and returns the exact text with an approval code.
    * With the code it sends through the engine, and only when the recipient and the text are the
    * ones the host approved. The door code never goes out this way.
    */
-  sendMessage(input: { to?: string; text?: string; confirmation?: string }, pinKey?: Buffer): Promise<ToolReply> {
-    return this.serial(() => this.sendMessageNow(input, pinKey));
+  sendMessage(input: { to?: string; text?: string; draft?: string; confirmation?: string }, pinKey?: Buffer): Promise<ToolReply> {
+    return this.serial(() => (input.draft !== undefined ? this.sendDraftNow(input.draft, input.confirmation, pinKey) : this.sendMessageNow(input, pinKey)));
+  }
+
+  /**
+   * Sends a saved draft: its text, to its recipient, with the host's code. The code never expires,
+   * and is bound to the draft, its text, and who is in the group. A draft that is stale, answered,
+   * or gone is refused, both for the preview and for the send.
+   */
+  private async sendDraftNow(id: string, confirmation: string | undefined, pinKey: Buffer | undefined): Promise<ToolReply> {
+    const draft = (this.file.drafts ?? []).find((item) => item.id === id.trim());
+    if (!draft) return this.fail(DRAFT_GONE);
+    const kept = this.file.messages ?? [];
+    const status = draftStatus(draft, kept);
+    if (status === "gone") return this.fail(DRAFT_GONE);
+    if (status === "answered") {
+      const state = replyStateAt(kept, kept.findIndex((message) => message.id === draft.replyTo));
+      return this.failWith(ALREADY_ANSWERED, { alreadyAnswered: true, by: state?.reply === "answered" ? state.by : "group" });
+    }
+    if (status === "stale") return this.failWith(DRAFT_NEW_SINCE, { newSince: true });
+    this.openSeal(pinKey);
+    if (this.carriesCode(draft.text)) return this.fail(DOOR_CODE_IN_CHAT);
+    const recipient = this.draftRecipient(draft.to);
+    if ("error" in recipient) return this.fail(recipient.error);
+    const cant = `I can't text ${recipient.name} right now.`;
+    this.resume();
+    const engine = this.engine;
+    if (this.pin) engine?.rememberPin(this.pin);
+    if (!this.file.checked || !engine || !this.reachable(recipient.send, engine)) return this.fail(cant);
+    if (engine.hostMessagesSince(new Date(this.now().getTime() - HOUR_MS)) >= HOST_MESSAGES_PER_HOUR) return this.fail(TOO_MANY);
+    const bound = recipient.send === "group" ? `group:${engine.groupMembers().join(",")}` : recipient.key;
+    const fingerprint = createHash("sha256").update(`${bound}|draft:${draft.id}|${draft.text}`).digest("hex");
+    const code = confirmation?.trim() ?? "";
+    if (!code) {
+      const question = `Send to ${recipient.name}: "${draft.text}"?`;
+      return this.reply({ preview: { to: recipient.name, text: draft.text }, confirmation: this.draftApprovals.issue(SEND_ACTION, recipient.key, fingerprint, question) });
+    }
+    try {
+      this.draftApprovals.redeem(code, SEND_ACTION, recipient.key, fingerprint);
+    } catch {
+      return this.fail(APPROVAL_STALE);
+    }
+    let sent: CleanerText | null;
+    try {
+      sent = await engine.sendHostMessage({ to: recipient.send, body: draft.text });
+    } catch {
+      sent = null;
+    }
+    if (!sent) return this.fail(cant);
+    this.file.drafts = (this.file.drafts ?? []).filter((item) => item.id !== draft.id);
+    this.keepSent(recipient.name, draft.text, sentTarget(recipient));
+    return this.reply({ next: `Sent to ${recipient.name}.` });
   }
 
   private async sendMessageNow(input: { to?: string; text?: string; confirmation?: string }, pinKey: Buffer | undefined): Promise<ToolReply> {
@@ -2282,7 +2499,7 @@ export class LiveDesk {
       sent = null;
     }
     if (!sent) return this.fail(cant);
-    this.keepSent(recipient.name, text);
+    this.keepSent(recipient.name, text, sentTarget(recipient));
     return this.reply({ next: `Sent to ${recipient.name}.` });
   }
 
@@ -2314,8 +2531,8 @@ export class LiveDesk {
   }
 
   /** Keeps a sent host message in the history. Grok sent it, so check_now doesn't return it as new. */
-  private keepSent(to: string, text: string): void {
-    const message: Message = { id: messageId(), from: "host", name: "Host", to, text: this.messageText(text), at: this.messageAt(), handled: "sent" };
+  private keepSent(to: string, text: string, target: string): void {
+    const message: Message = { id: messageId(), from: "host", name: "Host", to, target, text: this.messageText(text), at: this.messageAt(), handled: "sent" };
     this.file.messages = [...(this.file.messages ?? []), message].slice(-MAX_MESSAGES);
     this.file.messagesShown = [...(this.file.messagesShown ?? []), message.id];
     this.persist();
@@ -2403,6 +2620,8 @@ export class LiveDesk {
     delete this.file.alertsQueued;
     delete this.file.messages;
     delete this.file.messagesShown;
+    delete this.file.drafts;
+    delete this.file.savedAnswers;
     delete this.file.completedShown;
     delete this.file.timedJobs;
     this.approvals.clear();
@@ -2699,11 +2918,20 @@ export class LiveDesk {
     const withPhotos = messages.some((message) => message.photos);
     const base = withPhotos ? publicBaseUrl(this.env()) : undefined;
     const key = base ? photoKey(this.env(), save) : undefined;
-    return messages.map(({ photos, photosAt: _photosAt, ...message }) => {
+    return messages.map(({ photos, photosAt: _photosAt, ...kept }) => {
+      const message = this.withReply(kept);
       if (!photos || !base || !key) return message;
       const links = photoLinks(this.root, messagePhotoId(message.id), base, key, this.now());
       return links.length > 0 ? { ...message, photos: links } : message;
     });
+  }
+
+  /** A cleaner or contact message with whether the host has answered it, read against every kept message. */
+  private withReply<T extends Omit<Message, "photos" | "photosAt">>(kept: T): Omit<T, "target"> & Partial<ReplyState> {
+    const { target: _target, ...message } = kept;
+    const all = this.file.messages ?? [];
+    const state = replyStateAt(all, all.findIndex((item) => item.id === message.id));
+    return state ? { ...message, ...state } : message;
   }
 
   /** A kept message's text: every run of 4 or more digits redacted, split or not, trimmed to 300 characters. */
@@ -3459,4 +3687,11 @@ export class LiveDesk {
     if (this.scratchCapture()) this.noteLocal(from, "held");
     return { sent: [], handled: "none" };
   }
+}
+
+/** Who a send reached, as kept on the sent message: "group", "cleaner", or "contact:<name>". */
+function sentTarget(recipient: { key: string; name: string }): string {
+  if (recipient.key === "group") return "group";
+  if (recipient.key.startsWith("cleaner:")) return "cleaner";
+  return `contact:${recipient.name}`;
 }

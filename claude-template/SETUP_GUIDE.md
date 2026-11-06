@@ -103,6 +103,8 @@ Remove every other connector. A scheduled task can use all its connectors' tools
 
 From here, each reply from the cleaner starts a task run that tells you what needs you. Open the run to answer it, for example "yes, the guests have left" to send the door code.
 
+When the cleaner asks something, the run shows their words and a reply draft with Send, Edit, and Skip. Nothing goes to the cleaner until you tap Send. If you answer in the group text yourself, Claude sees your reply and drops its draft. After a reply goes out, Claude may offer to save it so the next draft for the same question uses your words.
+
 ## Troubleshooting
 
 Every row here came up during testing.

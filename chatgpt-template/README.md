@@ -33,7 +33,9 @@ Cleaner Core can't tell ChatGPT the moment the cleaner writes. The group text
 (the default answer at setup, "A group text with me and the cleaner") puts the
 cleaner's message on the host's phone right away. The host then says "Maria
 texted, draft a reply", and ChatGPT calls `check_now` first to read the actual
-message. A host who picks texts to the cleaner alone is told at setup that
+message. It saves a draft and shows it with Send, Edit, and Skip. Nothing goes
+to the cleaner until the host taps Send. When the host answers in the group
+text instead, ChatGPT sees that reply on its next check and drops its draft. A host who picks texts to the cleaner alone is told at setup that
 those messages can take up to an hour to reach them.
 
 ### If the hourly task stops

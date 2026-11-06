@@ -23,13 +23,15 @@ interface Pending {
 export interface ConfirmationRequest {
   code: string;
   question: string;
-  expiresInMinutes: number;
+  /** Left out when the book's codes never expire. */
+  expiresInMinutes?: number;
 }
 
 export class ConfirmationBook {
   private readonly pending = new Map<string, Pending>();
 
   constructor(
+    /** Number.POSITIVE_INFINITY makes codes that never expire. */
     private readonly ttlMs = 10 * 60_000,
     private readonly now: () => number = () => Date.now(),
   ) {}
@@ -40,7 +42,7 @@ export class ConfirmationBook {
     do code = Array.from({ length: 6 }, () => ALPHABET[randomInt(ALPHABET.length)]).join("");
     while (this.pending.has(code));
     this.pending.set(code, { action, target, fingerprint, expiresAt: this.now() + this.ttlMs });
-    return { code, question, expiresInMinutes: Math.round(this.ttlMs / 60_000) };
+    return { code, question, ...(Number.isFinite(this.ttlMs) ? { expiresInMinutes: Math.round(this.ttlMs / 60_000) } : {}) };
   }
 
   /** Looks up an unused code without consuming it. */
