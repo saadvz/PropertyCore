@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ConfirmationBook } from "../src/operator/confirmations";
 import { ALREADY_ANSWERED, DOOR_CODE_IN_CHAT, DRAFT_GONE, DRAFT_NEW_SINCE, DRAFT_NOT_IN_GROUP, DRAFT_RECIPIENT_CHANGED, DRAFT_UNKNOWN, setCleanerAlertFetch, type LiveDesk } from "../src/cleaner-core/liveDesk";
 import { approvedOnDesk } from "./hostApproval";
 import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
@@ -406,5 +407,58 @@ describe("A draft goes only to the person it answers", () => {
     const now = ok(await desk.checkNow());
     const all = [...((now.earlier as OutMessage[]) ?? []), ...((now.messages as OutMessage[]) ?? [])];
     expect(all.find((message) => message.id === samId)).toMatchObject({ reply: "open" });
+  });
+});
+
+describe("Draft approvals and group members", () => {
+  const book = (desk: LiveDesk) => (desk as unknown as { draftApprovals: ConfirmationBook }).draftApprovals;
+
+  it("forgets a draft's codes once it is sent, dropped, replaced, or answered", async () => {
+    const { desk } = await liveGroup();
+    const replyTo = await asked(desk);
+    const sent = await savedDraft(desk, replyTo);
+    await previewCode(desk, sent);
+    await previewCode(desk, sent);
+    expect(book(desk).size).toBe(2);
+    ok(await approvedOnDesk((confirmation) => desk.sendMessage({ draft: sent, ...(confirmation ? { confirmation } : {}) })));
+    expect(book(desk).size).toBe(0);
+
+    const next = await asked(desk, "And the vacuum?", "q2");
+    const dropped = await savedDraft(desk, next);
+    await previewCode(desk, dropped);
+    ok(await desk.saveDraft({ replyTo: next, drop: true }));
+    expect(book(desk).size).toBe(0);
+
+    const replaced = await savedDraft(desk, next);
+    await previewCode(desk, replaced);
+    await savedDraft(desk, next, "Something else");
+    expect(book(desk).size).toBe(0);
+
+    const answered = await savedDraft(desk, next);
+    await previewCode(desk, answered);
+    await desk.inbound({ id: "h-ans", from: HOST, text: "Under the stairs", channel: "group" });
+    ok(await desk.checkNow());
+    expect(book(desk).size).toBe(0);
+  });
+
+  it("reset_property clears draft approvals", async () => {
+    const { desk } = await liveGroup();
+    const id = await savedDraft(desk, await asked(desk));
+    await previewCode(desk, id);
+    ok(await approvedOnDesk((confirmation) => desk.resetProperty(confirmation ? { confirmation } : {}, () => undefined)));
+    expect(book(desk).size).toBe(0);
+  });
+
+  it("stops a group draft saved before the group's members changed", async () => {
+    const opened = await liveGroup();
+    const { desk } = opened;
+    const id = await savedDraft(desk, await asked(desk));
+    await desk.inbound({ id: "stop-host", from: HOST, text: "STOP", channel: "group" });
+    const before = sentCount(opened);
+    const preview = await desk.sendMessage({ draft: id });
+    expect(preview.ok).toBe(false);
+    // A host STOP is kept as a host group message, so it answers the question as well as changing the group.
+    if (!preview.ok) expect([DRAFT_RECIPIENT_CHANGED, DRAFT_NEW_SINCE, ALREADY_ANSWERED]).toContain(preview.error);
+    expect(sentCount(opened)).toBe(before);
   });
 });

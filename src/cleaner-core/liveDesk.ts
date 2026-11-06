@@ -162,6 +162,11 @@ interface SavedAnswer {
 
 export const DRAFT_RECIPIENT_CHANGED = "The person this draft was for has changed. Drop it, and draft again from the newest messages.";
 export const DRAFT_NOT_IN_GROUP = "That came to Cleaner Core one-to-one from someone outside the group, and with a group, replies go only to the group. Tell the host to answer them directly.";
+export const CODE_IN_SAVED_ANSWER = (topic?: string): string =>
+  topic
+    ? `Those digits are in the saved answer for "${topic}". Change or forget that answer with save_answer, then save the door code again.`
+    : "Those digits are in a saved answer. Change or forget it with save_answer, then save the door code again.";
+export const CODE_IN_DRAFT = "Those digits are in a reply draft waiting to be sent. Send it or drop it with save_draft, then save the door code again.";
 export const DRAFT_NEW_SINCE = "Something new came in since this draft. Read it with check_now, then save a new draft or drop this one.";
 const RECIPIENT_NEEDED = "Say who to text: the cleaner, the group, or a saved contact's name.";
 const NO_GROUP = "There's no group chat for this property.";
@@ -675,6 +680,8 @@ export class LiveDesk {
   private readonly approvals: ConfirmationBook;
   /** Approvals for saved drafts. They never expire; a restart means asking for a new code. */
   private readonly draftApprovals: ConfirmationBook;
+  /** The codes issued for each draft, by draft id, so they leave the book with the draft. */
+  private readonly draftCodes = new Map<string, string[]>();
   /** The door-code key of the call that made the pending upload link. Only in memory. */
   private uploadKey: Buffer | undefined;
 
@@ -1341,6 +1348,10 @@ export class LiveDesk {
     }
     const key = this.keyFor(pinKey);
     if (!key) return this.fail(PIN_KEY_MISSING);
+    // The seal is refused when the code's digits already sit elsewhere in the file. Say where, without the digits.
+    const inAnswer = (this.file.savedAnswers ?? []).find((item) => containsCodeToken(item.topic, code) || containsCodeToken(item.answer, code));
+    if (inAnswer) return this.fail(CODE_IN_SAVED_ANSWER(containsCodeToken(inAnswer.topic, code) ? undefined : inAnswer.topic));
+    if ((this.file.drafts ?? []).some((draft) => containsCodeToken(draft.text, code))) return this.fail(CODE_IN_DRAFT);
     const previousPin = this.pin;
     const previousSeal = this.file.pinSeal;
     const previousLock = this.file.lockLocation;
@@ -2288,7 +2299,7 @@ export class LiveDesk {
     const at = kept.findIndex((message) => message.id === replyTo);
     const message = kept[at];
     if (input.drop) {
-      this.file.drafts = (this.file.drafts ?? []).filter((draft) => draft.replyTo !== replyTo);
+      this.setDrafts((this.file.drafts ?? []).filter((draft) => draft.replyTo !== replyTo));
       this.persist();
       return this.reply({ dropped: true });
     }
@@ -2301,8 +2312,9 @@ export class LiveDesk {
     if (state?.reply === "answered") return this.failWith(ALREADY_ANSWERED, { alreadyAnswered: true, by: state.by });
     const to = this.draftRecipientKey(message);
     if ("error" in to) return this.fail(to.error);
-    const draft: StoredDraft = { id: messageId(), replyTo, to: to.key, text, base: kept.at(-1)!.id };
-    this.file.drafts = [...(this.file.drafts ?? []).filter((item) => item.replyTo !== replyTo), draft];
+    const members = to.key === "group" ? this.groupMembersNow() : undefined;
+    const draft: StoredDraft = { id: messageId(), replyTo, to: to.key, text, base: kept.at(-1)!.id, ...(members !== undefined ? { members } : {}) };
+    this.setDrafts([...(this.file.drafts ?? []).filter((item) => item.replyTo !== replyTo), draft]);
     this.persist();
     return this.reply({ draft: this.draftOut(draft, "ready") });
   }
@@ -2346,13 +2358,34 @@ export class LiveDesk {
   private waitingDrafts(): Record<string, unknown>[] {
     const kept = this.file.messages ?? [];
     const waiting: { draft: StoredDraft; status: "ready" | "stale" }[] = [];
+    const members = this.groupMembersNow();
     for (const draft of this.file.drafts ?? []) {
-      const status = draftStatus(draft, kept);
-      if (status === "ready" || status === "stale") waiting.push({ draft, status });
+      const status = draftStatus(draft, kept, members);
+      // A draft whose group changed is shown stale, so the assistant reads the thread and drafts again.
+      if (status === "ready" || status === "stale" || status === "changed") waiting.push({ draft, status: status === "ready" ? "ready" : "stale" });
     }
-    if (waiting.length !== (this.file.drafts ?? []).length) this.file.drafts = waiting.map((item) => item.draft);
-    if (this.file.drafts?.length === 0) delete this.file.drafts;
+    if (waiting.length !== (this.file.drafts ?? []).length) this.setDrafts(waiting.map((item) => item.draft));
     return waiting.map((item) => this.draftOut(item.draft, item.status));
+  }
+
+  /** Replaces the saved drafts. A draft that leaves takes its approval codes out of the book with it. */
+  private setDrafts(next: StoredDraft[]): void {
+    const keep = new Set(next.map((draft) => draft.id));
+    for (const draft of this.file.drafts ?? []) {
+      if (keep.has(draft.id)) continue;
+      for (const code of this.draftCodes.get(draft.id) ?? []) this.draftApprovals.drop(code);
+      this.draftCodes.delete(draft.id);
+    }
+    if (next.length > 0) this.file.drafts = next;
+    else delete this.file.drafts;
+  }
+
+  /** Who is in the group thread now, as sorted phones joined by commas, or undefined without one. */
+  private groupMembersNow(): string | undefined {
+    if (!this.groupOn()) return undefined;
+    this.resume();
+    const members = this.engine?.groupMembers();
+    return members ? [...members].sort().join(",") : undefined;
   }
 
   /**
@@ -2393,7 +2426,13 @@ export class LiveDesk {
     return this.reply({ next: input.remove ? "Forgotten." : "Saved." });
   }
 
-  /** The host's saved answers, then the checklist and the cleaning note, as check_now returns them. */
+  /**
+   * The host's saved answers, then the checklist and the cleaning note, as check_now returns them.
+   * Unlike kept messages, these aren't digit-redacted: they are the host's own words, which a draft
+   * sends word for word, so redacting would break the reply. The door code can't be in them: saving
+   * checks for it, and while the code is sealed and can't be opened any run of 4 or more digits is
+   * refused (carriesCode). A new door code whose digits are already in one won't seal (saveDoorCodeNow).
+   */
   private savedAnswersOut(): SavedAnswer[] {
     const preferences = this.file.preferences;
     return [
@@ -2422,8 +2461,9 @@ export class LiveDesk {
     const draft = (this.file.drafts ?? []).find((item) => item.id === id.trim());
     if (!draft) return this.fail(DRAFT_GONE);
     const kept = this.file.messages ?? [];
-    const status = draftStatus(draft, kept);
+    const status = draftStatus(draft, kept, this.groupMembersNow());
     if (status === "gone") return this.fail(DRAFT_GONE);
+    if (status === "changed") return this.fail(DRAFT_RECIPIENT_CHANGED);
     if (status === "answered") {
       const state = replyStateAt(kept, kept.findIndex((message) => message.id === draft.replyTo));
       return this.failWith(ALREADY_ANSWERED, { alreadyAnswered: true, by: state?.reply === "answered" ? state.by : "group" });
@@ -2444,7 +2484,9 @@ export class LiveDesk {
     const code = confirmation?.trim() ?? "";
     if (!code) {
       const question = `Send to ${recipient.name}: "${draft.text}"?`;
-      return this.reply({ preview: { to: recipient.name, text: draft.text }, confirmation: this.draftApprovals.issue(SEND_ACTION, recipient.key, fingerprint, question) });
+      const issued = this.draftApprovals.issue(SEND_ACTION, recipient.key, fingerprint, question);
+      this.draftCodes.set(draft.id, [...(this.draftCodes.get(draft.id) ?? []), issued.code]);
+      return this.reply({ preview: { to: recipient.name, text: draft.text }, confirmation: issued });
     }
     try {
       this.draftApprovals.redeem(code, SEND_ACTION, recipient.key, fingerprint);
@@ -2458,7 +2500,7 @@ export class LiveDesk {
       sent = null;
     }
     if (!sent) return this.fail(cant);
-    this.file.drafts = (this.file.drafts ?? []).filter((item) => item.id !== draft.id);
+    this.setDrafts((this.file.drafts ?? []).filter((item) => item.id !== draft.id));
     this.keepSent(recipient.name, draft.text, sentTarget(recipient));
     return this.reply({ next: `Sent to ${recipient.name}.` });
   }
@@ -2590,6 +2632,8 @@ export class LiveDesk {
       this.stale = false;
       this.held = false;
       this.approvals.clear();
+      this.draftApprovals.clear();
+      this.draftCodes.clear();
     }
     if (!wiped) return this.fail(RESET_UNFINISHED);
     return this.reply({ next: `Cleaner Core is reset for ${address}. Start setup again whenever you're ready.` });
@@ -2625,6 +2669,8 @@ export class LiveDesk {
     delete this.file.completedShown;
     delete this.file.timedJobs;
     this.approvals.clear();
+    this.draftApprovals.clear();
+    this.draftCodes.clear();
     this.held = false;
     this.persist();
     return this.reply({ next: groupGone ? SCRATCH_RESET_LINE : `${SCRATCH_RESET_LINE} ${SCRATCH_GROUP_KEPT}` });

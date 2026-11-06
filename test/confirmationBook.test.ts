@@ -19,4 +19,14 @@ describe("ConfirmationBook", () => {
     at = 10 * 60_000;
     expect(() => book.redeem(issued.code, "a", "t", "f")).toThrow(/expired/);
   });
+
+  it("drops one code and counts the codes it holds", () => {
+    const book = new ConfirmationBook(Number.POSITIVE_INFINITY, () => 0);
+    const first = book.issue("a", "t", "f1", "q?");
+    book.issue("a", "t", "f2", "q?");
+    expect(book.size).toBe(2);
+    book.drop(first.code);
+    expect(book.size).toBe(1);
+    expect(() => book.redeem(first.code, "a", "t", "f1")).toThrow(/expired/);
+  });
 });
