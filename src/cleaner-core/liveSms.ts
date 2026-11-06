@@ -19,7 +19,7 @@ export function smsAllowlist(env: NodeJS.ProcessEnv): string[] {
   return phones;
 }
 
-/** True when CLEANER_CORE_SMS_ALLOWLIST holds "*": any number may be texted, except this service's own lines. */
+/** True when CLEANER_CORE_SMS_ALLOWLIST holds "*": any number may be texted, except this service's own lines (every tenant's, on the multi-tenant service). */
 export function smsAllowsAny(env: NodeJS.ProcessEnv): boolean {
   return (env.CLEANER_CORE_SMS_ALLOWLIST ?? "").split(",").some((part) => part.trim() === "*");
 }
@@ -28,7 +28,9 @@ export function smsAllowsAny(env: NodeJS.ProcessEnv): boolean {
 const OWN_LINES = ["CLEANER_CORE_TWILIO_PHONE_NUMBER", "TOURCORE_TWILIO_PHONE_NUMBER", "TOURCORE_PHOTON_PHONE_NUMBER"] as const;
 
 function ownLine(env: NodeJS.ProcessEnv, phone: string): boolean {
-  return OWN_LINES.some((key) => parsePhone(env[key] ?? "") === phone);
+  if (OWN_LINES.some((key) => parsePhone(env[key] ?? "") === phone)) return true;
+  // On the multi-tenant service, every tenant's number is one of this service's lines.
+  return (env.CLEANER_CORE_SERVICE_LINES ?? "").split(",").some((line) => parsePhone(line.trim()) === phone);
 }
 
 export function isAllowlisted(env: NodeJS.ProcessEnv, phone: string): boolean {

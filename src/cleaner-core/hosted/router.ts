@@ -93,7 +93,8 @@ export function tenantContext(h: HostedCleaner, tenant: Tenant): TenantContext {
     env: () => {
       const current = h.registry.get(id);
       const primary = h.registry.primary(id, (grantId) => h.grantLive(grantId));
-      const env = buildTenantEnv({ base: h.baseEnv(), tenant: current ?? tenant, secrets: h.secrets, primary, origin: h.origin() ?? "" });
+      const serviceLines = h.registry.list().map((each) => each.twilioNumber);
+      const env = buildTenantEnv({ base: h.baseEnv(), tenant: current ?? tenant, secrets: h.secrets, primary, origin: h.origin() ?? "", serviceLines });
       // Deleted or turned off while a request or drain was under way: nothing more is sent for it.
       if (!current || current.disabled) env.CLEANER_CORE_ENABLED = "0";
       return env;
