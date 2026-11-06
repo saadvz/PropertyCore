@@ -24,6 +24,10 @@ webhook address, no key, and no secret.
 3. If the Google read failed, call `check_now` without `googleEvents`. Never
    send an empty list for a failed read. An empty list tells Cleaner Core
    every stay was removed.
+   With more than one property, do steps 1 to 3 once per property that uses
+   Google Calendar, each with its own calendar and its `property` id from
+   `get_state`. For the rest, call `check_now` once without `property` and
+   `googleEvents`: it checks every property and names each one.
 4. Post each line in `alerts` in your own short words. Post nothing when
    `alerts` is empty.
    - A new booking names the stay and the usual times. When the host says yes,

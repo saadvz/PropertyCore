@@ -177,6 +177,11 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
   if (front) return front;
   const supply = SUPPLY_FRONT_NAMES.has(name);
   if (!supply && !CLEANING_TOOLS.has(name)) return { text: `There's no tool named ${name || "that"} here. Call get_state.`, isError: true };
+  // A scheduled run checks every property at once: check_now with no property, on an account of two
+  // or more, runs each property with Cleaner Core on and names it in the result.
+  // Google events come from one property's calendar, so they always name their property.
+  const googleEvents = args && typeof args === "object" && "googleEvents" in (args as Record<string, unknown>);
+  if (name === "check_now" && !namesProperty(args) && !googleEvents && tenant.properties.length > 1) return checkEveryProperty(h, r, tenant, caller, args);
   const resolved = resolveProperty(tenant, args);
   if ("refusal" in resolved) return { text: resolved.refusal, isError: true };
   const { property } = resolved;
@@ -196,6 +201,22 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
   const reply = await cleaningTool(h, r, tenant, property, caller, name, resolved.args);
   if (name === "save_people" && !reply.isError) await afterPeopleSaved(h, tenant, property);
   return reply;
+}
+
+function namesProperty(args: unknown): boolean {
+  const all = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+  return typeof all.property === "string" || typeof all.propertyId === "string";
+}
+
+async function checkEveryProperty(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller, args: unknown): Promise<FrontReply> {
+  const own = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+  const properties: Record<string, unknown>[] = [];
+  for (const property of tenant.properties.filter((p) => p.flows.cleaning.on)) {
+    const reply = await cleaningTool(h, r, tenant, property, caller, "check_now", own);
+    properties.push({ id: property.id, label: property.label, ...(reply.isError ? { error: reply.text } : (reply.structured ?? { text: reply.text })) });
+  }
+  const structured = { properties, next: "Each result names its property. Tell the host about each one by its label." };
+  return { text: JSON.stringify(structured), structured, isError: false };
 }
 
 let rpcIds = 0;

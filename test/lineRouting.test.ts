@@ -56,6 +56,12 @@ describe("routeLineText", () => {
     expect(routeLineText(two, HOST, "start", phones)).toEqual({ kind: "host-all", properties: [lane, court] });
   });
 
+  it("the landlord's bare YES is not a START: it changes nothing on any property", () => {
+    const two = account([lane, court]);
+    expect(routeLineText(two, HOST, "YES", phones)).toEqual({ kind: "host-unused", property: lane });
+    expect(routeLineText(two, HOST, "yes", phones)).toEqual({ kind: "host-unused", property: lane });
+  });
+
   it("the landlord's HELP gets nothing; anything else is unused, for the oldest property", () => {
     const two = account([lane, court]);
     expect(routeLineText(two, HOST, "HELP", phones)).toEqual({ kind: "host-help" });
@@ -153,6 +159,34 @@ describe("texts on the shared line", () => {
     expect(saved.isError).toBe(false);
     await s.m.toolAt(PATH, s.token, "check_now", { property: s.court.id });
     expect(bodiesTo(s.m, STRANGER)).toEqual([]);
+  });
+
+  it("a cleaner's START lifts the line opt-out for good: saving people again doesn't bring it back", SLOW, async () => {
+    const s = await twoProperties();
+    await s.m.text(LINE, STRANGER, "STOP", "SM-stranger-stop");
+    expect((await s.m.toolAt(PATH, s.token, "save_people", { property: s.court.id, host: HOST, cleaner: STRANGER, cleanerName: "Cy" })).isError).toBe(false);
+    await s.m.text(LINE, STRANGER, "START", "SM-stranger-start");
+    expect((await s.m.toolAt(PATH, s.token, "save_people", { property: s.court.id, host: HOST, cleaner: STRANGER, cleanerName: "Cy B" })).isError).toBe(false);
+    const file = JSON.parse(readFileSync(join(s.desk(s.court).root, "cleaner-live.json"), "utf8")) as { lineOptOuts?: string[] };
+    expect(file.lineOptOuts ?? []).not.toContain(STRANGER);
+  });
+
+  it("check_now with no property on a two-property account checks each property and names it", SLOW, async () => {
+    const s = await twoProperties();
+    const check = await s.m.toolAt(PATH, s.token, "check_now", {});
+    expect(check.isError).toBe(false);
+    const results = check.structured?.properties as { id: string; label: string }[];
+    expect(results.map((r) => [r.id, r.label])).toEqual([
+      [s.lane.id, "12 Scratch Lane"],
+      [s.court.id, "8 Scratch Court"],
+    ]);
+  });
+
+  it("check_now with Google events but no property is refused: one calendar belongs to one property", SLOW, async () => {
+    const s = await twoProperties();
+    const check = await s.m.toolAt(PATH, s.token, "check_now", { googleEvents: { timeZone: "America/New_York", items: [] } });
+    expect(check.isError).toBe(true);
+    expect(check.text).toContain("Which property?");
   });
 
   it("a forged text changes nothing", SLOW, async () => {

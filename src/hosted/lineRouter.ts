@@ -42,7 +42,9 @@ export function routeLineText(tenant: Tenant, from: string, text: string, phones
   if (person) return { kind: "property", property: person.property };
   const hosted = known.filter((entry) => entry.host === from).map((entry) => entry.property);
   if (hosted.length > 0) {
-    if (isStopText(text) || isStartText(text)) return { kind: "host-all", properties: hosted };
+    // Only STOP and START words reach every property. A bare YES would act as the host's answer on
+    // each desk (saving times, sending offers), so it changes nothing, like any other host text.
+    if (isStopText(text) || keywordOf(text) === "start") return { kind: "host-all", properties: hosted };
     if (keywordOf(text) === "help") return { kind: "host-help" };
     return { kind: "host-unused", property: hosted[0]! };
   }
@@ -93,6 +95,9 @@ export async function handleLineText(h: HostedCleaner, r: HostedRequest, tenant:
   };
   h.registry.touch(tenant.id);
   if (route.kind === "property") {
+    // A person's START or YES lifts a STOP they sent the line before they were saved, for good, so
+    // saving the property's people again doesn't opt them out again.
+    if (from && isStartText(text)) new TenantOptOuts(h.dataRoot).start(tenant.id, from);
     const result = await toDesk(route.property);
     return r.send(result.status, result.contentType ?? "text/xml", result.body);
   }
