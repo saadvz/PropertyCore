@@ -24,6 +24,10 @@ What pauses live activation: the flag defaults off; CI fails when a configured s
 | Pay link | Money is offered only to the saved, landlord-approved Venmo username. No cleaner text changes it. The note has no address and no door code; a username holding the door code isn't saved, and a link that would hold the code is withheld. | `test/cleanerPayDesk.test.ts`, `test/cleanerPayments.test.ts` |
 | Owed once | Replay, restart, and a second check never add a second owed record. `mark_paid` is idempotent and needs `confirmed: true`. No payment path texts anyone. | `test/cleanerPayDesk.test.ts` |
 | Checklist YES | Only the cleaner's YES, only while the question waits, finishes a checklist job. STOP, HELP, and injury still win. | `test/cleanerChecklistYes.test.ts` |
+| Draft needs Send | `save_draft` sends nothing, and no routine holds `send_message`. A draft goes out only with the code from the preview of its saved text. A draft the host never answers sends nothing. A draft and its code have no time limit; something new in the thread or a group change stops it. | `test/cleanerReplyDrafts.test.ts`, `test/cleanerTemplate.test.ts` |
+| Group reply wins | After the host's group text, a draft for the message it answered is removed and refused with `alreadyAnswered`, and any other draft saved before it is refused with `newSince`. | `test/cleanerReplyDrafts.test.ts` |
+| Group text acts on nothing | A host group text never holds, resumes, sets times, or releases the door code. | `test/cleanerReplyDrafts.test.ts` |
+| Saved answers | A saved answer can't hold the door code. Saving and removing need the host's code. A saved answer is never sent by itself. | `test/cleanerSavedAnswers.test.ts` |
 | Secret scan | Configured scratch codes are absent from new files, test logs, and evidence. | `scripts/scan-cleaner-secrets.mjs` inside `scripts/ci-check.sh` |
 
 Audit rows on a watched turn record actor, source, version, reason, and time. Review texts go out through the same consent-checked send path as every other job text. Injury texts still use the single 911 path from step F.
