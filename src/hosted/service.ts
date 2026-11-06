@@ -65,6 +65,13 @@ export async function setFlows(ctx: FlowContext, input: FlowInput): Promise<Fron
   if (wanted.length > 1 && typeof input.confirmation === "string") return fail("Turn one flow off at a time when you pass a confirmation.");
   const forced = ctx.actor === "admin" && input.force === true;
   const confirmation = typeof input.confirmation === "string" ? input.confirmation.trim() : "";
+  // Every flow turning on is checked before any changes, so a refusal never leaves a half-made change.
+  for (const flow of wanted) {
+    if (input[flow] !== true) continue;
+    const current = (h.registry.get(tenant.id) ?? tenant).properties.find((p) => p.id === property.id) ?? property;
+    const refusal = turnOnRefusal(ctx, current, flow, wanted.includes("cleaning") && input.cleaning === true);
+    if (refusal) return fail(refusal);
+  }
   const done: string[] = [];
   for (const flow of wanted) {
     const on = input[flow] as boolean;
@@ -85,11 +92,17 @@ export async function setFlows(ctx: FlowContext, input: FlowInput): Promise<Fron
   return { text: `${done.join(" ")} Call get_state with property ${after.id} for the next step. If the tools don't change, start a new chat.`, structured, isError: false };
 }
 
+/** Why a flow can't turn on, or undefined. `cleaningComing` is true when the same call turns cleaning on. */
+function turnOnRefusal(ctx: FlowContext, property: Property, flow: FlowName, cleaningComing: boolean): string | undefined {
+  if (flow !== "supplies") return undefined;
+  if (ctx.assistant !== "grok") return GROK_ONLY;
+  // Supply Core on its own, without Cleaner Core at the property, only while SUPPLY_CORE is on.
+  if (!property.flows.cleaning.on && !cleaningComing && !supplyCoreOn(ctx.h.baseEnv())) return "Supply Core on its own isn't available on this service yet. Turn on Cleaner Core for this property first.";
+  return undefined;
+}
+
 async function turnOn(ctx: FlowContext, property: Property, flow: FlowName): Promise<FrontReply | undefined> {
   if (flow === "supplies") {
-    if (ctx.assistant !== "grok") return fail(GROK_ONLY);
-    // Supply Core on its own, without Cleaner Core at the property, only while SUPPLY_CORE is on.
-    if (!property.flows.cleaning.on && !supplyCoreOn(ctx.h.baseEnv())) return fail("Supply Core on its own isn't available on this service yet. Turn on Cleaner Core for this property first.");
     await turnOnSupplies(ctx.h, ctx.tenant, property);
     return undefined;
   }

@@ -41,6 +41,7 @@ const REGISTRY_WORDS: Record<RegistryError["reason"], string> = {
   "has-properties": "This account has properties, so it can't run touring.",
   "fixer-not-yet": "Fixer Core isn't available yet.",
   "needs-migration": "The tenant list needs its migration. Restart the service.",
+  "duplicate-label": "That account already has a property with that label.",
 };
 
 const sessions = new Map<string, { csrf: string; expiresAt: number }>();
@@ -195,8 +196,11 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
     case "flows": {
       const flow = form.get("flow");
       if (flow !== "cleaning" && flow !== "supplies") return html(400, page(h, tenant, live.csrf, "Pick cleaning or supplies."));
-      const reply = await setFlows({ h, tenant, actor: "admin", noteToolsChanged: () => {} }, { property: form.get("property") ?? "", [flow]: false, force: true });
-      if (reply.isError || !findProperty(tenant, form.get("property") ?? "")) return html(400, page(h, h.registry.get(tenant.id) ?? tenant, live.csrf, reply.text));
+      // The form names its property every time; one that names none, or another's, changes nothing.
+      const property = findProperty(tenant, form.get("property") ?? "");
+      if (!property || property.id !== (form.get("property") ?? "").trim()) return html(400, page(h, tenant, live.csrf, REGISTRY_WORDS["unknown-property"]));
+      const reply = await setFlows({ h, tenant, actor: "admin", noteToolsChanged: () => {} }, { property: property.id, [flow]: false, force: true });
+      if (reply.isError) return html(400, page(h, h.registry.get(tenant.id) ?? tenant, live.csrf, reply.text));
       return redirect(back);
     }
     case "touring": {

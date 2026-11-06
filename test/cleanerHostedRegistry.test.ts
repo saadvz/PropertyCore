@@ -154,6 +154,14 @@ describe("an account's properties", () => {
     expect(() => reg.setFlow(tenant.id, "prp_nothere000", "cleaning", true)).toThrow(expect.objectContaining({ reason: "unknown-property" }));
   });
 
+  it("refuses a second property with the same label, in any case", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    reg.addProperty(tenant.id, "12 Scratch Lane");
+    expect(() => reg.addProperty(tenant.id, " 12 SCRATCH lane ")).toThrow(expect.objectContaining({ reason: "duplicate-label" }));
+    const other = reg.create({ label: "Court", twilioNumber: "+15555550160" }).tenant;
+    expect(reg.addProperty(other.id, "12 Scratch Lane").label).toBe("12 Scratch Lane");
+  });
+
   it("refuses fixer", () => {
     const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
     const lane = reg.addProperty(tenant.id, "12 Scratch Lane");
@@ -184,8 +192,9 @@ describe("an account's properties", () => {
     expect(findProperty(account, lane.id)).toEqual(lane);
     expect(findProperty(account, " 12 scratch lane ")).toEqual(lane);
     expect(findProperty(account, "Scratch")).toBeUndefined();
-    reg.addProperty(tenant.id, "12 SCRATCH LANE");
-    expect(findProperty(reg.get(tenant.id)!, "12 scratch lane")).toBeUndefined();
+    // Labels are unique per account, so a label names one property.
+    const twice = { ...account, properties: [...account.properties, { ...lane, id: "prp_twice00000" }] };
+    expect(findProperty(twice, "12 scratch lane")).toBeUndefined();
   });
 
   it("names folders and link bases for a property", () => {

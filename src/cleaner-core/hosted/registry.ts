@@ -47,7 +47,7 @@ export type InviteRefusal = "invalid" | "expired" | "used" | "disabled";
 
 export class RegistryError extends Error {
   constructor(
-    readonly reason: "bad-label" | "bad-number" | "number-taken" | "unknown-tenant" | "needs-migration" | "unknown-property" | "has-properties" | "fixer-not-yet",
+    readonly reason: "bad-label" | "bad-number" | "number-taken" | "unknown-tenant" | "needs-migration" | "unknown-property" | "has-properties" | "fixer-not-yet" | "duplicate-label",
   ) {
     super(reason);
     this.name = "RegistryError";
@@ -243,6 +243,8 @@ export class TenantRegistry {
     const label = rawLabel.trim();
     if (!label) throw new RegistryError("bad-label");
     return this.update(tenantId, (tenant) => {
+      // A label names one property, so the agent can use it in place of the id.
+      if (tenant.properties.some((p) => p.label.trim().toLowerCase() === label.toLowerCase())) throw new RegistryError("duplicate-label");
       const taken = new Set(this.read().tenants.flatMap((t) => t.properties.map((p) => p.id)));
       for (const p of tenant.properties) taken.add(p.id);
       const property: Property = {

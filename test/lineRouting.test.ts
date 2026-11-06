@@ -189,6 +189,42 @@ describe("texts on the shared line", () => {
     expect(check.text).toContain("Which property?");
   });
 
+  it("the landlord's STOP reaches a property added later, and START lifts it there too", SLOW, async () => {
+    const s = await twoProperties();
+    await s.m.text(LINE, HOST, "STOP", "SM-host-stop");
+    const added = await s.m.toolAt(PATH, s.token, "add_property", { label: "9 Scratch Annex" });
+    const id = (added.structured?.property as { id: string }).id;
+    await s.m.toolAt(PATH, s.token, "set_flows", { property: id, cleaning: true });
+    await s.m.toolAt(PATH, s.token, "get_state", { property: id, choice: "cleaners" });
+    await s.m.toolAt(PATH, s.token, "save_property", { property: id, business: "Annex", address: "9 Scratch Annex, Teaneck, NJ 07666", timeZone: "America/New_York" });
+    expect((await s.m.toolAt(PATH, s.token, "save_people", { property: id, host: HOST, cleaner: "+15555550142", cleanerName: "Dee" })).isError).toBe(false);
+    const annex = s.m.registry.get(s.account.id)!.properties.find((p) => p.id === id)!;
+    const optOuts = () => (JSON.parse(readFileSync(join(s.desk(annex).root, "cleaner-live.json"), "utf8")) as { lineOptOuts?: string[] }).lineOptOuts ?? [];
+    expect(optOuts()).toContain(HOST);
+    await s.m.text(LINE, HOST, "START", "SM-host-start");
+    expect(optOuts()).not.toContain(HOST);
+  });
+
+  it("a stranger's STOP on a one-property account holds when a second property saves the phone", SLOW, async () => {
+    at = Date.parse("2026-10-14T13:00:00.000Z");
+    open = await multiTenantApp({ now: clock });
+    const m = open;
+    const made = m.registry.create({ label: "Lane", twilioNumber: LINE }).tenant;
+    const token = await m.join(made.id, "grok");
+    const lane = m.registry.addProperty(made.id, "12 Scratch Lane");
+    m.registry.setFlow(made.id, lane.id, "cleaning", true);
+    await m.text(LINE, STRANGER, "STOP", "SM-stranger-stop-1");
+    const court = m.registry.addProperty(made.id, "8 Scratch Court");
+    m.registry.setFlow(made.id, court.id, "cleaning", true);
+    await m.toolAt(PATH, token, "get_state", { property: court.id, choice: "cleaners" });
+    await m.toolAt(PATH, token, "save_property", { property: court.id, business: "Court", address: "8 Scratch Court, Teaneck, NJ 07666", timeZone: "America/New_York" });
+    const savedCy = await m.toolAt(PATH, token, "save_people", { property: court.id, host: HOST, cleaner: STRANGER, cleanerName: "Cy" });
+    expect(savedCy.isError, savedCy.text).toBe(false);
+    const h = hostedCleaner({ registry: m.registry, secrets: new TenantSecrets(m.app.root), dataRoot: m.app.root, origin: () => BASE, baseEnv: () => m.app.inst.env(), grantLive: () => true, now: clock, log: () => undefined });
+    const root = propertyContext(h, m.registry.get(made.id)!, m.registry.get(made.id)!.properties.find((p) => p.id === court.id)!).root;
+    expect((JSON.parse(readFileSync(join(root, "cleaner-live.json"), "utf8")) as { lineOptOuts?: string[] }).lineOptOuts).toContain(STRANGER);
+  });
+
   it("a forged text changes nothing", SLOW, async () => {
     const s = await twoProperties();
     const fields = { MessageSid: "SM-forged", From: STRANGER, To: LINE, Body: "STOP", SmsStatus: "received" };

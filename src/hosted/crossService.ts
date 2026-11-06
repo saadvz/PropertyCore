@@ -7,7 +7,7 @@ import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 
 /** The two services a parked touring account has run: touring now, and cleaning before the move to properties. */
 type ServiceName = "touring" | "cleaning";
-import { tenantContext, type HostedCleaner } from "../cleaner-core/hosted/router";
+import { touringAccountContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { isMedicalEmergency, isPlainLanguageStop, keywordOf } from "../intent/ruleBased";
 import { isInjuryReport } from "../cleaner-core/injury";
@@ -76,7 +76,7 @@ export class TenantOptOuts {
 
 /** The host, cleaner, observer, and contacts the tenant's cleaning setup saved. */
 function knownToCleaning(h: HostedCleaner, tenant: Tenant, phone: string): Promise<boolean> {
-  const ctx = tenantContext(h, tenant);
+  const ctx = touringAccountContext(h, tenant);
   if (!existsSync(ctx.root)) return Promise.resolve(false);
   return liveDeskFor(ctx.root, ctx.env, () => h.now()).knownPhones().then((phones) => phones.includes(phone));
 }

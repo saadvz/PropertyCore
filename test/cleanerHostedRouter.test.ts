@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { liveDeskFor, resetLiveDesks } from "../src/cleaner-core/liveDesk";
 import { isAllowlisted } from "../src/cleaner-core/liveSms";
-import { drainAllTenants, hostedCleaner, splitTenantPath, tenantContext } from "../src/cleaner-core/hosted/router";
+import { drainAllTenants, hostedCleaner, splitTenantPath, touringAccountContext } from "../src/cleaner-core/hosted/router";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
 import { hashSecret, OAuthGrantStore } from "../src/mcp/oauth/store";
 import { BASE, closeHostedApps } from "./cleanerOauthHarness";
@@ -225,7 +225,7 @@ describe("routing on the multi-tenant service", () => {
       now: clock,
       log: () => undefined,
     });
-    const ctx = tenantContext(h, lane);
+    const ctx = touringAccountContext(h, lane);
     expect(ctx.env().CLEANER_CORE_ENABLED).toBe("1");
     m.registry.remove(lane.id);
     expect(ctx.env().CLEANER_CORE_ENABLED).toBe("0");
@@ -243,7 +243,7 @@ describe("routing on the multi-tenant service", () => {
       now: clock,
       log: () => undefined,
     });
-    const env = tenantContext(h, lane).env();
+    const env = touringAccountContext(h, lane).env();
     expect(isAllowlisted(env, LANE_CLEANER)).toBe(true);
     expect(isAllowlisted(env, LANE_LINE)).toBe(false);
     expect(isAllowlisted(env, COURT_LINE)).toBe(false);

@@ -96,6 +96,8 @@ const fail = (text: string): FrontReply => ({ text, isError: true });
 export function addProperty(h: HostedCleaner, tenant: Tenant, args: unknown): FrontReply {
   const label = typeof (args as { label?: unknown } | undefined)?.label === "string" ? (args as { label: string }).label.trim() : "";
   if (!label || label.length > LABEL_MAX) return fail(`Give the property a label of 1 to ${LABEL_MAX} characters, like its address.`);
+  const same = tenant.properties.find((p) => p.label.trim().toLowerCase() === label.toLowerCase());
+  if (same) return fail(`There's already a property called ${same.label}. Use a different label, like the unit number.`);
   const property = h.registry.addProperty(tenant.id, label);
   mkdirSync(propertyFolder(h.dataRoot, tenant.id, property), { recursive: true });
   h.log(`${tenant.id} added ${property.id}.`);

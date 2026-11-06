@@ -170,7 +170,7 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
   if (name === "set_flows") {
     const reply = await setFlows({ h, tenant, actor: "host", assistant: caller.assistant, noteToolsChanged }, (args ?? {}) as FlowInput);
     // A property that turns cleaning on starts with the account's routine connected.
-    if (!reply.isError) shareRoutine(h, tenant.id);
+    if (!reply.isError) await shareRoutine(h, tenant.id);
     return reply;
   }
   const front = await handleFrontTool({ h, tenant, caller, noteToolsChanged }, name, args);

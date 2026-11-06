@@ -63,6 +63,16 @@ describe("turning Supply Core on", () => {
     expect(m.registry.get(tenant.id)?.properties[0]?.flows.supplies.on).toBe(true);
   });
 
+  it("checks every flow before changing any: a refused Supply Core leaves cleaning off too", SLOW, async () => {
+    const m = await start();
+    const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+    const lane = m.registry.addProperty(tenant.id, "12 Scratch Lane");
+    const claude = await m.joinAt(tenant.id, "claude", PATH);
+    const refused = await m.toolAt(PATH, claude, "set_flows", { property: lane.id, cleaning: true, supplies: true });
+    expect(refused.isError).toBe(true);
+    expect(m.registry.get(tenant.id)?.properties[0]?.flows).toMatchObject({ cleaning: { on: false }, supplies: { on: false } });
+  });
+
   it("refuses a chat that isn't Grok", SLOW, async () => {
     const m = await start();
     const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });

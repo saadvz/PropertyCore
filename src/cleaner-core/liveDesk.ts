@@ -2238,12 +2238,15 @@ export class LiveDesk {
   }
 
   /** Counts the account's alert routine, connected through another property, as connected here. */
-  markRoutineConnected(connectionIds: readonly string[]): void {
-    if (connectionIds.length === 0) return;
-    this.file.routineConnected = true;
-    const ids = this.file.routineConnections ?? [];
-    this.file.routineConnections = [...ids, ...connectionIds.filter((id) => !ids.includes(id))];
-    this.persist();
+  markRoutineConnected(connectionIds: readonly string[]): Promise<void> {
+    return this.serial(async () => {
+      const ids = this.file.routineConnections ?? [];
+      const fresh = connectionIds.filter((id) => !ids.includes(id));
+      if (fresh.length === 0 && this.file.routineConnected) return;
+      this.file.routineConnected = true;
+      this.file.routineConnections = [...ids, ...fresh];
+      this.persist();
+    });
   }
 
   /** On a line shared by two or more properties, a text to the host, or in the group, names the property first. */

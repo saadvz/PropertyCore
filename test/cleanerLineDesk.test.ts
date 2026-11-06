@@ -58,7 +58,10 @@ describe("LiveDesk on a shared line", () => {
     const { desk, env } = openDesk([HOST, CLEANER], "0");
     env.CLEANER_CORE_PRIMARY_CONNECTION = "grant-grok";
     expect(await withCaller({ assistant: "grok", connectionId: "grant-grok" }, async () => desk.routineConnectionIds())).toEqual([]);
-    desk.markRoutineConnected(["grant-grok"]);
+    const saved = desk.markRoutineConnected(["grant-grok"]);
+    // It waits its turn behind the desk's other changes, like every save.
+    expect(saved).toBeInstanceOf(Promise);
+    await saved;
     expect(desk.routineConnectionIds()).toEqual(["grant-grok"]);
   });
 

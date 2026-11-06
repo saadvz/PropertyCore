@@ -4,11 +4,15 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { migrateRegistry, MigrationError, PROPERTY_FILES, setMigrationRename } from "../src/cleaner-core/hosted/migrate";
 import { TenantRegistry } from "../src/cleaner-core/hosted/registry";
-import { resetLiveDesks } from "../src/cleaner-core/liveDesk";
+import { liveDeskFor, resetLiveDesks } from "../src/cleaner-core/liveDesk";
+import { propertyFolder } from "../src/cleaner-core/hosted/properties";
+import { hostedCleaner } from "../src/cleaner-core/hosted/router";
+import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
+import { supplyDesk } from "../src/supply-core/hosted";
 import { openPin } from "../src/cleaner-core/pinSeal";
-import { closeHostedApps, hostedApp, hostedEnv } from "./cleanerOauthHarness";
+import { BASE, closeHostedApps, hostedApp, hostedEnv } from "./cleanerOauthHarness";
 import { cleanupDesks, openDesk, PIN_KEY, setUp } from "./cleanerDeskHarness";
-import { CLEANER, DOOR_CODE, HOST } from "./wiringProof";
+import { CLEANER, DOOR_CODE, FROZEN, HOST } from "./wiringProof";
 
 /** A v2 data folder written by hand, the way a live service holds it today. Only 555 numbers. */
 
@@ -179,6 +183,54 @@ describe("migrateRegistry", () => {
     migrateRegistry(root, NOW);
     const moved = JSON.parse(readFileSync(join(dir, "properties", "prp_lane000001", "cleaner-live.json"), "utf8")) as { pinSeal: Parameters<typeof openPin>[0] };
     expect(openPin(moved.pinSeal, PIN_KEY)).toBe(DOOR_CODE);
+  });
+});
+
+describe("after the migration", () => {
+  it("an upload link and a pending approval made before it still work, end to end", async () => {
+    const opened = openDesk([HOST, CLEANER], "0");
+    await setUp(opened.desk, { groupChat: "cleaner-only" });
+    // Links the v2 service handed out lived under /t/<id>/.
+    opened.env.PUBLIC_BASE_URL = `${BASE}/t/${LANE}`;
+    const link = await opened.desk.saveAlertRoutine({}, () => undefined);
+    if (!link.ok) throw new Error(link.error);
+    const uploadPath = new URL(String(link.result.uploadUrl)).pathname;
+    const ask = await opened.desk.savePayments({ rate: 80, venmo: "scratch-cleaner" });
+    if (!ask.ok) throw new Error(ask.error);
+    const code = String((ask.result.confirmation as { code: string }).code);
+    resetLiveDesks();
+    const root = dataRoot();
+    writeV2(root, [tenant(LANE, "+15555550150", { service: "cleaning" })]);
+    mkdirSync(join(root, "tenants"), { recursive: true });
+    renameSync(opened.root, join(root, "tenants", LANE));
+    // The service starts on the v2 folder, migrates it, and answers the old link.
+    const app = await hostedApp({}, { root, env: hostedEnv(root, { CLEANER_CORE_MULTI_TENANT: "1", CLEANER_CORE_ENABLED: "1" }) }, undefined, () => new Date(FROZEN));
+    expect(version(root)).toBe(3);
+    const posted = await app.http(uploadPath, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: "https://grok.example/routine/hook", token: "routine-key-after-move" }) });
+    expect(posted.status).toBe(200);
+    const property = new TenantRegistry(root, NOW).get(LANE)!.properties[0]!;
+    const moved = liveDeskFor(propertyFolder(root, LANE, property), () => opened.env, () => new Date(FROZEN));
+    const yes = await moved.savePayments({ rate: 80, venmo: "scratch-cleaner", confirmation: code });
+    expect(yes.ok).toBe(true);
+  });
+
+  it("Supply Core reads Cleaner Core's real turnovers on a migrated property with both flows on", async () => {
+    const opened = openDesk([HOST, CLEANER], "0");
+    await setUp(opened.desk, { groupChat: "cleaner-only" });
+    const turnoversBefore = await opened.desk.turnoverDates();
+    expect(turnoversBefore.length).toBeGreaterThan(0);
+    resetLiveDesks();
+    const root = dataRoot();
+    writeV2(root, [tenant(LANE, "+15555550150", { service: "cleaning", supplies: true })]);
+    mkdirSync(join(root, "tenants"), { recursive: true });
+    renameSync(opened.root, join(root, "tenants", LANE));
+    migrateRegistry(root, NOW);
+    const registry = new TenantRegistry(root, NOW);
+    const account = registry.get(LANE)!;
+    const h = hostedCleaner({ registry, secrets: new TenantSecrets(root), dataRoot: root, origin: () => BASE, baseEnv: () => ({ ...opened.env, CLEANER_CORE_MULTI_TENANT: "1" }), grantLive: () => true, now: () => new Date(FROZEN), log: () => undefined });
+    const desk = supplyDesk(h, account, account.properties[0]!);
+    expect(desk.deps.standalone).toBe(false);
+    expect(await desk.deps.cleaning!.turnovers()).toEqual(turnoversBefore);
   });
 });
 

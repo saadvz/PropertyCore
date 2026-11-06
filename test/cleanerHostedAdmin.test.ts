@@ -336,6 +336,18 @@ describe("the admin page", () => {
     expect((await admin.post(`/admin/tenants/${court.id}/flows`, { property: "prp_nothere000", flow: "cleaning" })).status).toBe(400);
   });
 
+  it("refuses a turn-off that names no property, and changes nothing", SLOW, async () => {
+    const m = await start();
+    const admin = await signIn(m);
+    const court = m.registry.create({ label: "Court", twilioNumber: "+15555550160" }).tenant;
+    const property = m.registry.addProperty(court.id, "8 Scratch Court");
+    m.registry.setFlow(court.id, property.id, "cleaning", true);
+    const refused = await admin.post(`/admin/tenants/${court.id}/flows`, { property: "", flow: "cleaning" });
+    expect(refused.status).toBe(400);
+    expect(refused.html).toContain("That property doesn&#39;t exist.");
+    expect(m.registry.get(court.id)?.properties[0]?.flows.cleaning.on).toBe(true);
+  });
+
   it("makes an account with no properties a touring account, and refuses one with properties", SLOW, async () => {
     const m = await start(TOURING);
     const admin = await signIn(m);

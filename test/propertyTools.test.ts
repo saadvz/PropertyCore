@@ -52,6 +52,8 @@ describe("the account's tools", () => {
     const state = await m.toolAt(PATH, token, "get_state");
     expect(state.structured?.properties).toEqual([{ id, label: "12 Scratch Lane", flows: { cleaning: false, supplies: false, fixer: false } }]);
     expect((await m.toolAt(PATH, token, "add_property", { label: " " })).isError).toBe(true);
+    const twice = await m.toolAt(PATH, token, "add_property", { label: "12 scratch lane" });
+    expect(twice).toMatchObject({ isError: true, text: "There's already a property called 12 Scratch Lane. Use a different label, like the unit number." });
     expect((await m.toolAt(PATH, token, "add_property", { label: "x".repeat(121) })).isError).toBe(true);
   });
 

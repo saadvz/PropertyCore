@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { propertyFolder, type Property } from "../src/cleaner-core/hosted/properties";
 import type { Tenant } from "../src/cleaner-core/hosted/registry";
-import { drainAllTenants, hostedCleaner, propertyContext, splitTenantPath, type HostedCleaner } from "../src/cleaner-core/hosted/router";
+import { drainAllTenants, hostedCleaner, propertyContext, splitTenantPath, touringAccountContext, type HostedCleaner } from "../src/cleaner-core/hosted/router";
+import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { buildTenantEnv, PER_TENANT_NAMES } from "../src/cleaner-core/hosted/tenantEnv";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
 import { liveDeskFor } from "../src/cleaner-core/liveDesk";
@@ -110,6 +111,15 @@ describe("propertyContext", () => {
     expect(ctx.env().CLEANER_CORE_ENABLED).toBe("1");
     m.registry.setFlow(account.id, lane.id, "cleaning", false);
     expect(ctx.env().CLEANER_CORE_ENABLED).toBe("0");
+  });
+});
+
+describe("touringAccountContext", () => {
+  it("is the account's own folder, never a property's, even when the account has properties", async () => {
+    const { m, account } = await start();
+    const ctx = touringAccountContext(hosted(m), account);
+    expect(ctx.root).toBe(tenantFolder(m.app.root, account.id));
+    expect(ctx.env().CLEANER_CORE_PROPERTY_ID).toBeUndefined();
   });
 });
 

@@ -97,11 +97,17 @@ export async function handleLineText(h: HostedCleaner, r: HostedRequest, tenant:
   if (route.kind === "property") {
     // A person's START or YES lifts a STOP they sent the line before they were saved, for good, so
     // saving the property's people again doesn't opt them out again.
-    if (from && isStartText(text)) new TenantOptOuts(h.dataRoot).start(tenant.id, from);
+    // A STOP holds for the whole line, so a property that saves this phone later starts opted out.
+    if (from && isStopText(text)) new TenantOptOuts(h.dataRoot).stop(tenant.id, from);
+    else if (from && isStartText(text)) new TenantOptOuts(h.dataRoot).start(tenant.id, from);
     const result = await toDesk(route.property);
     return r.send(result.status, result.contentType ?? "text/xml", result.body);
   }
   if (route.kind === "host-all") {
+    // Kept for the whole line too, so a property added later starts with the landlord opted out.
+    const optOuts = new TenantOptOuts(h.dataRoot);
+    if (isStopText(text)) optOuts.stop(tenant.id, from);
+    else optOuts.start(tenant.id, from);
     for (const property of route.properties) await toDesk(property);
     return r.send(200, "text/xml", EMPTY_TWIML);
   }
@@ -150,6 +156,6 @@ export async function afterPeopleSaved(h: HostedCleaner, tenant: Tenant, propert
   const ctx = propertyContext(h, tenant, property);
   const desk = liveDeskFor(ctx.root, ctx.env, () => h.now());
   const optOuts = new TenantOptOuts(h.dataRoot);
-  const { people } = await desk.phonesOnProperty();
-  for (const phone of people) if (optOuts.stopped(tenant.id, phone)) await desk.markOptedOut(phone);
+  const { host, people } = await desk.phonesOnProperty();
+  for (const phone of [...(host ? [host] : []), ...people]) if (optOuts.stopped(tenant.id, phone)) await desk.markOptedOut(phone);
 }

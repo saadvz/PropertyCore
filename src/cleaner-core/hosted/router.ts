@@ -104,12 +104,11 @@ export function propertyContext(h: HostedCleaner, tenant: Tenant, property: Prop
 }
 
 /**
- * Until every caller names a property: the account's first property with cleaning on, else its first
- * property, else the account folder.
+ * A parked touring account's own folder and environment: its touring records and any cleaning setup it
+ * had before the move to properties. Never a property's desk; those use propertyContext.
  */
-export function tenantContext(h: HostedCleaner, tenant: Tenant): TenantContext {
-  const property = tenant.properties.find((p) => p.flows.cleaning.on) ?? tenant.properties[0];
-  return property ? propertyContext(h, tenant, property) : accountContext(h, tenant, tenantFolder(h.dataRoot, tenant.id), undefined);
+export function touringAccountContext(h: HostedCleaner, tenant: Tenant): TenantContext {
+  return accountContext(h, tenant, tenantFolder(h.dataRoot, tenant.id), undefined);
 }
 
 function accountContext(h: HostedCleaner, tenant: Tenant, root: string, propertyId: string | undefined): TenantContext {
@@ -382,7 +381,7 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
  * that will never connect one. A primary with a connected routine is never changed here.
  */
 export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
-  shareRoutine(h, tenantId);
+  void shareRoutine(h, tenantId).catch(() => h.log(`Couldn't share ${tenantId}'s alert routine with its properties this time.`));
   const tenant = h.registry.get(tenantId);
   if (!tenant || tenant.disabled) return;
   const live = (grantId: string) => h.grantLive(grantId) && tenant.connections.some((c) => c.grantId === grantId);
@@ -405,7 +404,7 @@ export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
  * The account's alert routine belongs to its chats, not to one property: a routine connected through
  * any property counts on every property running Cleaner Core, so setup never asks for it again.
  */
-export function shareRoutine(h: HostedCleaner, tenantId: string): void {
+export async function shareRoutine(h: HostedCleaner, tenantId: string): Promise<void> {
   const tenant = h.registry.get(tenantId);
   if (!tenant || tenant.disabled) return;
   const desks = tenant.properties
@@ -416,7 +415,7 @@ export function shareRoutine(h: HostedCleaner, tenantId: string): void {
     });
   const ids = [...new Set(desks.flatMap((desk) => desk.routineConnectionIds()))];
   if (ids.length === 0) return;
-  for (const desk of desks) if (ids.some((id) => !desk.routineConnectionIds().includes(id))) desk.markRoutineConnected(ids);
+  for (const desk of desks) if (ids.some((id) => !desk.routineConnectionIds().includes(id))) await desk.markRoutineConnected(ids);
 }
 
 /** Delivers every enabled tenant's waiting wake-ups. One tenant's failure never stops the rest. */
