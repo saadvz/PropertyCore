@@ -26,8 +26,8 @@ an explicit local or self-host request, so it cannot select the local path.
 Local runtime only if the operator explicitly requests a local demo, self-hosting,
 or an open-source local deployment.
 Approval shows a pairing code and an invite code box. The operator types the
-invite code from Saad and clicks Allow. When Tour Core says the number isn't
-set up yet, call `choose_service` with `touring`.
+invite code from Saad and clicks Allow. Tours are parked for new hosts: Saad
+switches an account to tours on `/admin`, so ask him first.
 
 ## Open-source path
 

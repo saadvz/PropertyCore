@@ -26,19 +26,18 @@ on the approval page and clicks Allow. Never ask for the invite code in chat.
 Keep this one connector. Never add a second one, and never connect to
 `/mcp/cleaner-core`, even when a service's guide names it.
 
-## Choose the service
+## Your properties
 
-As soon as you're connected, without waiting to be asked, ask the host exactly
-"Which do you want to set up: Tour Core or Cleaner Core?" with two choices:
-"Tour Core: self-guided tours for a rental unit" and "Cleaner Core: a cleaner
-for a property". Don't describe your tools instead. If the host already said
-which one, or picked it on the approval page (`get_state` then shows that
-service), skip the question.
+Call `get_state` first. It lists the account's properties and which flows each
+one runs: Cleaner Core (`cleaning`) and Supply Core (`supplies`). With no
+property yet, ask the host for the property's address and call `add_property`
+with it. Then ask what they want there, and call `set_flows` with the property
+and `cleaning` true for Cleaner Core. With more than one property, name the
+property in every property tool call with its id from `get_state`. Touring is
+parked: only Saad makes an account a touring account, on `/admin`, and then
+`get_state` shows Tour Core instead.
 
-Call `choose_service` with their pick: `touring` for Tour Core, `cleaning` for
-Cleaner Core. If the new tools don't appear, ask the host to start a new chat.
-
-## Run the chosen service
+## Run each flow
 
 - **Tour Core:** call `get_state` and follow its next step, one question at a
   time. For tour updates, follow
@@ -48,9 +47,9 @@ Cleaner Core. If the new tools don't appear, ask the host to start a new chat.
   `claude-template/routines/cleaner-core-task.md`. You're already connected,
   so skip their connect step.
 
-The number runs one service at a time. Switch only when the host asks: call
-`switch_service`, and if something is still live, offer `stand_down_service`
-first.
+Turn a flow off only when the host asks: call `set_flows` with the property
+and that flow false. With anything live, it shows what stops and the exact
+texts that go out, and needs the host's yes first. The setup is kept.
 
 ## Always
 

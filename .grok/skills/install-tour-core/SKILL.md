@@ -179,12 +179,10 @@ As soon as it's approved, without waiting to be asked:
 and call `get_state`. An old Tour Core connection left over from
 before is an exception: remove it and connect again the same way.
 
-On the hosted service, when `get_state` says this number isn't set up yet,
-ask its `say` question right away, with its `choices` as buttons (Tour Core
-for self-guided tours of a rental unit, or Cleaner Core for a cleaner). If the operator already said they
-want tours, skip the question. Call `choose_service` with their pick, then
-call `get_state` again. If the new tools don't appear, ask the operator to
-start a new chat.
+On the hosted service, touring is parked: only Saad makes an account a
+touring account, on `/admin`. When `get_state` lists properties instead of
+tours, the account isn't a touring account yet. Tell the operator to ask Saad,
+then start a new chat once he has.
 
 ### Phase 3: Infrastructure (follow Tour Core's order)
 

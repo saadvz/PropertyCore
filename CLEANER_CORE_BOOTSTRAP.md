@@ -17,8 +17,8 @@ The cleaner gets the door code (in the group only when the group is just the hos
 Read `cleaner-template/template.json`. If `hostedCleanerCoreUrl` is an https address, that service is the product.
 Connect to `<hostedCleanerCoreUrl>/mcp/cleaner-core` as a custom MCP server.
 The clone is only for reading these instructions. Do not run Cleaner Core on your computer. Do not start a local server or a tunnel.
-The connection asks for approval. The host types the invite code from Saad on the Cleaner Core page and clicks Allow. You can't approve it yourself.
-Never ask for the invite code in chat.
+The connection asks for approval. The host types the invite code from Saad on the Cleaner Core page and clicks Allow. You can't approve it yourself. Never ask for the invite code in chat.
+One account can hold several properties on its one text line. Call `get_state` first. With no property yet, ask the host for the address, call `add_property` with it, then `set_flows` with that property and `cleaning` true. With more than one property, name the property in every Cleaner Core call with its id from `get_state`, as `property`. `set_flows` also turns a property's Cleaner Core off: with anything live it previews the exact texts and needs the host's yes, like any other approval. The host runs everything from this chat: with more than one property, a text the host sends the line changes nothing except STOP and START. For now one person (a cleaner or a contact) can be on only one property; a refusal says which.
 
 ## Setup order
 

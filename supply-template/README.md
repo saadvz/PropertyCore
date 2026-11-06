@@ -15,11 +15,10 @@ Host ─► Grok Bot ─► hosted Supply Core (hostedSupplyCoreUrl/mcp)
 1. Open the Supply Core template link and click **Add to Grok Bot**, then
    **Add Bot**. Or open a new Grok Bot and paste [`SETUP_PROMPT.md`](SETUP_PROMPT.md).
 2. Say "Set up Supply Core".
-3. When the page opens, type the invite code from Saad, pick Supply Core, and
-   click Allow.
+3. When the page opens, type the invite code from Saad and click Allow.
 
 A host who already runs Cleaner Core doesn't need this bot. Their Cleaner Core
-bot turns Supply Core on with `turn_on_supplies` when they ask.
+bot turns Supply Core on for a property with `set_flows` when they ask.
 
 ## What the bot needs from the host
 
