@@ -3057,7 +3057,8 @@ export class LiveDesk {
     else if (!this.routineReady()) next = this.words().routineAsk;
     else {
       const untimed = this.untimedTurns();
-      if (untimed >= 2 && this.file.checkoutTime && this.file.checkInTime) {
+      // Only a group times every turnover at once (confirmAllTimes), so only a group is offered it.
+      if (untimed >= 2 && this.groupOn() && this.file.checkoutTime && this.file.checkInTime) {
         ask = allTimesAsk(clockText(this.file.checkoutTime), clockText(this.file.checkInTime), untimed);
         next = askNext(ask.tool);
       } else next = "Tell me the checkout time and the next check-in time before I text the cleaner.";

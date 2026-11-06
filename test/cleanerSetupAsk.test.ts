@@ -277,7 +277,7 @@ describe("Cleaner Core setup: a calendar link from Grok's secure card", () => {
 
 /** A group setup with the two test stays, with the alert routine saved, then activated. Without the routine it stops before the review. */
 async function activatedGroup(
-  options: { uploadCode?: boolean; hostName?: string; schedule?: Parameters<ReturnType<typeof liveDeskFor>["saveSchedule"]>[0]; now?: () => Date; connectRoutine?: boolean } = {},
+  options: { uploadCode?: boolean; hostName?: string; schedule?: Parameters<ReturnType<typeof liveDeskFor>["saveSchedule"]>[0]; now?: () => Date; connectRoutine?: boolean; groupChat?: "cleaner-and-host" | "cleaner-only" } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "cleaner-setup-ask-"));
   roots.push(root);
@@ -302,7 +302,7 @@ async function activatedGroup(
   ok(await desk.getState("cleaners"));
   ok(await desk.saveProperty(PROPERTY));
   ok(await desk.saveSources({ calendars: [{ name: "Guesty Lite", url: CALENDAR_URL }] }));
-  ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Maria", groupChat: "cleaner-and-host", ...(options.hostName ? { hostName: options.hostName } : {}) }));
+  ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Maria", groupChat: options.groupChat ?? "cleaner-and-host", ...(options.hostName ? { hostName: options.hostName } : {}) }));
   ok(await desk.saveSchedule(options.schedule ?? { firstText: "when-confirmed" }));
   if (options.uploadCode) {
     const link = String(ok(await desk.saveDoorCode({}, PIN_KEY)).uploadUrl);
@@ -384,6 +384,14 @@ describe("Cleaner Core times: the usual times for every turnover", () => {
     expect(sms.sent.filter((item) => item.to === CLEANER)).toHaveLength(1);
     expect(askOf(ok(await desk.getState()))).toBeUndefined();
     expect((await desk.confirmTimes({ checkout: "10:00", checkIn: "16:00", all: true })).ok).toBe(false);
+  });
+
+  it("asks a setup without a group for one turnover's times, not for all of them", async () => {
+    const { desk } = await activatedGroup({ groupChat: "cleaner-only" });
+    const state = ok(await desk.getState());
+    const options = askOf(state)?.questions.flatMap((question) => question.options ?? []) ?? [];
+    expect(options.map((option) => option.value)).not.toContain("all");
+    expect(state.next).toBe("Tell me the checkout time and the next check-in time before I text the cleaner.");
   });
 
   it("still sends the cleaner one offer at a time after timing them all", async () => {

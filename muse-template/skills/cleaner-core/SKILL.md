@@ -192,8 +192,8 @@ Then call `get_state` to confirm.
 `get_state` asks for the first booking's times. Call `confirm_times` with
 the host's answer. Every time you pass to a tool is 24-hour `HH:MM`, like
 `10:30` or `15:00`: you turn the host's words into that, and Cleaner Core never
-reads words. When two or more upcoming turnovers have no times and the usual
-times are saved, `get_state` asks instead whether to use the usual times for
+reads words. When the cleaner texts in a group, two or more upcoming turnovers
+have no times, and the usual times are saved, `get_state` asks instead whether to use the usual times for
 all of them. If the host picks that, call `confirm_times` with those times and
 `all: true`. The cleaner still gets one cleaning offer at a time, each on the
 day the schedule sets.
