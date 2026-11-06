@@ -12,7 +12,7 @@ import { ServiceNotices } from "./crossService";
 import { FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsFor, wrongServiceLine, type FrontReply } from "./serviceTools";
 import { setFlows, type FlowInput } from "./service";
 import { accountState, accountTools, addProperty, flowOff, resolveProperty, withPropertyArg, type PropertyStates } from "./propertyTools";
-import { listedSupplyFront, SUPPLY_FRONT_NAMES, suppliesLine, supplyCall, supplyDesk } from "../supply-core/hosted";
+import { listedChooseSupplies, listedSupplyFront, SUPPLY_FRONT_NAMES, suppliesLine, supplyCall, supplyDesk } from "../supply-core/hosted";
 import { taskWarning } from "./touringAlerts";
 import { callWorkerMcp, forwardMcp, type WorkerTarget } from "./touringForward";
 
@@ -153,6 +153,7 @@ async function propertyToolList(h: HostedCleaner, r: HostedRequest, tenant: Tena
     const listed = deskJson(await cleaningCall(h, tenant, cleaning, caller, rpcBody("tools/list", {}), r));
     const own = ((listed?.result as { tools?: Record<string, unknown>[] } | undefined)?.tools ?? []).filter((tool) => tool.name !== "get_state");
     tools.push(...own.map((tool) => withPropertyArg(tool, required)));
+    tools.push(...listedChooseSupplies(caller.assistant).map((tool) => withPropertyArg(tool, required)));
   }
   if (tenant.properties.some((p) => p.flows.supplies.on)) tools.push(...listedSupplyFront(caller.assistant).map((tool) => withPropertyArg(tool, required)));
   return tools;
@@ -167,7 +168,7 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
     return reply;
   }
   if (name === "set_flows") {
-    const reply = await setFlows({ h, tenant, actor: "host", noteToolsChanged }, (args ?? {}) as FlowInput);
+    const reply = await setFlows({ h, tenant, actor: "host", assistant: caller.assistant, noteToolsChanged }, (args ?? {}) as FlowInput);
     // A property that turns cleaning on starts with the account's routine connected.
     if (!reply.isError) shareRoutine(h, tenant.id);
     return reply;

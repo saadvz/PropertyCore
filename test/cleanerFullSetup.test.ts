@@ -21,6 +21,7 @@ import { CLEANER_SCOPE } from "../src/mcp/oauth/provider";
 import { twilioSignature } from "../src/messaging/twilio/signature";
 import { FileRuntimeStore } from "../src/storage/runtimeStore";
 import { BASE, CLEANER_RESOURCE, closeHostedApps, hostedApp } from "./cleanerOauthHarness";
+import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { TenantRegistry, tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { drainAllTenants, hostedCleaner } from "../src/cleaner-core/hosted/router";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
@@ -1956,7 +1957,11 @@ const PLAIN_CODE = new RegExp(`(?<![0-9A-Za-z])${DOOR_CODE}(?![0-9A-Za-z])`);
 /** Scratch Lane as a tenant of the multi-tenant service, on the rehearsal's Twilio number. */
 function laneTenant(hosted: Awaited<ReturnType<typeof hostedApp>>, clock: () => Date) {
   const registry = new TenantRegistry(hosted.root, clock);
-  const { tenant } = registry.create({ label: "Scratch Lane", twilioNumber: CLEANER_LINE });
+  const created = registry.create({ label: "Scratch Lane", twilioNumber: CLEANER_LINE }).tenant;
+  // An existing cleaning host: one property, with Cleaner Core on.
+  const property = registry.addProperty(created.id, "Scratch Lane");
+  registry.setFlow(created.id, property.id, "cleaning", true);
+  const tenant = registry.get(created.id)!;
   const secrets = new TenantSecrets(hosted.root);
   const h = hostedCleaner({
     registry,
@@ -1968,7 +1973,7 @@ function laneTenant(hosted: Awaited<ReturnType<typeof hostedApp>>, clock: () => 
     now: clock,
     log: () => undefined,
   });
-  return { tenant, room: tenantFolder(hosted.root, tenant.id), secrets, drain: () => drainAllTenants(h) };
+  return { tenant, room: propertyFolder(hosted.root, tenant.id, property), secrets, drain: () => drainAllTenants(h) };
 }
 
 describe("Cleaner Core full diagram", () => {

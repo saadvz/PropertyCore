@@ -57,7 +57,12 @@ const grok = (assistant: CleanerAssistant) => assistant === "grok";
 /** Supply Core's tools as tools/list shows them: only for a Grok chat, which shops with its own tools. */
 export function listedSupplyFront(assistant: CleanerAssistant): Record<string, unknown>[] {
   if (!grok(assistant)) return [];
-  return [...listedSupplyTools(SUPPLY_TOOLS.map((tool) => tool.name)), CHOOSE_TOOL];
+  return listedSupplyTools(SUPPLY_TOOLS.map((tool) => tool.name));
+}
+
+/** Cleaner Core's setup question about Supply Core, listed for a Grok chat while any property runs Cleaner Core. */
+export function listedChooseSupplies(assistant: CleanerAssistant): Record<string, unknown>[] {
+  return grok(assistant) ? [CHOOSE_TOOL] : [];
 }
 
 const CHOOSE_TOOL = {

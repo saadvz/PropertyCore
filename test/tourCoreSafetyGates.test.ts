@@ -38,7 +38,7 @@ afterEach(() => {
 async function publishedTouring() {
   const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1", CLEANER_CORE_SCRATCH_TOOLS: "1" } }));
   const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
-  m.registry.setService(tenant.id, "touring");
+  m.registry.setTouring(tenant.id);
   const ws = new PropertyWorkspace(join(tenantFolder(m.app.root, tenant.id), "tour-core"));
   // A Scratch host's property texts through the local test outbox, so its checks pass without Twilio.
   const { config } = ws.save({ ...hillsideConfig(), messagingProvider: "local" });

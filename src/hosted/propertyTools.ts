@@ -25,12 +25,18 @@ const PROPERTY_ARG = { type: "string", maxLength: 200, description: "The propert
 
 /** The property a call names, and its arguments without `property`, or why it can't run. */
 export function resolveProperty(tenant: Tenant, args: unknown): { property: Property; args: Record<string, unknown> } | { refusal: string } {
-  const { property: ref, ...rest } = args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
+  const all = args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
+  // A tool with its own `property` field (Supply Core's settings) names the property with propertyId.
+  const { propertyId, ...withoutId } = all;
+  const named = typeof all.property === "string";
+  const { property: _ref, ...rest } = withoutId;
+  const ref = typeof propertyId === "string" ? propertyId : named ? (all.property as string) : undefined;
+  const kept = named ? rest : withoutId;
   if (typeof ref === "string" && ref.trim()) {
     const property = findProperty(tenant, ref);
-    return property ? { property, args: rest } : { refusal: nameProperty(tenant) };
+    return property ? { property, args: kept } : { refusal: nameProperty(tenant) };
   }
-  if (tenant.properties.length === 1) return { property: tenant.properties[0]!, args: rest };
+  if (tenant.properties.length === 1) return { property: tenant.properties[0]!, args: kept };
   if (tenant.properties.length === 0) return { refusal: FIRST_PROPERTY };
   return { refusal: nameProperty(tenant) };
 }
@@ -38,8 +44,11 @@ export function resolveProperty(tenant: Tenant, args: unknown): { property: Prop
 /** A listed tool with the `property` argument added to its input. */
 export function withPropertyArg(tool: Record<string, unknown>, required: boolean): Record<string, unknown> {
   const schema = (tool.inputSchema ?? { type: "object", properties: {} }) as { properties?: Record<string, unknown>; required?: string[]; additionalProperties?: unknown };
-  const properties = { ...(schema.properties ?? {}), property: PROPERTY_ARG };
-  const needed = required ? [...new Set([...(schema.required ?? []), "property"])] : (schema.required ?? []).filter((name) => name !== "property");
+  // A tool that already has a `property` field of its own takes the property's id as propertyId.
+  const key = schema.properties && "property" in schema.properties ? "propertyId" : "property";
+  const properties = { ...(schema.properties ?? {}), [key]: PROPERTY_ARG };
+  const own = (schema.required ?? []).filter((name) => key === "property" || name !== "propertyId");
+  const needed = required ? [...new Set([...own, key])] : own.filter((name) => name !== key);
   return { ...tool, inputSchema: { ...schema, properties, ...(needed.length > 0 ? { required: needed } : {}) } };
 }
 

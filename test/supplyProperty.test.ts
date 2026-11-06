@@ -54,7 +54,7 @@ describe("Supply Core per property", () => {
     const desk = supplyDesk(h, fresh(), court());
     expect(desk.deps.standalone).toBe(true);
     expect(desk.deps.cleaning).toBeUndefined();
-    expect(desk.deps.uploadBase()).toBe(`${BASE}/t/${fresh().id}/p/${court().id}`);
+    expect(desk.deps.uploadBase?.()).toBe(`${BASE}/t/${fresh().id}/p/${court().id}`);
   });
 
   it("two properties keep separate supply lists", async () => {

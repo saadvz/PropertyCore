@@ -1,12 +1,13 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { isStartText, isStopText, TenantOptOuts } from "../src/hosted/crossService";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 
-/** STOP covers both services on a number, and the inactive service's people get no reply. Only 555 numbers. */
+/** STOP and the earlier cleaning setup's people on a parked touring account, and STOP on a shared line. Only 555 numbers. */
 
 const LANE = "+15555550150";
 const HOST = "+15555550151";
@@ -48,32 +49,24 @@ describe("STOP and START words", () => {
   });
 });
 
-/** A cleaning tenant with a host and a cleaner saved, joined on /mcp. */
-async function cleaningWithPeople(m: MultiTenantApp) {
+/**
+ * A parked touring account that ran cleaning before the move to properties: its old cleaning setup,
+ * with a host and a cleaner, is still in the account folder. Joined on /mcp.
+ */
+async function touringAfterCleaning(m: MultiTenantApp) {
   const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+  mkdirSync(tenantFolder(m.app.root, tenant.id), { recursive: true });
+  writeFileSync(join(tenantFolder(m.app.root, tenant.id), "cleaner-live.json"), JSON.stringify({ address: "1 Scratch Lane, Springfield, IL 62701", host: HOST, cleaner: CLEANER, cleanerName: "Mike" }));
+  await m.makeTouring(tenant.id);
   const token = await m.joinAt(tenant.id, "grok", "/mcp");
-  await m.toolAt("/mcp", token, "choose_service", { service: "cleaning" });
-  await m.toolAt("/mcp", token, "get_state", { choice: "cleaners" });
-  await m.toolAt("/mcp", token, "save_property", { business: "Lane Stays", address: "1 Scratch Lane, Springfield, IL 62701", timeZone: "America/Chicago" });
-  const people = await m.toolAt("/mcp", token, "save_people", { host: HOST, cleaner: CLEANER, cleanerName: "Mike", groupChat: "cleaner-only" });
-  expect(people.isError, people.text).toBe(false);
   return { tenant, token };
 }
 
-async function switchTo(m: MultiTenantApp, token: string, to: "touring" | "cleaning") {
-  const asked = await m.toolAt("/mcp", token, "switch_service", { to });
-  const code = (asked.structured?.confirmation as { code: string } | undefined)?.code;
-  expect(code, asked.text).toBeDefined();
-  const done = await m.toolAt("/mcp", token, "switch_service", { to, confirmation: code });
-  expect(done.isError, done.text).toBe(false);
-}
-
-describe("across a switch", () => {
-  it("keeps a phone that texted STOP to cleaning opted out after the switch to touring, until START", SLOW, async () => {
+describe("on a touring account", () => {
+  it("keeps a phone that texted STOP opted out until START", SLOW, async () => {
     const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
-    const { tenant, token } = await cleaningWithPeople(m);
+    const { tenant } = await touringAfterCleaning(m);
     expect((await m.text(LANE, VISITOR, "STOP", "SMx1")).status).toBe(200);
-    await switchTo(m, token, "touring");
     await m.text(LANE, VISITOR, "Tour", "SMx2");
     expect(m.app.logs.join("\n")).toContain(`A text reached ${tenant.id} from a phone that opted out. Nothing was sent.`);
     const before = m.app.logs.length;
@@ -83,10 +76,9 @@ describe("across a switch", () => {
     expect(m.touring()!.inbox.pending(tenant.id)).toEqual([]);
   });
 
-  it("doesn't answer a cleaner's DONE as a tour request after the switch, and tells the host once", SLOW, async () => {
+  it("doesn't answer a cleaner from its old cleaning setup as a tour request, and tells the host once", SLOW, async () => {
     const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
-    const { tenant, token } = await cleaningWithPeople(m);
-    await switchTo(m, token, "touring");
+    const { tenant, token } = await touringAfterCleaning(m);
     await m.text(LANE, CLEANER, "DONE", "SMc1");
     await m.text(LANE, CLEANER, "DONE again", "SMc2");
     const logs = m.app.logs.join("\n");
@@ -99,17 +91,27 @@ describe("across a switch", () => {
 
   it("rejects a forged STOP: the signature is checked before any opt-out is kept", SLOW, async () => {
     const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
-    const { tenant } = await cleaningWithPeople(m);
+    const { tenant } = await touringAfterCleaning(m);
     const forged = await m.twilio("/webhooks/twilio/cleaner-core", { MessageSid: "SMf", From: VISITOR, To: LANE, Body: "STOP" }, "/elsewhere");
     expect(forged.status).toBe(403);
     expect(new TenantOptOuts(m.app.root).stopped(tenant.id, VISITOR)).toBe(false);
   });
 
-  it("always gives HELP and an injury text to the service, even from a phone that texted STOP, with touring off", SLOW, async () => {
+  it("routes an injury text from the old cleaning setup's people too", SLOW, async () => {
+    const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
+    await touringAfterCleaning(m);
+    const before = m.app.logs.length;
+    await m.text(LANE, CLEANER, "I fell and I'm bleeding, call 911", "SMh3");
+    expect(m.app.logs.slice(before).join("\n")).not.toContain("Nothing was sent.");
+  });
+});
+
+describe("on an account of properties", () => {
+  it("always gives HELP and an injury text to the property, even from a phone that texted STOP", SLOW, async () => {
     const m = (open = await multiTenantApp({ env: {} }));
     const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
-    const token = await m.joinAt(tenant.id, "grok", "/mcp");
-    await m.toolAt("/mcp", token, "choose_service", { service: "cleaning" });
+    const property = m.registry.addProperty(tenant.id, "1 Scratch Lane");
+    m.registry.setFlow(tenant.id, property.id, "cleaning", true);
     await m.text(LANE, CLEANER, "STOP", "SMh0");
     const before = m.app.logs.length;
     await m.text(LANE, CLEANER, "HELP", "SMh1");
@@ -117,20 +119,22 @@ describe("across a switch", () => {
     expect(m.app.logs.slice(before).join("\n")).not.toContain("opted out");
   });
 
-  it("routes an injury text from the inactive service's people too", SLOW, async () => {
-    const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
-    const { token } = await cleaningWithPeople(m);
-    await switchTo(m, token, "touring");
-    const before = m.app.logs.length;
-    await m.text(LANE, CLEANER, "I fell and I'm bleeding, call 911", "SMh3");
-    expect(m.app.logs.slice(before).join("\n")).not.toContain("Nothing was sent.");
+  it("rejects a forged STOP: the signature is checked before any opt-out is kept", SLOW, async () => {
+    const m = (open = await multiTenantApp({ env: {} }));
+    const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+    for (const label of ["1 Scratch Lane", "2 Scratch Lane"]) m.registry.setFlow(tenant.id, m.registry.addProperty(tenant.id, label).id, "cleaning", true);
+    const forged = await m.twilio("/webhooks/twilio/cleaner-core", { MessageSid: "SMf", From: VISITOR, To: LANE, Body: "STOP" }, "/elsewhere");
+    expect(forged.status).toBe(403);
+    expect(new TenantOptOuts(m.app.root).stopped(tenant.id, VISITOR)).toBe(false);
   });
+});
 
+describe("waiting texts", () => {
   it("doesn't hand over a waiting text from a phone that opted out while it waited", SLOW, async () => {
     const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1", CLEANER_CORE_SCRATCH_TOOLS: "1" } }));
     const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+    await m.makeTouring(tenant.id);
     const token = await m.joinAt(tenant.id, "grok", "/mcp");
-    await m.toolAt("/mcp", token, "choose_service", { service: "touring" });
     const touring = m.touring()!;
     touring.supervisor.stop(tenant.id);
     await m.text(LANE, VISITOR, "TOUR", "SMwait1");

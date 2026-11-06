@@ -6,7 +6,9 @@ import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { ConfirmationBook } from "../operator/confirmations";
-import { supplyDesk, turnOffSupplies, turnOnSupplies } from "../supply-core/hosted";
+import { GROK_ONLY, supplyDesk, turnOffSupplies, turnOnSupplies } from "../supply-core/hosted";
+import { supplyCoreOn } from "../cleaner-core/flag";
+import type { CleanerAssistant } from "../cleaner-core/assistant";
 import { FIXER_NOT_YET, resolveProperty } from "./propertyTools";
 import type { FrontReply } from "./serviceTools";
 
@@ -21,6 +23,8 @@ export interface FlowContext {
   h: HostedCleaner;
   tenant: Tenant;
   actor: "host" | "admin";
+  /** The chat asking. Supply Core turns on only for Grok, which shops with its own tools. */
+  assistant?: CleanerAssistant;
   noteToolsChanged(): void;
 }
 
@@ -83,6 +87,9 @@ export async function setFlows(ctx: FlowContext, input: FlowInput): Promise<Fron
 
 async function turnOn(ctx: FlowContext, property: Property, flow: FlowName): Promise<FrontReply | undefined> {
   if (flow === "supplies") {
+    if (ctx.assistant !== "grok") return fail(GROK_ONLY);
+    // Supply Core on its own, without Cleaner Core at the property, only while SUPPLY_CORE is on.
+    if (!property.flows.cleaning.on && !supplyCoreOn(ctx.h.baseEnv())) return fail("Supply Core on its own isn't available on this service yet. Turn on Cleaner Core for this property first.");
     await turnOnSupplies(ctx.h, ctx.tenant, property);
     return undefined;
   }

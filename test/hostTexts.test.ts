@@ -28,8 +28,8 @@ const booked = () => tourEvent({ eventType: "tour.booked", propertyId: "prop_lan
 async function touring(env: NodeJS.ProcessEnv = {}) {
   const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1", CLEANER_CORE_SCRATCH_TOOLS: "1", ...env } }));
   const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+  await m.makeTouring(tenant.id);
   const token = await m.joinAt(tenant.id, "grok", "/mcp");
-  await m.toolAt("/mcp", token, "choose_service", { service: "touring" });
   return { m, tenant: m.registry.get(tenant.id)!, token };
 }
 
