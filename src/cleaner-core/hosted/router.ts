@@ -31,6 +31,7 @@ import { isPropertyId, propertyFolder, type Property } from "./properties";
 import { isTenantId, tenantFolder, type Tenant, type TenantRegistry } from "./registry";
 import { screenText } from "../../hosted/crossService";
 import { handleTenantMcp } from "../../hosted/frontMcp";
+import { handleLineText } from "../../hosted/lineRouter";
 import type { TouringFront } from "../../hosted/serviceTools";
 import { handleTouringAlertUpload, refreshTouringAlerts, touringAlertFormReply, touringAlertPage, touringAlertUploadCode } from "../../hosted/touringAlerts";
 import { forwardTenantPath } from "../../hosted/touringForward";
@@ -214,17 +215,8 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
       }
       return touringText(h, r, tenant, rawBody, signed(path));
     }
-    const property = tenant.properties.find((p) => p.flows.cleaning.on);
-    if (!property) {
-      h.log(`A text reached ${tenant.id}, which has no property running Cleaner Core. Nothing was sent.`);
-      h.registry.touch(tenant.id);
-      r.send(200, "text/xml", EMPTY_TWIML);
-      return true;
-    }
-    const ctx = propertyContext(h, tenant, property);
-    const result = await handleCleanerTwilioWebhook({ rawBody, headers: r.req.headers, url: signed(path), env: ctx.env, root: ctx.root, now });
-    h.registry.touch(tenant.id);
-    r.send(result.status, result.contentType ?? JSON_TYPE, result.body);
+    // One line, several properties: the sender names the property.
+    await handleLineText(h, r, tenant, rawBody, signed(path));
     return true;
   }
 
@@ -390,6 +382,7 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
  * that will never connect one. A primary with a connected routine is never changed here.
  */
 export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
+  shareRoutine(h, tenantId);
   const tenant = h.registry.get(tenantId);
   if (!tenant || tenant.disabled) return;
   const live = (grantId: string) => h.grantLive(grantId) && tenant.connections.some((c) => c.grantId === grantId);
@@ -406,6 +399,24 @@ export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
   const next = connected.at(-1)!;
   h.registry.setPrimary(tenantId, next);
   h.log(`${tenantId}'s primary chat is now the one that connected its alert routine.`);
+}
+
+/**
+ * The account's alert routine belongs to its chats, not to one property: a routine connected through
+ * any property counts on every property running Cleaner Core, so setup never asks for it again.
+ */
+export function shareRoutine(h: HostedCleaner, tenantId: string): void {
+  const tenant = h.registry.get(tenantId);
+  if (!tenant || tenant.disabled) return;
+  const desks = tenant.properties
+    .filter((p) => p.flows.cleaning.on)
+    .map((p) => {
+      const ctx = propertyContext(h, tenant, p);
+      return liveDeskFor(ctx.root, ctx.env, () => h.now());
+    });
+  const ids = [...new Set(desks.flatMap((desk) => desk.routineConnectionIds()))];
+  if (ids.length === 0) return;
+  for (const desk of desks) if (ids.some((id) => !desk.routineConnectionIds().includes(id))) desk.markRoutineConnected(ids);
 }
 
 /** Delivers every enabled tenant's waiting wake-ups. One tenant's failure never stops the rest. */

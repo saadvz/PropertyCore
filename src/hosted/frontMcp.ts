@@ -4,7 +4,8 @@ import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { CLEANER_MCP_PATH, CLEANER_TOOL_NAMES, cleanerInstructions } from "../cleaner-core/mcp";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { Property } from "../cleaner-core/hosted/properties";
-import { promoteRoutineOwner, propertyContext, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
+import { promoteRoutineOwner, propertyContext, shareRoutine, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
+import { afterPeopleSaved, peopleRefusal } from "./lineRouter";
 import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
 import { OPERATOR_TOOL_NAMES } from "../operator/tools";
 import { ServiceNotices } from "./crossService";
@@ -165,7 +166,12 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
     if (!reply.isError) noteToolsChanged();
     return reply;
   }
-  if (name === "set_flows") return setFlows({ h, tenant, actor: "host", noteToolsChanged }, (args ?? {}) as FlowInput);
+  if (name === "set_flows") {
+    const reply = await setFlows({ h, tenant, actor: "host", noteToolsChanged }, (args ?? {}) as FlowInput);
+    // A property that turns cleaning on starts with the account's routine connected.
+    if (!reply.isError) shareRoutine(h, tenant.id);
+    return reply;
+  }
   const front = await handleFrontTool({ h, tenant, caller, noteToolsChanged }, name, args);
   if (front) return front;
   const supply = SUPPLY_FRONT_NAMES.has(name);
@@ -182,7 +188,13 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
     return reply ?? { text: "Supply Core couldn't answer that.", isError: true };
   }
   if (!property.flows.cleaning.on) return { text: flowOff("cleaning", property.label), isError: true };
-  return cleaningTool(h, r, tenant, property, caller, name, resolved.args);
+  if (name === "save_people") {
+    const refusal = await peopleRefusal(h, tenant, property, resolved.args);
+    if (refusal) return { text: refusal, isError: true };
+  }
+  const reply = await cleaningTool(h, r, tenant, property, caller, name, resolved.args);
+  if (name === "save_people" && !reply.isError) await afterPeopleSaved(h, tenant, property);
+  return reply;
 }
 
 let rpcIds = 0;
