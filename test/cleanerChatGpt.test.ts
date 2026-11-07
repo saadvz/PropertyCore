@@ -101,6 +101,7 @@ async function toRoutine(wired: WiredApp): Promise<void> {
   await toDoorCode(wired);
   await call(wired, "save_door_code", { code: DOOR_CODE, lockLocation: "front door keypad" });
   await call(wired, "save_preferences", {});
+  await call(wired, "save_payments", { on: false });
 }
 
 describe("Cleaner Core for ChatGPT", () => {

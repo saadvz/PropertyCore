@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { calendarUrlAllowed } from "./fetchLimits";
+import { calendarUrlAllowed } from "../hub/fetchLimits";
 
 /**
  * The cleaner's photos from MMS, so Grok can look at them. Each photo is downloaded once from Twilio

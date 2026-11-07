@@ -76,7 +76,7 @@ Secrets never go in the chat. For a calendar link and the door code, Claude send
 
 ## Step 4: Make the scheduled task
 
-The task comes before Activate, so the cleaner's first reply already wakes it. It checks your calendar every hour and wakes when the cleaner texts. Activate is refused until it's connected.
+The task comes before Activate, so the cleaner's first reply already wakes it. It checks your calendar every hour and wakes when the cleaner texts. Activate is refused until it's connected and Cleaner Core's test wake-up has reached it.
 
 1. Open [claude.ai/code/routines](https://claude.ai/code/routines) and click **New task**, then **Set up manually**.
 2. Fill it in as below and click **Create**.
@@ -102,6 +102,8 @@ Remove every other connector. A scheduled task can use all its connectors' tools
 3. The cleaner gets one text: "Reply YES to get cleaning texts, or STOP to opt out."
 
 From here, each reply from the cleaner starts a task run that tells you what needs you. Open the run to answer it, for example "yes, the guests have left" to send the door code.
+
+When the cleaner asks something, the run shows their words and a reply draft with Send, Edit, and Skip. Nothing goes to the cleaner until you tap Send. If you answer in the group text yourself, Claude sees your reply and drops its draft. After a reply goes out, Claude may offer to save it so the next draft for the same question uses your words.
 
 ## Troubleshooting
 

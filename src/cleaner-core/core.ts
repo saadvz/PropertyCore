@@ -1,4 +1,5 @@
-import { openPin, pinKeyFor, sealPin, type PinSeal } from "./pinSeal";
+import { joinSplitDigits } from "../hub/digits";
+import { cleaningWindow, DOOR_NOT_OPENED, DOOR_WINDOW_OVER, fixedCodePort, type AccessRefusedLines, type DoorAccessPort } from "./doorPort";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -8,7 +9,7 @@ import { spokenTimes } from "../core/spokenTime";
 import { parsePhone } from "../core/phone";
 import { smsStopAck } from "../visitor/smsConsent";
 import { writeFileAtomic } from "../storage/atomicWrite";
-import { addCalendarDays, formatWhen, interpretFeed, zonedInstant, type FeedBlock, type Turnover } from "./calendar";
+import { addCalendarDays, formatWhen, interpretFeed, zonedInstant, type FeedBlock, type Turnover } from "../hub/calendar";
 import { isInjuryReport } from "./injury";
 import { isScratchTestNumber } from "./scratch";
 import { applyOnboardingAnswer, beginOnboarding, type OnboardingPreview, type OnboardingSession } from "./onboarding";
@@ -22,10 +23,10 @@ import {
   type NormalizedSources,
   type SourceConflict,
   type SourceSnapshot,
-} from "./sources";
+} from "../hub/sources";
 import { fingerprintOf, freshnessOf, GUESTY_POLL_MS, staleAfterMs, type SourceRecord } from "./freshness";
 import { containsCodeToken, redactLine, redactPhone } from "./redact";
-import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
+import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, SUPPLY_DONE_ASK, SUPPLY_NOTED, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
 import { codeRoute, GroupNotConfirmed, type GroupSeat } from "./groupThread";
 import { GROK_HELPER } from "./assistant";
 import { codeHandlingText, HEALTH_NOTE, isReviewKind, reviewAlert, reviewId, type AuditEvent, type ReviewDetail, type ReviewItem, type ReviewKind } from "./review";
@@ -118,6 +119,16 @@ export interface JobView {
   notes?: string[];
   /** The checklist items the cleaner was sent. */
   checklist?: string[];
+  /** When the cleaner answered YES to the checklist question, as an instant. */
+  checklistConfirmedAt?: string;
+  /** The cleaner's answer to the supplies question after DONE, redacted, or none. */
+  supplyReport?: SupplyReport;
+}
+
+export interface SupplyReport {
+  text?: string;
+  none?: true;
+  at: string;
 }
 
 export interface OutboxView {
@@ -238,7 +249,7 @@ export type ReceiveReason =
   | "retry";
 
 /** What Cleaner Core did with an inbound text, for Grok to read beside the message. */
-export type MessageHandled = "opted-in" | "confirmed" | "declined" | "done" | "stop" | "start" | "injury" | "code-held" | "none" | "sent";
+export type MessageHandled = "opted-in" | "confirmed" | "declined" | "done" | "stop" | "start" | "injury" | "code-held" | "checklist-asked" | "checklist-not-done" | "supply-report" | "none" | "sent";
 
 export interface ReceiveResult {
   handled: boolean;
@@ -282,10 +293,13 @@ export interface CleanerCoreOptions {
   ownerPhone: string;
   /** Approved cleaner. The door code is a private text to this number, and only after opt-in and departure. */
   cleaner: { phone: string; approved: boolean };
-  /** Standing door code. Absent means this engine never texts one. */
-  pin?: string;
-  /** Where the lock is, named in the private door-code text. Never a code. */
-  lockLocation?: string;
+  /**
+   * Where the door code comes from: the property hub's door access request on the live service, or a
+   * fixed made-up code (fixedCodePort). The engine asks only after its own checks pass.
+   */
+  access?: DoorAccessPort;
+  /** Host lines for a refused door access request, kept once per job. Unset reasons use DOOR_NOT_OPENED. */
+  accessRefused?: AccessRefusedLines;
   /** Name in the cleaner opt-in text. */
   hostName?: string;
   /** Numbers that share a group thread. They never receive the door code. */
@@ -352,8 +366,6 @@ export interface CleanerCoreOptions {
   cleanerConsent?: "pending" | "in" | "out";
   /** Host already texted STOP before this store existed. A saved choice wins. */
   ownerOptedOut?: boolean;
-  /** Live chat keeps the seal outside this store. Scratch fixtures seal here. */
-  sealPinAtRest?: boolean;
   /** Host sentence after the private text is accepted. Unset keeps the fixture sentence. */
   pinSentBody?: string;
   /** Host sentence when the private text fails. Unset keeps the fixture sentence. */
@@ -364,6 +376,12 @@ export interface CleanerCoreOptions {
    * Unset keeps the guide reply for the Scratch CLI and the smoke runs.
    */
   grokReadsMessages?: boolean;
+  /**
+   * How long a checkout change after the offer waits before the cleaner's "Update" text goes, so
+   * a quick second change replaces it, and a change back sends nothing. Unset or 0 sends at once.
+   * A held update goes out on sendDueUpdates, runReminders, or the cleaner's next YES.
+   */
+  updateSettleMs?: number;
   /** Who a host text tells them to talk to. Unset is "your Grok Bot"; a Claude deployment passes "Claude". */
   helperName?: string;
   /** The host's checklist, sent to the cleaner once per job right after the private code. */
@@ -372,6 +390,8 @@ export interface CleanerCoreOptions {
   photosRequired?: boolean;
   /** The cleaner's other texts during the cleaning are kept as job notes. */
   supplyNotes?: boolean;
+  /** Supply Core is on: the done text also asks what's running low, and the next reply is the answer. */
+  supplyAsk?: boolean;
   /**
    * The host's other instructions, added to the end of the door code text, so the cleaner reads them
    * as the cleaning starts. LiveDesk sets it only when instructions are saved, so the Scratch CLI and
@@ -419,6 +439,10 @@ export interface CleanerCore {
    * Grok passes them from chat. The cleaner's next text goes out as it would after a host text.
    */
   setHostTimes(input: { checkout: number; checkIn: number; keepCheckIn?: boolean }): Promise<CleanerText[]>;
+  /** When the held checkout update goes out, as an ISO time. Undefined when no update is held. */
+  updateDueAt(): string | undefined;
+  /** Sends a held checkout update whose hold has ended. */
+  sendDueUpdates(): Promise<CleanerText[]>;
   /** confirmOpenTimes with minutes after midnight. Group setups only. */
   setOpenTimes(input: { checkout: number; checkIn: number }): Promise<{ timed: number; sent: CleanerText[] }>;
   /** The host told Grok the guests have left. The door code goes out under the same rules as before. */
@@ -528,20 +552,22 @@ const CLEANER_HURT = "If someone is hurt, call 911 now. I've let the host know."
 const CLEANER_HURT_MISSED = "If someone is hurt, call 911 now. I couldn't reach the host, so please call them too.";
 export const SAFETY = new Set<TextKind>(["stop", "start", "emergency"]);
 
-/**
- * Joins digits split by spaces, dots, dashes, underscores, or slashes, so "8 0 8 8", "80-88", and
- * "8.0.8.8" read as 8088. A host message is checked for the door code in this form too.
- */
-export function joinSplitDigits(text: string): string {
-  return text.replace(/(\d)[\s.\-_/\u2010-\u2015]+(?=\d)/g, "$1");
-}
+export { joinSplitDigits };
 
 /** Every run of 4 or more digits, even split by spaces, dots, dashes, underscores, or slashes, as [redacted]. */
 export function redactDigitRuns(text: string): string {
   return text.replace(/\d(?:[\s.\-_/\u2010-\u2015]*\d){3,}/g, "[redacted]");
 }
 
+/** Texts that ask the cleaner their own YES or NO. */
+const CLEANER_QUESTIONS = new Set<TextKind>(["offer", "corrected", "opt-in"]);
 const JOB_TEXTS = new Set<TextKind>(["offer", "corrected", "confirm", "reminder", "cancel-update", "declined", "started", "done", "checklist"]);
+/**
+ * Engine job texts that carry a due group intro in the same post, the intro first. Two texts sent
+ * back to back into a group can reach each phone in a different order. The door code, the injury
+ * alert, and the landlord's own messages always go on their own.
+ */
+const INTRO_RIDES = new Set<TextKind>(["offer", "corrected", "confirm", "reminder", "cancel-update", "declined", "started", "done", "next", "checklist"]);
 /** Job notes kept during a cleaning, newest last, and the length of each. */
 const MAX_NOTES = 5;
 const MAX_NOTE = 200;
@@ -632,6 +658,16 @@ interface Job {
   notes?: string[];
   /** The checklist items sent to the cleaner. */
   checklist?: string[];
+  /** Set while DONE's checklist question waits for the cleaner's YES or NO. */
+  checklistAskedAt?: string;
+  /** The outbox id of that question, so a later question to the cleaner can take over their reply. */
+  checklistAskId?: string;
+  /** When the cleaner answered YES to the checklist question. */
+  checklistConfirmedAt?: string;
+  /** When the done text asked what's running low. */
+  supplyAskedAt?: string;
+  /** The cleaner's supplies answer. */
+  supplyReport?: SupplyReport;
 }
 
 interface Clearance {
@@ -646,6 +682,8 @@ interface HostFact {
   field: "checkout" | "checkin";
   version: number;
   minutes: number;
+  /** When the time was saved. Older stores have none, and their updates are never held. */
+  at?: string;
 }
 
 interface Tombstone {
@@ -689,7 +727,6 @@ interface Stored {
   blocks: FeedBlock[];
   cleanerConsent?: "pending" | "in" | "out";
   clearances?: Clearance[];
-  pinSeal?: PinSeal;
   onboarding?: OnboardingSession;
   origin?: "onboarding";
   activated?: boolean;
@@ -730,7 +767,6 @@ interface StoreFile {
   blocks?: FeedBlock[];
   cleanerConsent?: "pending" | "in" | "out";
   clearances?: Clearance[];
-  pinSeal?: PinSeal;
   pin?: unknown;
   onboarding?: OnboardingSession;
   origin?: "onboarding";
@@ -761,7 +797,9 @@ class Engine implements CleanerCore {
   private readonly enabled: boolean;
   private readonly owner: string | undefined;
   private readonly cleanerPhone: string | undefined;
+  /** The code, for leak checks and "is a code saved". The text's code comes from access, at release. */
   private pin: string | undefined;
+  private readonly access: DoorAccessPort | undefined;
   private readonly hostName: string;
   private readonly groupPhones: string[];
   private cleanerConsent: "pending" | "in" | "out" = "pending";
@@ -771,6 +809,8 @@ class Engine implements CleanerCore {
   private readonly defaultCheckIn: number;
   private jobsState: Job[] = [];
   private hostFacts: HostFact[] = [];
+  /** Set while the cleaner's YES sends a held update early. */
+  private sendHeldUpdate = false;
   private tombstones: Tombstone[] = [];
   private outboxState: OutboxItem[] = [];
   private inboundIds: string[] = [];
@@ -832,7 +872,9 @@ class Engine implements CleanerCore {
     this.enabled = options.enabled;
     this.owner = parsePhone(options.ownerPhone);
     this.cleanerPhone = parsePhone(options.cleaner.phone);
-    const pin = options.pin?.trim();
+    // The port is the one way a code reaches a text. The engine never stores the code.
+    this.access = options.access;
+    const pin = options.access?.codeForChecks()?.trim();
     this.pin = pin && /^\d{4,8}$/.test(pin) ? pin : undefined;
     this.hostName = options.hostName?.trim() || "Scratch";
     this.groupPhones = (options.groupPhones ?? []).flatMap((phone) => {
@@ -1062,6 +1104,10 @@ class Engine implements CleanerCore {
       }
     }
     if (from === this.owner && stripFiller(normalize(input.text)) === "retry") return this.retryUncertain(input.id);
+    const supplyJob = this.supplyWaiting(from, input.text);
+    if (supplyJob) return this.answerSupplies(supplyJob, from, input.id, input.text);
+    const asked = this.pin && from === this.cleanerPhone && this.cleanerConsent === "in" ? this.progressJob() : undefined;
+    if (asked && this.checklistWaiting(asked) && (isYes(input.text) || isNo(input.text))) return this.answerChecklist(asked, from, input.id, isYes(input.text));
     if (this.pin && from === this.cleanerPhone && isYes(input.text) && this.awaitingOptIn()) return this.optInCleaner(input.id);
     if (from && isYes(input.text) && this.participantConsent.get(from) === "pending" && this.delivery(`opt-in:${from}`) === "sent") {
       return this.optInParticipant(from, input.id);
@@ -1085,6 +1131,8 @@ class Engine implements CleanerCore {
     const failed: string[] = [];
     // An offer held by the offer trigger or quiet hours goes out on the first check after it is due.
     if (this.options.offerTrigger) sent.push(...(await this.drainOne()));
+    // A held checkout update whose hold ended goes out on this check, if nothing sent it sooner.
+    else if (this.heldJobs().length > 0) sent.push(...(await this.drainOne()));
     if (!this.inQuietHours()) for (const job of this.ordered()) {
       if (!this.canRemind(job)) continue;
       const fact = this.latestFact(job.id, "checkout");
@@ -1449,7 +1497,7 @@ class Engine implements CleanerCore {
       },
       ownerPhone: session.hostPhone,
       cleaner: { phone: cleaner.phone, approved: true },
-      pin: this.pin,
+      access: fixedCodePort(this.pin),
       hostName: session.nickname,
       consented: true,
       sink: { send() {} },
@@ -1676,6 +1724,8 @@ class Engine implements CleanerCore {
       const confirmer = this.cleanerRecord()?.phone;
       if (!confirmer || from !== confirmer) return this.quietOrGuide(from, id, text);
       if (isYes(text)) {
+        // A YES during a held update answered the old time. The update goes now and asks again.
+        if (this.updateHeld(job)) return this.sendUpdateNow(id);
         if (this.stale(job)) return this.quietOrGuide(from, id, text);
         const sent = await this.confirm(job);
         if (sent.length === 0 && !this.confirmSent(job)) return { handled: true, reason: "ignored", sent: [] };
@@ -1689,6 +1739,17 @@ class Engine implements CleanerCore {
       }
     }
     return this.quietOrGuide(from, id, text);
+  }
+
+  private async sendUpdateNow(id: string): Promise<ReceiveResult> {
+    this.sendHeldUpdate = true;
+    try {
+      const sent = await this.drainOne();
+      this.inboundIds.push(id);
+      return { handled: true, reason: "ignored", sent };
+    } finally {
+      this.sendHeldUpdate = false;
+    }
   }
 
   private async confirm(job: Job): Promise<CleanerText[]> {
@@ -1792,18 +1853,91 @@ class Engine implements CleanerCore {
       this.save();
       return { ...asked, label: "none" };
     }
-    const result = await this.reply(from, "Thanks, cleaning marked done.", "done", "done", id, job.id);
+    if ((job.checklist?.length ?? 0) > 0 && !job.checklistConfirmedAt) {
+      // The cleaning stays open until the cleaner says the checklist is finished.
+      job.checklistAskedAt = this.now().toISOString();
+      job.checklistAskId = `next:${id}`;
+      const asked = await this.reply(from, CHECKLIST_ASK, "next", "ignored", id, job.id);
+      if (!this.inboundIds.includes(id)) this.inboundIds.push(id);
+      this.save();
+      return { ...asked, label: "checklist-asked" };
+    }
+    return this.markDone(job, from, id);
+  }
+
+  /**
+   * True while DONE's checklist question is the cleaner's open question. A later offer or opt-in to
+   * the cleaner asks its own YES or NO, so the cleaner's reply goes to that one instead.
+   */
+  private checklistWaiting(job: Job): boolean {
+    if (!job.checklistAskedAt) return false;
+    const at = job.checklistAskId ? this.outboxState.findIndex((item) => item.id === job.checklistAskId) : -1;
+    if (at < 0) return true;
+    return !this.outboxState.slice(at + 1).some((item) => item.status === "sent" && item.jobId !== job.id && CLEANER_QUESTIONS.has(item.kind));
+  }
+
+  /** The cleaner's YES or NO to DONE's checklist question. */
+  private async answerChecklist(job: Job, from: string, id: string, yes: boolean): Promise<ReceiveResult & { label?: MessageHandled }> {
+    if (this.inboundIds.includes(id)) return { handled: true, reason: "duplicate", sent: [] };
+    // A held cleaning stays open: the question keeps waiting until the host resumes it.
+    if (this.problemHold) return this.guide(from, id);
+    delete job.checklistAskedAt;
+    delete job.checklistAskId;
+    if (yes) {
+      job.checklistConfirmedAt = this.now().toISOString();
+      return this.markDone(job, from, id);
+    }
+    const replied = await this.reply(from, CHECKLIST_NOT_DONE, "next", "ignored", id, job.id);
+    this.inboundIds.push(id);
+    this.save();
+    return { ...replied, label: "checklist-not-done" };
+  }
+
+  /** Marks the cleaning done once the cleaner's acknowledgement went out, and tells the host. */
+  private async markDone(job: Job, from: string, id: string): Promise<ReceiveResult & { label?: MessageHandled }> {
+    const body = this.options.supplyAsk ? SUPPLY_DONE_ASK : "Thanks, cleaning marked done.";
+    const result = await this.reply(from, body, "done", "done", id, job.id);
     const acked = result.sent.length > 0 || this.delivery(`done:${id}`) === "sent";
     if (acked) {
       job.started = true;
       job.done = true;
       job.doneAt = this.now().toISOString();
+      if (this.options.supplyAsk && !job.supplyAskedAt) job.supplyAskedAt = job.doneAt;
       if (!this.inboundIds.includes(id)) this.inboundIds.push(id);
       await this.tellHostDone(job);
     }
     this.save();
     // The job is done only once the cleaner's acknowledgement went out.
     return acked ? result : { ...result, label: "none" };
+  }
+
+  /**
+   * The finished cleaning whose supplies question this text answers: from the cleaner's own phone,
+   * within 12 hours of the question, not yet answered, and not a keyword, YES, DONE, an injury, a
+   * plain-language stop, or a code-like text, which keep their own meaning.
+   */
+  private supplyWaiting(from: string, raw: string): Job | undefined {
+    if (!this.options.supplyAsk || !from || from !== this.cleanerPhone || this.cleanerConsent !== "in") return undefined;
+    const text = raw.trim();
+    if (!text || keywordOf(text) !== undefined || isYes(text) || isDone(text) || isInjuryReport(text) || isPlainLanguageStop(text) || this.looksLikeCode(text)) return undefined;
+    // A bare NO while the next cleaning's offer waits declines that offer.
+    if (isNo(text) && this.ordered().some((item) => this.derive(item) === "offered")) return undefined;
+    const job = [...this.ordered()].reverse().find((item) => item.done && item.supplyAskedAt);
+    if (!job || job.supplyReport) return undefined;
+    if (this.now().getTime() - Date.parse(job.supplyAskedAt!) > SUPPLY_ANSWER_MS) return undefined;
+    return job;
+  }
+
+  /** Saves the cleaner's supplies answer, redacted, and thanks them once. */
+  private async answerSupplies(job: Job, from: string, id: string, raw: string): Promise<ReceiveResult & { label?: MessageHandled }> {
+    if (this.inboundIds.includes(id)) return { handled: true, reason: "duplicate", sent: [] };
+    const at = this.now().toISOString();
+    const words = raw.trim().toLowerCase().replace(/[^a-z ]+/g, "").trim();
+    job.supplyReport = NOTHING_LOW.has(words) ? { none: true, at } : { text: this.noteText(raw), at };
+    const replied = await this.reply(from, SUPPLY_NOTED, "next", "ignored", id, job.id);
+    this.inboundIds.push(id);
+    this.save();
+    return { ...replied, label: "supply-report" };
   }
 
   /** The cleaning in progress: the code went to the cleaner and it isn't done, called off, or declined. */
@@ -1929,6 +2063,23 @@ class Engine implements CleanerCore {
     return { handled: true, reason: "host-time", sent };
   }
 
+  /**
+   * Asks for door access for the cleaner during this cleaning's window. A refusal sends nothing, is
+   * not retried here, and gives the host one note per job and reason.
+   */
+  private async requestAccess(job: Job): Promise<{ code: string; lockLocation?: string } | undefined> {
+    const checkout = this.latestFact(job.id, "checkout");
+    // deliverPin reaches here only with a checkout fact (pinKey needs one), so this guard never drops a release silently.
+    if (!this.access || !this.cleanerPhone || !checkout) return undefined;
+    const window = cleaningWindow({ checkoutDate: job.checkoutDate, checkoutTime: hm(checkout.minutes), nextCheckInDate: job.nextCheckInDate, timeZone: this.options.property.timeZone });
+    const grant = await this.access.request({ person: this.cleanerPhone, window, purpose: "cleaning", jobId: job.id });
+    if (grant.ok && /^\d{4,8}$/.test(grant.code)) return { code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}) };
+    const reason = grant.ok ? "sealed" : grant.reason;
+    this.keepHostNote(`host:access-refused:${job.id}:${reason}`, this.options.accessRefused?.[reason] ?? (reason === "window-over" ? DOOR_WINDOW_OVER : DOOR_NOT_OPENED));
+    this.save();
+    return undefined;
+  }
+
   private async deliverPin(job: Job): Promise<CleanerText[]> {
     if (!this.pin || !this.cleanerPhone || this.optedOut || this.stale(job) || job.canceled || job.declined) return [];
     const key = this.pinKey(job);
@@ -1954,11 +2105,18 @@ class Engine implements CleanerCore {
     }
     if (this.problemHold || this.groupPinTerminal) return sent;
     if (this.delivery(key) !== "sent" && this.pin) {
-      const pin = this.pin;
       const route = this.groupChat ? codeRoute(this.groupSeats()) : "private";
       if (route === "held") return sent;
+      // Every check above has passed. Only now is door access asked for, for the cleaner, for this cleaning.
+      const grant = await this.requestAccess(job);
+      if (!grant) return sent;
+      const pin = grant.code;
+      // The granted code is the one the leak checks guard from here on: a code saved again since this
+      // engine opened would otherwise reach the transcript and outbox unredacted.
+      this.pin = pin;
+      const lockLocation = grant.lockLocation?.trim() || undefined;
       // The host's note rides on the door code, so the cleaner reads it as the cleaning starts.
-      const body = withHostNote(doorCodeBody(this.options.property.address, pin, this.options.lockLocation?.trim() || undefined), this.options.cleaningNote);
+      const body = withHostNote(doorCodeBody(this.options.property.address, pin, lockLocation), this.options.cleaningNote);
       const addressed = addressCleaner(this.cleanerRecord(), { kind: "pin", body });
       if (!addressed) return sent;
       let text: CleanerText | null = null;
@@ -1971,7 +2129,7 @@ class Engine implements CleanerCore {
           jobId: job.id,
           to: addressed.to,
           kind: "pin",
-          body: withHostNote(groupDoorCodeBody(this.options.property.address, pin, this.groupChat!.cleanerName, this.options.lockLocation?.trim() || undefined), this.options.cleaningNote),
+          body: withHostNote(groupDoorCodeBody(this.options.property.address, pin, this.groupChat!.cleanerName, lockLocation), this.options.cleaningNote),
           channel: "group",
           audience,
         });
@@ -2163,9 +2321,10 @@ class Engine implements CleanerCore {
 
   private async drainOne(): Promise<CleanerText[]> {
     if (this.optedOut || this.problemHold) return [];
+    // A job text posted to the group carries a due intro. An intro still due after it goes alone.
+    const rest = await this.drainJobs();
     const intro = await this.ensureIntro();
     if (intro) this.pendingIntros = this.pendingIntros.filter((item) => item !== intro);
-    const rest = await this.drainJobs();
     return intro ? [intro, ...rest] : rest;
   }
 
@@ -2265,6 +2424,7 @@ class Engine implements CleanerCore {
       };
     }
     if (this.checkoutDrift(job)) {
+      if (this.updateHeld(job)) return null;
       const to = this.cleanerRecord()?.phone;
       if (!to) return null;
       const when = this.clock(job.checkoutDate, checkout.minutes);
@@ -2405,7 +2565,8 @@ class Engine implements CleanerCore {
     const id = `${draft.id}:group`;
     // A text already sent one-to-one (an older store, an earlier fallback) is never posted again.
     if (this.delivery(draft.id) === "sent" || this.delivery(id) === "sent") return null;
-    await this.ensureIntro();
+    const intro = INTRO_RIDES.has(draft.kind) ? this.dueIntro() : undefined;
+    if (!intro) await this.ensureIntro();
     const audience = this.groupAudience();
     const name = this.seatName(draft.to);
     // The landlord's approved words are posted exactly as approved.
@@ -2422,13 +2583,14 @@ class Engine implements CleanerCore {
       id,
       ...(draft.jobId ? { jobId: draft.jobId } : {}),
       to: this.cleanerPhone ?? audience[0] ?? draft.to,
-      body,
+      body: intro ? `${intro.body}\n\n${body}` : body,
       kind: draft.kind,
       channel: "group",
       audience,
       ...(draft.afterSend ? { afterSend: draft.afterSend } : {}),
     });
     const status = this.delivery(id);
+    if (intro) this.noteIntro(intro, status);
     if (status === "sent") {
       if (draft.kind === "offer" && this.messagingMode() !== "cleaner-only") await this.copyOffer(draft, draft.to);
       // The landlord's own line still reaches Grok through get_state, beside the group post.
@@ -2825,23 +2987,31 @@ class Engine implements CleanerCore {
    * holds back the group's other texts.
    */
   private async ensureIntro(): Promise<CleanerText | null> {
-    const intro = this.introId();
-    if (!intro || !this.groupChat || this.lastIntro === intro.members) return null;
-    const audience = intro.seats.map((seat) => seat.phone);
-    const to = audience.find((phone) => phone === this.cleanerPhone) ?? audience[0];
-    if (!to) return null;
-    const text = await this.emit({
-      id: intro.id,
-      to,
-      body: groupIntroBody(intro.seats.map((seat) => seat.name), this.groupChat.hostName, this.options.property.address),
-      kind: "intro",
-      channel: "group",
-      audience,
-    });
+    const intro = this.dueIntro();
+    if (!intro) return null;
+    const text = await this.emit({ id: intro.id, to: intro.to, body: intro.body, kind: "intro", channel: "group", audience: intro.audience });
     // Once an attempt is on record (sent, failed or waiting), this membership is introduced.
     if (this.delivery(intro.id) !== undefined) this.lastIntro = intro.members;
     if (text) this.pendingIntros.push(text);
     return text;
+  }
+
+  /** The intro the group is owed now, if any. */
+  private dueIntro(): { id: string; members: string; to: string; audience: string[]; body: string } | undefined {
+    const intro = this.introId();
+    if (!intro || !this.groupChat || this.lastIntro === intro.members) return undefined;
+    const audience = intro.seats.map((seat) => seat.phone);
+    const to = audience.find((phone) => phone === this.cleanerPhone) ?? audience[0];
+    if (!to) return undefined;
+    const body = groupIntroBody(intro.seats.map((seat) => seat.name), this.groupChat.hostName, this.options.property.address);
+    return { id: intro.id, members: intro.members, to, audience, body };
+  }
+
+  /** Records an intro that went out inside a job text, with that post's outcome. */
+  private noteIntro(intro: NonNullable<ReturnType<Engine["dueIntro"]>>, status: OutboxItem["status"] | undefined): void {
+    if (status === undefined) return;
+    this.upsert({ id: intro.id, to: intro.to, body: intro.body, kind: "intro", channel: "group", audience: intro.audience }, status);
+    this.lastIntro = intro.members;
   }
 
   /** An intro posted during a step is listed first among that step's texts. */
@@ -3052,7 +3222,40 @@ class Engine implements CleanerCore {
       ...(job.photosSaved ? { photosSaved: job.photosSaved } : {}),
       ...(job.notes ? { notes: [...job.notes] } : {}),
       ...(job.checklist ? { checklist: [...job.checklist] } : {}),
+      ...(job.checklistConfirmedAt ? { checklistConfirmedAt: job.checklistConfirmedAt } : {}),
+      ...(job.supplyReport ? { supplyReport: { ...job.supplyReport } } : {}),
     };
+  }
+
+  /** When this job's checkout update may go: its last checkout change plus the hold. */
+  private updateDue(job: Job): number | undefined {
+    const settle = this.options.updateSettleMs ?? 0;
+    if (settle <= 0 || !this.checkoutDrift(job)) return undefined;
+    const at = Date.parse(this.latestFact(job.id, "checkout")?.at ?? "");
+    return Number.isNaN(at) ? undefined : at + settle;
+  }
+
+  private updateHeld(job: Job): boolean {
+    if (this.sendHeldUpdate) return false;
+    const due = this.updateDue(job);
+    return due !== undefined && this.now().getTime() < due;
+  }
+
+  private heldJobs(): Job[] {
+    return this.ordered().filter((job) => !job.canceled && !job.declined && this.updateDue(job) !== undefined);
+  }
+
+  updateDueAt(): string | undefined {
+    const due = this.heldJobs().map((job) => this.updateDue(job) ?? Infinity);
+    if (due.length === 0) return undefined;
+    return new Date(Math.min(...due)).toISOString();
+  }
+
+  async sendDueUpdates(): Promise<CleanerText[]> {
+    if (!this.enabled || !this.everConsented || this.heldJobs().length === 0) return [];
+    const sent = await this.drainOne();
+    this.save();
+    return sent;
   }
 
   private checkoutDrift(job: Job): boolean {
@@ -3126,7 +3329,7 @@ class Engine implements CleanerCore {
   private addFact(jobId: string, field: "checkout" | "checkin", minutes: number): void {
     const latest = this.latestFact(jobId, field);
     if (latest?.minutes === minutes) return;
-    this.hostFacts.push({ jobId, field, version: (latest?.version ?? 0) + 1, minutes });
+    this.hostFacts.push({ jobId, field, version: (latest?.version ?? 0) + 1, minutes, at: this.now().toISOString() });
     this.cancelPendingReminders(jobId);
   }
 
@@ -3368,10 +3571,6 @@ class Engine implements CleanerCore {
     return body.split(this.pin).join("[redacted]");
   }
 
-  private pinKeyMaterial(): Buffer {
-    return pinKeyFor(this.options.property.id);
-  }
-
   private load(): void {
     if (!this.file || !existsSync(this.file)) return;
     this.storeLoaded = true;
@@ -3379,6 +3578,8 @@ class Engine implements CleanerCore {
     if (parsed.schemaVersion !== 1) throw new Error("Cleaner Core store is not version 1.");
     const mine = sliceForTenant(parsed, this.tenantId);
     if (!mine) return;
+    // An older store's plaintext pin or sealed code is never read, and the next save leaves it out:
+    // the code comes only from access.
     const record = JSON.parse(JSON.stringify(mine)) as Stored & { pin?: unknown };
     delete record.pin;
     this.jobsState = record.jobs.map((job) => {
@@ -3433,13 +3634,6 @@ class Engine implements CleanerCore {
       if (last) this.lastIntro = last.id.slice("intro:".length).split(":")[0];
     }
     this.hostNoteState = (record.hostNotes ?? []).filter((note) => typeof note?.id === "string" && typeof note?.body === "string");
-    if (this.options.sealPinAtRest !== false && !this.pin && record.pinSeal) {
-      try {
-        this.pin = openPin(record.pinSeal, this.pinKeyMaterial());
-      } catch {
-        this.pin = undefined;
-      }
-    }
   }
 
   private save(): void {
@@ -3466,7 +3660,6 @@ class Engine implements CleanerCore {
       ...(this.participantConsent.size > 0
         ? { participantConsent: [...this.participantConsent].map(([phone, consent]) => ({ phone, consent })) }
         : {}),
-      ...(this.options.sealPinAtRest !== false && this.pin ? { pinSeal: sealPin(this.pin, this.pinKeyMaterial()) } : {}),
       ...(this.sourceRecords.length > 0 ? { sourceRecords: this.sourceRecords } : {}),
       ...(this.latest.size > 0 ? { snapshots: Object.fromEntries(this.latest) } : {}),
       ...(this.reviewItems.length > 0 ? { reviews: this.reviewItems } : {}),
@@ -3741,6 +3934,10 @@ class Engine implements CleanerCore {
     return stripped.length === 0;
   }
 }
+
+/** How long after DONE the cleaner's reply still answers the supplies question. */
+const SUPPLY_ANSWER_MS = 12 * 60 * 60_000;
+const NOTHING_LOW = new Set(["none", "no", "nothing", "nope", "none thanks", "nothing thanks"]);
 
 function emptyCounters(): Counters {
   return { sent: 0, failed: 0, uncertain: 0, canceled: 0, injury: 0, stop: 0, help: 0, polls: 0, pollFails: 0, pollDurationMs: 0 };

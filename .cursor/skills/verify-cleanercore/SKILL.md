@@ -113,6 +113,18 @@ The step G safety gates are one script. It overwrites the fixed directory `evide
 .cursor/skills/verify-cleanercore/scripts/prove-step-g.sh
 ```
 
+Payments are one desk drive: setup with $85 to the made-up Venmo username `scratch-cleaner`, DONE, the checklist YES, `check_now`'s `payDue`, and `mark_paid`. It exits non-zero unless the pay link is exact and no payment step sent a text. It never opens Venmo; opening a link on a phone is a manual check, stopped before Pay:
+
+```
+npx tsx .cursor/skills/verify-cleanercore/scripts/prove-payments.ts .cursor/skills/verify-cleanercore/evidence/payments/payments.json
+```
+
+Supply Core is one desk drive: a cleaning property with Supply Core on and one made-up item, DONE with the combined supplies question, the cleaner's answer, `check_now`'s `supply-report`, `report_low`, `check_supplies`, a go cart, and a made-up order number. It exits non-zero unless every step matches, every recipient is a Scratch number, and the door code appears nowhere. It never opens a store; see [features/supplies.md](features/supplies.md):
+
+```
+npx tsx .cursor/skills/verify-cleanercore/scripts/prove-supplies.ts .cursor/skills/verify-cleanercore/evidence/supplies/supplies.json
+```
+
 ## Evidence
 
 Write one directory per turnover or safety run:
@@ -201,6 +213,6 @@ After any script exits, its evidence directory must still be on disk. A cleanup 
 
 ## Feature map
 
-Read [features/README.md](features/README.md) before driving. One feature file is one user journey. `prove-turnover.sh` drives `same-day-turnover`. `prove-safety.sh` drives flag-off, STOP, HELP, injury, and the unapproved YES. `prove-step-d.sh` drives the step D blockers and overwrites `evidence/step-d`. `prove-step-e.sh` drives the step E blockers and overwrites `evidence/step-e`. `prove-step-f.sh` drives the step F blockers and overwrites `evidence/step-f`. `prove-step-g.sh` drives the step G safety gates and overwrites `evidence/step-g`. `prove-group-chat.sh` drives the group thread and overwrites `evidence/group-chat`. Do not mark a feature verified because a different feature's stdout happened to contain a related field.
+Read [features/README.md](features/README.md) before driving. One feature file is one user journey. `prove-turnover.sh` drives `same-day-turnover`. `prove-safety.sh` drives flag-off, STOP, HELP, injury, and the unapproved YES. `prove-step-d.sh` drives the step D blockers and overwrites `evidence/step-d`. `prove-step-e.sh` drives the step E blockers and overwrites `evidence/step-e`. `prove-step-f.sh` drives the step F blockers and overwrites `evidence/step-f`. `prove-step-g.sh` drives the step G safety gates and overwrites `evidence/step-g`. `prove-group-chat.sh` drives the group thread and overwrites `evidence/group-chat`. `prove-supplies.ts` drives [supplies](features/supplies.md) and overwrites `evidence/supplies/supplies.json`. Do not mark a feature verified because a different feature's stdout happened to contain a related field.
 
 When the map changes, run `/maintain-verification-skill` against `verify-cleanercore`.

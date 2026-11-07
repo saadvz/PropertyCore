@@ -12,9 +12,10 @@ Host ─► Grok Bot ─► hosted service (hostedPropertyCoreUrl/mcp) ─┬─
                                                                   └─► Cleaner Core ─► the cleaner's phone
 ```
 
-The bot connects once, to `/mcp`, and asks "Which do you want to set up: Tour
-Core or Cleaner Core?" right away. After the host picks, it follows that
-service's own guide: [`GROK_BOOTSTRAP.md`](../GROK_BOOTSTRAP.md) and
+The bot connects once, to `/mcp`, and calls `get_state`. It adds the host's
+properties with `add_property` and turns Cleaner Core or Supply Core on for
+each with `set_flows`. Touring is parked: only Saad makes an account a touring
+account, on `/admin`. For each flow, it follows that service's own guide: [`GROK_BOOTSTRAP.md`](../GROK_BOOTSTRAP.md) and
 [`grok-template/bot-profile.md`](../grok-template/bot-profile.md) for Tour
 Core, or [`CLEANER_CORE_BOOTSTRAP.md`](../CLEANER_CORE_BOOTSTRAP.md) and
 [`cleaner-template/bot-profile.md`](../cleaner-template/bot-profile.md) for

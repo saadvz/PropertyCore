@@ -42,7 +42,7 @@
     "check:storage": "tsx src/install/checkStorageCli.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "express": "^5.2.1",
     "sendblue": "^3.21.1",
     "spectrum-ts": "^12.10.1",

@@ -23,7 +23,7 @@ describe("through the shared service", () => {
       closeHostedApps();
     });
     const { tenant } = m.registry.create({ label: "Lane", twilioNumber: "+15555550150" });
-    m.registry.setService(tenant.id, "touring");
+    m.registry.setTouring(tenant.id);
     const ws = new PropertyWorkspace(join(tenantFolder(m.app.root, tenant.id), "tour-core"));
     const { config } = ws.save({ ...hillsideConfig(), messagingProvider: "local" });
     ws.recordReadiness(config.property.id, await runReadinessCheck(config, { now: new Date(), installed: { provider: "local" } }));

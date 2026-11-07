@@ -1,3 +1,4 @@
+import { fixedCodePort } from "../src/cleaner-core/doorPort";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -644,7 +645,7 @@ const AFTER = "2026-10-18T15:30:00.000Z";
 const UNAPPROVED = "+15555550199";
 
 function pinned(box: ReturnType<typeof sink>, overrides: Partial<Parameters<typeof openCleanerCore>[0]> = {}) {
-  return core(box, { pin: PIN, hostName: "Scratch", ...overrides });
+  return core(box, { access: fixedCodePort(PIN), hostName: "Scratch", ...overrides });
 }
 
 async function confirmAnita(job: ReturnType<typeof pinned>, cleanerYes = true): Promise<void> {
@@ -1420,7 +1421,7 @@ describe("step E second source and second tenant", () => {
       property: COURT?.property,
       ownerPhone: COURT?.ownerPhone,
       cleaner: { phone: COURT?.cleanerPhone ?? "", approved: true },
-      pin: COURT?.pin,
+      access: fixedCodePort(COURT?.pin),
       dataDir: courtDir,
     });
     await lane.pollFeed(feed("guesty-lite-scratch.ics"));
@@ -1459,7 +1460,7 @@ describe("step E second source and second tenant", () => {
         property: COURT.property,
         ownerPhone: COURT.ownerPhone,
         cleaner: { phone: COURT.cleanerPhone, approved: true },
-        pin: "7392",
+        access: fixedCodePort("7392"),
         hostName: "Scratch",
         dataDir: dir,
       });
@@ -1544,7 +1545,7 @@ describe("step E second source and second tenant", () => {
         property: COURT.property,
         ownerPhone: COURT.ownerPhone,
         cleaner: { phone: COURT.cleanerPhone, approved: true },
-        pin: "7392",
+        access: fixedCodePort("7392"),
         hostName: "Scratch",
         dataDir: dir,
       });
@@ -1694,7 +1695,7 @@ describe("step F Notion, onboarding, and group delivery", () => {
       property: { id: "prop_12_scratch_lane", address: ADDRESS, timeZone: "America/New_York" },
       ownerPhone: OWNER,
       cleaner: { phone: CLEANER, approved: true },
-      pin: PIN,
+      access: fixedCodePort(PIN),
       hostName: "Scratch",
       consented: true,
       sink: box,
@@ -1795,7 +1796,7 @@ describe("step F Notion, onboarding, and group delivery", () => {
         property: { id: "prop_annex", address: ANNEX, timeZone: "America/New_York" },
         ownerPhone: ANNEX_HOST,
         cleaner: { phone: ANNEX_CLEANER, approved: true },
-        pin: lock.match(/\d{4,8}/)?.[0],
+        access: fixedCodePort(lock.match(/\d{4,8}/)?.[0]),
         consented: true,
         sink: sink(),
         dataDir: dir,
@@ -1865,7 +1866,7 @@ describe("step F Notion, onboarding, and group delivery", () => {
       property: { id: "prop_12_scratch_lane", address: ADDRESS, timeZone: "America/New_York" },
       ownerPhone: OWNER,
       cleaner: { phone: CLEANER, approved: true },
-      pin: PIN,
+      access: fixedCodePort(PIN),
       hostName: "Scratch",
       consented: true,
       sink: box,

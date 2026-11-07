@@ -12,14 +12,16 @@ import { isScratchTestNumber } from "../src/cleaner-core/scratch";
 import { setCleanerGroupFetch, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import { fakeConversations } from "./fakeConversations";
 import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
+import { REPLY_INSTRUCTIONS } from "../src/cleaner-core/replyWording";
 import { photoKey, servePhoto, setCleanerPhotoFetch } from "../src/cleaner-core/photos";
 import { containsCodeToken } from "../src/cleaner-core/redact";
-import type { GoogleEventList } from "../src/cleaner-core/sources";
+import type { GoogleEventList } from "../src/hub/sources";
 import { SCRATCH_TENANTS } from "../src/cleaner-core/tenants";
 import { CLEANER_SCOPE } from "../src/mcp/oauth/provider";
 import { twilioSignature } from "../src/messaging/twilio/signature";
 import { FileRuntimeStore } from "../src/storage/runtimeStore";
 import { BASE, CLEANER_RESOURCE, closeHostedApps, hostedApp } from "./cleanerOauthHarness";
+import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { TenantRegistry, tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { drainAllTenants, hostedCleaner } from "../src/cleaner-core/hosted/router";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
@@ -182,8 +184,12 @@ describe("Cleaner Core full setup: the diagram order", () => {
 
     const preferences = await call(wired, "save_preferences", PREFERENCES);
     expect(preferences.isError).toBe(false);
+    // The optional Payments step comes next.
+    expect(askStep(preferences.structured)).toBe("payments");
+    const payments = await call(wired, "save_payments", { on: false });
+    expect(payments.isError).toBe(false);
     // The routines come before the review, and activate waits for them.
-    expect(String(preferences.structured?.next)).toMatch(/^Create the Cleaner Core Check and Cleaner Core Alerts routines\./);
+    expect(String(payments.structured?.next)).toMatch(/^Create the Cleaner Core Check and Cleaner Core Alerts routines\./);
     expect((await state(wired)).setup).toBeUndefined();
     expect((await call(wired, "activate")).isError).toBe(true);
     expect((await call(wired, "save_alert_routine", ROUTINE)).isError).toBe(false);
@@ -242,6 +248,8 @@ describe("Cleaner Core full setup: the diagram order", () => {
     expect((await call(wired, "save_door_code", { code: DOOR_CODE })).isError).toBe(false);
     expect(askStep((await state(wired)))).toBe("preferences");
     expect((await call(wired, "save_preferences", {})).isError).toBe(false);
+    expect(askStep(await state(wired))).toBe("payments");
+    expect((await call(wired, "save_payments", { on: false })).isError).toBe(false);
     expect((await call(wired, "save_alert_routine", ROUTINE)).isError).toBe(false);
     const review = await state(wired);
     expect(review.next).toBe(REVIEW_NEXT);
@@ -1593,12 +1601,10 @@ describe("Cleaner Core send_message: the host approves first", () => {
     const { desk, sms } = await confirmedCleaner();
     const tools = ((await mcp(desk, "tools/list")).tools as { name: string; description: string }[]) ?? [];
     expect(tools.find((tool) => tool.name === "send_message")?.description).toBe(
-      "Sends the host's own message. With a group, messages go only to the group (to: group). Without one, to is the cleaner or a saved contact. Call once without confirmation to get a preview and code, show the host the exact text, and call again with the code only after the host says yes.",
+      "Sends the host's own message. With a group, messages go only to the group (to: group). Without one, to is the cleaner or a saved contact. Call once without confirmation to get a preview and code, show the host the exact text, and call again with the code only after the host says yes. To send a saved draft, pass draft with its id instead of to and text.",
     );
     const text = String((await mcp(desk, "initialize")).instructions);
-    expect(text).toContain(
-      "When a message needs a reply Cleaner Core doesn't send itself, draft one short reply and offer it to the host. Send it only with send_message after the host says yes.",
-    );
+    for (const line of REPLY_INSTRUCTIONS) expect(text).toContain(line);
     const first = await mcp(desk, "tools/call", { name: "send_message", arguments: { to: "cleaner", text: LATE } });
     expect(first.isError).toBe(false);
     const code = (first.structuredContent as { confirmation: Approval }).confirmation.code;
@@ -1772,6 +1778,8 @@ describe("Cleaner Core cleaning: the completed record", () => {
     await desk.inbound({ id: "mms-2", from: CLEANER, text: "", media: [photo()] });
     time.set("2026-10-14T18:10:00.000Z");
     await desk.inbound({ id: "done", from: CLEANER, text: "DONE" });
+    time.set("2026-10-14T18:11:00.000Z");
+    await desk.inbound({ id: "checklist-yes", from: CLEANER, text: "YES" });
 
     const reply = ok(await desk.checkNow());
     expect(JSON.parse(plain(JSON.stringify(reply.completed)))).toEqual([
@@ -1780,7 +1788,8 @@ describe("Cleaner Core cleaning: the completed record", () => {
         day: "Sunday, Oct 18",
         arrivalTime: "11:30 AM",
         startedAt: "Wednesday, Oct 14, 11:32 AM",
-        doneAt: "Wednesday, Oct 14, 2:10 PM",
+        doneAt: "Wednesday, Oct 14, 2:11 PM",
+        checklistConfirmed: "Wednesday, Oct 14, 2:11 PM",
         checklist: ["Strip the beds", "Restock coffee"],
         photos: 3,
         notes: ["Need more paper towels", "The lockbox code [redacted] stuck", "Is it [redacted] again?"],
@@ -1948,7 +1957,11 @@ const PLAIN_CODE = new RegExp(`(?<![0-9A-Za-z])${DOOR_CODE}(?![0-9A-Za-z])`);
 /** Scratch Lane as a tenant of the multi-tenant service, on the rehearsal's Twilio number. */
 function laneTenant(hosted: Awaited<ReturnType<typeof hostedApp>>, clock: () => Date) {
   const registry = new TenantRegistry(hosted.root, clock);
-  const { tenant } = registry.create({ label: "Scratch Lane", twilioNumber: CLEANER_LINE });
+  const created = registry.create({ label: "Scratch Lane", twilioNumber: CLEANER_LINE }).tenant;
+  // An existing cleaning host: one property, with Cleaner Core on.
+  const property = registry.addProperty(created.id, "Scratch Lane");
+  registry.setFlow(created.id, property.id, "cleaning", true);
+  const tenant = registry.get(created.id)!;
   const secrets = new TenantSecrets(hosted.root);
   const h = hostedCleaner({
     registry,
@@ -1960,7 +1973,7 @@ function laneTenant(hosted: Awaited<ReturnType<typeof hostedApp>>, clock: () => 
     now: clock,
     log: () => undefined,
   });
-  return { tenant, room: tenantFolder(hosted.root, tenant.id), secrets, drain: () => drainAllTenants(h) };
+  return { tenant, room: propertyFolder(hosted.root, tenant.id, property), secrets, drain: () => drainAllTenants(h) };
 }
 
 describe("Cleaner Core full diagram", () => {
@@ -2089,6 +2102,9 @@ describe("Cleaner Core full diagram", () => {
     await say("save_schedule", { firstText: "days-after-check-in", firstTextDays: 1, reminder: "days-before-checkout", reminderDays: 1, reminderTime: "18:00" });
     await say("save_door_code", { code: DOOR_CODE, lockLocation: LOCK });
     await say("save_preferences", PREFERENCES);
+    await say("save_payments", { on: false });
+    // On Grok on the shared service, setup asks once whether to set up Supply Core too.
+    await say("choose_supplies", { on: false });
     await safe("2 setup");
 
     // 3. The alert routine, before the review, with a stubbed webhook. A Grok Bot's secure card can't
@@ -2192,8 +2208,11 @@ describe("Cleaner Core full diagram", () => {
     await fromCleaner("need paper towels");
     at = new Date("2026-10-17T17:00:00.000Z");
     await fromCleaner("DONE");
+    expect(inGroup().at(-1)).toBe("Before I mark it done: is everything on the checklist I sent finished? Ana, reply YES or NO.");
+    expect(inGroup().filter((body) => body === "Thanks, cleaning marked done.")).toHaveLength(0);
+    await fromCleaner("YES");
     expect(inGroup().filter((body) => body === "Thanks, cleaning marked done.")).toHaveLength(1);
-    await safe("9 checklist, photo, note, DONE");
+    await safe("9 checklist, photo, note, DONE, checklist YES");
 
     // 10. check_now returns the finished cleaning, and get_job_photos returns a link that works.
     const finished = await checkAt("2026-10-17T17:05:00.000Z");
@@ -2204,6 +2223,7 @@ describe("Cleaner Core full diagram", () => {
         day: "Saturday, Oct 17",
         arrivalTime: "11:30 AM",
         checklist: PREFERENCES.checklist,
+        checklistConfirmed: "Saturday, Oct 17, 1:00 PM",
         photos: 1,
         notes: ["need paper towels"],
       }),

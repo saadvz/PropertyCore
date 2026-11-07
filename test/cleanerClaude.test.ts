@@ -22,8 +22,8 @@ const PATH = "/mcp/cleaner-core";
 const ZONE = "America/New_York";
 const FIRE_URL = "https://api.anthropic.com/v1/claude_code/routines/trig_01MADEUPTESTTRIGGER/fire";
 const FIRE_TOKEN = "made-up-claude-routine-token-for-tests";
-/** The Grok deployment's initialize instructions, byte for byte, as they were before Claude. */
-const GROK_INSTRUCTIONS_SHA256 = "658e58d77bd1df15f8b02bb8c9b4b94bf4493a278dd33c7ea0f370e2dfa7fa09";
+/** The Grok deployment's initialize instructions, byte for byte: as before Claude, plus the reply-draft lines. */
+const GROK_INSTRUCTIONS_SHA256 = "8fffc712eac8afeed345536e0eba534513f97e73e90dbbd77e1580ac84cc0d31";
 
 const read = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 
@@ -262,6 +262,7 @@ describe("Claude's scheduled task comes before Activate", () => {
     await toDoorCode(wired);
     await call(wired, "save_door_code", { code: DOOR_CODE, lockLocation: "front door keypad" });
     await call(wired, "save_preferences", {});
+    await call(wired, "save_payments", { on: false });
     const state = (await call(wired, "get_state")).structured ?? {};
     expect(state.next).toBe(CLAUDE_DESK_WORDING.routineAsk);
     expect(state.routine).toEqual(JSON.parse(JSON.stringify(CLAUDE_TASK)));

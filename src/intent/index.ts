@@ -97,7 +97,8 @@ export function intentModelFromEnv(env: NodeJS.ProcessEnv = process.env): Langua
   }
   const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   if (url.protocol !== "https:" && !local) return undefined;
-  return new OpenAICompatibleModel({ baseUrl, apiKey, model });
+  const reasoningEffort = env.TOURCORE_INTENT_MODEL_REASONING_EFFORT?.trim() || undefined;
+  return new OpenAICompatibleModel({ baseUrl, apiKey, model, reasoningEffort });
 }
 
 export function createIntentInterpreter(options: { env?: NodeJS.ProcessEnv; model?: LanguageModel; log?: (line: string) => void } = {}): LayeredIntentInterpreter {

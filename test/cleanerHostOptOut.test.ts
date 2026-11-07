@@ -1,3 +1,4 @@
+import { fixedCodePort } from "../src/cleaner-core/doorPort";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -113,7 +114,7 @@ function engine(box: ReturnType<typeof sink>, now: () => Date): CleanerCore {
     property: LANE.property,
     ownerPhone: OWNER,
     cleaner: { phone: CLEANER, approved: true },
-    pin: LANE.pin,
+    access: fixedCodePort(LANE.pin),
     hostName: "Scratch",
     consented: true,
     noteHostOnStop: true,

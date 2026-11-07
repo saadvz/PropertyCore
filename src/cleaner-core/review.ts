@@ -81,7 +81,7 @@ function reminderDeliveryNote(day: string, helper: string): string {
 
 /** Host-facing rotation and offboarding steps. The demo does not change the lock. */
 export function codeHandlingText(address: string): string {
-  return `To change the outdoor code at ${address}, set the new code on the lock yourself, then tell me the new code in a private text. I store only a sealed reference. I do not change the lock. To offboard a cleaner, reply STOP from their number or tell me to remove them. I will not send the code again until you confirm a new cleaner and the guests have left.`;
+  return `To change the outdoor code at ${address}, set the new code on the lock yourself, then save it in your Cleaner Core chat, which gives you a one-time secure link for it. Never text me the code. I store only a sealed reference. I do not change the lock. To offboard a cleaner, reply STOP from their number or tell me to remove them. I will not send the code again until you confirm a new cleaner and the guests have left.`;
 }
 
 export const HEALTH_NOTE = "Cleaner Core health. This check does not send texts.";

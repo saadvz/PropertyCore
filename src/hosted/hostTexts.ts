@@ -4,7 +4,7 @@ import type { OperatorEvent, OperatorEventType } from "../alerts/operatorEvents"
 import { parsePhone } from "../core/phone";
 import type { CleanerAssistant } from "../cleaner-core/assistant";
 import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
-import { tenantContext, type HostedCleaner } from "../cleaner-core/hosted/router";
+import { touringAccountContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { sendLiveSms } from "../cleaner-core/liveSms";
 import { isScratchTestNumber } from "../cleaner-core/scratch";
 import { writeJsonAtomic } from "../storage/atomicWrite";
@@ -110,7 +110,7 @@ export async function textHost(h: HostedCleaner, tenant: Tenant, to: string, bod
     writeJsonAtomic(scratchFile(h, tenant.id), { texts: [...readScratchHostTexts(h, tenant.id), { to, text: body }] });
     return;
   }
-  const env = tenantContext(h, tenant).env();
+  const env = touringAccountContext(h, tenant).env();
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       await sendLiveSms(env, { to, body });

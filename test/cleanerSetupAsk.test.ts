@@ -28,7 +28,7 @@ import { filesUnder } from "./files";
 const PATH = "/mcp/cleaner-core";
 const ZONE = "America/New_York";
 const PIN_KEY = Buffer.from(TEST_PIN_KEY, "base64");
-const CALENDAR_PREFIX = `${PUBLIC}/cleaner-core/calendar-link/`;
+const CALENDAR_PREFIX = `${PUBLIC}/calendar-link/`;
 const GUESTY_LINK = "https://app.guesty.com/api/public/icalendar-dashboard-api/export/made-up-test-calendar";
 
 const open: WiredApp[] = [];
@@ -103,7 +103,8 @@ describe("Cleaner Core setup asks: one question at a time", () => {
     }
     expect((await call(wired, "save_door_code", { code: DOOR_CODE })).isError).toBe(false);
     expect(askOf((await call(wired, "get_state")).structured).step).toBe("preferences");
-    const routines = (await call(wired, "save_preferences", {})).structured;
+    expect(askOf((await call(wired, "save_preferences", {})).structured).step).toBe("payments");
+    const routines = (await call(wired, "save_payments", { on: false })).structured;
     expect(routines?.ask).toBeUndefined();
     expect(String(routines?.next)).toMatch(/^Create the Cleaner Core Check and Cleaner Core Alerts routines\./);
     setCleanerAlertFetch(async () => ({ status: 200 }));
@@ -276,7 +277,7 @@ describe("Cleaner Core setup: a calendar link from Grok's secure card", () => {
 
 /** A group setup with the two test stays, with the alert routine saved, then activated. Without the routine it stops before the review. */
 async function activatedGroup(
-  options: { uploadCode?: boolean; hostName?: string; schedule?: Parameters<ReturnType<typeof liveDeskFor>["saveSchedule"]>[0]; now?: () => Date; connectRoutine?: boolean } = {},
+  options: { uploadCode?: boolean; hostName?: string; schedule?: Parameters<ReturnType<typeof liveDeskFor>["saveSchedule"]>[0]; now?: () => Date; connectRoutine?: boolean; groupChat?: "cleaner-and-host" | "cleaner-only" } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "cleaner-setup-ask-"));
   roots.push(root);
@@ -301,14 +302,15 @@ async function activatedGroup(
   ok(await desk.getState("cleaners"));
   ok(await desk.saveProperty(PROPERTY));
   ok(await desk.saveSources({ calendars: [{ name: "Guesty Lite", url: CALENDAR_URL }] }));
-  ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Maria", groupChat: "cleaner-and-host", ...(options.hostName ? { hostName: options.hostName } : {}) }));
+  ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Maria", groupChat: options.groupChat ?? "cleaner-and-host", ...(options.hostName ? { hostName: options.hostName } : {}) }));
   ok(await desk.saveSchedule(options.schedule ?? { firstText: "when-confirmed" }));
   if (options.uploadCode) {
     const link = String(ok(await desk.saveDoorCode({}, PIN_KEY)).uploadUrl);
     const posted = await desk.uploadDoorCode(link.slice(link.lastIndexOf("/") + 1), { code: DOOR_CODE });
     expect(posted.status).toBe(200);
   } else ok(await desk.saveDoorCode({ code: DOOR_CODE }, PIN_KEY));
-  const preferences = ok(await desk.savePreferences({}));
+  ok(await desk.savePreferences({}));
+  const preferences = ok(await desk.savePayments({ on: false }));
   // The routine counts only once this setup connects it. The env already holds its values.
   const posts: string[] = [];
   setCleanerAlertFetch(async (_url, init) => {
@@ -384,11 +386,20 @@ describe("Cleaner Core times: the usual times for every turnover", () => {
     expect((await desk.confirmTimes({ checkout: "10:00", checkIn: "16:00", all: true })).ok).toBe(false);
   });
 
+  it("asks a setup without a group for one turnover's times, not for all of them", async () => {
+    const { desk } = await activatedGroup({ groupChat: "cleaner-only" });
+    const state = ok(await desk.getState());
+    const options = askOf(state)?.questions.flatMap((question) => question.options ?? []) ?? [];
+    expect(options.map((option) => option.value)).not.toContain("all");
+    expect(state.next).toBe("Tell me the checkout time and the next check-in time before I text the cleaner.");
+  });
+
   it("still sends the cleaner one offer at a time after timing them all", async () => {
     const { desk, groups } = await activatedGroup();
     ok(await desk.confirmTimes({ checkout: "10:00", checkIn: "16:00", all: true }));
     await desk.inbound({ id: "join", from: CLEANER, text: "YES" });
-    const offers = () => groups.posts.filter((post) => post.body.startsWith("Turnover at"));
+    // The first offer follows the group's intro in the same post.
+    const offers = () => groups.posts.filter((post) => /(^|\n\n)Turnover at /.test(post.body));
     expect(offers()).toHaveLength(1);
     await desk.inbound({ id: "take-1", from: CLEANER, text: "YES", channel: "group" });
     expect(offers()).toHaveLength(1);
@@ -403,7 +414,8 @@ describe("Cleaner Core times: the usual times for every turnover", () => {
     const { desk, groups } = await activatedGroup({ schedule: { firstText: "days-before-checkout", firstTextDays: 2 }, now: () => at });
     ok(await desk.confirmTimes({ checkout: "10:00", checkIn: "16:00", all: true }));
     await desk.inbound({ id: "join", from: CLEANER, text: "YES" });
-    const offers = () => groups.posts.filter((post) => post.body.startsWith("Turnover at"));
+    // The first offer follows the group's intro in the same post.
+    const offers = () => groups.posts.filter((post) => /(^|\n\n)Turnover at /.test(post.body));
     expect(offers()).toHaveLength(0);
     // Checkouts are Oct 18 and Oct 22. Two days before, at 9:00 AM New York time.
     at = new Date("2026-10-16T13:00:00.000Z");
@@ -431,7 +443,7 @@ describe("Cleaner Core times: the usual times for every turnover", () => {
   });
 });
 
-const DOOR_PREFIX = `${PUBLIC}/cleaner-core/door-code/`;
+const DOOR_PREFIX = `${PUBLIC}/door-code/`;
 
 describe("Cleaner Core setup: the door code from Grok's secure card", () => {
   async function atDoor(wired: WiredApp) {
@@ -476,6 +488,7 @@ describe("Cleaner Core setup: the door code from Grok's secure card", () => {
     expect(state?.done).toContain("Door code saved.");
     expect(askOf(state).step).toBe("preferences");
     await call(wired, "save_preferences", {});
+    await call(wired, "save_payments", { on: false });
     setCleanerAlertFetch(async () => ({ status: 200 }));
     await call(wired, "save_alert_routine", { url: "https://routine.example/hook", token: "k-test-routine-key" });
     expect(JSON.stringify((await call(wired, "get_state")).structured?.setup)).toContain("front door keypad");

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanerMultiTenant, tourCoreTenants } from "../src/cleaner-core/flag";
+import { findProperty, isPropertyId, migratedPropertyId, newPropertyId, propertyBasePath, propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { isTenantId, TenantRegistry, tenantFolder } from "../src/cleaner-core/hosted/registry";
 
 const DAY = 24 * 60 * 60_000;
@@ -123,43 +124,86 @@ describe("tourCoreTenants", () => {
   });
 });
 
-describe("a tenant's service", () => {
-  const lane = {
-    id: "tnt_lane000001",
-    label: "Lane",
-    twilioNumber: "+15555550150",
-    connections: [],
-    invites: [],
-    createdAt: "2026-10-01T00:00:00.000Z",
-  };
-
-  it("turns every tenant in a version-1 file into a cleaning tenant, once", () => {
-    writeFileSync(join(dir, "tenants.json"), JSON.stringify({ schemaVersion: 1, tenants: [lane] }));
-    expect(reg.get(lane.id)?.service).toBe("cleaning");
-    expect(JSON.parse(readFileSync(join(dir, "tenants.json"), "utf8")).schemaVersion).toBe(2);
-    expect(reg.list()[0]?.service).toBe("cleaning");
-  });
-
-  it("creates a new tenant with no service", () => {
+describe("an account's properties", () => {
+  it("creates a new account with no properties and no service", () => {
     const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    expect(tenant.properties).toEqual([]);
     expect(tenant.service).toBeUndefined();
-    expect(reg.get(tenant.id)?.service).toBeUndefined();
+    expect(JSON.parse(readFileSync(join(dir, "tenants.json"), "utf8")).schemaVersion).toBe(3);
   });
 
-  it("does not turn a new tenant in a version-2 file into a cleaning tenant", () => {
+  it("adds a property with every flow off", () => {
     const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
-    const again = new TenantRegistry(dir, () => new Date(at));
-    expect(again.get(tenant.id)?.service).toBeUndefined();
+    const property = reg.addProperty(tenant.id, " 12 Scratch Lane ");
+    expect(isPropertyId(property.id)).toBe(true);
+    expect(property.label).toBe("12 Scratch Lane");
+    expect(property.flows).toEqual({ cleaning: { on: false }, supplies: { on: false }, fixer: { on: false } });
+    expect(reg.get(tenant.id)?.properties).toEqual([property]);
+    expect(() => reg.addProperty(tenant.id, "  ")).toThrow(expect.objectContaining({ reason: "bad-label" }));
+    expect(() => reg.addProperty("tnt_nobody0000", "Court")).toThrow(expect.objectContaining({ reason: "unknown-tenant" }));
   });
 
-  it("records a service change and when it happened", () => {
+  it("switches one flow on one property", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    const lane = reg.addProperty(tenant.id, "12 Scratch Lane");
+    const court = reg.addProperty(tenant.id, "8 Scratch Court");
+    advance(MINUTE);
+    const changed = reg.setFlow(tenant.id, lane.id, "cleaning", true);
+    expect(changed.flows.cleaning).toEqual({ on: true, changedAt: new Date(at).toISOString() });
+    expect(reg.get(tenant.id)?.properties.find((p) => p.id === court.id)?.flows).toEqual(court.flows);
+    expect(() => reg.setFlow(tenant.id, "prp_nothere000", "cleaning", true)).toThrow(expect.objectContaining({ reason: "unknown-property" }));
+  });
+
+  it("refuses a second property with the same label, in any case", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    reg.addProperty(tenant.id, "12 Scratch Lane");
+    expect(() => reg.addProperty(tenant.id, " 12 SCRATCH lane ")).toThrow(expect.objectContaining({ reason: "duplicate-label" }));
+    const other = reg.create({ label: "Court", twilioNumber: "+15555550160" }).tenant;
+    expect(reg.addProperty(other.id, "12 Scratch Lane").label).toBe("12 Scratch Lane");
+  });
+
+  it("refuses fixer", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    const lane = reg.addProperty(tenant.id, "12 Scratch Lane");
+    expect(() => reg.setFlow(tenant.id, lane.id, "fixer", true)).toThrow(expect.objectContaining({ reason: "fixer-not-yet" }));
+    expect(reg.setFlow(tenant.id, lane.id, "fixer", false).flows.fixer.on).toBe(false);
+  });
+
+  it("refuses a v2 file", () => {
+    writeFileSync(join(dir, "tenants.json"), JSON.stringify({ schemaVersion: 2, tenants: [] }));
+    expect(() => reg.list()).toThrow(expect.objectContaining({ reason: "needs-migration" }));
+  });
+
+  it("setTouring makes an account touring, and refuses one with properties", () => {
     const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
     advance(MINUTE);
-    reg.setService(tenant.id, "touring");
+    reg.setTouring(tenant.id);
     expect(reg.get(tenant.id)).toMatchObject({ service: "touring", serviceChangedAt: new Date(at).toISOString() });
+    const other = reg.create({ label: "Court", twilioNumber: "+15555550160" }).tenant;
+    reg.addProperty(other.id, "8 Scratch Court");
+    expect(() => reg.setTouring(other.id)).toThrow(expect.objectContaining({ reason: "has-properties" }));
   });
 
-  it("refuses a service change for an unknown tenant", () => {
-    expect(() => reg.setService("tnt_nobody0000", "touring")).toThrow("unknown-tenant");
+  it("findProperty takes an id or a unique label, in any case", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    const lane = reg.addProperty(tenant.id, "12 Scratch Lane");
+    reg.addProperty(tenant.id, "8 Scratch Court");
+    const account = reg.get(tenant.id)!;
+    expect(findProperty(account, lane.id)).toEqual(lane);
+    expect(findProperty(account, " 12 scratch lane ")).toEqual(lane);
+    expect(findProperty(account, "Scratch")).toBeUndefined();
+    // Labels are unique per account, so a label names one property.
+    const twice = { ...account, properties: [...account.properties, { ...lane, id: "prp_twice00000" }] };
+    expect(findProperty(twice, "12 scratch lane")).toBeUndefined();
+  });
+
+  it("names folders and link bases for a property", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    const lane = reg.addProperty(tenant.id, "12 Scratch Lane");
+    expect(propertyFolder(dir, tenant.id, lane)).toBe(join(dir, "tenants", tenant.id, "properties", lane.id));
+    expect(propertyBasePath(tenant.id, lane)).toBe(`/t/${tenant.id}/p/${lane.id}`);
+    expect(propertyBasePath(tenant.id, { ...lane, legacyPaths: true })).toBe(`/t/${tenant.id}`);
+    expect(migratedPropertyId("tnt_lane000001")).toBe("prp_lane000001");
+    expect(newPropertyId((id) => id === "prp_taken00000")).toMatch(/^prp_[a-z0-9]{10}$/);
   });
 });

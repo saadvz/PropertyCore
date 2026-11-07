@@ -1,3 +1,4 @@
+import { fixedCodePort } from "../src/cleaner-core/doorPort";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,7 +128,7 @@ describe("step G safety gates", () => {
   it("holds a new offer once the feed is past three missed hourly polls, alerts the host once, and sends the offer after a fresh read", async () => {
     const exact = sink();
     const exactClock = { at: FRESH };
-    const onTime = engine(exact, exactClock, { pin: lane.pin, hostName: lane.hostName });
+    const onTime = engine(exact, exactClock, { access: fixedCodePort(lane.pin), hostName: lane.hostName });
     await onTime.pollFeed(feed("guesty-lite-scratch.ics"));
     await onTime.receive({ id: "opt", from: CLEANER, text: "YES" });
     await onTime.receive({ id: "checkout", from: OWNER, text: "YES" });
@@ -137,7 +138,7 @@ describe("step G safety gates", () => {
 
     const box = sink();
     const clock = { at: FRESH };
-    const job = engine(box, clock, { pin: lane.pin, hostName: lane.hostName });
+    const job = engine(box, clock, { access: fixedCodePort(lane.pin), hostName: lane.hostName });
     const opened = await job.pollFeed(feed("guesty-lite-scratch.ics"));
     expect(opened.sent.map((text) => text.kind)).toEqual(["host-checkout", "opt-in"]);
     await job.receive({ id: "opt", from: CLEANER, text: "YES" });
@@ -158,7 +159,7 @@ describe("step G safety gates", () => {
   it("keeps a newer host checkout when a stale feed names a different day", async () => {
     const box = sink();
     const clock = { at: FRESH };
-    const job = engine(box, clock, { pin: lane.pin, hostName: lane.hostName });
+    const job = engine(box, clock, { access: fixedCodePort(lane.pin), hostName: lane.hostName });
     await job.pollFeed(feed("guesty-lite-scratch.ics"));
     await job.receive({ id: "opt", from: CLEANER, text: "YES" });
     await job.receive({ id: "two", from: OWNER, text: "2:00 PM" });
@@ -179,7 +180,7 @@ describe("step G safety gates", () => {
     const backup = join(dir, "turn.db");
     try {
       const clock = { at: FRESH };
-      const first = engine(sink(), clock, { dataDir: dir, sqlite: true, pin: lane.pin, hostName: lane.hostName });
+      const first = engine(sink(), clock, { dataDir: dir, sqlite: true, access: fixedCodePort(lane.pin), hostName: lane.hostName });
       await first.pollFeed(feed("guesty-lite-scratch.ics"));
       await first.receive({ id: "opt", from: CLEANER, text: "YES" });
       await first.receive({ id: "out", from: OWNER, text: "YES" });
@@ -188,7 +189,8 @@ describe("step G safety gates", () => {
       first.backup(backup);
       const bytes = readFileSync(backup);
       expect(bytes.includes(Buffer.from(lane.pin))).toBe(false);
-      expect(bytes.toString("utf8").includes("pinSeal")).toBe(true);
+      // The engine stores no code: the backup holds neither the code nor a seal of it (#165).
+      expect(bytes.toString("utf8").includes("pinSeal")).toBe(false);
       writeFileSync(join(dir, "cleaner-core.json"), JSON.stringify({
         schemaVersion: 1,
         tenantId: lane.id,
@@ -204,7 +206,7 @@ describe("step G safety gates", () => {
       }));
       first.restore(backup);
       const clock2 = { at: FRESH };
-      const next = engine(sink(), clock2, { dataDir: dir, sqlite: true, pin: lane.pin, hostName: lane.hostName });
+      const next = engine(sink(), clock2, { dataDir: dir, sqlite: true, access: fixedCodePort(lane.pin), hostName: lane.hostName });
       const ticked = await next.pollFeed(feed("guesty-lite-scratch.ics"));
       expect(ticked.sent).toEqual([]);
       expect(next.outbox().some((item) => item.kind === "offer" && item.status === "sent")).toBe(true);
@@ -217,7 +219,7 @@ describe("step G safety gates", () => {
   it("replays a finished turn without sending again", async () => {
     const box = sink();
     const clock = { at: FRESH };
-    const job = engine(box, clock, { pin: lane.pin, hostName: lane.hostName });
+    const job = engine(box, clock, { access: fixedCodePort(lane.pin), hostName: lane.hostName });
     await job.pollFeed(feed("guesty-lite-scratch.ics"));
     await job.receive({ id: "opt", from: CLEANER, text: "YES" });
     await job.receive({ id: "out", from: OWNER, text: "YES" });
@@ -234,14 +236,14 @@ describe("step G safety gates", () => {
     try {
       const clock = { at: FRESH };
       const firstBox = sink();
-      const first = engine(firstBox, clock, { dataDir: dir, pin: lane.pin, hostName: lane.hostName, halt: "after-accept" });
+      const first = engine(firstBox, clock, { dataDir: dir, access: fixedCodePort(lane.pin), hostName: lane.hostName, halt: "after-accept" });
       await first.pollFeed(feed("guesty-lite-scratch.ics"));
       await first.receive({ id: "opt", from: CLEANER, text: "YES" });
       await first.receive({ id: "out", from: OWNER, text: "YES" });
       await expect(first.receive({ id: "in", from: OWNER, text: "YES" })).rejects.toThrow(/after-accept/);
       expect(firstBox.sent.filter((text) => text.kind === "offer")).toHaveLength(1);
       const secondBox = sink();
-      const second = engine(secondBox, clock, { dataDir: dir, pin: lane.pin, hostName: lane.hostName });
+      const second = engine(secondBox, clock, { dataDir: dir, access: fixedCodePort(lane.pin), hostName: lane.hostName });
       const resumed = await second.replay();
       expect(resumed.sent).toEqual([{ to: OWNER, body: UNCERTAIN_ALERT, kind: "review" }]);
       expect(secondBox.sent.filter((text) => text.kind === "offer")).toEqual([]);
@@ -260,13 +262,13 @@ describe("step G safety gates", () => {
     const dir = mkdtempSync(join(tmpdir(), "cleaner-halt-grok-"));
     try {
       const clock = { at: FRESH };
-      const first = engine(sink(), clock, { dataDir: dir, pin: lane.pin, hostName: lane.hostName, halt: "after-accept" });
+      const first = engine(sink(), clock, { dataDir: dir, access: fixedCodePort(lane.pin), hostName: lane.hostName, halt: "after-accept" });
       await first.pollFeed(feed("guesty-lite-scratch.ics"));
       await first.receive({ id: "opt", from: CLEANER, text: "YES" });
       await first.receive({ id: "out", from: OWNER, text: "YES" });
       await expect(first.receive({ id: "in", from: OWNER, text: "YES" })).rejects.toThrow(/after-accept/);
       const secondBox = sink();
-      const second = engine(secondBox, clock, { dataDir: dir, pin: lane.pin, hostName: lane.hostName });
+      const second = engine(secondBox, clock, { dataDir: dir, access: fixedCodePort(lane.pin), hostName: lane.hostName });
       expect((await second.replay()).sent).toEqual([{ to: OWNER, body: UNCERTAIN_ALERT, kind: "review" }]);
       const retried = await second.hostRetry("grok-retry-1");
       expect(retried.sent).toEqual([{ to: CLEANER, body: OFFER, kind: "offer" }]);
@@ -282,7 +284,7 @@ describe("step G safety gates", () => {
     const dir = mkdtempSync(join(tmpdir(), "cleaner-pin-halt-"));
     try {
       const clock = { at: "2026-10-18T16:00:00.000Z" };
-      const first = engine(sink(), clock, { dataDir: dir, pin: lane.pin, hostName: lane.hostName, halt: "before-pin", watchFreshness: false });
+      const first = engine(sink(), clock, { dataDir: dir, access: fixedCodePort(lane.pin), hostName: lane.hostName, halt: "before-pin", watchFreshness: false });
       await first.pollFeed(feed("guesty-lite-scratch.ics"));
       await first.receive({ id: "opt", from: CLEANER, text: "YES" });
       await first.receive({ id: "out", from: OWNER, text: "YES" });
@@ -291,7 +293,7 @@ describe("step G safety gates", () => {
       await expect(first.receive({ id: "left", from: OWNER, text: "guests have left" })).rejects.toThrow(/before-pin/);
       expect(first.outbox().some((item) => item.kind === "pin")).toBe(false);
       const secondBox = sink();
-      const second = engine(secondBox, clock, { dataDir: dir, pin: lane.pin, hostName: lane.hostName, watchFreshness: false });
+      const second = engine(secondBox, clock, { dataDir: dir, access: fixedCodePort(lane.pin), hostName: lane.hostName, watchFreshness: false });
       const resumed = await second.runReminders();
       expect(resumed.sent.find((text) => text.kind === "pin")).toEqual({
         to: CLEANER,
@@ -299,7 +301,7 @@ describe("step G safety gates", () => {
         body: `Guests have left ${ADDRESS}. Door code: ${lane.pin}. This code is only for you. Reply DONE when the cleaning is finished.`,
       });
       expect(resumed.sent.filter((text) => text.kind === "pin")).toHaveLength(1);
-      const third = await engine(sink(), clock, { dataDir: dir, pin: lane.pin, hostName: lane.hostName, watchFreshness: false }).runReminders();
+      const third = await engine(sink(), clock, { dataDir: dir, access: fixedCodePort(lane.pin), hostName: lane.hostName, watchFreshness: false }).runReminders();
       expect(third.sent.filter((text) => text.kind === "pin")).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -309,7 +311,7 @@ describe("step G safety gates", () => {
   it("reviews a code-like inbound once and does not store the digits", async () => {
     const box = sink();
     const clock = { at: FRESH };
-    const job = engine(box, clock, { pin: lane.pin, hostName: lane.hostName });
+    const job = engine(box, clock, { access: fixedCodePort(lane.pin), hostName: lane.hostName });
     const exposed = await job.receive({ id: "code", from: CLEANER, text: lane.pin });
     expect(exposed.sent).toEqual([{ to: OWNER, body: EXPOSURE_ALERT, kind: "review" }]);
     expect(job.transcript().join("\n").includes(lane.pin)).toBe(false);
@@ -366,7 +368,7 @@ describe("step G safety gates", () => {
         sqlite: true,
         watchFreshness: true,
       });
-      await courtJob.readSource((await import("../src/cleaner-core/sources")).googleCalendarFixtureSource(feed("google-court-stay.json")));
+      await courtJob.readSource((await import("../src/hub/sources")).googleCalendarFixtureSource(feed("google-court-stay.json")));
       expect(courtJob.reviews()).toEqual([]);
       expect(courtBox.sent.every((text) => text.to === court.ownerPhone || text.to === court.cleanerPhone)).toBe(true);
       expect(laneBox.sent.every((text) => text.to === OWNER || text.to === CLEANER)).toBe(true);

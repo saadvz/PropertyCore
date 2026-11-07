@@ -1,3 +1,4 @@
+import type { Hub } from "../hub/hub";
 import { ASSISTANT_PROFILES, cleanerAssistant, type CleanerAssistant } from "./assistant";
 import { cleanerCoreEnabled } from "./flag";
 import { liveDeskFor } from "./liveDesk";
@@ -76,15 +77,21 @@ export async function handleCleanerUploadPage(input: {
    * the link doesn't say. Never put into the env: the desk's env decides texts and alerts.
    */
   multiTenant?: { fallback: CleanerAssistant | undefined };
+  /**
+   * The property's hub, on the shared service. A calendar link is the hub's, so its page works while
+   * any flow is on for the property, Cleaner Core or not.
+   */
+  hub?: Hub;
 }): Promise<{ status: number; body: string; headers: Record<string, string> }> {
   const env = input.env();
   const missing = { status: 404, body: "Not found", headers: { "Content-Type": "text/plain" } };
   // A ChatGPT or Muse chat has no Fire URL or token, so it has no alert page.
   const noPage = (assistant: CleanerAssistant | undefined) => !assistant || !ASSISTANT_PROFILES[assistant].privatePages || (input.kind === "alert-routine" && ASSISTANT_PROFILES[assistant].polledTask);
-  if (!cleanerCoreEnabled(env) || (!input.multiTenant && noPage(cleanerAssistant(env)))) return missing;
-  const desk = liveDeskFor(input.root, input.env, input.now);
+  const hub = input.kind === "calendar-link" ? input.hub : undefined;
+  if ((!hub && !cleanerCoreEnabled(env)) || (!input.multiTenant && noPage(cleanerAssistant(env)))) return missing;
+  const desk = hub ? undefined : liveDeskFor(input.root, input.env, input.now);
   const html = (status: number, body: string) => ({ status, body, headers: { "Content-Type": "text/html; charset=utf-8", ...HEADERS } });
-  const link = await desk.uploadLinkOpen(input.kind, input.code);
+  const link = hub ? (hub.uploadLinkOpen(input.code) as { open: boolean; name?: string; by?: { assistant: CleanerAssistant } }) : await desk!.uploadLinkOpen(input.kind, input.code);
   const assistant = input.multiTenant ? (link.by?.assistant ?? input.multiTenant.fallback) : cleanerAssistant(env);
   if (noPage(assistant)) return missing;
   const chat = ASSISTANT_PROFILES[assistant!].helper;
@@ -95,12 +102,13 @@ export async function handleCleanerUploadPage(input: {
   const raw = await input.readBody();
   if (!raw) return html(413, formPage(shown, chat, link.name, "That was too long. Try again."));
   const form = Object.fromEntries(new URLSearchParams(raw.toString("utf8")));
-  const result =
-    input.kind === "door-code"
-      ? await desk.uploadDoorCode(input.code, { code: form.code ?? "" })
+  const result = hub
+    ? await hub.uploadCalendarLink(input.code, { url: form.url ?? "" })
+    : input.kind === "door-code"
+      ? await desk!.uploadDoorCode(input.code, { code: form.code ?? "" })
       : input.kind === "calendar-link"
-        ? await desk.uploadCalendarLink(input.code, { url: form.url ?? "" })
-        : await desk.uploadAlertRoutine(input.code, { url: form.url ?? "", token: form.token ?? "" }, input.saveSecrets);
+        ? await desk!.uploadCalendarLink(input.code, { url: form.url ?? "" })
+        : await desk!.uploadAlertRoutine(input.code, { url: form.url ?? "", token: form.token ?? "" }, input.saveSecrets);
   if (result.status === 200) return html(200, page("Saved", `<p>${escape(result.body.message ?? "Saved.")}</p>\n        <p>You can close this page and go back to ${chat}.</p>`));
   if (result.status === 404) return html(404, page(GONE_TITLE, `<p>${goneText(chat)}</p>`));
   if (result.status === 409) return html(409, page("Not saved", `<p>Saving this link would call off upcoming cleanings, so it wasn't saved. Tell ${chat}, and it will ask you what to do.</p>`));

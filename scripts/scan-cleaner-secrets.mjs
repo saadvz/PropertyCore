@@ -94,6 +94,12 @@ function walk(dir, out) {
   }
 }
 
+// Node prints warnings as "(node:<pid>) ...". A random pid can contain a code by chance,
+// so only that prefix is blanked. A code anywhere else in the text still counts.
+function withoutNodePid(text) {
+  return text.replace(/\(node:\d+\)/g, "(node:pid)");
+}
+
 function leak(path, values) {
   let buf;
   try {
@@ -101,11 +107,7 @@ function leak(path, values) {
   } catch {
     return false;
   }
-  if (buf.includes(0)) {
-    const text = buf.toString("latin1");
-    return values.some((value) => text.includes(value));
-  }
-  const text = buf.toString("utf8");
+  const text = withoutNodePid(buf.toString(buf.includes(0) ? "latin1" : "utf8"));
   return values.some((value) => text.includes(value));
 }
 

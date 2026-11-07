@@ -9,9 +9,9 @@ import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 
 /**
- * docs/tour-core-safety-gates.md, hosted tenants: two touring tenants (Lane, Mill) and one cleaning
- * tenant (Court) on one shared service. No text, grant, link, call, setting, or stand-down reaches
- * another tenant. Only 555 numbers.
+ * docs/tour-core-safety-gates.md, hosted tenants: two touring accounts (Lane, Mill) and one account
+ * with a cleaning property (Court) on one shared service. No text, grant, link, call, setting, or flow
+ * change reaches another account. Only 555 numbers.
  */
 
 const LANE = "+15555550150";
@@ -31,8 +31,9 @@ async function three() {
   const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1", CLEANER_CORE_SCRATCH_TOOLS: "1" } }));
   const join_ = async (label: string, number: string, service: "touring" | "cleaning") => {
     const { tenant } = m.registry.create({ label, twilioNumber: number });
+    if (service === "touring") await m.makeTouring(tenant.id);
+    else m.registry.setFlow(tenant.id, m.registry.addProperty(tenant.id, `${label} property`).id, "cleaning", true);
     const token = await m.joinAt(tenant.id, "grok", "/mcp");
-    await m.toolAt("/mcp", token, "choose_service", { service });
     return { tenant: m.registry.get(tenant.id)!, token };
   };
   const lane = await join_("Lane", LANE, "touring");
@@ -95,24 +96,24 @@ describe("hosted tenants gate", () => {
   it("builds a touring process's settings from its own tenant only", () => {
     const base: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
     for (const name of PER_TENANT_NAMES) base[name] = `court-or-mill-${name}`;
-    const lane: Tenant = { id: "tnt_lane000001", label: "Lane", twilioNumber: LANE, connections: [], invites: [], service: "touring", createdAt: "2026-10-30T00:00:00.000Z" };
+    const lane: Tenant = { id: "tnt_lane000001", label: "Lane", twilioNumber: LANE, connections: [], invites: [], service: "touring", properties: [], createdAt: "2026-10-30T00:00:00.000Z" };
     const env = buildTouringEnv({ base, tenant: lane, dataRoot: "/data", origin: "https://s.up.railway.app", key: "k", scratch: false });
     expect(env.TOURCORE_TWILIO_INCOMING_URL).toBe("https://s.up.railway.app/webhooks/twilio/cleaner-core");
     for (const value of Object.values(env)) expect(String(value)).not.toContain("court-or-mill");
     expect(env.TOURCORE_TWILIO_PHONE_NUMBER).toBe(LANE);
   });
 
-  it("keeps a switch and a stand-down to one tenant", SLOW, async () => {
+  it("keeps a flow change to one account", SLOW, async () => {
     const { m, lane, mill, court } = await three();
-    const asked = await m.toolAt("/mcp", lane.token, "switch_service", { to: "cleaning" });
-    const code = (asked.structured?.confirmation as { code: string }).code;
-    await m.toolAt("/mcp", lane.token, "switch_service", { to: "cleaning", confirmation: code });
-    expect(m.registry.get(lane.tenant.id)?.service).toBe("cleaning");
+    const property = m.registry.get(court.tenant.id)!.properties[0]!;
+    expect((await m.toolAt("/mcp", court.token, "set_flows", { property: property.id, cleaning: false })).isError).toBe(false);
+    expect(m.registry.get(court.tenant.id)?.properties[0]?.flows.cleaning.on).toBe(false);
+    expect(m.registry.get(lane.tenant.id)?.service).toBe("touring");
     expect(m.registry.get(mill.tenant.id)?.service).toBe("touring");
+    expect(m.touring()!.supervisor.target(lane.tenant.id)).toBeDefined();
     expect(m.touring()!.supervisor.target(mill.tenant.id)).toBeDefined();
-    expect((await m.toolAt("/mcp", court.token, "stand_down_service")).isError).toBe(false);
-    expect(m.registry.get(court.tenant.id)?.service).toBe("cleaning");
-    expect(m.touring()!.supervisor.target(mill.tenant.id)).toBeDefined();
+    // A touring account can't call the property tools.
+    expect((await m.toolAt("/mcp", lane.token, "set_flows", { property: property.id, cleaning: true })).text).toBe("This number is set up for touring now. Start a new chat to see its tools.");
   });
 
   it("never lets a public /t/<id>/ link reach a touring process's internal routes or local webhook", SLOW, async () => {

@@ -4,38 +4,14 @@
  * a choice card. Nothing here is sent to anyone.
  */
 
-export interface AskOption {
-  value: string;
-  label: string;
-}
+import { askNext, type AskOption, type AskQuestion } from "../hub/ask";
 
-export interface AskQuestion {
-  /** The tool argument this answer fills, or a choice Grok uses to pick the next question. */
-  field: string;
-  /** What to find out, as a short phrase. Grok words the question itself. */
-  ask: string;
-  required: boolean;
-  /** Show these as a choice card. The host picks one, or several when `multiple` is set. */
-  options?: AskOption[];
-  multiple?: boolean;
-  /** The answer to offer first, as an option value or a plain value. */
-  default?: string;
-  example?: string;
-  /** Asked only when an earlier answer calls for it. */
-  when?: string;
-  /** How to collect or use the answer. */
-  how?: string;
-}
+export { askNext, type AskOption, type AskQuestion };
 
 export interface SetupAsk {
-  step: "start" | "property" | "sources" | "people" | "schedule" | "door-code" | "preferences" | "times";
+  step: "start" | "property" | "sources" | "people" | "schedule" | "door-code" | "preferences" | "payments" | "supplies" | "times";
   tool: string;
   questions: AskQuestion[];
-}
-
-/** The instruction beside every ask. */
-export function askNext(tool: string): string {
-  return `Ask the host the questions in ask, in order, in your own short words. Each message asks exactly one question: never two in one message, even related ones like the checkout and check-in times, or a phone number and a name. Wait for the answer before the next one. When a question has options, show them as a choice card the host can tap, never as a list or a question in the text. Skip a question the host already answered. Then call ${tool}.`;
 }
 
 export const START_ASK: SetupAsk = {
@@ -256,6 +232,52 @@ export const PREFERENCES_STEP: SetupAsk = {
     },
     { field: "checklist", ask: "checklist items", required: false, when: "any is some" },
     { field: "instructions", ask: "a note for the cleaner, sent with the door code", required: false, when: "any is some" },
+  ],
+};
+
+/** Optional: help paying the cleaner after each cleaning, with a Venmo link the host taps. */
+export const PAYMENTS_STEP: SetupAsk = {
+  step: "payments",
+  tool: "save_payments",
+  questions: [
+    {
+      field: "on",
+      ask: "whether you'd like help paying the cleaner after each cleaning",
+      required: true,
+      options: [
+        { value: "yes", label: "Yes" },
+        { value: "no", label: "Not now" },
+      ],
+      how: "Not now saves save_payments { on: false }.",
+    },
+    { field: "rate", ask: "how much the host pays the cleaner per cleaning, in dollars", required: false, when: "on is yes", example: "85" },
+    {
+      field: "venmo",
+      ask: "the cleaner's Venmo username",
+      required: false,
+      when: "on is yes",
+      example: "@maria-cleans",
+      how: "Call save_payments without confirmation, show the host the profile link and the question, and call again with the code only after the host says yes.",
+    },
+  ],
+};
+
+/** Optional, Grok on the shared service only: Supply Core as an add-on, set up now or later. */
+export const SUPPLIES_STEP: SetupAsk = {
+  step: "supplies",
+  tool: "choose_supplies",
+  questions: [
+    {
+      field: "on",
+      ask: "whether the host wants Supply Core to keep the property stocked",
+      required: true,
+      options: [
+        { value: "yes", label: "Yes, set it up" },
+        { value: "no", label: "Not now" },
+      ],
+      how:
+        'Explain it in two or three short sentences, in your own words: Supply Core reorders the supplies the property always needs, like paper towels and coffee pods, on a schedule, from stores that deliver to the door. After each cleaning, the cleaner is asked "Anything running low?", and what they name gets ordered. You stop for the host\'s yes before checkout unless they choose hands-off, and their cards stay in their Vault. Tell them they can set it up later by asking you. Then call choose_supplies with on true or false.',
+    },
   ],
 };
 
