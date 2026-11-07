@@ -2287,6 +2287,16 @@ export class LiveDesk {
     });
   }
 
+  /** The business name saved for this property. */
+  businessName(): Promise<string | undefined> {
+    return this.serial(async () => this.file.business);
+  }
+
+  /** A note for the host's agent chat from the shared line, such as a held text that was dropped. One wake-up. */
+  noteDroppedText(note: string): Promise<boolean> {
+    return this.noteForHost(`line-note:${randomUUID()}`, note);
+  }
+
   /**
    * Records that the landlord's phone opted out of the shared line before this property saved it.
    * Nothing is sent to it, and nothing is sent by this call, until it texts START or YES.
@@ -3621,7 +3631,8 @@ export class LiveDesk {
         send: async (text) => {
           // A phone that opted out of the shared line gets nothing, group or not, until it texts START or YES.
           const audience = text.channel === "group" && text.audience ? text.audience : [text.to];
-          if (audience.some((phone) => this.lineOptedOut(phone))) {
+          // The reply to the person's own STOP still goes: the carrier's rules call for it.
+          if (text.kind !== "stop" && audience.some((phone) => this.lineOptedOut(phone))) {
             if (text.kind === "pin") throw new Error("opted out of the line");
             return;
           }

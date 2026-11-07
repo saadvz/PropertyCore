@@ -39,44 +39,65 @@ const account = (properties: Property[]): Tenant => ({ id: "tnt_lane000001", lab
 describe("routeLineText", () => {
   const lane = property("prp_lane000001", "12 Scratch Lane");
   const court = property("prp_court00001", "8 Scratch Court");
-  const phones = (p: Property) => (p.id === lane.id ? { host: HOST, people: [CLEANER] } : { host: HOST, people: [COURT_CLEANER] });
+  /** The account's people: Ana on Lane, Bea on Court, the landlord the host on both. */
+  const people = (on: Record<string, string[]> = { [CLEANER]: [lane.id], [COURT_CLEANER]: [court.id] }) => ({
+    propertiesOf: (phone: string) => on[phone] ?? [],
+    hostOf: () => HOST,
+  });
 
   it("one property takes every sender", () => {
     const one = account([lane]);
-    for (const from of [HOST, CLEANER, STRANGER]) expect(routeLineText(one, from, "hello", phones)).toEqual({ kind: "property", property: lane });
+    for (const from of [HOST, CLEANER, STRANGER]) expect(routeLineText(one, from, "hello", people())).toEqual({ kind: "property", property: lane });
   });
 
   it("a person on one property goes to that property", () => {
     const two = account([lane, court]);
-    expect(routeLineText(two, CLEANER, "YES", phones)).toEqual({ kind: "property", property: lane });
-    expect(routeLineText(two, COURT_CLEANER, "STOP", phones)).toEqual({ kind: "property", property: court });
+    expect(routeLineText(two, CLEANER, "YES", people())).toEqual({ kind: "property", property: lane });
+    expect(routeLineText(two, COURT_CLEANER, "STOP", people())).toEqual({ kind: "property", property: court });
   });
 
   it("the landlord's STOP and START go to every property where they're the host", () => {
     const two = account([lane, court]);
-    expect(routeLineText(two, HOST, "STOP", phones)).toEqual({ kind: "host-all", properties: [lane, court] });
-    expect(routeLineText(two, HOST, "start", phones)).toEqual({ kind: "host-all", properties: [lane, court] });
+    expect(routeLineText(two, HOST, "STOP", people())).toEqual({ kind: "host-all", properties: [lane, court] });
+    expect(routeLineText(two, HOST, "start", people())).toEqual({ kind: "host-all", properties: [lane, court] });
   });
 
   it("the landlord's bare YES is not a START: it changes nothing on any property", () => {
     const two = account([lane, court]);
-    expect(routeLineText(two, HOST, "YES", phones)).toEqual({ kind: "host-unused", property: lane });
-    expect(routeLineText(two, HOST, "yes", phones)).toEqual({ kind: "host-unused", property: lane });
+    expect(routeLineText(two, HOST, "YES", people())).toEqual({ kind: "host-unused", property: lane });
+    expect(routeLineText(two, HOST, "yes", people())).toEqual({ kind: "host-unused", property: lane });
   });
 
   it("the landlord's HELP gets nothing; anything else is unused, for the oldest property", () => {
     const two = account([lane, court]);
-    expect(routeLineText(two, HOST, "HELP", phones)).toEqual({ kind: "host-help" });
-    expect(routeLineText(two, HOST, "guests left", phones)).toEqual({ kind: "host-unused", property: lane });
+    expect(routeLineText(two, HOST, "HELP", people())).toEqual({ kind: "host-help" });
+    expect(routeLineText(two, HOST, "guests left", people())).toEqual({ kind: "host-unused", property: lane });
   });
 
   it("anyone else is unknown", () => {
-    expect(routeLineText(account([lane, court]), STRANGER, "STOP", phones)).toEqual({ kind: "unknown" });
+    expect(routeLineText(account([lane, court]), STRANGER, "STOP", people())).toEqual({ kind: "unknown" });
   });
 
   it("a property with cleaning off doesn't count", () => {
     const off = { ...court, flows: { ...court.flows, cleaning: { on: false } } };
-    expect(routeLineText(account([lane, off]), STRANGER, "hi", phones)).toEqual({ kind: "property", property: lane });
+    expect(routeLineText(account([lane, off]), STRANGER, "hi", people())).toEqual({ kind: "property", property: lane });
+  });
+
+  it("a person on both: STOP and START to both, HELP to none, anything else to be worked out (saadvz/TourCore#190)", () => {
+    const two = account([lane, court]);
+    const both = people({ [CLEANER]: [lane.id, court.id] });
+    expect(routeLineText(two, CLEANER, "STOP", both)).toEqual({ kind: "person-all", properties: [lane, court] });
+    expect(routeLineText(two, CLEANER, "start", both)).toEqual({ kind: "person-all", properties: [lane, court] });
+    expect(routeLineText(two, CLEANER, "HELP", both)).toEqual({ kind: "person-help" });
+    expect(routeLineText(two, CLEANER, "YES", both)).toEqual({ kind: "shared", properties: [lane, court] });
+  });
+
+  it("a person on both whose other property has cleaning off goes straight to the one left", () => {
+    const off = { ...court, flows: { ...court.flows, cleaning: { on: false } } };
+    const both = people({ [CLEANER]: [lane.id, court.id] });
+    expect(routeLineText(account([lane, off]), CLEANER, "YES", both)).toEqual({ kind: "property", property: lane });
+    const third = property("prp_annex00001", "9 Scratch Annex");
+    expect(routeLineText(account([lane, off, third]), CLEANER, "YES", both)).toEqual({ kind: "property", property: lane });
   });
 });
 

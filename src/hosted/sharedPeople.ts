@@ -85,8 +85,8 @@ export async function afterPeopleSaved(h: HostedCleaner, tenant: Tenant, propert
   const older = new TenantOptOuts(h.dataRoot);
   // The landlord's line STOP holds on a property that saves them later, as before.
   if (source.host && older.stopped(tenant.id, source.host)) await desk.markHostOptedOut(source.host);
+  // A person's older line STOP was moved into people.json once; the line router keeps it there since.
   for (const person of source.people) {
-    if (older.stopped(tenant.id, person.phone)) people.stop(person.phone);
     if (people.stopped(person.phone)) await desk.accountStop(person.phone);
     else if (people.optedIn(person.phone)) await desk.accountOptIn(person.phone);
   }

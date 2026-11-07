@@ -5,6 +5,7 @@ import { CLEANER_MCP_PATH, CLEANER_TOOL_NAMES, cleanerInstructions } from "../cl
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { Property } from "../cleaner-core/hosted/properties";
 import { promoteRoutineOwner, propertyContext, shareRoutine, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
+import { sweepHeldTexts } from "./lineRouter";
 import { afterPeopleSaved, peopleRefusal } from "./sharedPeople";
 import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
 import { OPERATOR_TOOL_NAMES } from "../operator/tools";
@@ -181,6 +182,8 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
   // or more, runs each property with Cleaner Core on and names it in the result.
   // Google events come from one property's calendar, so they always name their property.
   const googleEvents = args && typeof args === "object" && "googleEvents" in (args as Record<string, unknown>);
+  // A held text on the shared line that nobody answered for 2 hours is dropped here, with a note for the host.
+  if (name === "check_now") await sweepHeldTexts(h, tenant);
   if (name === "check_now" && !namesProperty(args) && !googleEvents && tenant.properties.length > 1) return checkEveryProperty(h, r, tenant, caller, args);
   const resolved = resolveProperty(tenant, args);
   if ("refusal" in resolved) return { text: resolved.refusal, isError: true };

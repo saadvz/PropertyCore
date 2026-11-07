@@ -14,7 +14,7 @@ export const ASK_EVERY_MS = 10 * 60_000;
 export interface HeldText {
   id: string;
   text: string;
-  media?: { url: string; contentType?: string }[];
+  media?: { url: string; contentType: string }[];
   propertyIds: string[];
   heldAt: string;
   askedAt: string;
