@@ -21,6 +21,7 @@ import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
 import { calendarUrlAllowed, readPublicCalendar, type CalendarFetch } from "../hub/fetchLimits";
 import { calendarFetch, setCalendarFetch } from "../hub/calendarFetch";
+import { forgetHub, resetHubs } from "../hub/hub";
 import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, PAYMENTS_STEP, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, SUPPLIES_STEP, type SetupAsk } from "./setupAsk";
 import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jobHoldLine, optedOutCodeLine, resumeNote } from "./cleanerTexts";
 import { isInjuryReport } from "./injury";
@@ -537,11 +538,13 @@ export async function drainCleanerAlerts(root: string, env: () => NodeJS.Process
 
 export function resetLiveDesks(): void {
   desks.clear();
+  resetHubs();
 }
 
 /** Drops one state folder's desk, so nothing keeps working on a folder that is being removed. */
 export function forgetLiveDesk(root: string): void {
   desks.delete(root);
+  forgetHub(root);
 }
 
 function statedClock(text: string): boolean {

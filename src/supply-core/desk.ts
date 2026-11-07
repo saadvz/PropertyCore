@@ -7,7 +7,7 @@ import { googleCalendarSource, type GoogleEventList } from "../hub/sources";
 import { isValidTimeZone, localDateOf } from "../core/timezone";
 import { askNext } from "../hub/ask";
 import { ConfirmationBook } from "../operator/confirmations";
-import { refuseCards } from "./cards";
+import { refuseCards } from "../hub/cards";
 import { cartFingerprint, checkCart, type CartInput, type GateContext, type Hold, type Mode } from "./gate";
 import { deadlineFor, dueOn, nextDates, scheduleProblem, type Schedule } from "./schedule";
 import { planStores, supplySetupAsk } from "./setupAsk";

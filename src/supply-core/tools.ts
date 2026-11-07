@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { refuseCards } from "./cards";
+import { refuseCards } from "../hub/cards";
 import type { SupplyDesk, SupplyReply } from "./desk";
 
 /**
