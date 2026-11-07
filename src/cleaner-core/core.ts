@@ -554,7 +554,7 @@ export interface CleanerCore {
   saveArrival(minutes: number): boolean;
   /**
    * True when the host's own message can go now to `to`: "group" for the group thread, or the phone
-   * of the cleaner or a saved group contact. The person must have opted in and be on the allowlist.
+   * of the cleaner or a saved group contact. The person must have opted in, and the number must pass the allowlist option.
    */
   canSendHostMessage(to: string): boolean;
   /**
