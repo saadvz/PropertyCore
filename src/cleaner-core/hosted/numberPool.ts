@@ -13,7 +13,7 @@ import { writeJsonAtomic } from "../../storage/atomicWrite";
 export interface PoolNumber {
   /** E.164. */
   number: string;
-  /** Twilio's IncomingPhoneNumber sid, so pointing the webhook needs no lookup. */
+  /** Twilio's IncomingPhoneNumber sid, so pointing the webhook needs no lookup. Empty until looked up for a line recorded from an older account. */
   sid: string;
   addedAt: string;
   /** The account the line belongs to. Absent while it waits in the pool. */
@@ -173,12 +173,46 @@ export class NumberPool {
       entry = { number, sid, addedAt: this.stamp() };
       doc.numbers.push(entry);
     }
+    entry.sid = sid;
     delete entry.tenantId;
     delete entry.assignedAt;
     delete entry.webhookOk;
     entry.returnedAt = this.stamp();
     this.write(doc);
     return entry;
+  }
+
+  /**
+   * Takes a line no account holds out of the pool, before Twilio is asked to release it, so no
+   * sign-up can pick it while the release is under way. `restore` puts it back if Twilio refuses.
+   */
+  take(raw: string): PoolNumber {
+    return this.remove(raw);
+  }
+
+  /** Puts back a line `take` removed, as it was. */
+  restore(entry: PoolNumber): void {
+    const doc = this.read();
+    if (doc.numbers.some((n) => n.number === entry.number)) return;
+    doc.numbers.push(entry);
+    this.write(doc);
+  }
+
+  /**
+   * Records each account's line the pool doesn't know yet (accounts made before the pool), so the
+   * pool is the one record of every line. Their sid is looked up when it's first needed.
+   */
+  record(lines: { number: string; tenantId: string }[]): number {
+    const doc = this.read();
+    let added = 0;
+    for (const line of lines) {
+      const number = parsePhone(line.number);
+      if (!number || doc.numbers.some((n) => n.number === number)) continue;
+      doc.numbers.push({ number, sid: "", addedAt: this.stamp(), tenantId: line.tenantId, assignedAt: this.stamp() });
+      added++;
+    }
+    if (added > 0) this.write(doc);
+    return added;
   }
 
   /** Takes a line out of the pool for good, after Twilio released it. Never one an account is using. */
