@@ -285,7 +285,7 @@ function endpointStatus(inst: Installation, mode: DeploymentMode): ComponentStat
           })
         : step("PUBLIC_ENDPOINT", "ESTABLISH_PUBLIC_ENDPOINT", "OPERATOR", "Tour Core needs a secure public connection before it can be reached.", {
             grokInstructions:
-              mode === "SELF_HOSTED" ? "Set PUBLIC_BASE_URL to the server's stable https address and restart Tour Core." : "Start a secure tunnel and set PUBLIC_BASE_URL (README, developer path).",
+              mode === "SELF_HOSTED" ? "Set PUBLIC_BASE_URL to the server's stable https address and restart Tour Core." : "Start a secure tunnel and set PUBLIC_BASE_URL (docs/tour-core/README.md, developer path).",
           });
   if (!url) {
     if (raw) return component("PUBLIC_ENDPOINT", "ERROR", "Tour Core's public connection isn't set up correctly.", { technical: ["PUBLIC_BASE_URL isn't https."], next: establish() });
