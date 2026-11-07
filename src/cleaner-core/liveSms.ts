@@ -62,14 +62,14 @@ export function verifiedLandlordPhone(env: NodeJS.ProcessEnv): string | undefine
 
 /**
  * True when `host` is the account's landlord: the phone confirmed at sign-up, or, for an account
- * with no confirmed phone (made in /admin), a phone the old operator allowlist approves. Nobody on
- * the account is texted until this holds.
+ * with no landlord record at all (made in /admin), a phone the old operator allowlist approves.
+ * Nobody on the account is texted until this holds. A landlord record that isn't a confirmed phone
+ * (an owner whose code hasn't checked out, or a value that isn't a phone) fails closed.
  */
 export function landlordConfirmed(env: NodeJS.ProcessEnv, host: string | undefined): boolean {
   const phone = parsePhone(host ?? "");
   if (!phone || ownLine(env, phone)) return false;
-  const verified = verifiedLandlordPhone(env);
-  if (verified) return phone === verified;
+  if (env.CLEANER_CORE_LANDLORD_PHONE?.trim()) return phone === verifiedLandlordPhone(env);
   return isAllowlisted(env, phone);
 }
 
