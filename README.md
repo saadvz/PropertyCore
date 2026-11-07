@@ -926,6 +926,8 @@ scripts/           bootstrap-grok.mjs (dependency-installing entry point for npm
 grok-template/     Tour Core Bot profile, context, routine, safe examples, integration notes, manifest
 property-core-template/  Property Core: one bot that asks Tour Core or Cleaner Core, then follows that service's guide. Grok at the root;
                    claude/, chatgpt/, and muse/ for the other chats
+muse-template/     Cleaner Core and Supply Core for Muse: the paste-in prompt, the cleaner-core and supply-core skills, and
+                   their recurring tasks
 src/intent/        what a typed message means: intent schema, rule-based interpreter, optional language-model
                    interpreter behind a vendor-neutral interface
 src/visitor/       visitor session over the real engine (browser phone and real phones), typed-reply
@@ -958,7 +960,7 @@ phone). It does not prove identity.
 
 ## Baseline eval
 
-`npm run test:eval` reruns today's duplex setup, the same ten duplexes through the milestone tools, golden landlord tasks, and the demo click path against the checked-in snapshot in `eval/baseline/`. Both config-diff reports must show zero fields differing. `npm run eval:rebaseline` records a new snapshot when that behavior is meant to change. `npm run eval:live` points the same flow at hosted Scratch. Run one live eval at a time. It needs `TOURCORE_MCP_URL` and `TOURCORE_MCP_TOKEN` (the one-hour sign-in access token from `POST /token` after the owner's Allow click). It keeps the properties it creates on local test texting, and its end-of-run sweep removes only the property named with this run's `eval-` id. See [docs/eval.md](docs/eval.md). The per-agent client matrix runs that duplex, plus the safety gates, once for Grok, ChatGPT, Claude, an unknown client, and a spoofed grok name. See [docs/client-matrix.md](docs/client-matrix.md).
+`npm run test:eval` reruns today's duplex setup, the same ten duplexes through the milestone tools, golden landlord tasks, and the demo click path against the checked-in snapshot in `eval/baseline/`. Both config-diff reports must show zero fields differing. `npm run eval:rebaseline` records a new snapshot when that behavior is meant to change. `npm run eval:live` points the same flow at hosted Scratch. Run one live eval at a time. It needs `TOURCORE_MCP_URL` and `TOURCORE_MCP_TOKEN` (the one-hour sign-in access token from `POST /token` after the owner's Allow click). It keeps the properties it creates on local test texting, and its end-of-run sweep removes only the property named with this run's `eval-` id. See [docs/eval.md](docs/eval.md). The per-agent client matrix runs that duplex, plus the safety gates, once for Grok, ChatGPT, Claude, an unknown client, and a spoofed grok name. See [docs/client-matrix.md](docs/client-matrix.md). The same page has the Property Core matrix: Grok Bot and Muse run Cleaner Core and Supply Core end to end, and Claude and ChatGPT as plain chats run Cleaner Core only.
 
 ## Contributing
 

@@ -14,7 +14,7 @@ import { monthSpentCents, onItsWay, readSupply, writeSupply, type Cart, type Ite
 
 /**
  * Supply Core's desk: every tool's behaviour over one tenant's `supply.json`. One call at a time.
- * It never sees a card detail and never buys anything; Grok shops and reports back.
+ * It never sees a card detail and never buys anything; the agent (Grok or Muse) shops and reports back.
  */
 
 export interface SupplyReply {
@@ -797,7 +797,7 @@ export class SupplyDesk {
     file.lowReports = file.lowReports.filter((report) => !order.items.some((line) => line.itemId === report.itemId));
   }
 
-  recordOrder(input: { cartToken?: string; orderId?: string; orderNumber?: string; chargedCents?: number; expectedBy?: string; approvedBy?: "grok-card" }): Promise<SupplyReply> {
+  recordOrder(input: { cartToken?: string; orderId?: string; orderNumber?: string; chargedCents?: number; expectedBy?: string; approvedBy?: "grok-card" | "host-browser" }): Promise<SupplyReply> {
     return this.guarded(input, () => {
       if (!isInt(input.chargedCents, 0, 2_000_000)) return fail("Pass the amount charged, in whole cents.");
       if (input.orderNumber !== undefined && !isText(input.orderNumber, 80)) return fail("The order number has to be under 80 characters.");
@@ -826,7 +826,7 @@ export class SupplyDesk {
           chargedCents: input.chargedCents,
           deadline: cart.deadline,
           source: cart.source,
-          approvedBy: cart.status === "approved" ? "landlord" : input.approvedBy === "grok-card" ? "grok-card" : "rules",
+          approvedBy: cart.status === "approved" ? "landlord" : input.approvedBy === "grok-card" || input.approvedBy === "host-browser" ? input.approvedBy : "rules",
           status: "placed",
         };
         cart.status = "recorded";

@@ -60,7 +60,7 @@ describe("the account's tools", () => {
   it("with one property a Cleaner Core call needs no property argument", SLOW, async () => {
     const { m, account, token } = await start();
     const lane = property(m, account.id, "12 Scratch Lane", ["cleaning"]);
-    await m.toolAt(PATH, token, "get_state", { choice: "cleaners" });
+    await m.toolAt(PATH, token, "get_state", { choice: "cleaners", drafted: true });
     const saved = await m.toolAt(PATH, token, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE });
     expect(saved.isError).toBe(false);
     expect(existsSync(join(propertyFolder(m.app.root, account.id, lane), "cleaner-live.json"))).toBe(true);
@@ -91,7 +91,8 @@ describe("the account's tools", () => {
     expect((overview.structured?.properties as { id: string; next?: Record<string, string> }[]).map((p) => p.id)).toContain(lane.id);
     const own = await m.toolAt(PATH, token, "get_state", { property: lane.id, choice: "cleaners" });
     expect(own.isError).toBe(false);
-    expect(own.structured?.ask).toBeDefined();
+    // Each property's setup starts with its own draft (#166).
+    expect(own.structured?.draft).toBeDefined();
   });
 
   it("a label works in place of the id", SLOW, async () => {
@@ -125,14 +126,14 @@ describe("the account's tools", () => {
     for (const tool of tools.filter((t) => !["add_property"].includes(t.name))) expect(tool.inputSchema.properties ?? {}).toHaveProperty("property");
   });
 
-  it("Supply Core tools are listed for Grok only", SLOW, async () => {
+  it("Supply Core tools are listed for always-on agents only, not a plain chat", SLOW, async () => {
     const { m, account } = await start({ SUPPLY_CORE: "1" });
     property(m, account.id, "12 Scratch Lane", ["cleaning", "supplies"]);
     const claude = await m.join(account.id, "claude");
     const names = await m.toolNames(PATH, claude);
     expect(names).toContain("save_property");
     expect(names).not.toContain("get_supply_state");
-    expect((await m.toolAt(PATH, claude, "get_supply_state")).text).toBe("Supply Core works with Grok only for now: it shops with Grok's own shopping tools and Vault.");
+    expect((await m.toolAt(PATH, claude, "get_supply_state")).text).toBe("Supply Core works with Grok Bot and Muse for now: they shop and check out at the store themselves. In this chat, Cleaner Core works without Supply Core.");
   });
 
   it("the Allow page asks for the invite code and no service", SLOW, async () => {

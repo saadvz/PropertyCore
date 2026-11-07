@@ -1,10 +1,11 @@
-import type { CleanerAssistant } from "../cleaner-core/assistant";
+import { runsSupplies, SUPPLIES_AGENTS_ONLY, type CleanerAssistant } from "../cleaner-core/assistant";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import { propertyBasePath, propertyFolder, type Property } from "../cleaner-core/hosted/properties";
 import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { supplyDeskFor, type SupplyDesk, type SupplyReply } from "../supply-core/desk";
-import { handleSupplyTool, listedSupplyTools, SUPPLY_TOOL_NAMES, SUPPLY_TOOLS } from "../supply-core/tools";
+import { listedSupplyToolsFor, supplyReplyFor } from "./supplyWording";
+import { handleSupplyTool, SUPPLY_TOOL_NAMES } from "../supply-core/tools";
 
 /**
  * Supply Core on the shared service, answered in this process, one desk per property. The property's
@@ -39,17 +40,15 @@ export function supplyDesk(h: HostedCleaner, tenant: Tenant, property: Property)
   });
 }
 
-const grok = (assistant: CleanerAssistant) => assistant === "grok";
-
-/** Supply Core's tools as tools/list shows them: only for a Grok chat, which shops with its own tools. */
+/** Supply Core's tools as tools/list shows them: only for an always-on agent (Grok Bot, Muse), which shops itself. */
 export function listedSupplyFront(assistant: CleanerAssistant): Record<string, unknown>[] {
-  if (!grok(assistant)) return [];
-  return listedSupplyTools(SUPPLY_TOOLS.map((tool) => tool.name));
+  if (!runsSupplies(assistant)) return [];
+  return listedSupplyToolsFor(assistant);
 }
 
-/** Cleaner Core's setup question about Supply Core, listed for a Grok chat while any property runs Cleaner Core. */
+/** Cleaner Core's setup question about Supply Core, listed for an always-on agent while any property runs Cleaner Core. */
 export function listedChooseSupplies(assistant: CleanerAssistant): Record<string, unknown>[] {
-  return grok(assistant) ? [CHOOSE_TOOL] : [];
+  return runsSupplies(assistant) ? [CHOOSE_TOOL] : [];
 }
 
 const CHOOSE_TOOL = {
@@ -99,12 +98,10 @@ export async function chooseSupplies(h: HostedCleaner, tenant: Tenant, property:
 /** Answers one Supply Core tool for the property. Undefined when the name isn't Supply Core's. */
 export async function supplyCall(h: HostedCleaner, tenant: Tenant, property: Property, assistant: CleanerAssistant, name: string, args: unknown): Promise<SupplyReply | undefined> {
   if (!SUPPLY_FRONT_NAMES.has(name)) return undefined;
-  if (!grok(assistant)) return { text: GROK_ONLY, isError: true };
+  if (!runsSupplies(assistant)) return { text: SUPPLIES_AGENTS_ONLY, isError: true };
   if (name === CHOOSE) return chooseSupplies(h, tenant, property, args);
   const reply = await handleSupplyTool(supplyDesk(h, tenant, property), name, args);
   // Activating reopens Cleaner Core's engine, so the next DONE already asks about supplies.
   if (reply && !reply.isError && name === "activate_supplies" && property.flows.cleaning.on) cleaningDesk(h, tenant, property).refreshSupplyAsk();
-  return reply;
+  return reply && supplyReplyFor(assistant, name, reply);
 }
-
-export const GROK_ONLY = "Supply Core works with Grok only for now: it shops with Grok's own shopping tools and Vault.";

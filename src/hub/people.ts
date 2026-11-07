@@ -144,6 +144,11 @@ export class People {
     return person ? { ...person, where: [...person.where] } : undefined;
   }
 
+  /** Every person on the account, as copies. */
+  everyone(): Person[] {
+    return this.file.people.map((person) => ({ ...person, where: [...person.where] }));
+  }
+
   propertiesOf(phone: string): string[] {
     return this.file.people.find((p) => p.phone === phone)?.where.map((w) => w.propertyId) ?? [];
   }

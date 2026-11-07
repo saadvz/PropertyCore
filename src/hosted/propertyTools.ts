@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import type { CleanerAssistant } from "../cleaner-core/assistant";
+import { runsSupplies, type CleanerAssistant } from "../cleaner-core/assistant";
 import { findProperty, propertyFolder, type FlowName, type Property } from "../cleaner-core/hosted/properties";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
@@ -56,8 +56,8 @@ const GET_STATE = {
   name: "get_state",
   title: "What's next",
   description:
-    "Call this first. Lists the account's properties, which flows each one has on, and each one's next step. With property, gives that property's own Cleaner Core state and next step (or Supply Core's, when only Supply Core is on there). With one property, it gives that property's state directly.",
-  inputSchema: { type: "object", properties: { property: PROPERTY_ARG, choice: { type: "string", maxLength: 40 } }, additionalProperties: false },
+    "Call this first. Lists the account's properties, which flows each one has on, and each one's next step. With property, gives that property's own Cleaner Core state and next step (or Supply Core's, when only Supply Core is on there). With one property, it gives that property's state directly. Setup starts with a draft for each property: pass drafted: true with the property once the host corrected its summary.",
+  inputSchema: { type: "object", properties: { property: PROPERTY_ARG, choice: { type: "string", maxLength: 40 }, drafted: { type: "boolean" } }, additionalProperties: false },
 };
 
 const ADD_PROPERTY = {
@@ -117,13 +117,15 @@ export async function accountState(tenant: Tenant, args: unknown, states: Proper
   const list = tenant.properties.map(propertyLine);
   if (tenant.properties.length === 0) return done({ properties: [], next: FIRST_PROPERTY });
   const named = args && typeof args === "object" && typeof (args as { property?: unknown }).property === "string";
+  // Each property has its own draft (#166), so drafted: true names the property it's for.
+  if (!named && tenant.properties.length > 1 && (args as { drafted?: unknown } | undefined)?.drafted === true) return fail("Name the property whose draft the host saw: call get_state with property and drafted: true.");
   if (named || tenant.properties.length === 1) {
     const resolved = resolveProperty(tenant, args);
     if ("refusal" in resolved) return fail(resolved.refusal);
     const { property } = resolved;
     const reply = property.flows.cleaning.on
       ? await states.cleaning(property, resolved.args)
-      : property.flows.supplies.on && assistant === "grok"
+      : property.flows.supplies.on && runsSupplies(assistant)
         ? await states.supplies(property)
         : done({ next: TURN_A_FLOW_ON });
     if (reply.isError || !reply.structured) return reply;

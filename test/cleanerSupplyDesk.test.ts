@@ -54,7 +54,7 @@ function openDesk(extra: NodeJS.ProcessEnv = {}) {
 }
 
 async function live(desk: LiveDesk) {
-  ok(await desk.getState("cleaners"));
+  ok(await desk.getState("cleaners", true));
   ok(await desk.saveProperty({ business: BUSINESS, nickname: "Lake House", address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
   ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
   ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" }));
@@ -105,7 +105,7 @@ describe("the live desk and Supply Core", () => {
 
 describe("the Supply Core question in Cleaner Core's setup", () => {
   async function throughPayments(desk: LiveDesk) {
-    ok(await desk.getState("cleaners"));
+    ok(await desk.getState("cleaners", true));
     ok(await desk.saveProperty({ business: BUSINESS, nickname: "Lake House", address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
     ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
     ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" }));
@@ -129,13 +129,20 @@ describe("the Supply Core question in Cleaner Core's setup", () => {
     expect(await stepOf(desk)).toBeUndefined();
   });
 
-  it("never asks a Claude, ChatGPT, or Muse host", async () => {
-    for (const assistant of ["claude", "chatgpt", "muse"]) {
+  it("never asks a plain chat (Claude, ChatGPT) host", async () => {
+    for (const assistant of ["claude", "chatgpt"]) {
       resetLiveDesks();
       const { desk } = openDesk({ CLEANER_CORE_MULTI_TENANT: "1", CLEANER_CORE_ASSISTANT: assistant });
       await throughPayments(desk);
       expect(await stepOf(desk), assistant).not.toBe("supplies");
     }
+  });
+
+  it("asks a Muse host, as it asks a Grok Bot host", async () => {
+    resetLiveDesks();
+    const { desk } = openDesk({ CLEANER_CORE_MULTI_TENANT: "1", CLEANER_CORE_ASSISTANT: "muse" });
+    await throughPayments(desk);
+    expect(await stepOf(desk)).toBe("supplies");
   });
 
   it("isn't asked off the shared service, where the add-on doesn't exist", async () => {
