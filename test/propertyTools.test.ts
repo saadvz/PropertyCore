@@ -126,14 +126,14 @@ describe("the account's tools", () => {
     for (const tool of tools.filter((t) => !["add_property"].includes(t.name))) expect(tool.inputSchema.properties ?? {}).toHaveProperty("property");
   });
 
-  it("Supply Core tools are listed for Grok only", SLOW, async () => {
+  it("Supply Core tools are listed for always-on agents only, not a plain chat", SLOW, async () => {
     const { m, account } = await start({ SUPPLY_CORE: "1" });
     property(m, account.id, "12 Scratch Lane", ["cleaning", "supplies"]);
     const claude = await m.join(account.id, "claude");
     const names = await m.toolNames(PATH, claude);
     expect(names).toContain("save_property");
     expect(names).not.toContain("get_supply_state");
-    expect((await m.toolAt(PATH, claude, "get_supply_state")).text).toBe("Supply Core works with Grok only for now: it shops with Grok's own shopping tools and Vault.");
+    expect((await m.toolAt(PATH, claude, "get_supply_state")).text).toBe("Supply Core works with Grok Bot and Muse for now: they shop and check out at the store themselves. In this chat, Cleaner Core works without Supply Core.");
   });
 
   it("the Allow page asks for the invite code and no service", SLOW, async () => {

@@ -47,6 +47,11 @@ parked: only Saad makes an account a touring account, on `/admin`, and then
 - **Cleaner Core:** follow the Cleaner Core skill in
   `muse-template/skills/cleaner-core/SKILL.md`. You're already connected, so
   skip its connect step.
+- **Supply Core:** when the host wants supplies reordered at a property, call
+  `set_flows` with the property and `supplies` true, save the folder
+  `muse-template/skills/supply-core` as a skill named Supply Core, and follow
+  it from `get_supply_state`. You shop in your own browser, at stores the
+  host signs in to there.
 
 Turn a flow off only when the host asks: call `set_flows` with the property
 and that flow false. With anything live, it shows what stops and the exact

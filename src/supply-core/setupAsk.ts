@@ -4,7 +4,8 @@ import type { SupplyFile } from "./store";
 
 /**
  * Supply Core's setup, one step at a time, in Cleaner Core's `ask` shape: Supply Core names the
- * fields and choices, and Grok asks one short question per message in its own words.
+ * fields and choices, and the agent asks one short question per message in its own words. The words
+ * here are Grok's; src/hosted/supplyWording.ts gives Muse its own.
  */
 
 export type SupplyStep = "property" | "list" | "stores" | "schedule" | "products" | "sources" | "accounts" | "mode" | "caps" | "check-time" | "routine" | "review";
@@ -76,7 +77,7 @@ const SCHEDULE_QUESTIONS: AskQuestion[] = [
 ];
 
 /** Product cards first, then a choice card the host can tap: cards alone have no button. */
-const CARDS =
+export const CARDS =
   "Show 3 to 4 product cards from the plan's stores only. Then, right after the cards, show a choice card with one option per product, by its short name, so the host can tap their pick. Never list products as text.";
 
 const ITEM_QUESTIONS: AskQuestion[] = [

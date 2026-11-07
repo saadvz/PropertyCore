@@ -6,9 +6,9 @@ import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { ConfirmationBook } from "../operator/confirmations";
-import { GROK_ONLY, supplyDesk, turnOffSupplies, turnOnSupplies } from "./supplies";
+import { supplyDesk, turnOffSupplies, turnOnSupplies } from "./supplies";
 import { supplyCoreOn } from "../cleaner-core/flag";
-import type { CleanerAssistant } from "../cleaner-core/assistant";
+import { runsSupplies, SUPPLIES_AGENTS_ONLY, type CleanerAssistant } from "../cleaner-core/assistant";
 import { FIXER_NOT_YET, resolveProperty } from "./propertyTools";
 import type { FrontReply } from "./serviceTools";
 
@@ -95,7 +95,7 @@ export async function setFlows(ctx: FlowContext, input: FlowInput): Promise<Fron
 /** Why a flow can't turn on, or undefined. `cleaningComing` is true when the same call turns cleaning on. */
 function turnOnRefusal(ctx: FlowContext, property: Property, flow: FlowName, cleaningComing: boolean): string | undefined {
   if (flow !== "supplies") return undefined;
-  if (ctx.assistant !== "grok") return GROK_ONLY;
+  if (!ctx.assistant || !runsSupplies(ctx.assistant)) return SUPPLIES_AGENTS_ONLY;
   // Supply Core on its own, without Cleaner Core at the property, only while SUPPLY_CORE is on.
   if (!property.flows.cleaning.on && !cleaningComing && !supplyCoreOn(ctx.h.baseEnv())) return "Supply Core on its own isn't available on this service yet. Turn on Cleaner Core for this property first.";
   return undefined;

@@ -35,6 +35,14 @@
       "doc": "../../muse-template/skills/cleaner-core/references/cleaner-core-task.md",
       "schedule": "as often as the host sets",
       "credentialsTravelWithTemplate": false
+    },
+    {
+      "name": "Supply Core",
+      "service": "cleaning",
+      "flow": "supplies",
+      "doc": "../../muse-template/skills/supply-core/references/supply-core-task.md",
+      "schedule": "daily at the host's check time",
+      "credentialsTravelWithTemplate": false
     }
   ],
   "suggestedPrompts": ["Set up Property Core", "Set up tours for a rental unit", "Set up a cleaner for my property", "What's next?"],
