@@ -220,10 +220,27 @@ export class DoorAccess {
     return { ok: false, error: UPLOAD_RETRY };
   }
 
-  /** True when `code` is the pending link's code and the link hasn't expired. */
-  uploadPending(code: string): boolean {
+  /** Whether `code` is the pending link's code and the link hasn't expired. Reads only. */
+  uploadLinkOpen(code: string): { open: boolean; by?: HubCaller } {
     const pending = this.file.upload;
-    return Boolean(pending && sameHash(uploadHash(code), pending.hash) && this.now().getTime() < Date.parse(pending.expiresAt));
+    if (!pending || !sameHash(uploadHash(code), pending.hash) || this.now().getTime() >= Date.parse(pending.expiresAt)) return { open: false };
+    return { open: true, ...(pending.by ? { by: pending.by } : {}) };
+  }
+
+  /**
+   * Opens the seal with exactly this key, never the cached code or the server's key: the release and
+   * the key-token check ask whether this key opens it. Undefined when it doesn't.
+   */
+  opensWith(key: Buffer): string | undefined {
+    if (!this.file.pinSeal) return undefined;
+    try {
+      const code = openPin(this.file.pinSeal, key);
+      if (!CODE_SHAPE.test(code)) return undefined;
+      this.open = code;
+      return code;
+    } catch {
+      return undefined;
+    }
   }
 
   /**

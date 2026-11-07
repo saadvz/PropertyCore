@@ -2,10 +2,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { liveDeskFor, resetLiveDesks, setCleanerAlertFetch, setCleanerCalendarFetch, type LiveDesk, type ToolReply } from "../src/cleaner-core/liveDesk";
+import { doorCodeUploadCode } from "../src/cleaner-core/http";
+import { CODE_IN_DRAFT, CODE_IN_SAVED_ANSWER, liveDeskFor, resetLiveDesks, setCleanerAlertFetch, setCleanerCalendarFetch, type LiveDesk, type ToolReply } from "../src/cleaner-core/liveDesk";
 import { setCleanerGroupFetch, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import { hubFor } from "../src/hub/hub";
+import { PIN_KEY as HARNESS_KEY, cleanupDesks, idOf, liveGroup } from "./cleanerDeskHarness";
 import { fakeConversations } from "./fakeConversations";
+import { approvedOnDesk } from "./hostApproval";
 import { ADDRESS, BUSINESS, CALENDAR_ICS, CALENDAR_URL, CLEANER, CLEANER_LINE, DOOR_CODE, FROZEN, HOST, TEST_PIN_KEY, fakeSms } from "./wiringProof";
 
 /** Cleaner Core reads its property and calendars from the property hub. 555 numbers and a made-up code only. */
@@ -23,6 +26,7 @@ afterEach(() => {
   setCleanerCalendarFetch(undefined);
   setCleanerAlertFetch(undefined);
   resetLiveDesks();
+  cleanupDesks();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -247,5 +251,54 @@ describe("Cleaner Core on the property hub", () => {
 
     ok(await desk.saveSources({ done: true, dropJobs: true }));
     expect(hubOf(root).setAside()).toEqual([]);
+  });
+});
+
+describe("Cleaner Core keeps the door code in the hub", () => {
+  const GATE = ["4", "4", "1", "7"].join("");
+
+  it("save_door_code seals into door-access.json, not cleaner-live.json", async () => {
+    const { root, desk } = openDesk();
+    await withJobs(desk);
+    expect(live(root)).not.toHaveProperty("pinSeal");
+    expect(live(root)).not.toHaveProperty("lockLocation");
+    const door = JSON.parse(readFileSync(join(root, "door-access.json"), "utf8")) as Record<string, unknown>;
+    expect(door.pinSeal).toBeTruthy();
+    expect(door.lockLocation).toBe("back door");
+    expect(JSON.stringify(door)).not.toContain(DOOR_CODE);
+  });
+
+  it("upload refuses digits in a waiting draft and keeps the link", async () => {
+    const { desk } = await liveGroup();
+    await desk.inbound({ id: "q", from: CLEANER, text: "How do I get in the side gate?", channel: "group" });
+    const draftId = await idOf(desk, "How do I get in the side gate?");
+    ok(await desk.saveDraft({ replyTo: draftId, text: `It opens with ${GATE}.` }, HARNESS_KEY));
+    const link = codeOf(ok(await desk.saveDoorCode({}, HARNESS_KEY)));
+    const refusedUpload = await desk.uploadDoorCode(link, { code: GATE });
+    expect(refusedUpload).toEqual({ status: 400, body: { ok: false, error: CODE_IN_DRAFT } });
+    expect(JSON.stringify(refusedUpload)).not.toContain(GATE);
+    ok(await desk.saveDraft({ replyTo: draftId, drop: true }, HARNESS_KEY));
+    expect((await desk.uploadDoorCode(link, { code: GATE })).status).toBe(200);
+  });
+
+  it("upload refuses digits in a saved answer", async () => {
+    const { desk } = await liveGroup();
+    ok(await approvedOnDesk((confirmation) => desk.saveAnswer({ topic: "Gate", answer: `The side gate opens with ${GATE}.`, ...(confirmation ? { confirmation } : {}) }, HARNESS_KEY)));
+    const link = codeOf(ok(await desk.saveDoorCode({}, HARNESS_KEY)));
+    expect(await desk.uploadDoorCode(link, { code: GATE })).toEqual({ status: 400, body: { ok: false, error: CODE_IN_SAVED_ANSWER("Gate") } });
+  });
+
+  it("a link from save_door_code opens at /door-code/ and the old /cleaner-core/door-code/ path", async () => {
+    const { desk } = openDesk();
+    await property(desk);
+    ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }], done: true }));
+    ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" }));
+    const issued = ok(await desk.saveDoorCode({}, PIN_KEY));
+    const url = String(issued.uploadUrl);
+    expect(url.startsWith(`${PUBLIC}/door-code/`)).toBe(true);
+    const code = codeOf(issued);
+    expect(doorCodeUploadCode(`/door-code/${code}`)).toBe(code);
+    expect(doorCodeUploadCode(`/cleaner-core/door-code/${code}`)).toBe(code);
+    expect(await desk.uploadLinkOpen("door-code", code)).toMatchObject({ open: true });
   });
 });

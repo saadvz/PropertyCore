@@ -29,7 +29,9 @@ import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jo
 import { isInjuryReport } from "./injury";
 import { GroupNotConfirmed } from "./groupThread";
 import { cleanerPinStatusUrl, deleteLiveGroup, isAllowlisted, liveSmsOn, sendLiveGroup, sendLiveSms } from "./liveSms";
-import { openPin, sealPin, serverPinKey, type PinSeal } from "../hub/pinSeal";
+import { serverPinKey } from "../hub/pinSeal";
+import { LOCK_LOCATION_REFUSED, type DoorAccess } from "../hub/doorAccess";
+import { HUB_DOOR_CODE_PREFIX } from "../hub/paths";
 import { containsCodeToken, redactPhone } from "./redact";
 import { isScratchTestNumber } from "./scratch";
 import { guestyLiteSource, icalSource, type BookingSource, type GoogleEventList } from "../hub/sources";
@@ -89,7 +91,8 @@ export const CALENDAR_UPLOAD_PREFIX = "/cleaner-core/calendar-link/";
 const CALENDAR_UPLOAD_NEXT =
   'From your own cloud computer, POST JSON {"url": "<calendar link>"} to uploadUrl with Content-Type: application/json, using the link from your secure card. Never put it in chat or in a tool argument. Then call get_state to confirm.';
 /** Where Grok's own computer posts the door code from its secure card. The rest of the path is the one-time code. */
-export const DOOR_CODE_UPLOAD_PREFIX = "/cleaner-core/door-code/";
+/** The hub's door code link. Cleaner Core's older prefix still leads to it (hubDoorCode). */
+export const DOOR_CODE_UPLOAD_PREFIX = HUB_DOOR_CODE_PREFIX;
 const DOOR_CODE_UPLOAD_NEXT =
   'From your own cloud computer, POST JSON {"code": "<door code>"} to uploadUrl with Content-Type: application/json, using the code from your secure card. Never put it in chat. Then call get_state to confirm.';
 const DOOR_CODE_UPLOAD_REFUSED = "Send the door code as 4 to 8 digits in code.";
@@ -211,7 +214,6 @@ const MAX_MESSAGE_TEXT = 300;
 const UNREAD_REASONS = new Set<ReceiveResult["reason"]>(["disabled", "duplicate", "scratch-only", "wrong-tenant"]);
 const MAX_CONTACTS = 4;
 const MAX_NAME = 40;
-const MAX_LOCK_LOCATION = 80;
 const MAX_CHECKLIST = 12;
 const MAX_CHECKLIST_ITEM = 80;
 const MAX_INSTRUCTIONS = 300;
@@ -384,8 +386,6 @@ interface LiveFile {
   groupChat?: GroupChoice;
   /** The landlord's door-code choice when contacts share the group. */
   doorCodeTo?: "group" | "cleaner";
-  /** Where the lock is. Never digits that could be a code. */
-  lockLocation?: string;
   /** Set once the host saved a messaging schedule, or kept the defaults. */
   schedule?: Schedule;
   /** Set once the host saved cleaning preferences or said there are none. */
@@ -407,9 +407,6 @@ interface LiveFile {
   lastCheckAt?: string;
   /** The pending alert upload link: the sha256 of its code and when it expires. Never the code. */
   alertUpload?: { hash: string; expiresAt: string; by?: CleanerCaller };
-  /** The pending door code upload link, with the lock location to save with it. Never the link's code or the door code. */
-  doorCodeUpload?: { hash: string; expiresAt: string; lockLocation?: string; by?: CleanerCaller };
-  pinSeal?: PinSeal;
   pinSend?: PinSend;
   texting?: boolean;
   /**
@@ -618,8 +615,6 @@ export class LiveDesk {
   private engineRevision = 0;
   /** The door-code key from the call that made the calendar upload link, so the upload can check the link. */
   private calendarUploadKey: Buffer | undefined;
-  /** The door-code key from the call that made the door code upload link, so the upload seals with it. */
-  private doorCodeUploadKey: Buffer | undefined;
   private pin: string | undefined;
   private engine: CleanerCore | undefined;
   /** A setup save changed what the engine reads when it opens. The next serial step reopens it. */
@@ -660,6 +655,7 @@ export class LiveDesk {
         return this.carriesCode(text) || this.leaks(text);
       },
       leaks: (text) => this.leaks(text),
+      codeRefused: (code, lockLocation) => this.codeRefused(code, lockLocation),
       wouldCancel: (claims) =>
         this.env().CLEANER_CORE_ENABLED?.trim() === "0"
           ? Promise.resolve([])
@@ -743,17 +739,10 @@ export class LiveDesk {
 
   /** True when `token`, read as a base64 or base64url key, opens the sealed door code. */
   private opensSavedCode(token: string): boolean {
-    const seal = this.file.pinSeal;
-    if (!seal) return false;
+    if (!this.door().saved()) return false;
     for (const encoding of ["base64", "base64url"] as const) {
       const key = Buffer.from(token, encoding);
-      if (key.length !== 32) continue;
-      try {
-        openPin(seal, key);
-        return true;
-      } catch {
-        // Not this key.
-      }
+      if (key.length === 32 && this.door().opensWith(key)) return true;
     }
     return false;
   }
@@ -949,9 +938,27 @@ export class LiveDesk {
    * made with another key stays shut.
    */
   private openSeal(pinKey?: Buffer): void {
-    if (this.pin || !this.file.pinSeal) return;
-    const key = this.keyFor(pinKey);
-    if (key) this.unlock(key);
+    if (this.pin) return;
+    const code = this.door().codeForChecks(pinKey);
+    if (code) this.pin = code;
+  }
+
+  /** The property's door access in its hub: the sealed code, the lock location, and the upload link. */
+  private door(): DoorAccess {
+    return this.hub.doorAccess(this.env);
+  }
+
+  /**
+   * Cleaner Core's checks on a door code being saved, run by the hub for save_door_code and for its
+   * upload link: the lock location may not carry it, and its digits may not already sit in a saved
+   * answer or a waiting draft. The refusal says where, never the digits.
+   */
+  private codeRefused(code: string, lockLocation?: string): string | undefined {
+    if (lockLocation && this.carriesCode(lockLocation, code)) return LOCK_LOCATION_REFUSED;
+    const inAnswer = (this.file.savedAnswers ?? []).find((item) => containsCodeToken(item.topic, code) || containsCodeToken(item.answer, code));
+    if (inAnswer) return CODE_IN_SAVED_ANSWER(containsCodeToken(inAnswer.topic, code) ? undefined : inAnswer.topic);
+    if ((this.file.drafts ?? []).some((draft) => containsCodeToken(draft.text, code))) return CODE_IN_DRAFT;
+    return undefined;
   }
 
   /**
@@ -965,12 +972,12 @@ export class LiveDesk {
     const joined = joinSplitDigits(text);
     if (saving && joined.includes(saving)) return true;
     if (this.chatCarriesDoorCode(text) || this.chatCarriesDoorCode(joined)) return true;
-    return !this.pin && Boolean(this.file.pinSeal) && /\d{4,}/.test(joined);
+    return !this.pin && this.door().saved() && /\d{4,}/.test(joined);
   }
 
   /** True when a door code is saved, open in memory or only sealed. */
   private codeSaved(): boolean {
-    return Boolean(this.pin || this.file.pinSeal);
+    return Boolean(this.pin || this.door().saved());
   }
 
   chatCarriesDoorCode(text: string): boolean {
@@ -1289,75 +1296,45 @@ export class LiveDesk {
   }
 
   private saveDoorCodeNow(input: { code?: string; lockLocation?: string }, pinKey: Buffer | undefined): ToolReply {
-    if (!this.file.cleaner || !this.file.propertyId) return this.fail("Save the host and the cleaner first.");
-    if (!this.hasSources() && !isScratchPropertyAddress(this.place.address)) return this.fail("Save the calendar link first.");
+    const before = this.doorCodeBefore();
+    if (before) return this.fail(before);
     const code = input.code?.trim() ?? "";
     // A Grok Bot's secure card can't fill a tool argument, so no code means: make an upload link.
     if (!code) return this.issueDoorCodeUpload(input.lockLocation?.trim(), pinKey);
     if (!/^\d{4,8}$/.test(code)) return this.fail(/\d/.test(code) || code.length > 12 ? "Send the door code as 4 to 8 digits." : this.words().maskedCode);
-    const lockLocation = input.lockLocation?.trim();
     this.openSeal(pinKey);
-    // No run of 4 or more digits, even split like "80 88", and never the saved code or the one being saved.
-    if (lockLocation && (lockLocation.length > MAX_LOCK_LOCATION || /\d{4,}/.test(joinSplitDigits(lockLocation)) || this.carriesCode(lockLocation, code))) {
-      return this.fail(`Say where the lock is in under ${MAX_LOCK_LOCATION} characters, with no code or long number in it.`);
-    }
-    const key = this.keyFor(pinKey);
-    if (!key) return this.fail(PIN_KEY_MISSING);
-    // The seal is refused when the code's digits already sit elsewhere in the file. Say where, without the digits.
-    const inAnswer = (this.file.savedAnswers ?? []).find((item) => containsCodeToken(item.topic, code) || containsCodeToken(item.answer, code));
-    if (inAnswer) return this.fail(CODE_IN_SAVED_ANSWER(containsCodeToken(inAnswer.topic, code) ? undefined : inAnswer.topic));
-    if ((this.file.drafts ?? []).some((draft) => containsCodeToken(draft.text, code))) return this.fail(CODE_IN_DRAFT);
-    const previousPin = this.pin;
-    const previousSeal = this.file.pinSeal;
-    const previousLock = this.file.lockLocation;
+    const previousLock = this.door().lockLocation();
+    // The hub seals it in door-access.json, after this desk's checks (codeRefused) and its own.
+    const saved = this.door().save(code, input.lockLocation, pinKey);
+    if (!saved.ok) return this.fail(saved.error);
     this.pin = code;
-    if (lockLocation !== undefined) this.keep("lockLocation", lockLocation || undefined);
-    for (let attempt = 0; attempt < 8; attempt++) {
-      this.file.pinSeal = sealPin(code, key);
-      const json = `${JSON.stringify(this.file)}\n`;
-      // The code as its own token (an id that only holds the digits is fine); the key anywhere.
-      if (containsCodeToken(json, code) || json.includes(key.toString("base64"))) continue;
-      this.writeFile(json);
-      // The engine names the lock in the door code text, so it reopens with the new location.
-      if (this.file.lockLocation !== previousLock) this.stale = true;
-      return this.reply({
-        next: `Saved the door code. It goes only to the cleaner, ${this.codeGoesToGroup() ? "in the cleaning group" : "in a private text"}, after you say the guests have left.`,
-      });
-    }
-    this.pin = previousPin;
-    this.file.pinSeal = previousSeal;
-    this.keep("lockLocation", previousLock);
-    return this.fail("Could not seal the door code.");
+    // The engine names the lock in the door code text, so it reopens with the new location.
+    if (this.door().lockLocation() !== previousLock) this.stale = true;
+    return this.reply({ next: this.doorCodeSavedLine() });
+  }
+
+  /** Why the door code can't be saved yet, or undefined. */
+  private doorCodeBefore(): string | undefined {
+    if (!this.file.cleaner || !this.file.propertyId) return "Save the host and the cleaner first.";
+    if (!this.hasSources() && !isScratchPropertyAddress(this.place.address)) return "Save the calendar link first.";
+    return undefined;
+  }
+
+  private doorCodeSavedLine(): string {
+    return `Saved the door code. It goes only to the cleaner, ${this.codeGoesToGroup() ? "in the cleaning group" : "in a private text"}, after you say the guests have left.`;
   }
 
   /**
-   * Makes a one-time upload link for the door code. Only the link code's sha256, its expiry, and the
-   * lock location are kept. A new link replaces the last one.
+   * Makes the hub's one-time upload link for the door code. Only the link code's sha256, its expiry,
+   * and the lock location are kept. A new link replaces the last one.
    */
   private issueDoorCodeUpload(lockLocation: string | undefined, pinKey: Buffer | undefined): ToolReply {
     this.openSeal(pinKey);
-    if (lockLocation && (lockLocation.length > MAX_LOCK_LOCATION || /\d{4,}/.test(joinSplitDigits(lockLocation)) || this.carriesCode(lockLocation))) {
-      return this.fail(`Say where the lock is in under ${MAX_LOCK_LOCATION} characters, with no code or long number in it.`);
-    }
-    if (!this.keyFor(pinKey)) return this.fail(PIN_KEY_MISSING);
-    const base = publicBaseUrl(this.env());
-    if (!base) return this.fail(UPLOAD_LINK_OFF);
-    const origin = base;
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const code = randomBytes(32).toString("base64url");
-      const uploadUrl = `${origin}${DOOR_CODE_UPLOAD_PREFIX}${code}`;
-      if (this.leaks(uploadUrl)) continue;
-      this.file.doorCodeUpload = {
-        hash: uploadHash(code),
-        expiresAt: new Date(this.now().getTime() + UPLOAD_MINUTES * 60_000).toISOString(),
-        ...(lockLocation ? { lockLocation } : {}),
-        ...(currentCaller() ? { by: currentCaller() } : {}),
-      };
-      this.doorCodeUploadKey = pinKey;
-      this.persist();
-      return this.reply({ uploadUrl, expiresInMinutes: UPLOAD_MINUTES, next: this.words().doorCodeUploadNext });
-    }
-    return this.fail("That didn't work. Try again.");
+    if (lockLocation && this.carriesCode(lockLocation)) return this.fail(LOCK_LOCATION_REFUSED);
+    const caller = currentCaller();
+    const issued = this.door().issueUpload(lockLocation, pinKey, publicBaseUrl(this.env()), caller);
+    if (!issued.ok) return this.fail(issued.error);
+    return this.reply({ uploadUrl: issued.uploadUrl, expiresInMinutes: issued.expiresInMinutes, next: this.words().doorCodeUploadNext });
   }
 
   /**
@@ -1366,29 +1343,17 @@ export class LiveDesk {
    */
   uploadDoorCode(code: string, body: Record<string, unknown>): Promise<{ status: 200 | 400 | 404; body: { ok: boolean; message?: string; error?: string } }> {
     return this.serial(async () => {
-      const pending = this.file.doorCodeUpload;
-      if (!pending || !sameHash(uploadHash(code), pending.hash)) return { status: 404, body: { ok: false, error: UPLOAD_GONE } };
-      if (this.now().getTime() >= Date.parse(pending.expiresAt)) {
-        delete this.file.doorCodeUpload;
-        this.doorCodeUploadKey = undefined;
-        this.persist();
-        return { status: 404, body: { ok: false, error: UPLOAD_GONE } };
-      }
-      const doorCode = typeof body.code === "string" ? body.code.trim() : typeof body.code === "number" ? String(body.code) : "";
-      if (!/^\d{4,8}$/.test(doorCode)) return { status: 400, body: { ok: false, error: DOOR_CODE_UPLOAD_REFUSED } };
-      const lockLocation = typeof body.lockLocation === "string" ? body.lockLocation : pending.lockLocation;
-      const key = this.doorCodeUploadKey;
-      delete this.file.doorCodeUpload;
-      const saved = this.saveDoorCodeNow({ code: doorCode, ...(lockLocation !== undefined ? { lockLocation } : {}) }, key);
-      if (!saved.ok) {
-        // A refused code keeps the link, so Grok can post again.
-        this.file.doorCodeUpload = pending;
-        this.persist();
-        return { status: 400, body: { ok: false, error: saved.error } };
-      }
-      this.doorCodeUploadKey = undefined;
-      this.persist();
-      return { status: 200, body: { ok: true, message: String(saved.result.next) } };
+      const door = this.door();
+      const before = door.uploadLinkOpen(code).open ? this.doorCodeBefore() : undefined;
+      // A refused code keeps the link, so Grok can post again.
+      if (before) return { status: 400, body: { ok: false, error: before } };
+      this.openSeal();
+      const previousLock = door.lockLocation();
+      const result = door.upload(code, body);
+      if (result.status !== 200) return result;
+      this.pin = door.codeForChecks();
+      if (door.lockLocation() !== previousLock) this.stale = true;
+      return { status: 200, body: { ok: true, message: this.doorCodeSavedLine() } };
     });
   }
 
@@ -3261,7 +3226,7 @@ export class LiveDesk {
         groupThread: this.groupOn(),
       },
       ...(file.schedule ? { schedule: this.reviewSchedule(file.schedule) } : {}),
-      access: file.lockLocation ? { lockLocation: file.lockLocation } : {},
+      access: this.door().lockLocation() ? { lockLocation: this.door().lockLocation() } : {},
       preferences: file.preferences,
     };
   }
@@ -3429,7 +3394,7 @@ export class LiveDesk {
       ownerPhone: file.host,
       cleaner: { phone: file.cleaner, approved: true },
       ...(this.pin ? { pin: this.pin } : {}),
-      ...(file.lockLocation ? { lockLocation: file.lockLocation } : {}),
+      ...(this.door().lockLocation() ? { lockLocation: this.door().lockLocation() } : {}),
       hostName: file.business,
       consented: file.texting === true,
       allowlist: (phone: string) => isAllowlisted(env(), phone),
@@ -3618,8 +3583,10 @@ export class LiveDesk {
   uploadLinkOpen(kind: "door-code" | "calendar-link" | "alert-routine", code: string): Promise<{ open: boolean; name?: string; by?: CleanerCaller }> {
     // A calendar link is the property's, in its hub.
     if (kind === "calendar-link") return Promise.resolve(this.hub.uploadLinkOpen(code) as { open: boolean; name?: string; by?: CleanerCaller });
+    // A door code link is the property's too, in its hub's door access.
+    if (kind === "door-code") return this.serial(async () => this.door().uploadLinkOpen(code) as { open: boolean; by?: CleanerCaller });
     return this.serial(async () => {
-      const pending = kind === "door-code" ? this.file.doorCodeUpload : this.file.alertUpload;
+      const pending = this.file.alertUpload;
       if (!pending || !sameHash(uploadHash(code), pending.hash)) return { open: false };
       if (this.now().getTime() >= Date.parse(pending.expiresAt)) return { open: false };
       return { open: true, ...(pending.by ? { by: pending.by } : {}) };
@@ -3684,16 +3651,13 @@ export class LiveDesk {
     writeFileSync(this.path, json);
   }
 
+  /** Opens the hub's sealed code with exactly this key. A seal made with another key stays shut. */
   private unlock(pinKey: Buffer): "ready" | "closed" {
-    if (!this.file.pinSeal) return this.pin ? "ready" : "closed";
-    try {
-      const opened = openPin(this.file.pinSeal, pinKey);
-      if (!/^\d{4,8}$/.test(opened)) return "closed";
-      this.pin = opened;
-      return "ready";
-    } catch {
-      return "closed";
-    }
+    if (!this.door().saved()) return this.pin ? "ready" : "closed";
+    const opened = this.door().opensWith(pinKey);
+    if (!opened) return "closed";
+    this.pin = opened;
+    return "ready";
   }
 
   private noteAccepted(sid: string): void {

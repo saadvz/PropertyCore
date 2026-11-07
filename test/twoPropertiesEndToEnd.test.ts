@@ -52,7 +52,7 @@ async function cleaning(property: Property, scratch: typeof LANE) {
   await tool("save_calendar_link", { ...p, url: CALENDAR_URL });
   const link = await tool("save_door_code", p);
   const path = new URL(String(link.structured?.uploadUrl)).pathname;
-  expect(path.startsWith(`/t/${accountId}/p/${property.id}/cleaner-core/door-code/`)).toBe(true);
+  expect(path.startsWith(`/t/${accountId}/p/${property.id}/door-code/`)).toBe(true);
   const upload = await m.app.http(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: scratch.pin }) });
   expect(upload.status).toBe(200);
   await tool("set_up_texting", p);

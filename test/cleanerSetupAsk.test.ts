@@ -443,7 +443,7 @@ describe("Cleaner Core times: the usual times for every turnover", () => {
   });
 });
 
-const DOOR_PREFIX = `${PUBLIC}/cleaner-core/door-code/`;
+const DOOR_PREFIX = `${PUBLIC}/door-code/`;
 
 describe("Cleaner Core setup: the door code from Grok's secure card", () => {
   async function atDoor(wired: WiredApp) {

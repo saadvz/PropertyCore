@@ -64,7 +64,7 @@ async function setUp(side: Omit<Side, "token">, assistant: CleanerAssistant): Pr
   const link = await call("save_door_code", {});
   const uploadUrl = String(link.structured?.uploadUrl);
   const property = m.registry.get(side.tenant.id)!.properties[0]!;
-  expect(new URL(uploadUrl).pathname.startsWith(`/t/${side.tenant.id}/p/${property.id}/cleaner-core/door-code/`)).toBe(true);
+  expect(new URL(uploadUrl).pathname.startsWith(`/t/${side.tenant.id}/p/${property.id}/door-code/`)).toBe(true);
   const upload = await m.app.http(new URL(uploadUrl).pathname, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: side.scratch.pin }) });
   expect(upload.status).toBe(200);
   await call("set_up_texting");

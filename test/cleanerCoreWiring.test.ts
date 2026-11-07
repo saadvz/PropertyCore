@@ -542,7 +542,7 @@ describe("Cleaner Core live wiring", () => {
     const serverKey = wired.env().CLEANER_CORE_PIN_KEY ?? "";
     expect(Buffer.from(serverKey, "base64")).toHaveLength(32);
     expect(serverSealed.raw).not.toContain(serverKey);
-    const savedPath = join(wired.root, "cleaner-live.json");
+    const savedPath = join(wired.root, "door-access.json");
     const serverSeal = readFileSync(savedPath, "utf8");
     expect(serverSeal).toContain("pinSeal");
     expect(serverSeal).not.toContain(DOOR_CODE);

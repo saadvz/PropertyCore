@@ -183,7 +183,7 @@ describe("migrateRegistry", () => {
     // The desk's folder becomes the tenant's folder, as on the live service.
     renameSync(opened.root, dir);
     migrateRegistry(root, NOW);
-    const moved = JSON.parse(readFileSync(join(dir, "properties", "prp_lane000001", "cleaner-live.json"), "utf8")) as { pinSeal: Parameters<typeof openPin>[0] };
+    const moved = JSON.parse(readFileSync(join(dir, "properties", "prp_lane000001", "door-access.json"), "utf8")) as { pinSeal: Parameters<typeof openPin>[0] };
     expect(openPin(moved.pinSeal, PIN_KEY)).toBe(DOOR_CODE);
   });
 });
