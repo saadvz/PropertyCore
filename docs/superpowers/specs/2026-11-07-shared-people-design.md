@@ -102,6 +102,8 @@ Cleaner Core. Writes are atomic and one at a time on an in-memory copy, as in
 interface PeopleFile {
   schemaVersion: 1;
   people: Person[];
+  hosts: Record<string, string>;  // propertyId → the landlord's phone, for routing only
+  movedAt?: string;               // set when the move from the old files finished
 }
 
 interface Person {
