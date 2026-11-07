@@ -205,7 +205,7 @@ them, with the requirement Tour Core (not the agent) assigns:
 | --- | --- | --- |
 | `RUNTIME`, `PUBLIC_ENDPOINT` | required before property | BOOTSTRAP |
 | `GROK_OPERATOR` | required before property | CONNECT |
-| `VISITOR_MESSAGING`, `STORAGE`, `ACCESS` (DURIN_DEMO accepted) | required before property | INFRASTRUCTURE |
+| `VISITOR_MESSAGING`, `STORAGE`, `ACCESS` (manifest `accessProvider: DURIN_DEMO` accepted) | required before property | INFRASTRUCTURE |
 | `PROPERTY` | required to publish | PROPERTY |
 | `OPERATOR_ALERTS` ("Tour updates") | recommended; offered only after the property is saved; turned on or declined with `save_settings`; chosen but not connected → `CONNECT_OPERATOR_ALERTS` | PROPERTY |
 | `READINESS`, `PRACTICE_TOUR` | required to publish; run automatically | VALIDATE |
@@ -224,9 +224,9 @@ property setup early. Every step carries a `rule`: Tour Core decides the
 order, so Grok doesn't offer alternatives or ask the operator what to do
 next. Technical values (public address, connector address, providers) are
 under `technical`, marked for Grok only. A later storage provider
-(Google Drive as `STORAGE`) or live Durin Access Platform credentials
+(Google Drive as `STORAGE`) or live door access credentials
 (`ACCESS`) changes what this returns; the Install Tour Core skill doesn't
-change. Tour Core is already built on the Durin Access Platform.
+change.
 
 <!-- historical-tools: These names are the install-layer tools still defined in src/install/tools.ts. The landlord connector does not list them. -->
 ### Installation tools (MCP)
