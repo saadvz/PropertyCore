@@ -119,7 +119,7 @@ function evaluate({ reservation, prospect, consent, verification, doorId, reques
   }
 
   if (!durinHealth || durinHealth.healthy !== true) {
-    return deny("DENY_DURIN_UNHEALTHY", `Durin is not healthy${durinHealth?.detail ? `: ${durinHealth.detail}` : ""}`);
+    return deny("DENY_DURIN_UNHEALTHY", `The door system is not healthy${durinHealth?.detail ? `: ${durinHealth.detail}` : ""}`);
   }
 
   return { allowed: true, code: "ALLOW", reason: "all access checks passed" };
