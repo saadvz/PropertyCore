@@ -80,7 +80,10 @@ export interface HubRead {
 
 const hubs = new Map<string, Hub>();
 
-/** The property folder's hub, one per folder. */
+/**
+ * The property folder's hub, one per folder. The first opener's deps win, including its clock, which
+ * the door access window check uses: every flow passes the real clock in production, so they agree.
+ */
 export function hubFor(root: string, deps: HubDeps): Hub {
   const existing = hubs.get(root);
   if (existing) return existing;

@@ -2069,6 +2069,7 @@ class Engine implements CleanerCore {
    */
   private async requestAccess(job: Job): Promise<{ code: string; lockLocation?: string } | undefined> {
     const checkout = this.latestFact(job.id, "checkout");
+    // deliverPin reaches here only with a checkout fact (pinKey needs one), so this guard never drops a release silently.
     if (!this.access || !this.cleanerPhone || !checkout) return undefined;
     const window = cleaningWindow({ checkoutDate: job.checkoutDate, checkoutTime: hm(checkout.minutes), nextCheckInDate: job.nextCheckInDate, timeZone: this.options.property.timeZone });
     const grant = await this.access.request({ person: this.cleanerPhone, window, purpose: "cleaning", jobId: job.id });

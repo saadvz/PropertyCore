@@ -99,6 +99,11 @@ export class DoorAccess {
   private file: DoorAccessFile;
   /** The open code, only in memory. */
   private open: string | undefined;
+  /**
+   * The request key that last saved or opened the code, kept in memory with it, so a later request
+   * with no key of its own (a reminder pass) opens it the same way. Undefined means the server's key.
+   */
+  private openKey: Buffer | undefined;
   private env: () => NodeJS.ProcessEnv = () => ({});
   private provider: AccessProvider = ownCode;
   /** The key of the call that made the pending upload link. Only in memory. */
@@ -139,6 +144,7 @@ export class DoorAccess {
       const opened = openPin(this.file.pinSeal, usable);
       if (!CODE_SHAPE.test(opened)) return undefined;
       this.open = opened;
+      this.openKey = key;
       return opened;
     } catch {
       return undefined;
@@ -150,6 +156,7 @@ export class DoorAccess {
     rmSync(doorAccessPath(this.root), { force: true });
     this.file = { schemaVersion: 1 };
     this.open = undefined;
+    this.openKey = undefined;
     this.uploadKey = undefined;
   }
 
@@ -165,7 +172,7 @@ export class DoorAccess {
   request(request: AccessRequest): AccessGrant {
     const seal = this.file.pinSeal;
     if (!seal) return { ok: false, reason: "no-code" };
-    const key = this.keyFor(request.key);
+    const key = this.keyFor(request.key ?? this.openKey);
     if (!key) return { ok: false, reason: "no-key" };
     let code: string;
     try {
@@ -204,6 +211,7 @@ export class DoorAccess {
       writeFileAtomic(doorAccessPath(this.root), json);
       this.file = next;
       this.open = trimmed;
+      this.openKey = key;
       return { ok: true };
     }
     return { ok: false, reason: "seal", error: SEAL_FAILED };
@@ -224,7 +232,7 @@ export class DoorAccess {
       const uploadUrl = `${base}${HUB_DOOR_CODE_PREFIX}${code}`;
       if (this.guards()?.leaks?.(uploadUrl)) continue;
       const expiresAt = new Date(this.now().getTime() + UPLOAD_MINUTES * 60_000).toISOString();
-      this.write({ ...this.file, upload: { hash: uploadHash(code), expiresAt, ...(lock ? { lockLocation: lock } : {}), ...(by ? { by } : {}) } });
+      if (!this.write({ ...this.file, upload: { hash: uploadHash(code), expiresAt, ...(lock ? { lockLocation: lock } : {}), ...(by ? { by } : {}) } })) return { ok: false, error: SEAL_FAILED };
       this.uploadKey = key;
       return { ok: true, uploadUrl, expiresInMinutes: UPLOAD_MINUTES };
     }
@@ -248,6 +256,7 @@ export class DoorAccess {
       const code = openPin(this.file.pinSeal, key);
       if (!CODE_SHAPE.test(code)) return undefined;
       this.open = code;
+      this.openKey = key;
       return code;
     } catch {
       return undefined;
@@ -263,6 +272,7 @@ export class DoorAccess {
     if (!pending || !sameHash(uploadHash(code), pending.hash)) return { status: 404, body: { ok: false, error: UPLOAD_GONE } };
     if (this.now().getTime() >= Date.parse(pending.expiresAt)) {
       const { upload: _gone, ...rest } = this.file;
+      // Removing the link can't add the code to the file; a refused write just leaves an expired link.
       this.write(rest);
       this.uploadKey = undefined;
       return { status: 404, body: { ok: false, error: UPLOAD_GONE } };
@@ -281,12 +291,13 @@ export class DoorAccess {
     return { status: 200, body: { ok: true } };
   }
 
-  /** Writes the file, refusing one that would hold the open code as its own token. */
-  protected write(next: DoorAccessFile): void {
+  /** Writes the file. False, with nothing written, when it would hold the open code as its own token. */
+  protected write(next: DoorAccessFile): boolean {
     const json = `${JSON.stringify(next)}\n`;
-    if (this.open && holdsCodeToken(json, this.open)) throw new Error(SEAL_FAILED);
+    if (this.open && holdsCodeToken(json, this.open)) return false;
     writeFileAtomic(doorAccessPath(this.root), json);
     this.file = next;
+    return true;
   }
 
   protected current(): DoorAccessFile {

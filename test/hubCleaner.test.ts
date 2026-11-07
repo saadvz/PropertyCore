@@ -374,3 +374,25 @@ describe("review fixes: the code after a re-save and after a reset", () => {
     expect(sms.sent.some((item) => item.body.includes(DOOR_CODE))).toBe(false);
   });
 });
+
+describe("review minors: the key a later release uses", () => {
+  const NEW_CODE = ["3", "8", "5", "2"].join("");
+
+  it("a release held until a later pass uses the key the code was last saved with", async () => {
+    const clock = testClock();
+    const { desk, sms, env } = openHarnessDesk([HOST, CLEANER], "0", clock.now);
+    await setUp(desk, { groupChat: "cleaner-only" });
+    await desk.inbound({ id: "yes-1", from: CLEANER, text: "YES" });
+    await desk.inbound({ id: "yes-2", from: CLEANER, text: "YES" });
+    clock.advance(Date.parse("2026-10-18T16:00:00.000Z") - clock.now().getTime());
+    // Sends are held, so the host's word clears the release but nothing goes out yet.
+    env.CLEANER_CORE_LIVE_SMS = "0";
+    await desk.markGuestsLeft({ confirmed: true }, HARNESS_KEY);
+    // The host saves a new code through a call carrying another key. There's no server key.
+    const other = Buffer.alloc(32, 7);
+    ok(await desk.saveDoorCode({ code: NEW_CODE, lockLocation: LOCK }, other));
+    env.CLEANER_CORE_LIVE_SMS = "1";
+    await desk.runReminders();
+    expect(sms.sent.filter((item) => item.to === CLEANER && item.body.includes(NEW_CODE))).toHaveLength(1);
+  });
+});

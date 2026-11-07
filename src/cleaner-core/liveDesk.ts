@@ -616,8 +616,6 @@ export class LiveDesk {
   /** The door-code key from the call that made the calendar upload link, so the upload can check the link. */
   private calendarUploadKey: Buffer | undefined;
   private pin: string | undefined;
-  /** The request key that opened the code, kept in memory with it, so a later tick can ask the hub. */
-  private openedWith: Buffer | undefined;
   /** Why the hub refused door access during this call, for mark_guests_left's reply. */
   private accessRefusal: AccessRefusal | undefined;
   private engine: CleanerCore | undefined;
@@ -946,17 +944,16 @@ export class LiveDesk {
     const code = this.door().codeForChecks(pinKey);
     if (!code) return;
     this.pin = code;
-    if (pinKey) this.openedWith = pinKey;
   }
 
   /**
-   * The engine's door access: the hub's request, with the key that opened the code (else the server's
-   * key), the way the engine held the open code before. The refusal is kept for mark_guests_left.
+   * The engine's door access: the hub's request. With no key of its own, the hub opens the code with
+   * the key that last saved or opened it, else the server's key. The refusal is kept for mark_guests_left.
    */
   private doorPort(): DoorAccessPort {
     return {
       request: async (input) => {
-        const grant = this.door().request({ person: input.person, window: input.window, purpose: input.purpose, ...(this.openedWith ? { key: this.openedWith } : {}) });
+        const grant = this.door().request({ person: input.person, window: input.window, purpose: input.purpose });
         this.accessRefusal = grant.ok ? undefined : grant.reason;
         return grant;
       },
@@ -965,7 +962,7 @@ export class LiveDesk {
   }
 
   private accessRefusedLines(): AccessRefusedLines {
-    return { "no-code": PIN_KEY_MISSING, "no-key": PIN_KEY_MISSING, sealed: PIN_REENTER, "window-over": DOOR_WINDOW_OVER };
+    return { "no-code": "Save the door code first.", "no-key": PIN_KEY_MISSING, sealed: PIN_REENTER, "window-over": DOOR_WINDOW_OVER };
   }
 
   /** The property's door access in its hub: the sealed code, the lock location, and the upload link. */
@@ -2641,7 +2638,6 @@ export class LiveDesk {
       }
       this.file = {};
       this.pin = undefined;
-      this.openedWith = undefined;
       this.accessRefusal = undefined;
       this.uploadKey = undefined;
       this.engine = undefined;
@@ -3696,7 +3692,6 @@ export class LiveDesk {
     const opened = this.door().opensWith(pinKey);
     if (!opened) return "closed";
     this.pin = opened;
-    this.openedWith = pinKey;
     return "ready";
   }
 

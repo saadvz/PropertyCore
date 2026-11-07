@@ -250,3 +250,24 @@ describe("hub door access: the request", () => {
     expect(door.codeForChecks(KEY)).toBe(OTHER);
   });
 });
+
+describe("hub door access: review minors", () => {
+  it("a link whose stored fields would hold the open code is refused, not thrown", () => {
+    const { root, door } = open();
+    door.save(CODE, undefined, KEY);
+    const before = fileOf(root);
+    const issued = door.issueUpload(undefined, KEY, "https://cleaner.example.test", { assistant: "grok", connectionId: CODE });
+    expect(issued.ok).toBe(false);
+    expect(JSON.stringify(issued)).not.toContain(CODE);
+    expect(fileOf(root)).toBe(before);
+  });
+
+  it("a request with no key uses the key the code was last saved with, then the server's", () => {
+    const { root, door } = open();
+    door.save(CODE, undefined, KEY);
+    expect(door.request({ person: "+15555550123", window: { from: "2026-11-07T15:00:00Z", until: "2026-11-09T05:00:00Z" }, purpose: "cleaning" })).toMatchObject({ ok: true, code: CODE });
+    resetHubs();
+    // After a restart nothing is in memory: with no server key there's no key.
+    expect(open(root).door.request({ person: "+15555550123", window: { from: "2026-11-07T15:00:00Z", until: "2026-11-09T05:00:00Z" }, purpose: "cleaning" })).toEqual({ ok: false, reason: "no-key" });
+  });
+});
