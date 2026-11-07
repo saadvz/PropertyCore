@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { savedCalendars } from "../src/hub/calendars";
 import { hubFor, resetHubs, type HubGuards } from "../src/hub/hub";
 import { hubCalendarCode } from "../src/hub/paths";
+import { setCalendarFetch } from "../src/hub/calendarFetch";
 
 /** The property hub: details and calendars in hub.json. Made-up links and a made-up door code only. */
 
@@ -15,6 +16,7 @@ const roots: string[] = [];
 
 afterEach(() => {
   resetHubs();
+  setCalendarFetch(undefined);
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -234,5 +236,90 @@ describe("hub upload flow", () => {
     replies.push(await hub.uploadCalendarLink(code, { url: secret }));
     replies.push(await hub.uploadCalendarLink(code, { url: secret }));
     for (const reply of replies) expect(JSON.stringify(reply)).not.toContain("secret-token-xyz");
+  });
+});
+
+function ics(...stays: [string, string][]): string {
+  const events = stays.flatMap(([start, end], i) => ["BEGIN:VEVENT", `UID:stay-${i}`, `DTSTART;VALUE=DATE:${start}`, `DTEND;VALUE=DATE:${end}`, "SUMMARY:Guest", "END:VEVENT"]);
+  return ["BEGIN:VCALENDAR", ...events, "END:VCALENDAR"].join("\r\n");
+}
+
+/** Serves each link's body; a link not listed fails with 404. */
+function serve(bodies: Record<string, string>): void {
+  setCalendarFetch(async (url) => ({ status: url in bodies ? 200 : 404, url, async text() { return bodies[url] ?? ""; } }));
+}
+
+const googleStay = (start: string, end: string) => ({ timeZone: "America/New_York", items: [{ id: "g1", status: "confirmed", summary: "Guest", start: { date: start }, end: { date: end } }] });
+
+describe("hub calendar reads", () => {
+  it("reads every link and returns results per calendar", async () => {
+    const { hub } = open();
+    hub.setCalendars({ calendars: [{ name: "Airbnb", url: AIRBNB }, { name: "Vrbo", url: VRBO }] });
+    serve({ [AIRBNB]: ics(["20261110", "20261113"]) });
+    const read = await hub.readCalendars({ tenantId: "prop-1" });
+    expect(read.links.map((l) => [l.calendar.sourceId, l.read.ok])).toEqual([["ical:airbnb", true], ["ical:vrbo", false]]);
+    expect(read.google).toBeUndefined();
+    expect(read.googleUnread).toBe(false);
+  });
+
+  it("stores checkout dates only when every calendar read", async () => {
+    const { hub } = open();
+    hub.setCalendars({ calendars: [{ name: "Airbnb", url: AIRBNB }, { name: "Vrbo", url: VRBO }] });
+    serve({ [AIRBNB]: ics(["20261110", "20261113"]), [VRBO]: ics(["20261120", "20261122"]) });
+    await hub.readCalendars({ tenantId: "prop-1" });
+    expect(hub.checkouts()).toEqual({ dates: ["2026-11-13", "2026-11-22"], at: NOW.toISOString() });
+  });
+
+  it("a failed read keeps the last dates and sets failedAt", async () => {
+    const { hub } = open();
+    hub.setCalendars({ calendars: [{ name: "Airbnb", url: AIRBNB }, { name: "Vrbo", url: VRBO }] });
+    serve({ [AIRBNB]: ics(["20261110", "20261113"]), [VRBO]: ics(["20261120", "20261122"]) });
+    await hub.readCalendars({ tenantId: "prop-1" });
+    serve({ [AIRBNB]: ics(["20261201", "20261203"]) });
+    await hub.readCalendars({ tenantId: "prop-1" });
+    expect(hub.checkouts()).toEqual({ dates: ["2026-11-13", "2026-11-22"], at: NOW.toISOString(), failedAt: NOW.toISOString() });
+  });
+
+  it("google saved but no events keeps the last dates", async () => {
+    const { hub } = open();
+    hub.setCalendars({ google: true });
+    await hub.readCalendars({ tenantId: "prop-1", googleEvents: googleStay("2026-11-05", "2026-11-08") });
+    expect(hub.checkouts()?.dates).toEqual(["2026-11-08"]);
+    await hub.readCalendars({ tenantId: "prop-1" });
+    expect(hub.checkouts()).toMatchObject({ dates: ["2026-11-08"], failedAt: NOW.toISOString() });
+  });
+
+  it("google events that read as nothing count as unread", async () => {
+    const { hub } = open();
+    hub.setCalendars({ google: true });
+    const read = await hub.readCalendars({ tenantId: "prop-1", googleEvents: { items: [{ id: "bad" }] } });
+    expect(read.googleUnread).toBe(true);
+    expect(read.google).toBeUndefined();
+    expect(hub.checkouts()).toEqual({ dates: [], failedAt: NOW.toISOString() });
+  });
+
+  it("two calendars listing the same checkout count it once", async () => {
+    const { hub } = open();
+    hub.setCalendars({ calendars: [{ name: "Airbnb", url: AIRBNB }, { name: "Vrbo", url: VRBO }] });
+    serve({ [AIRBNB]: ics(["20261110", "20261113"]), [VRBO]: ics(["20261111", "20261113"]) });
+    await hub.readCalendars({ tenantId: "prop-1" });
+    expect(hub.checkouts()?.dates).toEqual(["2026-11-13"]);
+  });
+
+  it("google events ignored when google isn't saved", async () => {
+    const { hub } = open();
+    hub.setCalendars({ calendars: [{ name: "Airbnb", url: AIRBNB }] });
+    serve({ [AIRBNB]: ics(["20261110", "20261113"]) });
+    const read = await hub.readCalendars({ tenantId: "prop-1", googleEvents: googleStay("2026-11-05", "2026-11-08") });
+    expect(read.google).toBeUndefined();
+    expect(hub.checkouts()?.dates).toEqual(["2026-11-13"]);
+  });
+
+  it("nothing saved changes nothing", async () => {
+    const { root, hub } = open();
+    const read = await hub.readCalendars({ tenantId: "prop-1" });
+    expect(read.links).toEqual([]);
+    expect(hub.checkouts()).toBeUndefined();
+    expect(existsSync(join(root, "hub.json"))).toBe(false);
   });
 });

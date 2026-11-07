@@ -15,7 +15,10 @@ import {
   type SavedCalendar,
   type StoredCalendar,
 } from "./calendars";
-import { calendarUrlAllowed } from "./fetchLimits";
+import { interpretFeed } from "./calendar";
+import { calendarFetch } from "./calendarFetch";
+import { calendarUrlAllowed, readPublicCalendar } from "./fetchLimits";
+import { googleCalendarSource, type GoogleEventList, type SourceSnapshot } from "./sources";
 import { HUB_CALENDAR_PREFIX } from "./paths";
 import { emptyHub, hubPath, readHubFile, type HubCaller, type HubFile, type HubProperty } from "./store";
 
@@ -61,6 +64,15 @@ function sameHash(a: string, b: string): boolean {
   const left = Buffer.from(a, "hex");
   const right = Buffer.from(b, "hex");
   return left.length === 32 && right.length === 32 && timingSafeEqual(left, right);
+}
+
+/** One read of every saved calendar, for each flow to use its own way. */
+export interface HubRead {
+  links: { calendar: SavedCalendar; read: { ok: true; body: string } | { ok: false; reason: string } }[];
+  /** Undefined when Google isn't saved, no events were passed, or the events read as nothing. */
+  google?: SourceSnapshot;
+  /** Events were passed, but none of them reads as a stay or a block: a shape this reader doesn't know. */
+  googleUnread: boolean;
 }
 
 const hubs = new Map<string, Hub>();
@@ -239,6 +251,46 @@ export class Hub {
     if (!saved.ok) return { status: 400, body: { ok: false, error: CALENDAR_UPLOAD_REFUSED } };
     this.dropUpload();
     return { status: 200, body: { ok: true, message: CALENDAR_UPLOAD_SAVED } };
+  }
+
+  /**
+   * Reads every saved calendar now, and Google from the events the agent passed when Google is saved.
+   * When every one read cleanly, keeps their checkout dates; otherwise notes the failure and keeps
+   * the last good dates. The links are never returned in a reason or logged.
+   */
+  async readCalendars(input: { googleEvents?: GoogleEventList; tenantId: string }): Promise<HubRead> {
+    const calendars = this.calendars();
+    const googleSaved = this.google();
+    let google: SourceSnapshot | undefined;
+    let googleUnread = false;
+    if (googleSaved && input.googleEvents) {
+      google = await googleCalendarSource(input.googleEvents, input.tenantId).read();
+      if (input.googleEvents.items.length > 0 && google.turnovers.length === 0 && google.blocks.length === 0) {
+        google = undefined;
+        googleUnread = true;
+      }
+    }
+    const links = await Promise.all(calendars.map(async (calendar) => ({ calendar, read: await readPublicCalendar(calendar.url, calendarFetch()) })));
+    if (calendars.length === 0 && !googleSaved) return { links, googleUnread };
+    const all = links.every((link) => link.read.ok) && (!googleSaved || google !== undefined);
+    const last = this.file.checkouts;
+    const at = this.deps.now().toISOString();
+    if (all) {
+      const dates = new Set<string>();
+      for (const link of links) if (link.read.ok) for (const turn of interpretFeed(link.read.body).turnovers) dates.add(turn.checkoutDate);
+      for (const turn of google?.turnovers ?? []) dates.add(turn.checkoutDate);
+      this.file = { ...this.file, checkouts: { dates: [...dates].sort(), at } };
+    } else {
+      this.file = { ...this.file, checkouts: { dates: last?.dates ?? [], ...(last?.at ? { at: last.at } : {}), failedAt: at } };
+    }
+    this.save();
+    return { links, ...(google ? { google } : {}), googleUnread };
+  }
+
+  /** Checkout dates from the last read where every calendar read cleanly. */
+  checkouts(): { dates: string[]; at?: string; failedAt?: string } | undefined {
+    const checkouts = this.file.checkouts;
+    return checkouts ? { ...checkouts, dates: [...checkouts.dates] } : undefined;
   }
 
   private pending(code: string): NonNullable<HubFile["calendarUpload"]> | undefined {
