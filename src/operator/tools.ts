@@ -1057,7 +1057,7 @@ export const OPERATOR_TOOLS: OperatorTool[] = [
     title: "Run the readiness check",
     kind: "change",
     description:
-      "Runs Tour Core's real readiness checks (property, hours, routes, verification, messaging, records, tour progress, door access, audit/export). One touring number covers every property on this Tour Core; a second property is not blocked for sharing it. Report the result as-is, including any advisory lines; never claim a check passed if it didn't. Never name Durin; say door access.",
+      "Runs Tour Core's real readiness checks (property, hours, routes, verification, messaging, records, tour progress, door access, audit/export). One touring number covers every property on this Tour Core; a second property is not blocked for sharing it. Report the result as-is, including any advisory lines; never claim a check passed if it didn't. Never name the door access provider; say door access.",
     input: z.strictObject({ property: Property }),
     run: async (ctx, i) => {
       const id = resolvePropertyId(ctx.services.workspace, i.property);
