@@ -155,7 +155,7 @@ node -e '
   if (desk.sent !== sent) process.exit(1);
   if (desk.again !== again) process.exit(1);
   if (desk.groupSawCode !== false) process.exit(1);
-  if (desk.emptyAllowlist !== "no-fetch") process.exit(1);
+  if (desk.liveOff !== "no-fetch") process.exit(1);
 ' "$EVIDENCE/desk/desk.json" || fail "desk replies"
 printf '%s\n' "feature: desk" >"$EVIDENCE/desk/result.txt"
 printf '%s\n' "pass" >>"$EVIDENCE/desk/result.txt"
@@ -177,7 +177,7 @@ This run used the in-process doctor/smoke CLI and one local desk process. A live
 1. Started tsx via npm run cleaner:doctor and npm run cleaner:smoke in this checkout. A hosted job is not launched that way.
 2. Read the Guesty Lite fixture under src/cleaner-core/fixtures/ and the practice calendar fixture. Did not call Guesty, Google, Notion, or Twilio.
 3. Froze time at the smoke default 2026-10-14T15:00:00.000Z. The desk used the same frozen instant.
-4. Pushed texts onto an in-memory array, or a JSON file under a temporary --data directory, and printed JSON. The desk group send used a fake fetch that failed. An empty allowlist did not fetch. Temporary directories were removed after stdout was saved.
+4. Pushed texts onto an in-memory array, or a JSON file under a temporary --data directory, and printed JSON. The desk group send used a fake fetch that failed. With live texts off, the group did not fetch. Temporary directories were removed after stdout was saved.
 5. Applied each --reply and --group-reply inside the process. Neither path received an inbound SMS.
 6. Printed no door code. Saved stdout, transcripts, job lists, and the outbox use [redacted].
 EOF
