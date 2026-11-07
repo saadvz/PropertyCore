@@ -161,7 +161,7 @@ The same `get_state` → `ask` pattern as Cleaner Core, one question per message
    6. The schedule, as a choice card: **Every…**, **By bookings**, **Other**. For Other, Grok writes the RRULE, calls `preview_schedule`, and reads the next 3 dates back before saving.
 
    Then "Anything else to add?" until the landlord says that's all.
-3. **Bookings source**, only when an item is `bookings` and Cleaner Core is off. `save_supply_sources` reuses Cleaner Core's calendar-link upload and Google Calendar handling (`src/cleaner-core/sources.ts`, `calendar.ts`).
+3. **Bookings source**, only when an item is `bookings` and Cleaner Core is off. `save_supply_sources` uses the property hub's calendar-link upload and Google Calendar handling (`src/hub/`), shared with Cleaner Core.
 4. **Mode**: hands-off or stop at checkout.
 5. **Caps**: "Want a spending cap?" Per order, per month, both, or no cap. Then the amounts.
 6. **Check time**: when the daily routine runs (default 10:00).
@@ -236,8 +236,8 @@ The landlord says "we're low on coffee" in chat: Grok calls `report_low` with `s
 | `save_supply_item` | Adds or changes an item. Two-call approval after Activate. |
 | `remove_supply_item` | Two-call approval after Activate. |
 | `preview_schedule` | The next 3 dates for a schedule, or why it's refused. |
-| `save_supply_sources` | Standalone bookings source, reusing Cleaner Core's upload flow. |
-| `activate_supplies` | Refused until there's at least one item, a mode, and a check time. |
+| `save_supply_sources` | Standalone bookings source, through the property hub's calendar upload flow (the same one Cleaner Core uses). |
+| `activate_supplies` | Refused until there's at least one item, a mode, a check time, a saved property, and every store in the plan marked ready (`storesReady`). |
 | `check_supplies` | What's due, unconfirmed, held, late, and spending. |
 | `report_low` | Marks list items due now. Takes item ids only, never free text or a product. |
 | `check_cart` | Go or hold, with the token. |
