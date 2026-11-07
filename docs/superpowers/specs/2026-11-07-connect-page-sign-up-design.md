@@ -47,7 +47,16 @@ Twilio Verify sends and checks it (`CLEANER_CORE_TWILIO_VERIFY_SERVICE_SID`,
 on the shared Cleaner Core Twilio account). The service never stores a code,
 and it needs no registered line of its own to text from, since Verify's
 senders are already registered. Only US and Canadian numbers are taken, the
-same as the text lines.
+same as the text lines: inside +1, the Caribbean, Bermuda, toll-free, premium
+and other non-geographic area codes are refused, and the Verify service's Geo
+Permissions are limited to the US and Canada. A code is a text, so it waits for
+`CLEANER_CORE_LIVE_SMS` and goes only to phones `CLEANER_CORE_SMS_ALLOWLIST`
+allows (`*` on the live service).
+
+Twilio uses a code up once it checks out. The page remembers the phone it
+confirmed for its ten minutes, so a landlord told to choose Create account (or
+Sign in) goes on without a second code. A check Twilio couldn't answer is not
+counted as a wrong code.
 
 ## Limits
 
@@ -65,7 +74,7 @@ leaves a cap.
 
 ## Turning it on
 
-All four, or the page stays invite-only:
+All four, with `CLEANER_CORE_LIVE_SMS` on, or the page stays invite-only:
 
 | Variable | Value |
 | --- | --- |
@@ -74,7 +83,7 @@ All four, or the page stays invite-only:
 | `CLEANER_CORE_TERMS_URL` | Saad's terms page, `https://` |
 | `CLEANER_CORE_TERMS_VERSION` | The version a new account records, such as `2026-11-07` |
 
-The number pool must have ready numbers.
+With no ready numbers in the pool, Create account says no line is free.
 
 ## Invite codes
 
