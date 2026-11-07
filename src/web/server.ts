@@ -41,6 +41,7 @@ import { handleAdmin } from "../cleaner-core/hosted/admin";
 import { INVITE_REFUSALS } from "../mcp/oauth/pages";
 import { phoneCodesFor } from "../hosted/phoneCodes";
 import { accountDoor, SignUpDesk } from "../hosted/signUp";
+import { openAccount } from "../cleaner-core/hosted/lines";
 import { handleCleanerUploadPage, isFormPost } from "../cleaner-core/uploadPage";
 import { ALERT_UPLOAD_MAX_BYTES, alertUploadCode, calendarUploadCode, doorCodeUploadCode, uploadPageOf, CLEANER_MCP_PATH, CLEANER_TWILIO_GROUP_PATH, CLEANER_TWILIO_PATH, CLEANER_TWILIO_STATUS_PATH, handleCleanerAlertUpload, handleCleanerCalendarUpload, handleCleanerDoorCodeUpload, handleCleanerGroupWebhook, handleCleanerMcpHttp, handleCleanerTwilioStatus, handleCleanerTwilioWebhook, textAddressedTo } from "../cleaner-core/http";
 import { drainCleanerAlerts } from "../cleaner-core/liveDesk";
@@ -497,7 +498,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
   const signUp = new SignUpDesk({
     registry: tenants,
     codes: () => phoneCodesFor(installation.env()),
-    openAccount: async () => ({ refused: "no-line" }),
+    openAccount: (input) => openAccount(hostedCleanerService, input),
     env: () => installation.env(),
     now: () => (options.now?.() ?? new Date()).getTime(),
     log,
