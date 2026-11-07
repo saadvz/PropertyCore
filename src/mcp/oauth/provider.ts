@@ -465,8 +465,10 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
       this.log(`Refused a connect-page ${mode}.`);
       return answer;
     }
-    // The page may have been denied or expired while the code was checked.
-    if (found.request.status !== "pending" || found.request.expiresAt <= this.now()) return refused;
+    // The page may have been denied or expired while the code was checked. A new account is kept.
+    if (found.request.status !== "pending" || found.request.expiresAt <= this.now()) {
+      return mode === "sign-up" ? { ok: false, message: "Your account is set up, but this page timed out. Reconnect, then choose Sign in." } : refused;
+    }
     if (!this.bind(found.request, found.invites, answer.tenantId, service)) return refused;
     this.log(`A connect-page ${mode} approved a connection for ${answer.tenantId}.`);
     return { ok: true };
