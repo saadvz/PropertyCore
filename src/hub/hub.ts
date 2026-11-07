@@ -19,6 +19,7 @@ import { interpretFeed } from "./calendar";
 import { calendarFetch } from "./calendarFetch";
 import { calendarUrlAllowed, readPublicCalendar } from "./fetchLimits";
 import { googleCalendarSource, type GoogleEventList, type SourceSnapshot } from "./sources";
+import { DoorAccess } from "./doorAccess";
 import { folderNeedsMove, migrateFolder } from "./migrate";
 import { HUB_CALENDAR_PREFIX } from "./paths";
 import { emptyHub, hubPath, readHubFile, type HubCaller, type HubFile, type HubProperty } from "./store";
@@ -38,6 +39,8 @@ export interface HubGuards {
   wouldCancel(next: CalendarClaim[]): Promise<string[]>;
   /** True when a generated upload link happens to hold the door code or the server's key. */
   leaks?(text: string): boolean;
+  /** Cleaner Core's refusal for this door code or lock location, never holding the digits. */
+  codeRefused?(code: string, lockLocation?: string): string | undefined;
 }
 
 export interface HubDeps {
@@ -108,6 +111,7 @@ export function resetHubs(): void {
 export class Hub {
   protected file: HubFile;
   private guards: () => HubGuards | undefined = () => undefined;
+  private door: DoorAccess | undefined;
   /** Counts saves of the property's details in this process, so a flow can tell they changed under it. */
   private propertySaves = 0;
 
@@ -168,6 +172,21 @@ export class Hub {
   /** The engine's claims for a calendar list, the saved one by default. */
   claims(list: readonly StoredCalendar[] = this.file.calendars, google = this.google()): CalendarClaim[] {
     return claimsOf(list, google);
+  }
+
+  /**
+   * The property's door access, one per hub. `env` gives the server's key; the flow that opens it
+   * sets it, and on one property every flow shares the same env.
+   */
+  doorAccess(env: () => NodeJS.ProcessEnv): DoorAccess {
+    if (!this.door) {
+      this.door = new DoorAccess(this.root, () => {
+        const guards = this.guards();
+        return guards?.codeRefused ? (code, lock) => guards.codeRefused!(code, lock) : undefined;
+      });
+    }
+    this.door.useEnv(env);
+    return this.door;
   }
 
   /** Cleaner Core's checks, asked for each time they're used, so a flow switched off stops guarding. */

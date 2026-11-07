@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { EMPTY_TWIML } from "../src/cleaner-core/twilioHook";
 import { resetLiveDesks, setCleanerCalendarFetch } from "../src/cleaner-core/liveDesk";
 import { setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
-import { openPin, pinKeyFor, pinKeyFromHeader, sealPin } from "../src/cleaner-core/pinSeal";
+import { openPin, pinKeyFor, pinKeyFromHeader, sealPin } from "../src/hub/pinSeal";
 import {
   ADDRESS,
   BUSINESS,

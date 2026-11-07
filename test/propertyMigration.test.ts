@@ -11,7 +11,7 @@ import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { hostedCleaner } from "../src/cleaner-core/hosted/router";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
 import { supplyDesk } from "../src/hosted/supplies";
-import { openPin } from "../src/cleaner-core/pinSeal";
+import { openPin } from "../src/hub/pinSeal";
 import { BASE, closeHostedApps, hostedApp, hostedEnv } from "./cleanerOauthHarness";
 import { cleanupDesks, openDesk, PIN_KEY, setUp } from "./cleanerDeskHarness";
 import { ADDRESS, CLEANER, DOOR_CODE, FROZEN, HOST } from "./wiringProof";

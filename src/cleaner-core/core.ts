@@ -1,4 +1,4 @@
-import { openPin, pinKeyFor, sealPin, type PinSeal } from "./pinSeal";
+import { openPin, pinKeyFor, sealPin, type PinSeal } from "../hub/pinSeal";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -550,13 +550,8 @@ const CLEANER_HURT = "If someone is hurt, call 911 now. I've let the host know."
 const CLEANER_HURT_MISSED = "If someone is hurt, call 911 now. I couldn't reach the host, so please call them too.";
 export const SAFETY = new Set<TextKind>(["stop", "start", "emergency"]);
 
-/**
- * Joins digits split by spaces, dots, dashes, underscores, or slashes, so "8 0 8 8", "80-88", and
- * "8.0.8.8" read as 8088. A host message is checked for the door code in this form too.
- */
-export function joinSplitDigits(text: string): string {
-  return text.replace(/(\d)[\s.\-_/\u2010-\u2015]+(?=\d)/g, "$1");
-}
+import { joinSplitDigits } from "../hub/digits";
+export { joinSplitDigits };
 
 /** Every run of 4 or more digits, even split by spaces, dots, dashes, underscores, or slashes, as [redacted]. */
 export function redactDigitRuns(text: string): string {

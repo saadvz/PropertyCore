@@ -29,7 +29,7 @@ import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jo
 import { isInjuryReport } from "./injury";
 import { GroupNotConfirmed } from "./groupThread";
 import { cleanerPinStatusUrl, deleteLiveGroup, isAllowlisted, liveSmsOn, sendLiveGroup, sendLiveSms } from "./liveSms";
-import { openPin, sealPin, serverPinKey, type PinSeal } from "./pinSeal";
+import { openPin, sealPin, serverPinKey, type PinSeal } from "../hub/pinSeal";
 import { containsCodeToken, redactPhone } from "./redact";
 import { isScratchTestNumber } from "./scratch";
 import { guestyLiteSource, icalSource, type BookingSource, type GoogleEventList } from "../hub/sources";
