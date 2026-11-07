@@ -128,8 +128,11 @@ while `TOUR_CORE_TENANTS` is on.
 
 ## Not yet
 
-Self-serve signup (a phone check in place of the invite code), copying backups
-off Railway, and a per-tenant SMS allowlist.
+Self-serve signup (a phone check in place of the invite code), and copying
+backups off Railway. Texting consent is already per account: a tenant's desk
+texts nobody until its host is the landlord's phone confirmed at sign-up
+(`tenant.owner`, passed as `CLEANER_CORE_LANDLORD_PHONE`), and then each
+person's own YES and STOP decide.
 
 Touring on every chat:
 
