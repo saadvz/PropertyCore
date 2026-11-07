@@ -1,4 +1,5 @@
-import type { CleanerAssistant } from "../cleaner-core/assistant";
+import { runsSupplies, type CleanerAssistant } from "../cleaner-core/assistant";
+import { supplyReplyFor } from "./supplyWording";
 import { handleCleanerMcpHttp } from "../cleaner-core/http";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { CLEANER_MCP_PATH, CLEANER_TOOL_NAMES, cleanerInstructions } from "../cleaner-core/mcp";
@@ -252,12 +253,12 @@ function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, call
     const structured = { ...reply.structured, supplies: line };
     return { ...reply, text: JSON.stringify(structured), structured };
   };
-  const supplies = async (property: Property): Promise<FrontReply> => supplyDesk(h, tenant, property).state();
+  const supplies = async (property: Property): Promise<FrontReply> => supplyReplyFor(caller.assistant, "get_supply_state", await supplyDesk(h, tenant, property).state());
   return {
     cleaning,
     supplies,
     next: async (property) => {
-      const reply = property.flows.cleaning.on ? await cleaning(property, {}) : property.flows.supplies.on && caller.assistant === "grok" ? await supplies(property) : undefined;
+      const reply = property.flows.cleaning.on ? await cleaning(property, {}) : property.flows.supplies.on && runsSupplies(caller.assistant) ? await supplies(property) : undefined;
       const ask = reply?.structured?.ask as { step?: unknown } | undefined;
       return typeof ask?.step === "string" ? ask.step : undefined;
     },
