@@ -27,6 +27,14 @@ export interface TenantInvite {
 /** Only touring is left as an account-wide service: Tour Core is parked, and its accounts have no properties. */
 export type TenantService = "touring";
 
+export interface TenantOwner {
+  /** E.164. */
+  phone: string;
+  email: string;
+  phoneVerifiedAt: string;
+  terms: { version: string; acceptedAt: string };
+}
+
 export interface Tenant {
   id: string;
   label: string;
@@ -41,6 +49,8 @@ export interface Tenant {
   properties: Property[];
   createdAt: string;
   lastActivityAt?: string;
+  /** The landlord who signed up, set only after their phone code checked out (saadvz/TourCore#162). */
+  owner?: TenantOwner;
 }
 
 export type InviteRefusal = "invalid" | "expired" | "used" | "disabled";
