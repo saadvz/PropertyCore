@@ -1,4 +1,5 @@
 import { parsePhone } from "../../core/phone";
+import { CLEANER_TWILIO_PATH } from "../twilioHook";
 import { NumberPool, PoolError, POOL_LOW_AT } from "./numberPool";
 import type { Tenant } from "./registry";
 import type { HostedCleaner } from "./router";
@@ -11,10 +12,26 @@ import { findIncomingNumber, pointSmsWebhook, releaseNumber } from "./twilioNumb
  */
 
 /** Where every account's line sends its texts. The `To` number picks the account. */
-export const LINE_WEBHOOK_PATH = "/webhooks/twilio/cleaner-core";
+export const LINE_WEBHOOK_PATH = CLEANER_TWILIO_PATH;
 
 export function numberPool(h: HostedCleaner): NumberPool {
   return new NumberPool(h.dataRoot, () => h.now());
+}
+
+/** Every number the service owns, the pool's too. Never throws, so one bad pool file can't stop an account's texts. */
+export function serviceLines(h: HostedCleaner): string[] {
+  let pooled: string[] = [];
+  try {
+    pooled = numberPool(h).list().map((each) => each.number);
+  } catch {
+    h.log("The number pool file couldn't be read. Pooled numbers aren't counted as the service's own until it's fixed.");
+  }
+  return [...new Set([...h.registry.list().map((each) => each.twilioNumber), ...pooled])];
+}
+
+/** Records the lines of accounts made before the pool, so /admin counts and manages them too. */
+export function recordAccountLines(h: HostedCleaner): void {
+  numberPool(h).record(h.registry.list().map((t) => ({ number: t.twilioNumber, tenantId: t.id })));
 }
 
 export function lineWebhookUrl(h: HostedCleaner): string {
@@ -71,7 +88,7 @@ export async function attachTypedLine(h: HostedCleaner, tenant: Tenant, sid: str
 /** Points the account's line at this service again, after Twilio refused it once. */
 export async function repointLine(h: HostedCleaner, tenant: Tenant): Promise<boolean> {
   const pool = numberPool(h);
-  const sid = pool.get(tenant.twilioNumber)?.sid ?? (await findIncomingNumber(h.baseEnv(), tenant.twilioNumber))?.sid;
+  const sid = pool.get(tenant.twilioNumber)?.sid || (await findIncomingNumber(h.baseEnv(), tenant.twilioNumber))?.sid;
   if (!sid) return false;
   return pointLine(h, pool, tenant.twilioNumber, sid);
 }
@@ -85,31 +102,36 @@ async function pointLine(h: HostedCleaner, pool: NumberPool, number: string, sid
 
 export type CloseLine = "return" | "release";
 
+/** What happened to a closed account's line. Only "returned" and "released" went as asked. */
+export type LineClosed = "returned" | "released" | "release-refused" | "not-found";
+
 /**
  * A closing account's line stops reaching this service. "return" puts it back in the pool, where it
  * rests before another account gets it. "release" gives it back to Twilio for good; if Twilio
  * refuses, it rests in the pool instead and can be released from there.
  */
-export async function closeLine(h: HostedCleaner, tenant: Tenant, how: CloseLine): Promise<void> {
+export async function closeLine(h: HostedCleaner, tenant: Tenant, how: CloseLine): Promise<LineClosed> {
   const env = h.baseEnv();
   const pool = numberPool(h);
-  const sid = pool.get(tenant.twilioNumber)?.sid ?? (await findIncomingNumber(env, tenant.twilioNumber))?.sid;
+  const sid = pool.get(tenant.twilioNumber)?.sid || (await findIncomingNumber(env, tenant.twilioNumber))?.sid;
   if (!sid) {
-    h.log(`${tenant.id}'s line isn't on the Twilio account, so nothing went back to the pool.`);
-    return;
+    h.log(`${tenant.id}'s line wasn't found on the Twilio account, or Twilio couldn't be reached. Clear its webhook in the Twilio console.`);
+    return "not-found";
   }
   await pointSmsWebhook(env, sid, "");
+  // Resting from here on, so no sign-up picks it while Twilio releases it.
   pool.giveBack(tenant.twilioNumber, sid);
   if (how === "return") {
     h.log(`${tenant.id}'s line went back to the pool to rest.`);
-    return;
+    return "returned";
   }
   if (await releaseNumber(env, sid)) {
     pool.remove(tenant.twilioNumber);
     h.log(`Released ${tenant.id}'s line from Twilio.`);
-  } else {
-    h.log(`Twilio didn't release ${tenant.id}'s line. It rests in the pool; release it from there.`);
+    return "released";
   }
+  h.log(`Twilio didn't release ${tenant.id}'s line. It rests in the pool; release it from there.`);
+  return "release-refused";
 }
 
 export type ReleaseRefusal = "not-pooled" | "in-use" | "twilio";
@@ -120,17 +142,20 @@ export async function releasePooled(h: HostedCleaner, raw: string): Promise<{ re
   const entry = pool.get(raw);
   if (!entry) return { refused: "not-pooled" };
   if (entry.tenantId || h.registry.byNumber(entry.number)) return { refused: "in-use" };
-  if (!(await releaseNumber(h.baseEnv(), entry.sid))) return { refused: "twilio" };
-  try {
-    pool.remove(entry.number);
-  } catch (err) {
-    if (!(err instanceof PoolError)) throw err;
+  // Out of the pool before the await, so no sign-up can take it while Twilio releases it.
+  const taken = pool.take(entry.number);
+  if (!(await releaseNumber(h.baseEnv(), taken.sid))) {
+    pool.restore(taken);
+    return { refused: "twilio" };
   }
   h.log("Released a pooled line from Twilio.");
   return { released: entry.number };
 }
 
 export type TopUpRefusal = "bad-number" | "already-pooled" | "in-use" | "not-on-twilio";
+
+/** Numbers another part of the service owns. A pooled number's webhook would be pointed away from them. */
+const OTHER_LINES = ["CLEANER_CORE_TWILIO_PHONE_NUMBER", "TOURCORE_TWILIO_PHONE_NUMBER", "TOURCORE_PHOTON_PHONE_NUMBER"] as const;
 
 /** Adds registered numbers to the pool. Each must be on the Twilio account and held by no account. */
 export async function topUp(h: HostedCleaner, raws: string[]): Promise<{ added: string[]; refused: { raw: string; reason: TopUpRefusal }[] }> {
@@ -139,7 +164,8 @@ export async function topUp(h: HostedCleaner, raws: string[]): Promise<{ added: 
   const refused: { raw: string; reason: TopUpRefusal }[] = [];
   for (const raw of raws) {
     const e164 = parsePhone(raw);
-    const reason: TopUpRefusal | undefined = !e164 ? "bad-number" : h.registry.byNumber(e164) ? "in-use" : pool.get(e164) ? "already-pooled" : undefined;
+    const otherLine = OTHER_LINES.some((key) => parsePhone(h.baseEnv()[key] ?? "") === e164);
+    const reason: TopUpRefusal | undefined = !e164 ? "bad-number" : h.registry.byNumber(e164) || otherLine ? "in-use" : pool.get(e164) ? "already-pooled" : undefined;
     if (reason || !e164) {
       refused.push({ raw, reason: reason ?? "bad-number" });
       continue;
