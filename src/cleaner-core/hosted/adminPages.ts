@@ -177,10 +177,11 @@ export function tenantPage(t: Tenant, csrf: string, error?: string, health: Tena
 }
 
 /** The invite code and the connector URL, shown once. */
-export function invitePage(t: Tenant, code: string, connectorUrl: string): string {
+export function invitePage(t: Tenant, code: string, connectorUrl: string, warning?: string): string {
   return shell(
     `Invite for ${t.label}`,
     `      <h1>Invite for ${escape(t.label)}</h1>
+      ${errorLine(warning)}
       <p>Text line: ${escape(t.twilioNumber)}.</p>
       <p>Send the host this invite code. They type it on the Cleaner Core page that opens when they connect.</p>
       <p class="code" data-invite="${escape(code)}">${escape(code)}</p>
@@ -211,7 +212,7 @@ export function poolPage(rows: PoolRow[], summary: PoolSummary, csrf: string, no
     .map((row) => {
       const account = row.tenant ? `<a href="/admin/tenants/${escape(row.tenant.id)}">${escape(row.tenant.label)}</a>` : "—";
       const webhook =
-        row.state !== "in-use" ? "—" : row.webhookOk === false ? `not pointed ${action(`/admin/tenants/${row.tenant?.id ?? ""}/line`, csrf, "Point again")}` : "pointed";
+        row.state !== "in-use" ? "—" : row.webhookOk === false ? `not pointed${row.tenant ? ` ${action(`/admin/tenants/${row.tenant.id}/line`, csrf, "Point again")}` : ""}` : row.webhookOk ? "pointed" : "—";
       return `<tr><td>${escape(row.number)}</td><td>${escape(stateOf(row))}</td><td>${account}</td><td>${webhook}</td><td>${escape(row.addedAt)}</td></tr>`;
     })
     .join("\n");
