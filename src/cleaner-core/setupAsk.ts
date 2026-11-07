@@ -262,7 +262,7 @@ export const PAYMENTS_STEP: SetupAsk = {
   ],
 };
 
-/** Optional, Grok on the shared service only: Supply Core as an add-on, set up now or later. */
+/** Optional, on the shared service, for an always-on agent (Grok Bot, Muse) only: Supply Core as an add-on, set up now or later. */
 export const SUPPLIES_STEP: SetupAsk = {
   step: "supplies",
   tool: "choose_supplies",
