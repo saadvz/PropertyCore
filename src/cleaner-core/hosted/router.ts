@@ -40,7 +40,7 @@ import { touringPublicRoute } from "../../hosted/workerRoutes";
 import { MCP_PATH } from "../../mcp/paths";
 import { TWILIO_WEBHOOK_PATH } from "../../messaging/twilio/provider";
 import { formParams, verifyTwilioSignature } from "../../messaging/twilio/signature";
-import { numberPool } from "./lines";
+import { serviceLines } from "./lines";
 import { buildTenantEnv, ROUTINE_NAMES } from "./tenantEnv";
 import type { TenantSecrets } from "./tenantSecrets";
 
@@ -121,14 +121,14 @@ function accountContext(h: HostedCleaner, tenant: Tenant, root: string, property
       const property = propertyId ? current?.properties.find((p) => p.id === propertyId) : undefined;
       const primary = h.registry.primary(id, (grantId) => h.grantLive(grantId));
       // Every number the service owns, the pool's too, so none is ever texted as a person.
-      const serviceLines = [...new Set([...h.registry.list().map((each) => each.twilioNumber), ...numberPool(h).list().map((each) => each.number)])];
+      const ownLines = serviceLines(h);
       const env = buildTenantEnv({
         base: h.baseEnv(),
         tenant: current ?? tenant,
         secrets: h.secrets,
         primary,
         origin: h.origin() ?? "",
-        serviceLines,
+        serviceLines: ownLines,
         ...(property ? { property, propertyCount: current?.properties.length ?? 1 } : {}),
       });
       // Deleted, turned off, or the property gone or its cleaning off while a request or drain was under way: nothing more is sent for it.
