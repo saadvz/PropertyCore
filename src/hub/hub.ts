@@ -1,7 +1,10 @@
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import {
   CALENDAR_COUNT_REFUSED,
+  CALENDAR_NAME_LONG,
+  MAX_CALENDAR_NAME,
   calendarRefusal,
   claimsOf,
   DOOR_CODE_IN_CHAT,
@@ -12,7 +15,9 @@ import {
   type SavedCalendar,
   type StoredCalendar,
 } from "./calendars";
-import { emptyHub, hubPath, readHubFile, type HubFile, type HubProperty } from "./store";
+import { calendarUrlAllowed } from "./fetchLimits";
+import { HUB_CALENDAR_PREFIX } from "./paths";
+import { emptyHub, hubPath, readHubFile, type HubCaller, type HubFile, type HubProperty } from "./store";
 
 /**
  * One property's hub: its details and booking calendars, kept in hub.json in the property's folder.
@@ -34,6 +39,29 @@ export interface HubDeps {
 }
 
 export type HubSave = { ok: true } | { ok: false; error: string; reason: CalendarRefusal };
+
+export const UPLOAD_MINUTES = 10;
+export const UPLOAD_GONE = "This upload link isn't valid anymore. Ask for a new one.";
+export const CALENDAR_UPLOAD_REFUSED = "Send the calendar's public https link as url.";
+export const CALENDAR_UPLOAD_SAVED = "Saved the calendar link.";
+export const wouldCallOff = (count: number) =>
+  `Removing that calendar would call off ${count} upcoming ${count === 1 ? "cleaning" : "cleanings"}. Ask the host, then save again with dropJobs: true.`;
+
+export interface UploadResult {
+  status: 200 | 400 | 404 | 409;
+  body: { ok: boolean; message?: string; error?: string };
+}
+
+function uploadHash(code: string): string {
+  return createHash("sha256").update(code).digest("hex");
+}
+
+/** Compares two sha256 hex digests in constant time. */
+function sameHash(a: string, b: string): boolean {
+  const left = Buffer.from(a, "hex");
+  const right = Buffer.from(b, "hex");
+  return left.length === 32 && right.length === 32 && timingSafeEqual(left, right);
+}
 
 const hubs = new Map<string, Hub>();
 
@@ -149,6 +177,83 @@ export class Hub {
       if (this.carriesCode(name) || this.carriesCode(url, true)) return { ok: false, reason: "code", error: DOOR_CODE_IN_CHAT };
     }
     return undefined;
+  }
+
+  /**
+   * Makes the one-time upload link for one calendar, saved under `name`. Only the code's sha256, its
+   * expiry, and the name are kept. A new link replaces the last one, whichever flow asked.
+   * google: true is saved now. `base` is the asking flow's public base for this property.
+   */
+  issueCalendarUpload(input: { name: string; google?: boolean; base: string; by?: HubCaller }): { uploadUrl: string; expiresInMinutes: number } | { error: string } {
+    const name = input.name.trim();
+    if (name.length > MAX_CALENDAR_NAME) return { error: CALENDAR_NAME_LONG };
+    if (this.carriesCode(name)) return { error: DOOR_CODE_IN_CHAT };
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const code = randomBytes(32).toString("base64url");
+      const uploadUrl = `${input.base}${HUB_CALENDAR_PREFIX}${code}`;
+      // A link that happens to carry the door code is never handed out.
+      if (this.carriesCode(uploadUrl, true)) continue;
+      const expiresAt = new Date(this.deps.now().getTime() + UPLOAD_MINUTES * 60_000).toISOString();
+      this.file = { ...this.file, calendarUpload: { hash: uploadHash(code), expiresAt, name, ...(input.by ? { by: input.by } : {}) }, ...(input.google === true ? { google: true } : {}) };
+      this.save();
+      return { uploadUrl, expiresInMinutes: UPLOAD_MINUTES };
+    }
+    return { error: "That didn't work. Try again." };
+  }
+
+  /** True while the link with this code waits and hasn't expired. Reads only; opening the page never uses it up. */
+  uploadLinkOpen(code: string): { open: boolean; name?: string; by?: HubCaller } {
+    const pending = this.pending(code);
+    if (!pending || this.expired(pending)) return { open: false };
+    return { open: true, name: pending.name, ...(pending.by ? { by: pending.by } : {}) };
+  }
+
+  /**
+   * Saves a calendar link posted to its upload link. A link under the same name replaces that one,
+   * and every other calendar stays. Only a save uses the link up. The link is never repeated or logged.
+   */
+  async uploadCalendarLink(code: string, body: Record<string, unknown>): Promise<UploadResult> {
+    const pending = this.pending(code);
+    if (!pending) return { status: 404, body: { ok: false, error: UPLOAD_GONE } };
+    if (this.expired(pending)) {
+      this.dropUpload();
+      return { status: 404, body: { ok: false, error: UPLOAD_GONE } };
+    }
+    const url = typeof body.url === "string" ? body.url.trim() : "";
+    if (!url || url.length > 2000 || !calendarUrlAllowed(url)) return { status: 400, body: { ok: false, error: CALENDAR_UPLOAD_REFUSED } };
+    const wanted = pending.name.toLowerCase();
+    const at = this.file.calendars.findIndex((calendar) => calendar.name.toLowerCase() === wanted);
+    const next = at >= 0
+      ? this.file.calendars.map((calendar, i) => (i === at ? { name: calendar.name, url } : { ...calendar }))
+      : [...this.file.calendars.map((calendar) => ({ ...calendar })), { name: pending.name, url }];
+    const refused = this.refusal(next);
+    if (refused) return { status: 400, body: { ok: false, error: refused.reason === "count" ? refused.error : CALENDAR_UPLOAD_REFUSED } };
+    const guards = this.guards();
+    if (guards) {
+      const lost = await guards.wouldCancel(this.claims(next));
+      if (lost.length > 0) return { status: 409, body: { ok: false, error: wouldCallOff(lost.length) } };
+    }
+    // Something else may have used or replaced the link while the guard ran.
+    if (this.pending(code)?.hash !== pending.hash) return { status: 404, body: { ok: false, error: UPLOAD_GONE } };
+    const saved = this.setCalendars({ calendars: next });
+    if (!saved.ok) return { status: 400, body: { ok: false, error: CALENDAR_UPLOAD_REFUSED } };
+    this.dropUpload();
+    return { status: 200, body: { ok: true, message: CALENDAR_UPLOAD_SAVED } };
+  }
+
+  private pending(code: string): NonNullable<HubFile["calendarUpload"]> | undefined {
+    const pending = this.file.calendarUpload;
+    return pending && sameHash(uploadHash(code), pending.hash) ? pending : undefined;
+  }
+
+  private expired(pending: NonNullable<HubFile["calendarUpload"]>): boolean {
+    return this.deps.now().getTime() >= Date.parse(pending.expiresAt);
+  }
+
+  private dropUpload(): void {
+    const { calendarUpload: _gone, ...rest } = this.file;
+    this.file = rest;
+    this.save();
   }
 
   /**

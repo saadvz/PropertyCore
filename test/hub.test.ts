@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { savedCalendars } from "../src/hub/calendars";
 import { hubFor, resetHubs, type HubGuards } from "../src/hub/hub";
+import { hubCalendarCode } from "../src/hub/paths";
 
 /** The property hub: details and calendars in hub.json. Made-up links and a made-up door code only. */
 
@@ -122,5 +123,116 @@ describe("hub store", () => {
     expect(hub.setAside()).toEqual(["Vrbo"]);
     hub.setCalendars({ done: true });
     expect(hub.setAside()).toEqual([]);
+  });
+});
+
+const BASE = "https://cleaner.example/t/tnt_abcdefghij/p/prp_abcdefghij";
+
+function codeOf(uploadUrl: string): string {
+  return uploadUrl.slice(uploadUrl.lastIndexOf("/") + 1);
+}
+
+function issued(reply: ReturnType<ReturnType<typeof hubFor>["issueCalendarUpload"]>): string {
+  if ("error" in reply) throw new Error(reply.error);
+  return codeOf(reply.uploadUrl);
+}
+
+describe("hub upload flow", () => {
+  it("issues a link whose code is stored only as its hash", () => {
+    const { root, hub } = open();
+    const reply = hub.issueCalendarUpload({ name: "Airbnb", base: BASE });
+    if ("error" in reply) throw new Error(reply.error);
+    expect(reply.expiresInMinutes).toBe(10);
+    expect(reply.uploadUrl.startsWith(`${BASE}/calendar-link/`)).toBe(true);
+    const code = codeOf(reply.uploadUrl);
+    expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(readFileSync(join(root, "hub.json"), "utf8")).not.toContain(code);
+    expect(hub.uploadLinkOpen(code)).toEqual({ open: true, name: "Airbnb" });
+  });
+
+  it("google: true is saved when the link is issued", () => {
+    const { hub } = open();
+    hub.issueCalendarUpload({ name: "Airbnb", base: BASE, google: true });
+    expect(hub.google()).toBe(true);
+  });
+
+  it("a second link replaces the first, from either flow", async () => {
+    const { hub } = open();
+    const first = issued(hub.issueCalendarUpload({ name: "Airbnb", base: BASE }));
+    const second = issued(hub.issueCalendarUpload({ name: "Vrbo", base: "https://cleaner.example/t/tnt_abcdefghij" }));
+    expect((await hub.uploadCalendarLink(first, { url: AIRBNB })).status).toBe(404);
+    expect((await hub.uploadCalendarLink(second, { url: VRBO })).status).toBe(200);
+    expect(hub.calendars().map((c) => c.name)).toEqual(["Vrbo"]);
+  });
+
+  it("expired after 10 minutes", async () => {
+    let now = NOW;
+    const { root, hub } = open(folder(), () => now);
+    const code = issued(hub.issueCalendarUpload({ name: "Airbnb", base: BASE }));
+    now = new Date(NOW.getTime() + 10 * 60_000);
+    expect(hub.uploadLinkOpen(code)).toEqual({ open: false });
+    expect((await hub.uploadCalendarLink(code, { url: AIRBNB })).status).toBe(404);
+    expect(JSON.parse(readFileSync(join(root, "hub.json"), "utf8")).calendarUpload).toBeUndefined();
+  });
+
+  it("refuses a private link with 400 and keeps the link usable", async () => {
+    const { hub } = open();
+    const code = issued(hub.issueCalendarUpload({ name: "Airbnb", base: BASE }));
+    const refused = await hub.uploadCalendarLink(code, { url: "https://10.0.0.8/cal.ics" });
+    expect(refused).toEqual({ status: 400, body: { ok: false, error: "Send the calendar's public https link as url." } });
+    expect((await hub.uploadCalendarLink(code, { url: AIRBNB })).body).toEqual({ ok: true, message: "Saved the calendar link." });
+  });
+
+  it("409 when wouldCancel names cleanings, and nothing saved", async () => {
+    const { hub } = open();
+    hub.setCalendars({ calendars: [{ name: "Airbnb", url: AIRBNB }] });
+    hub.useGuards(() => ({ carriesCode: () => false, wouldCancel: async () => ["job-1"] }));
+    const code = issued(hub.issueCalendarUpload({ name: "Airbnb", base: BASE }));
+    const refused = await hub.uploadCalendarLink(code, { url: VRBO });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe("Removing that calendar would call off 1 upcoming cleaning. Ask the host, then save again with dropJobs: true.");
+    expect(hub.calendars().map((c) => c.url)).toEqual([AIRBNB]);
+  });
+
+  it("an upload whose link carries the door code is refused", async () => {
+    const { hub } = open();
+    hub.useGuards(() => ({ carriesCode: (text) => text.includes("5097"), wouldCancel: noCancel }));
+    const code = issued(hub.issueCalendarUpload({ name: "Airbnb", base: BASE }));
+    expect((await hub.uploadCalendarLink(code, { url: "https://example.com/5097.ics" })).status).toBe(400);
+    expect(hub.calendars()).toEqual([]);
+  });
+
+  it("same name replaces only that calendar", async () => {
+    const { hub } = open();
+    hub.setCalendars({ calendars: [{ name: "Guesty Lite", url: AIRBNB, legacy: true }, { name: "Vrbo", url: VRBO }] });
+    const code = issued(hub.issueCalendarUpload({ name: "guesty lite", base: BASE }));
+    expect((await hub.uploadCalendarLink(code, { url: "https://example.com/new.ics" })).status).toBe(200);
+    expect(hub.stored()).toEqual([
+      { name: "Guesty Lite", url: "https://example.com/new.ics" },
+      { name: "Vrbo", url: VRBO },
+    ]);
+  });
+
+  it("hubCalendarCode accepts all three prefixes", () => {
+    const code = "a".repeat(43);
+    expect(hubCalendarCode(`/calendar-link/${code}`)).toBe(code);
+    expect(hubCalendarCode(`/cleaner-core/calendar-link/${code}`)).toBe(code);
+    expect(hubCalendarCode(`/supply/calendar/${code}`)).toBe(code);
+    expect(hubCalendarCode(`/calendar-link/${code}x`)).toBeUndefined();
+    expect(hubCalendarCode("/photos/abc")).toBeUndefined();
+  });
+
+  it("no reply contains the link", async () => {
+    const secret = "https://example.com/cal.ics?token=secret-token-xyz";
+    const { hub } = open();
+    const replies: unknown[] = [];
+    const code = issued(hub.issueCalendarUpload({ name: "Airbnb", base: BASE }));
+    replies.push(await hub.uploadCalendarLink(code, { url: secret.replace("https://example.com", "https://10.0.0.1") }));
+    hub.useGuards(() => ({ carriesCode: () => false, wouldCancel: async () => ["job-1"] }));
+    replies.push(await hub.uploadCalendarLink(code, { url: secret }));
+    hub.useGuards(() => undefined);
+    replies.push(await hub.uploadCalendarLink(code, { url: secret }));
+    replies.push(await hub.uploadCalendarLink(code, { url: secret }));
+    for (const reply of replies) expect(JSON.stringify(reply)).not.toContain("secret-token-xyz");
   });
 });
