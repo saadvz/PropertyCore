@@ -1,3 +1,4 @@
+import { fixedCodePort } from "../src/cleaner-core/doorPort";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -31,7 +32,7 @@ async function offered(settle?: number) {
     property: { id: "prop_12_scratch_lane", address: ADDRESS, timeZone: "America/New_York" },
     ownerPhone: OWNER,
     cleaner: { phone: CLEANER, approved: true },
-    pin: SCRATCH_TENANTS[0]!.pin,
+    access: fixedCodePort(SCRATCH_TENANTS[0]!.pin),
     hostName: "Scratch",
     consented: true,
     grokReadsMessages: true,

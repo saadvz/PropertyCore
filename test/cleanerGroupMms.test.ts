@@ -1,3 +1,4 @@
+import { fixedCodePort } from "../src/cleaner-core/doorPort";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -225,7 +226,7 @@ function engine(send: (text: CleanerText) => Promise<void>) {
     property: { id: "prop_12_scratch_lane", address: LANE, timeZone: "America/New_York" },
     ownerPhone: OWNER,
     cleaner: { phone: MIKE, approved: true },
-    pin: PIN,
+    access: fixedCodePort(PIN),
     hostName: "Scratch",
     consented: true,
     sink: { send },

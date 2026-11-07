@@ -3437,7 +3437,6 @@ export class LiveDesk {
       noteHostOnStop: true,
       isolate: true,
       tenantId: file.propertyId,
-      sealPinAtRest: false,
       pinSentBody: PIN_SENT,
       pinFailedBody: this.hostWords().pinFailed,
       ...(this.groupOn()

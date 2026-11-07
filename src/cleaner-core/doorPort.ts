@@ -17,11 +17,15 @@ export type AccessRefusedLines = Partial<Record<AccessRefusal, string>>;
 export const DOOR_WINDOW_OVER = "The cleaning's window has passed, so the door code didn't go out.";
 export const DOOR_NOT_OPENED = "The door code didn't go out. Save it again through the private box.";
 
-/** A port that grants this made-up code for any window: the CLI, scratch, and tests. */
-export function fixedCodePort(code: string, lockLocation?: string): DoorAccessPort {
+/**
+ * A port that grants this made-up code for any window: the CLI, scratch, and tests. With no code it
+ * refuses no-code, as an engine with no code never texts one.
+ */
+export function fixedCodePort(code: string | undefined, lockLocation?: string): DoorAccessPort {
+  const saved = code?.trim() || undefined;
   return {
-    request: async (input) => ({ ok: true, kind: "code", code, ...(lockLocation?.trim() ? { lockLocation: lockLocation.trim() } : {}), until: input.window.until }),
-    codeForChecks: () => code,
+    request: async (input) => (saved ? { ok: true, kind: "code", code: saved, ...(lockLocation?.trim() ? { lockLocation: lockLocation.trim() } : {}), until: input.window.until } : { ok: false, reason: "no-code" }),
+    codeForChecks: () => saved,
   };
 }
 

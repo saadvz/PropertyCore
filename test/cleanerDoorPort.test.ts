@@ -1,12 +1,13 @@
-import { randomBytes } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openCleanerCore, type CleanerText } from "../src/cleaner-core/core";
-import { cleaningWindow, DOOR_WINDOW_OVER, type DoorAccessPort } from "../src/cleaner-core/doorPort";
+import { cleaningWindow, DOOR_WINDOW_OVER, fixedCodePort, type DoorAccessPort } from "../src/cleaner-core/doorPort";
 import type { AccessGrant } from "../src/hub/doorAccess";
 import { hubFor, resetHubs } from "../src/hub/hub";
+import { sealPin } from "../src/hub/pinSeal";
 
 /** The engine gets the door code for a release only from the hub's door access request. 555 numbers and made-up codes. */
 
@@ -172,5 +173,46 @@ describe("the engine asks the hub at release", () => {
     await engine(sent, clock, hubPort(), { dataDir: data }).runReminders();
     expect(pins(sent)).toHaveLength(1);
     expect(pins(sent)[0]!.body).toContain(CODE);
+  });
+});
+
+describe("the engine stores no door code", () => {
+  it("the engine store never holds a seal", async () => {
+    const data = folder();
+    const clock = { at: NOW };
+    const job = engine([], clock, fixedCodePort(CODE), { dataDir: data });
+    await scheduled(job);
+    const store = readFileSync(join(data, "cleaner-core.json"), "utf8");
+    expect(store).not.toContain("pinSeal");
+    expect(store).not.toContain(CODE);
+  });
+
+  it("an old store's pinSeal is ignored and dropped on the next save", async () => {
+    const data = folder();
+    const clock = { at: NOW };
+    await scheduled(engine([], clock, fixedCodePort(CODE), { dataDir: data }));
+    const path = join(data, "cleaner-core.json");
+    const old = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    // The old engine seal's key was made from the property id, so this is a seal the old engine opened.
+    old.pinSeal = sealPin(CODE, createHash("sha256").update("cleaner-core-pin:prop_12_scratch_lane").digest());
+    writeFileSync(path, `${JSON.stringify(old)}\n`);
+    const sent: CleanerText[] = [];
+    const again = openCleanerCore({
+      enabled: true,
+      property: { id: "prop_12_scratch_lane", address: ADDRESS, timeZone: "America/New_York" },
+      ownerPhone: OWNER,
+      cleaner: { phone: CLEANER, approved: true },
+      hostName: "Scratch",
+      consented: true,
+      sink: { send: (text) => void sent.push(text) },
+      now: () => new Date(clock.at),
+      watchFreshness: false,
+      dataDir: data,
+    });
+    await again.runReminders();
+    clock.at = AFTER;
+    await again.receive({ id: "left", from: OWNER, text: "guests have left" });
+    expect(pins(sent)).toEqual([]);
+    expect(readFileSync(path, "utf8")).not.toContain("pinSeal");
   });
 });

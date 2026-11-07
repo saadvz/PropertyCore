@@ -1,3 +1,4 @@
+import { fixedCodePort } from "../src/cleaner-core/doorPort";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -86,7 +87,7 @@ function open(sent: { send(text: CleanerText): void | Promise<void> }, extra = f
     property: { id: "prop_12_scratch_lane", address: ADDRESS, timeZone: "America/New_York" },
     ownerPhone: OWNER,
     cleaner: { phone: CLEANER, approved: true },
-    pin: PIN,
+    access: fixedCodePort(PIN),
     hostName: "Scratch",
     consented: true,
     sink: sent,
@@ -313,7 +314,7 @@ describe("group thread", () => {
       property: { id: "prop_12_scratch_lane", address: ADDRESS, timeZone: "America/New_York" },
       ownerPhone: OWNER,
       cleaner: { phone: CLEANER, approved: true },
-      pin: PIN,
+      access: fixedCodePort(PIN),
       hostName: "Scratch",
       consented: true,
       sink: {
@@ -356,7 +357,7 @@ describe("group thread", () => {
       property: { id: "prop_12_scratch_lane", address: ADDRESS, timeZone: "America/New_York" },
       ownerPhone: "",
       cleaner: { phone: CLEANER, approved: true },
-      pin: PIN,
+      access: fixedCodePort(PIN),
       hostName: "Scratch",
       consented: true,
       sink: { async send(text) { sent.push(text); } },
@@ -762,7 +763,7 @@ describe("live group membership", () => {
       property: { id: "prop_12_scratch_lane", address: ADDRESS, timeZone: "America/New_York" },
       ownerPhone: OWNER,
       cleaner: { phone: CLEANER, approved: true },
-      pin: PIN,
+      access: fixedCodePort(PIN),
       hostName: "Scratch",
       consented: true,
       allowlist: allow,

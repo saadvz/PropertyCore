@@ -1,4 +1,3 @@
-import { openPin, pinKeyFor, sealPin, type PinSeal } from "../hub/pinSeal";
 import { joinSplitDigits } from "../hub/digits";
 import { cleaningWindow, DOOR_NOT_OPENED, DOOR_WINDOW_OVER, fixedCodePort, type AccessRefusedLines, type DoorAccessPort } from "./doorPort";
 import { randomUUID } from "node:crypto";
@@ -294,8 +293,6 @@ export interface CleanerCoreOptions {
   ownerPhone: string;
   /** Approved cleaner. The door code is a private text to this number, and only after opt-in and departure. */
   cleaner: { phone: string; approved: boolean };
-  /** Standing door code. Absent means this engine never texts one. Superseded by access. */
-  pin?: string;
   /**
    * Where the door code comes from: the property hub's door access request on the live service, or a
    * fixed made-up code (fixedCodePort). The engine asks only after its own checks pass.
@@ -303,8 +300,6 @@ export interface CleanerCoreOptions {
   access?: DoorAccessPort;
   /** Host lines for a refused door access request, kept once per job. Unset reasons use DOOR_NOT_OPENED. */
   accessRefused?: AccessRefusedLines;
-  /** Where the lock is, named in the private door-code text. Never a code. */
-  lockLocation?: string;
   /** Name in the cleaner opt-in text. */
   hostName?: string;
   /** Numbers that share a group thread. They never receive the door code. */
@@ -371,8 +366,6 @@ export interface CleanerCoreOptions {
   cleanerConsent?: "pending" | "in" | "out";
   /** Host already texted STOP before this store existed. A saved choice wins. */
   ownerOptedOut?: boolean;
-  /** Live chat keeps the seal outside this store. Scratch fixtures seal here. */
-  sealPinAtRest?: boolean;
   /** Host sentence after the private text is accepted. Unset keeps the fixture sentence. */
   pinSentBody?: string;
   /** Host sentence when the private text fails. Unset keeps the fixture sentence. */
@@ -734,7 +727,6 @@ interface Stored {
   blocks: FeedBlock[];
   cleanerConsent?: "pending" | "in" | "out";
   clearances?: Clearance[];
-  pinSeal?: PinSeal;
   onboarding?: OnboardingSession;
   origin?: "onboarding";
   activated?: boolean;
@@ -775,7 +767,8 @@ interface StoreFile {
   blocks?: FeedBlock[];
   cleanerConsent?: "pending" | "in" | "out";
   clearances?: Clearance[];
-  pinSeal?: PinSeal;
+  /** An older store's sealed code. Never read; dropped on the next save. */
+  pinSeal?: unknown;
   pin?: unknown;
   onboarding?: OnboardingSession;
   origin?: "onboarding";
@@ -881,9 +874,9 @@ class Engine implements CleanerCore {
     this.enabled = options.enabled;
     this.owner = parsePhone(options.ownerPhone);
     this.cleanerPhone = parsePhone(options.cleaner.phone);
-    // The port is the one way a code reaches a text; a bare pin (the older option) becomes a fixed port.
-    this.access = options.access ?? (options.pin?.trim() ? fixedCodePort(options.pin.trim(), options.lockLocation) : undefined);
-    const pin = (options.access ? options.access.codeForChecks() : options.pin)?.trim();
+    // The port is the one way a code reaches a text. The engine never stores the code.
+    this.access = options.access;
+    const pin = options.access?.codeForChecks()?.trim();
     this.pin = pin && /^\d{4,8}$/.test(pin) ? pin : undefined;
     this.hostName = options.hostName?.trim() || "Scratch";
     this.groupPhones = (options.groupPhones ?? []).flatMap((phone) => {
@@ -1506,7 +1499,7 @@ class Engine implements CleanerCore {
       },
       ownerPhone: session.hostPhone,
       cleaner: { phone: cleaner.phone, approved: true },
-      pin: this.pin,
+      access: fixedCodePort(this.pin),
       hostName: session.nickname,
       consented: true,
       sink: { send() {} },
@@ -3576,10 +3569,6 @@ class Engine implements CleanerCore {
     return body.split(this.pin).join("[redacted]");
   }
 
-  private pinKeyMaterial(): Buffer {
-    return pinKeyFor(this.options.property.id);
-  }
-
   private load(): void {
     if (!this.file || !existsSync(this.file)) return;
     this.storeLoaded = true;
@@ -3587,8 +3576,10 @@ class Engine implements CleanerCore {
     if (parsed.schemaVersion !== 1) throw new Error("Cleaner Core store is not version 1.");
     const mine = sliceForTenant(parsed, this.tenantId);
     if (!mine) return;
-    const record = JSON.parse(JSON.stringify(mine)) as Stored & { pin?: unknown };
+    // An older store's plaintext pin or sealed code is never read: the code comes only from access.
+    const record = JSON.parse(JSON.stringify(mine)) as Stored & { pin?: unknown; pinSeal?: unknown };
     delete record.pin;
+    delete record.pinSeal;
     this.jobsState = record.jobs.map((job) => {
       const { checkInDate, ...rest } = job;
       return { ...rest, ...(typeof checkInDate === "string" ? { checkInDate } : {}), started: job.started === true, done: job.done === true };
@@ -3641,13 +3632,6 @@ class Engine implements CleanerCore {
       if (last) this.lastIntro = last.id.slice("intro:".length).split(":")[0];
     }
     this.hostNoteState = (record.hostNotes ?? []).filter((note) => typeof note?.id === "string" && typeof note?.body === "string");
-    if (this.options.sealPinAtRest !== false && !this.pin && record.pinSeal) {
-      try {
-        this.pin = openPin(record.pinSeal, this.pinKeyMaterial());
-      } catch {
-        this.pin = undefined;
-      }
-    }
   }
 
   private save(): void {
@@ -3674,7 +3658,6 @@ class Engine implements CleanerCore {
       ...(this.participantConsent.size > 0
         ? { participantConsent: [...this.participantConsent].map(([phone, consent]) => ({ phone, consent })) }
         : {}),
-      ...(this.options.sealPinAtRest !== false && this.pin ? { pinSeal: sealPin(this.pin, this.pinKeyMaterial()) } : {}),
       ...(this.sourceRecords.length > 0 ? { sourceRecords: this.sourceRecords } : {}),
       ...(this.latest.size > 0 ? { snapshots: Object.fromEntries(this.latest) } : {}),
       ...(this.reviewItems.length > 0 ? { reviews: this.reviewItems } : {}),
