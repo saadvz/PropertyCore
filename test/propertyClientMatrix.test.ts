@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ASSISTANT_PROFILES, runsSupplies, type CleanerAssistant } from "../src/cleaner-core/assistant";
+import { ASSISTANT_PROFILES, CHATGPT_INSTRUCTIONS, CLAUDE_INSTRUCTIONS, runsSupplies, type CleanerAssistant } from "../src/cleaner-core/assistant";
 import { listedChooseSupplies, listedSupplyFront } from "../src/hosted/supplies";
 import { REPO_ROOT } from "./files";
 
@@ -37,6 +37,12 @@ describe("the client matrix", () => {
     const flows = table(doc, "Property Core flows");
     expect(flows.find((row) => row[0] === "**Supply Core**")).toEqual(["**Supply Core**", "Yes", "Yes", "No", "No"]);
     expect(flows.find((row) => row[0] === "**Cleaner Core**")).toEqual(["**Cleaner Core**", "Yes", "Yes", "Yes", "Yes"]);
+  });
+
+  it("never tells a plain chat to set up or run Supply Core", () => {
+    for (const [agent, instructions] of [["claude", CLAUDE_INSTRUCTIONS], ["chatgpt", CHATGPT_INSTRUCTIONS]] as const) {
+      expect(instructions, agent).not.toMatch(/choose_supplies|Supply Core skill|check_cart/);
+    }
   });
 
   it("lists every agent's profile exactly as the code has it", () => {
