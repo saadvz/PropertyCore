@@ -595,14 +595,19 @@ Tour Core service's.
 | `CLEANER_CORE_ADMIN_PASSWORD` | Saad's admin password. Railway variables only |
 | `CLEANER_CORE_TWILIO_ACCOUNT_SID`, `CLEANER_CORE_TWILIO_AUTH_TOKEN` | The one Twilio account every tenant's number is on |
 | `CLEANER_CORE_LIVE_SMS`, `CLEANER_CORE_SMS_ALLOWLIST` | As on any Cleaner Core deployment |
+| `CLEANER_CORE_SIGNUP` | `1` to offer Sign in and Create account on the connect page. Needs the three below and ready numbers in the pool |
+| `CLEANER_CORE_TWILIO_VERIFY_SERVICE_SID` | The Twilio Verify service (`VA…`) that texts the sign-in code, on the same Twilio account |
+| `CLEANER_CORE_TERMS_URL`, `CLEANER_CORE_TERMS_VERSION` | Saad's terms page (`https://`) and the version a new account records |
 | `NODE_ENV`, `RAILPACK_NODE_NPM_INSTALL`, `NPM_CONFIG_PRODUCTION`, `RAILPACK_NODE_VERSION` | As in `.railway/railway.ts` |
 
 Do not set `CLEANER_CORE_TWILIO_PHONE_NUMBER`, `CLEANER_CORE_ASSISTANT`, or
 `CLEANER_CORE_MCP_TOKEN` there. Each tenant's number and chat come from its
 tenant, and a fixed token names no tenant.
 
-Adding a host: on `/admin`, create a tenant with its label and Twilio number,
-then send the host the invite code. They add the connector at `<service>/mcp`
+Adding a host: with sign-up on, the host adds the connector and chooses Create
+account on the page that opens; nothing happens on `/admin`. Otherwise, on
+`/admin`, create a tenant with its label and Twilio number, then send the host
+the invite code. They add the connector at `<service>/mcp`
 (or `<service>/mcp/cleaner-core` from a Cleaner Core template), type the code
 on the page that opens, and choose touring or cleaning.
 
