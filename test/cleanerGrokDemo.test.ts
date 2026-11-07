@@ -72,7 +72,7 @@ function call(wired: WiredApp, name: string, args: Record<string, unknown> = {})
 }
 
 async function setUpTo(wired: WiredApp, observer = false) {
-  await call(wired, "get_state", { choice: "cleaners" });
+  await call(wired, "get_state", { choice: "cleaners", drafted: true });
   expect((await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: "America/New_York" })).isError).toBe(false);
   expect((await call(wired, "save_people", { host: HOST, cleaner: CLEANER, ...(observer ? { observer: OBSERVER, doorCodeTo: "cleaner" } : {}) })).isError).toBe(false);
 }
@@ -413,7 +413,7 @@ function resultOf(reply: ToolReply): Record<string, unknown> {
 async function openDesk(root: string, env: NodeJS.ProcessEnv): Promise<LiveDesk> {
   const desk = liveDeskFor(root, () => env, () => new Date(FROZEN));
   const pinKey = Buffer.from(TEST_PIN_KEY, "base64");
-  expect((await desk.getState("cleaners")).ok).toBe(true);
+  expect((await desk.getState("cleaners", true)).ok).toBe(true);
   expect((await desk.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: ZONE })).ok).toBe(true);
   expect((await desk.savePeople({ host: HOST, cleaner: CLEANER })).ok).toBe(true);
   expect((await desk.saveCalendarLink({ google: true })).ok).toBe(true);
@@ -481,7 +481,7 @@ describe("Cleaner Core Grok demo: check_now follow-ups", () => {
     const lane = SCRATCH_TENANTS[0];
     if (!lane) throw new Error("missing tenant");
     const wired = await app({ scratchTools: true, allowlist: `${lane.ownerPhone},${lane.cleanerPhone}` });
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", { business: "Scratch", address: lane.property.address, timeZone: ZONE });
     await call(wired, "save_people", { host: lane.ownerPhone, cleaner: lane.cleanerPhone });
     await call(wired, "save_calendar_link", { google: true });
@@ -608,7 +608,7 @@ describe("Cleaner Core Grok demo: instant alerts", () => {
   it("save_alert_routine stores without echoing", async () => {
     const wired = await app();
     const posts = alertStub(() => 200);
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     const saved = await call(wired, "save_alert_routine", { url: ROUTINE_URL, token: ROUTINE_KEY });
     expect(saved.isError).toBe(false);
     expect(saved.structured?.next).toBe(CONNECTED);
@@ -790,7 +790,7 @@ describe("Cleaner Core Grok demo: Grok guidance", () => {
 
   it("asks where bookings come from at the calendar step, with Guesty Lite, Google Calendar, and other links as options", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" });
     const people = await call(wired, "save_people", { host: HOST, cleaner: CLEANER });
     const ask = people.structured?.ask as { step: string; tool: string; questions: { field: string; options?: { value: string }[]; example?: string }[] };
@@ -1560,7 +1560,7 @@ describe("Cleaner Core Grok demo: Scratch rehearsal", () => {
     };
 
     // 1. Setup with Google, then the routines.
-    await say("get_state", { choice: "cleaners" });
+    await say("get_state", { choice: "cleaners", drafted: true });
     await say("save_property", { business: "Scratch", address, timeZone: ZONE });
     await say("save_people", { host: LANE.ownerPhone, cleaner: LANE.cleanerPhone });
     await say("save_calendar_link", { google: true });
@@ -1745,7 +1745,7 @@ describe("Cleaner Core Grok demo: alert upload link", () => {
   it("issues a link on the app origin and saves nothing yet", async () => {
     const wired = await app();
     const posts = alertStub(() => 200);
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     const { code } = await issueLink(wired);
     expect(wired.env().CLEANER_CORE_ROUTINE_URL).toBeUndefined();
     expect(wired.env().CLEANER_CORE_ROUTINE_KEY).toBeUndefined();
@@ -1923,7 +1923,7 @@ describe("Cleaner Core Grok demo: alert upload link", () => {
     const asBase64Url = pinKey.toString("base64url");
     expect(asBase64Url).not.toBe(asBase64);
     const withKey = (name: string, args: Record<string, unknown> = {}) => wired.tool(PATH, CLEANER_TOKEN, name, args, { pinKey: asBase64 });
-    await withKey("get_state", { choice: "cleaners" });
+    await withKey("get_state", { choice: "cleaners", drafted: true });
     expect((await withKey("save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE })).isError).toBe(false);
     expect((await withKey("save_people", { host: HOST, cleaner: CLEANER })).isError).toBe(false);
     expect((await withKey("save_calendar_link", { google: true })).isError).toBe(false);

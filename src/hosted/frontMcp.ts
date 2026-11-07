@@ -6,7 +6,7 @@ import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { Property } from "../cleaner-core/hosted/properties";
 import { promoteRoutineOwner, propertyContext, shareRoutine, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
 import { sweepHeldTexts } from "./lineRouter";
-import { afterPeopleSaved, peopleRefusal } from "./sharedPeople";
+import { afterPeopleSaved, draftPeople, peopleRefusal } from "./sharedPeople";
 import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
 import { OPERATOR_TOOL_NAMES } from "../operator/tools";
 import { ServiceNotices } from "./crossService";
@@ -206,6 +206,16 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
   return reply;
 }
 
+/** Adds draft.knownPeople to a property's setup draft, when the account has people on other properties. */
+async function withDraftPeople(h: HostedCleaner, tenant: Tenant, property: Property, reply: FrontReply): Promise<FrontReply> {
+  const draft = reply.structured?.draft;
+  if (reply.isError || !reply.structured || !draft || typeof draft !== "object") return reply;
+  const knownPeople = await draftPeople(h, tenant, property);
+  if (knownPeople.length === 0) return reply;
+  const structured = { ...reply.structured, draft: { ...(draft as Record<string, unknown>), knownPeople } };
+  return { ...reply, text: JSON.stringify(structured), structured };
+}
+
 function namesProperty(args: unknown): boolean {
   const all = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
   return typeof all.property === "string" || typeof all.propertyId === "string";
@@ -245,7 +255,9 @@ async function cleaningTool(h: HostedCleaner, r: HostedRequest, tenant: Tenant, 
 
 function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller): PropertyStates {
   const cleaning = async (property: Property, args: Record<string, unknown>): Promise<FrontReply> => {
-    const reply = await cleaningTool(h, r, tenant, property, caller, "get_state", args);
+    const desk = await cleaningTool(h, r, tenant, property, caller, "get_state", args);
+    // A setup draft names the people already on the account's other properties (#166).
+    const reply = await withDraftPeople(h, tenant, property, desk);
     // Cleaner Core's get_state carries one Supply Core line while Supply Core is on for the property.
     const line = !reply.isError && reply.structured ? suppliesLine(h, tenant, property) : undefined;
     if (!line || !reply.structured) return reply;
@@ -258,6 +270,8 @@ function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, call
     supplies,
     next: async (property) => {
       const reply = property.flows.cleaning.on ? await cleaning(property, {}) : property.flows.supplies.on && caller.assistant === "grok" ? await supplies(property) : undefined;
+      // A setup still in its draft (#166) has no ask yet: its next step is the draft.
+      if (reply?.structured?.draft) return "draft";
       const ask = reply?.structured?.ask as { step?: unknown } | undefined;
       return typeof ask?.step === "string" ? ask.step : undefined;
     },

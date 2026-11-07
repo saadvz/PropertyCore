@@ -1,7 +1,9 @@
 /**
  * What each setup step still needs, for Grok to ask in its own words. Cleaner Core names the fields,
- * the allowed answers, and the defaults. Grok asks one short question at a time and shows options as
- * a choice card. Nothing here is sent to anyone.
+ * the allowed answers, and the defaults. Setup starts with a draft: Grok fills in what it already
+ * knows, shows the host one summary with the gaps marked "needs you", and the host corrects it once.
+ * Whatever is still missing after that is asked one short question at a time, with options as a
+ * choice card. Nothing here is sent to anyone.
  */
 
 import { askNext, type AskOption, type AskQuestion } from "../hub/ask";
@@ -301,3 +303,62 @@ export function allTimesAsk(checkout: string, checkIn: string, untimed: number):
     ],
   };
 }
+
+/** Where the agent looks for each part of the draft, and the tool that saves it. */
+export interface DraftFill {
+  fill: string;
+  from: string;
+  tool?: string;
+  how?: string;
+}
+
+/**
+ * The draft that starts setup (saadvz/TourCore#166). `needsYou` holds the questions of every step
+ * that is still missing, whatever its order; `confirm` holds what the host always confirms.
+ */
+export interface SetupDraft {
+  fill: DraftFill[];
+  confirm: string[];
+  needsYou: SetupAsk[];
+}
+
+export const DRAFT_NEXT =
+  'Draft this setup before you ask the host anything. draft.fill says where to look and which tool saves each part. Save what you find, in any order except that the calendars wait for the property, but do not save again a step that done already lists unless the host changes it. Never draft the door code. Then show the host one summary for this property: what you filled in, every step in draft.needsYou marked "needs you", and each item in draft.confirm called out for their yes. Let the host correct it in one reply. Save their changes, then call get_state with drafted: true.';
+
+export const DRAFT_FILL: DraftFill[] = [
+  {
+    fill: "the business name, the address, the time zone, and the usual checkout and check-in times",
+    from: "the listing and the booking confirmation emails",
+    tool: "save_property",
+  },
+  {
+    fill: "where the bookings come from",
+    from: "the booking emails and the host's calendars (Guesty Lite, Airbnb, Vrbo, Google Calendar)",
+    tool: "save_sources",
+    how: "A calendar link still goes through the upload link, never in chat. Once the host's reply confirms the list, save_sources with done: true.",
+  },
+  {
+    fill: "the cleaner's name and phone number, the host's name and phone number, and anyone else in the cleaning texts",
+    from: "the host's contacts and past texts with the cleaner",
+    tool: "save_people",
+  },
+  { fill: "the schedule", from: "the defaults, unless past texts show the host does it another way", tool: "save_schedule" },
+  { fill: "the checklist and the cleaner's notes", from: "past texts with the cleaner", tool: "save_preferences" },
+  {
+    fill: "supplies the property reorders",
+    from: "past supply orders",
+    how: "Name them in the summary as a suggestion for Supply Core. Nothing is ordered or saved from the draft.",
+  },
+  {
+    fill: "pros the host has used, like a plumber or a handyman",
+    from: "past emails and texts",
+    how: "Name them in the summary for later. Nothing saves them yet, and nobody is texted.",
+  },
+];
+
+export const DRAFT_CONFIRM: string[] = [
+  "The door code, always through its secure upload: call save_door_code with no code for the link. Never take it from an email, a text, or the chat.",
+  "Who gets the door code: the group choice and, with contacts in the group, doorCodeTo.",
+  "Any spending: payments to the cleaner and Supply Core. Payments still take their own yes with save_payments.",
+  "Anyone new who will be texted: the cleaner and each contact, by name. When someone is already on another of the host's properties, say so in the summary and save with shared: true only after the host's yes. Someone who already said YES there gets no new invite.",
+];

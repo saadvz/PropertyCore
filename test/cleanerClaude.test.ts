@@ -22,8 +22,8 @@ const PATH = "/mcp/cleaner-core";
 const ZONE = "America/New_York";
 const FIRE_URL = "https://api.anthropic.com/v1/claude_code/routines/trig_01MADEUPTESTTRIGGER/fire";
 const FIRE_TOKEN = "made-up-claude-routine-token-for-tests";
-/** The Grok deployment's initialize instructions, byte for byte: as before Claude, plus the reply-draft lines. */
-const GROK_INSTRUCTIONS_SHA256 = "8fffc712eac8afeed345536e0eba534513f97e73e90dbbd77e1580ac84cc0d31";
+/** The Grok deployment's initialize instructions, byte for byte: as before Claude, plus the reply-draft lines and the setup draft (#166). */
+const GROK_INSTRUCTIONS_SHA256 = "4bda70e0b890741eb62150226eb4b985ee580f8856b7db4c0d593f91bc8e5bf0";
 
 const read = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 
@@ -82,7 +82,7 @@ const form = (fields: Record<string, string>) => ({ type: "application/x-www-for
 
 /** Setup up to the door-code step, the way the chat drives it. */
 async function toDoorCode(wired: WiredApp): Promise<void> {
-  await call(wired, "get_state", { choice: "cleaners" });
+  await call(wired, "get_state", { choice: "cleaners", drafted: true });
   await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "10:30", checkInTime: "15:00" });
   await call(wired, "save_sources", { calendars: [{ name: "Airbnb", url: CALENDAR_URL }] });
   await call(wired, "save_sources", { done: true });
@@ -200,7 +200,7 @@ describe("Cleaner Core for Claude", () => {
 
   it("saves a calendar link from its private page, named on the page", async () => {
     const wired = await app(true);
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "10:30", checkInTime: "15:00" });
     const ask = (await call(wired, "get_state")).structured?.ask as { questions: { field: string; how: string }[] };
     expect(ask.questions.find((question) => question.field === "calendars")?.how).toMatch(/^Never in chat\./);
@@ -229,7 +229,7 @@ describe("Cleaner Core for Claude", () => {
 describe("Cleaner Core for Claude, live", () => {
   it("hands Claude the scheduled task and texts the host to tell Claude", async () => {
     const wired = await app(true);
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE });
     await call(wired, "save_people", { host: HOST, cleaner: CLEANER });
     await call(wired, "save_calendar_link", { url: CALENDAR_URL });

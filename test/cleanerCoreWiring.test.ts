@@ -91,7 +91,7 @@ describe("Cleaner Core live wiring", () => {
     expect(first.text).toContain(FIRST_QUESTION);
     expect(first.text).not.toMatch(PRODUCT);
 
-    const picked = await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners" });
+    const picked = await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners", drafted: true });
     remember(picked);
     expect(picked.text).toContain("That's Cleaner Core. It schedules cleaners between guest stays.");
     const later = await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state");
@@ -341,7 +341,7 @@ describe("Cleaner Core live wiring", () => {
 
   it("sends nothing when live texts are off", async () => {
     const wired = await app({ live: false });
-    await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners" });
+    await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners", drafted: true });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: "America/New_York" });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_people", { host: HOST, cleaner: CLEANER, observer: OBSERVER });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_calendar_link", { url: CALENDAR_URL });
@@ -360,7 +360,7 @@ describe("Cleaner Core live wiring", () => {
 
   it("keeps a STOP on the number that was texted, even when it arrives on the other route", async () => {
     const wired = await app();
-    await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners" });
+    await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners", drafted: true });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: "America/New_York" });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_people", { host: HOST, cleaner: CLEANER, observer: OBSERVER });
 
@@ -461,7 +461,7 @@ describe("Cleaner Core live wiring", () => {
 
   it("sends one STOP acknowledgement when the same text is delivered again, including after a restart", async () => {
     const wired = await app();
-    await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners" });
+    await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners", drafted: true });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: "America/New_York" });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_people", { host: HOST, cleaner: CLEANER, observer: OBSERVER });
     const sid = "SM-early-stop";
@@ -483,7 +483,7 @@ describe("Cleaner Core live wiring", () => {
 
   it("sends the door code once when the departure text, START, and STOP are retried", async () => {
     const wired = await app();
-    await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners" });
+    await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners", drafted: true });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: "America/New_York" });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_people", { host: HOST, cleaner: CLEANER, observer: OBSERVER });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_calendar_link", { url: CALENDAR_URL });
@@ -537,7 +537,7 @@ describe("Cleaner Core live wiring", () => {
 
   it("seals with the server's own key when the header is missing, and refuses a wrong header key", async () => {
     const wired = await app();
-    await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners" });
+    await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners", drafted: true });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: "America/New_York" });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_people", { host: HOST, cleaner: CLEANER, observer: OBSERVER });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_calendar_link", { url: CALENDAR_URL });
@@ -598,7 +598,7 @@ describe("Cleaner Core live wiring", () => {
     for (const tool of tools.result?.tools ?? []) {
       expect(Object.keys(tool.inputSchema?.properties ?? {}).join(" ")).not.toMatch(/key/i);
     }
-    await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners" });
+    await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners", drafted: true });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: "America/New_York" });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_people", { host: HOST, cleaner: CLEANER, observer: OBSERVER });
     await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_calendar_link", { url: CALENDAR_URL });
@@ -692,7 +692,7 @@ describe("Cleaner Core live wiring", () => {
 });
 
 async function throughSchedule(wired: WiredApp, tag: string): Promise<void> {
-  await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners" });
+  await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "get_state", { choice: "cleaners", drafted: true });
   await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: "America/New_York" });
   await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_people", { host: HOST, cleaner: CLEANER, observer: OBSERVER });
   await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "save_calendar_link", { url: CALENDAR_URL });

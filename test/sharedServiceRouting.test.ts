@@ -75,7 +75,8 @@ describe("one address, tools by service", () => {
     const state = await m.toolAt("/mcp", token, "get_state");
     expect(state.isError).toBe(false);
     expect(state.text).not.toContain("Letting renters tour a unit");
-    expect((state.structured?.ask as { step?: string } | undefined)?.step).toBe("property");
+    // Setup starts with a draft (#166), and the property is the first gap in it.
+    expect((state.structured?.draft as { needsYou: { step: string }[] } | undefined)?.needsYou[0]?.step).toBe("property");
   });
 
   it("asks nothing about Tour Core while TOUR_CORE_TENANTS is off", async () => {

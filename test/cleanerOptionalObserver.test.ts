@@ -78,7 +78,7 @@ function open(phones: string[]) {
 }
 
 async function setup(desk: ReturnType<typeof open>["desk"], observer?: string) {
-  expect((await desk.getState("cleaners")).ok).toBe(true);
+  expect((await desk.getState("cleaners", true)).ok).toBe(true);
   expect((await desk.saveProperty({ business: "Harbor", address: ADDRESS, timeZone: "America/New_York" })).ok).toBe(true);
   const saved = await desk.savePeople(observer === undefined ? { host: HOST, cleaner: CLEANER } : { host: HOST, cleaner: CLEANER, observer, doorCodeTo: "cleaner" });
   expect(saved.ok).toBe(true);
@@ -104,7 +104,7 @@ function bodyHasCode(body: string): boolean {
 describe("optional observer", () => {
   it("saves with the observer left empty and does not ask for a third number", async () => {
     const { desk, root } = open([HOST, CLEANER]);
-    expect((await desk.getState("cleaners")).ok).toBe(true);
+    expect((await desk.getState("cleaners", true)).ok).toBe(true);
     const asked = await desk.saveProperty({ business: "Harbor", address: ADDRESS, timeZone: "America/New_York", checkoutTime: "11:00", checkInTime: "16:00" });
     expect(asked.ok).toBe(true);
     if (asked.ok) {
@@ -200,7 +200,7 @@ describe("optional observer", () => {
 
   it("keeps a three-number setup on group copies only, and never sends the code to the observer", async () => {
     const { desk, sms, posts } = open([HOST, CLEANER, OLD]);
-    expect((await desk.getState("cleaners")).ok).toBe(true);
+    expect((await desk.getState("cleaners", true)).ok).toBe(true);
     expect((await desk.saveProperty({ business: "Harbor", address: ADDRESS, timeZone: "America/New_York" })).ok).toBe(true);
     const people = await desk.savePeople({ host: HOST, cleaner: CLEANER, observer: OLD, doorCodeTo: "cleaner" });
     expect(people.ok).toBe(true);
@@ -224,7 +224,7 @@ describe("optional observer", () => {
 
   it("still answers STOP from both numbers, sends nothing for HELP, and skips an opted-out number", async () => {
     const early = open([HOST, CLEANER]);
-    expect((await early.desk.getState("cleaners")).ok).toBe(true);
+    expect((await early.desk.getState("cleaners", true)).ok).toBe(true);
     expect((await early.desk.saveProperty({ business: "Harbor", address: ADDRESS, timeZone: "America/New_York" })).ok).toBe(true);
     expect((await early.desk.savePeople({ host: HOST, cleaner: CLEANER })).ok).toBe(true);
     const helpBefore = early.sms.sent.length;
