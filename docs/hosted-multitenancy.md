@@ -133,11 +133,15 @@ The design is
 `docs/superpowers/specs/2026-11-07-connect-page-sign-up-design.md`. With
 sign-up open, the connect page offers Sign in, Create account, and the invite
 code. A phone code from Twilio Verify proves the landlord holds their phone.
-Sign in binds the grant to the account that phone signed up; Create account
+A code is a text, so it waits for `CLEANER_CORE_LIVE_SMS` and goes only to
+phones `CLEANER_CORE_SMS_ALLOWLIST` allows, and only to US and Canadian
+numbers. Sign in binds the grant to the account that phone signed up; Create account
 opens a new account with a line from the number pool and records its landlord
 (`owner` in `tenants.json`: phone, email, when the phone was verified, and the
 terms version). Codes are limited per phone, per page, and for the whole
-service, and five wrong codes lock a phone out for an hour. Invite codes keep
+service, and five wrong codes lock a phone out for an hour. A page that
+confirmed a phone keeps it confirmed, so switching between Sign in and Create
+account doesn't need a second code. Invite codes keep
 working for accounts made on `/admin`.
 
 ## Not yet

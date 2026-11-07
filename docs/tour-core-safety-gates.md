@@ -4,7 +4,7 @@ These gates have to stay green before `TOUR_CORE_TENANTS` is turned on for a rea
 
 A touring host's Tour Core runs as its own process on the shared service (`TENANT_WORKER`). It is today's Tour Core, so the touring gates below are the same code the client matrix proves, run again through the shared service where the service changes the path.
 
-What pauses a live touring host: the flag defaults off; door access is the demo adapter, so no real lock opens; a touring process sends no text unless `CLEANER_CORE_LIVE_SMS` is on and the number is allowed by `CLEANER_CORE_SMS_ALLOWLIST`; a Scratch tenant on a 555 number never calls Twilio.
+What pauses a live touring host: the flag defaults off; door access is the demo adapter, so no real lock opens; a touring process sends no text unless `CLEANER_CORE_LIVE_SMS` is on and the number is allowed by `CLEANER_CORE_SMS_ALLOWLIST`, and the connect page's sign-in codes wait for the same two; a Scratch tenant on a 555 number never calls Twilio.
 
 | Gate | What it holds | Proof |
 | --- | --- | --- |
