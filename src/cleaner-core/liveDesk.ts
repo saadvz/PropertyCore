@@ -2341,6 +2341,11 @@ export class LiveDesk {
     });
   }
 
+  /** True when the saved host is the account's confirmed landlord, so this property's texts may go. */
+  textsAllowed(): Promise<boolean> {
+    return this.serial(async () => this.hostConfirmed());
+  }
+
   /** The business name saved for this property. */
   businessName(): Promise<string | undefined> {
     return this.serial(async () => this.file.business);
@@ -3282,6 +3287,8 @@ export class LiveDesk {
         ? `You're opted out of cleaning texts for ${address}. You won't get cleaning offers or the door code. Reply START to opt back in. Reply HELP for help.`
         : "You're opted back in to cleaning texts. Reply YES if you still want this turnover. Reply STOP to opt out.";
     const labeled = this.labeled(from, body, false);
+    // The STOP or START is kept above. The reply names the address, so it waits for a confirmed host like every other text.
+    if (!this.hostConfirmed()) return [];
     if (this.scratchCapture()) {
       this.noteLocal(from, keyword, labeled);
       return [{ to: from, body: labeled, kind: keyword }];
