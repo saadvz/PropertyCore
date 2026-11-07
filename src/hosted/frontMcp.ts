@@ -270,6 +270,8 @@ function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, call
     supplies,
     next: async (property) => {
       const reply = property.flows.cleaning.on ? await cleaning(property, {}) : property.flows.supplies.on && caller.assistant === "grok" ? await supplies(property) : undefined;
+      // A setup still in its draft (#166) has no ask yet: its next step is the draft.
+      if (reply?.structured?.draft) return "draft";
       const ask = reply?.structured?.ask as { step?: unknown } | undefined;
       return typeof ask?.step === "string" ? ask.step : undefined;
     },

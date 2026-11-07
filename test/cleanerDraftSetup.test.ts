@@ -96,13 +96,17 @@ describe("draft-and-confirm setup", () => {
       const saved = await call(wired, tool, args);
       expect(saved.isError, `${tool}: ${saved.text}`).toBe(false);
     }
-    // The door code is never drafted, and payments are spending: both still need the host.
+    // The door code is never drafted, and payments are spending: both still need the host. The summary
+    // also asks whether bookings come from anywhere besides the drafted calendar.
     const summary = await state(wired);
     expect(summary.next).toBe(DRAFT_NEXT);
-    expect(gaps(summary)).toEqual(["door-code", "payments"]);
+    expect(gaps(summary)).toEqual(["sources", "door-code", "payments"]);
+    // Only what's still missing is drafted, so nothing already saved is saved over.
+    expect(draftOf(summary)?.fill.map((part) => part.tool).filter(Boolean)).toEqual(["save_sources"]);
     expect(summary.done).toEqual(expect.arrayContaining(["Property saved.", "Cleaner saved.", "Schedule saved.", "Calendar link saved.", "Preferences saved."]));
 
-    // The host saw the summary and corrected it in one reply. Host decision 1.
+    // The host saw the summary and corrected it in one reply: that's all the calendars. Host decision 1.
+    expect((await call(wired, "save_sources", { done: true })).isError).toBe(false);
     const asked: string[] = [];
     const afterDraft = await state(wired, { drafted: true });
     expect(afterDraft.draft).toBeUndefined();
@@ -174,6 +178,33 @@ describe("draft-and-confirm setup", () => {
     expect(gaps(await state(wired))).toEqual(["sources", "people", "schedule", "preferences", "payments"]);
     // After the draft, the old order picks the first gap.
     expect(askStep(await state(wired, { drafted: true }))).toBe("sources");
+  });
+
+  it("refuses set_up_texting until the property, a calendar, the people, and the door code are saved", async () => {
+    const wired = await app();
+    await state(wired, { choice: "cleaners" });
+    expect((await call(wired, "save_property", DRAFTED.property)).isError).toBe(false);
+    const issued = await call(wired, "save_door_code", { lockLocation: "front door keypad" });
+    expect((await upload(wired, String(issued.structured?.uploadUrl), { code: DOOR_CODE })).status).toBe(200);
+    // A saved code no longer means the cleaner and a calendar are saved, so texting can't skip setup.
+    const early = await call(wired, "set_up_texting");
+    expect(early.isError).toBe(true);
+    expect(early.text).toContain("Before texting, save a booking calendar and the host and the cleaner.");
+    const still = await state(wired);
+    expect(still.next).toBe(DRAFT_NEXT);
+    expect(still.done).not.toContain("Texting saved.");
+  });
+
+  it("drafts only what a setup already under way is still missing", async () => {
+    const wired = await app();
+    // Saved before draft-and-confirm: no drafted mark yet.
+    await state(wired, { choice: "cleaners" });
+    for (const [tool, args] of [["save_property", DRAFTED.property], ["save_sources", { ...DRAFTED.sources, done: true }], ["save_people", DRAFTED.people]] as const) {
+      expect((await call(wired, tool, args)).isError).toBe(false);
+    }
+    const draft = await state(wired);
+    expect(gaps(draft)).toEqual(["schedule", "door-code", "preferences", "payments"]);
+    expect(draftOf(draft)?.fill.map((part) => part.tool).filter(Boolean)).toEqual(["save_schedule", "save_preferences"]);
   });
 
   it("refuses a door code whose digits are already in the cleaner's notes saved earlier in the draft", async () => {

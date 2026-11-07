@@ -1029,7 +1029,7 @@ export class LiveDesk {
     // Setup saves in any order (#166), so text the cleaner gets may be saved before the code.
     const preferences = this.file.preferences;
     if (preferences && [...preferences.checklist, preferences.instructions ?? ""].some((text) => text && containsCodeToken(joinSplitDigits(text), code))) return CODE_IN_PREFERENCES;
-    const saved = [this.file.business, this.file.cleanerName, this.file.hostName, this.file.schedule?.escalateTo, ...contactsOf(this.file).map((contact) => contact.name), ...this.hub.calendars().map((calendar) => calendar.name)];
+    const saved = [this.file.business, this.file.cleanerName, this.file.hostName, this.file.schedule?.escalateTo, this.file.payments?.venmo, ...contactsOf(this.file).map((contact) => contact.name), ...this.hub.calendars().map((calendar) => calendar.name)];
     if (saved.some((text) => text && containsCodeToken(joinSplitDigits(text), code))) return CODE_IN_SAVED_SETUP;
     return undefined;
   }
@@ -1523,7 +1523,9 @@ export class LiveDesk {
   }
 
   private setUpTextingNow(): ToolReply {
-    if (!this.codeSaved()) return this.fail("Save the door code first.");
+    // Setup saves in any order (#166), so a saved code no longer means the cleaner and a calendar are saved.
+    const missing = this.textingMissing();
+    if (missing.length > 0) return this.failWith(`Before texting, save ${listText(missing)}.`, { missing });
     this.file.texting = true;
     this.persist();
     return this.reply({
@@ -1536,7 +1538,7 @@ export class LiveDesk {
     return this.serial(async () => {
       // Setup saves in any order (#166), so Activate checks every step it needs.
       const missing = this.activateMissing();
-      if (missing.length > 0) return this.failWith(`Before Activate, save ${listText(missing)}.`, { needsYou: missing });
+      if (missing.length > 0) return this.failWith(`Before Activate, save ${listText(missing)}.`, { missing });
       // Nothing texts before the alert routine is connected, so no reply from the cleaner goes unheard.
       if (!this.routineReady()) {
         const task = this.task();
@@ -3434,7 +3436,8 @@ export class LiveDesk {
       needsYou.push(propertyAsk({ address: Boolean(place.address), checkoutTime: Boolean(place.checkoutTime), checkInTime: Boolean(place.checkInTime) }));
     }
     if (!this.hasSources()) needsYou.push(sourcesAsk(name));
-    else if (!this.hub.calendarsDone() && !this.file.cleaner) needsYou.push(moreSourcesAsk(this.sourceNames(), name));
+    // Whether bookings come from anywhere else stays in the summary until the host says that's all.
+    else if (!this.hub.calendarsDone()) needsYou.push(moreSourcesAsk(this.sourceNames(), name));
     if (!this.file.cleaner) needsYou.push(peopleAsk(this.file.business ?? "the host"));
     if (!this.file.schedule) needsYou.push(SCHEDULE_STEP);
     if (!this.codeSaved()) needsYou.push(DOOR_CODE_STEP);
@@ -3443,18 +3446,25 @@ export class LiveDesk {
     if (!this.file.suppliesAsked && this.offersSupplies()) needsYou.push(SUPPLIES_STEP);
     const assistant = this.assistant();
     const shown = (step: SetupAsk) => (assistant === "muse" ? museAsk(step) : assistant === "chatgpt" ? chatGptAsk(step) : assistant === "claude" ? claudeAsk(step) : step) as SetupAsk;
-    return { fill: DRAFT_FILL, confirm: DRAFT_CONFIRM, needsYou: needsYou.map(shown) };
+    // Only the steps still missing are drafted, so a saved step (a setup already under way) isn't saved over.
+    const missingTools = new Set(needsYou.map((step) => step.tool));
+    const fill = DRAFT_FILL.filter((part) => !part.tool || missingTools.has(part.tool));
+    return { fill, confirm: DRAFT_CONFIRM, needsYou: needsYou.map(shown) };
   }
 
-  /** What Activate still needs, in the host's words. Empty once setup can go live. */
-  private activateMissing(): string[] {
+  /** What texting needs before it can be saved, in the host's words: what the old save order guaranteed. */
+  private textingMissing(): string[] {
     const missing: string[] = [];
     if (!this.place.address) missing.push("the property");
     if (!this.hasSources() && !isScratchPropertyAddress(this.place.address)) missing.push("a booking calendar");
     if (!this.file.cleaner) missing.push("the host and the cleaner");
     if (!this.codeSaved()) missing.push("the door code");
-    if (!this.file.preferences) missing.push("the cleaning preferences (empty ones if there are none)");
     return missing;
+  }
+
+  /** What Activate still needs, in the host's words. Empty once setup can go live. */
+  private activateMissing(): string[] {
+    return [...this.textingMissing(), ...(this.file.preferences ? [] : ["the cleaning preferences (empty ones if there are none)"])];
   }
 
   /** The next setup step with its ask, for a save tool's reply. */

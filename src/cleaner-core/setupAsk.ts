@@ -323,7 +323,7 @@ export interface SetupDraft {
 }
 
 export const DRAFT_NEXT =
-  'Draft this setup before you ask the host anything. draft.fill says where to look and which tool saves each part. Save what you find, in any order. Never draft the door code. Then show the host one summary for this property: what you filled in, every step in draft.needsYou marked "needs you", and each item in draft.confirm called out for their yes. Let the host correct it in one reply. Save their changes, then call get_state with drafted: true.';
+  'Draft this setup before you ask the host anything. draft.fill says where to look and which tool saves each part. Save what you find, in any order except that the calendars wait for the property, but do not save again a step that done already lists unless the host changes it. Never draft the door code. Then show the host one summary for this property: what you filled in, every step in draft.needsYou marked "needs you", and each item in draft.confirm called out for their yes. Let the host correct it in one reply. Save their changes, then call get_state with drafted: true.';
 
 export const DRAFT_FILL: DraftFill[] = [
   {

@@ -109,6 +109,8 @@ export interface DraftPerson {
   on: { label: string; role: Role }[];
   /** They already said YES on the account, so this property sends them no new invite. */
   saidYes: boolean;
+  /** They texted STOP: nothing goes to them on any property until they text START. */
+  stopped?: true;
 }
 
 /**
@@ -129,7 +131,8 @@ export async function draftPeople(h: HostedCleaner, tenant: Tenant, property: Pr
       return name ? [{ label: name, role: w.role }] : [];
     });
     if (on.length === 0) continue;
-    listed.push({ ...(person.name ? { name: person.name } : {}), on, saidYes: people.optedIn(person.phone) });
+    const stopped = people.stopped(person.phone);
+    listed.push({ ...(person.name ? { name: person.name } : {}), on, saidYes: !stopped && people.optedIn(person.phone), ...(stopped ? { stopped: true as const } : {}) });
   }
   return listed;
 }

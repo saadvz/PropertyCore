@@ -21,6 +21,7 @@ interface KnownPerson {
   name?: string;
   on: { label: string; role: string }[];
   saidYes: boolean;
+  stopped?: true;
 }
 
 const knownOf = (structured: Record<string, unknown> | undefined) => (structured?.draft as { knownPeople?: KnownPerson[] } | undefined)?.knownPeople;
@@ -49,6 +50,36 @@ describe("a setup draft on an account with two properties", () => {
     await s.tool("save_people", { property: court, host: LANDLORD, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only", shared: true });
     // Once she is on this property too, the draft no longer lists her as someone from elsewhere.
     expect(knownOf((await s.tool("get_state", { property: court })).structured)).toBeUndefined();
+  });
+
+  it("never says a cleaner who texted STOP said YES", SLOW, async () => {
+    open = await sharedAccount();
+    const s = open;
+    await s.liveProperty("Scratch Lane", LANE, { cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" });
+    const court = await s.add("Scratch Court");
+    await s.tool("set_flows", { property: court, cleaning: true });
+    await s.m.text(LINE, CLEANER, "YES", "SM-draft-yes");
+    await s.m.text(LINE, CLEANER, "STOP", "SM-draft-stop");
+    const state = await s.tool("get_state", { property: court, choice: "cleaners" });
+    expect(knownOf(state.structured)).toEqual([{ name: "Ana", on: [{ label: "Scratch Lane", role: "cleaner" }], saidYes: false, stopped: true }]);
+  });
+
+  it("shows the draft as each property's next step, and drafted: true names its property", SLOW, async () => {
+    open = await sharedAccount();
+    const s = open;
+    const lane = await s.add("Scratch Lane");
+    const court = await s.add("Scratch Court");
+    await s.tool("set_flows", { property: lane, cleaning: true });
+    await s.tool("set_flows", { property: court, cleaning: true });
+    await s.tool("get_state", { property: lane, choice: "cleaners" });
+    const overview = await s.tool("get_state", {});
+    expect((overview.structured?.properties as { id: string; next?: string }[]).find((p) => p.id === lane)?.next).toBe("draft");
+    const unnamed = await s.call("get_state", { drafted: true });
+    expect(unnamed.isError).toBe(true);
+    expect(unnamed.text).toContain("Name the property");
+    const named = await s.tool("get_state", { property: lane, drafted: true });
+    expect(named.structured?.draft).toBeUndefined();
+    expect((named.structured?.ask as { step?: string } | undefined)?.step).toBe("property");
   });
 
   it("lists nobody on an account's first property", SLOW, async () => {

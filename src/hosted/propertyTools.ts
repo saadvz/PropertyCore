@@ -117,6 +117,8 @@ export async function accountState(tenant: Tenant, args: unknown, states: Proper
   const list = tenant.properties.map(propertyLine);
   if (tenant.properties.length === 0) return done({ properties: [], next: FIRST_PROPERTY });
   const named = args && typeof args === "object" && typeof (args as { property?: unknown }).property === "string";
+  // Each property has its own draft (#166), so drafted: true names the property it's for.
+  if (!named && tenant.properties.length > 1 && (args as { drafted?: unknown } | undefined)?.drafted === true) return fail("Name the property whose draft the host saw: call get_state with property and drafted: true.");
   if (named || tenant.properties.length === 1) {
     const resolved = resolveProperty(tenant, args);
     if ("refusal" in resolved) return fail(resolved.refusal);
