@@ -186,7 +186,7 @@ describe("installation status", () => {
     expect(s.nextStep).toMatchObject({ component: "PUBLIC_ENDPOINT", action: "ESTABLISH_PUBLIC_ENDPOINT", performedBy: "GROK", command: "npm run bootstrap:grok" });
     expect(s.infrastructureReady).toBe(false);
     expect(s.components.find((c) => c.component === "STORAGE")).toMatchObject({ requirement: "REQUIRED_BEFORE_PROPERTY", technical: { provider: "NOT_CONFIGURED" }, summary: "Offered once visitor texting is working." });
-    expect(s.components.find((c) => c.component === "ACCESS")).toMatchObject({ technical: { provider: "DURIN_DEMO" }, summary: "Demo. No real doors open." });
+    expect(s.components.find((c) => c.component === "ACCESS")).toMatchObject({ technical: { provider: "DEMO" }, summary: "Demo. No real doors open." });
     expect(s.components.find((c) => c.component === "OPERATOR_ALERTS")).toMatchObject({ requirement: "RECOMMENDED", summary: "Offered once your first property is set up." });
     expect(s.lines).toContain("\u2713 Access system: Demo. No real doors open.");
   });
