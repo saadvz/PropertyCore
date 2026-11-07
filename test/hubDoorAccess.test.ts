@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DOOR_ACCESS_FILE } from "../src/hub/doorAccess";
-import { hubFor, resetHubs, type HubGuards } from "../src/hub/hub";
+import { DOOR_ACCESS_FILE, DOOR_CODE_UPLOAD_REFUSED, UPLOAD_LINK_OFF } from "../src/hub/doorAccess";
+import { hubFor, resetHubs, UPLOAD_GONE, type HubGuards } from "../src/hub/hub";
 
 /** The hub's door access: the sealed door code in door-access.json. Made-up codes only. */
 
@@ -102,5 +102,87 @@ describe("hub door access: the sealed code", () => {
     expect(door.lockLocation()).toBe("side gate");
     door.save(CODE, "", KEY);
     expect(door.lockLocation()).toBeUndefined();
+  });
+});
+
+const BASE = "https://cleaner.example.test";
+
+function linkCode(url: string): string {
+  return url.slice(`${BASE}/door-code/`.length);
+}
+
+describe("hub door access: the upload link", () => {
+  it("issues a 43-character link under /door-code/ and keeps only its hash", () => {
+    const { root, door } = open();
+    const issued = door.issueUpload("back door", KEY, BASE);
+    if (!issued.ok) throw new Error(issued.error);
+    expect(issued.uploadUrl.startsWith(`${BASE}/door-code/`)).toBe(true);
+    expect(linkCode(issued.uploadUrl)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(issued.expiresInMinutes).toBe(10);
+    const text = fileOf(root);
+    expect(text).not.toContain(linkCode(issued.uploadUrl));
+    expect(JSON.parse(text).upload.hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("refuses without the server's public address", () => {
+    const { door } = open();
+    expect(door.issueUpload(undefined, KEY, undefined)).toEqual({ ok: false, error: UPLOAD_LINK_OFF });
+  });
+
+  it("a second link replaces the first", () => {
+    const { door } = open();
+    const first = door.issueUpload(undefined, KEY, BASE);
+    const second = door.issueUpload(undefined, KEY, BASE);
+    if (!first.ok || !second.ok) throw new Error("no link");
+    expect(door.upload(linkCode(first.uploadUrl), { code: CODE })).toEqual({ status: 404, body: { ok: false, error: UPLOAD_GONE } });
+    expect(door.upload(linkCode(second.uploadUrl), { code: CODE }).status).toBe(200);
+  });
+
+  it("an expired link is gone", () => {
+    let now = NOW;
+    const root = folder();
+    const door = hubFor(root, { now: () => now }).doorAccess(() => ({}));
+    const issued = door.issueUpload(undefined, KEY, BASE);
+    if (!issued.ok) throw new Error(issued.error);
+    now = new Date(NOW.getTime() + 10 * 60_000);
+    expect(door.upload(linkCode(issued.uploadUrl), { code: CODE })).toEqual({ status: 404, body: { ok: false, error: UPLOAD_GONE } });
+    expect(JSON.parse(fileOf(root)).upload).toBeUndefined();
+  });
+
+  it("a refused code keeps the link", () => {
+    const { door } = open();
+    const issued = door.issueUpload(undefined, KEY, BASE);
+    if (!issued.ok) throw new Error(issued.error);
+    expect(door.upload(linkCode(issued.uploadUrl), { code: "12" })).toEqual({ status: 400, body: { ok: false, error: DOOR_CODE_UPLOAD_REFUSED } });
+    expect(door.upload(linkCode(issued.uploadUrl), { code: CODE })).toEqual({ status: 200, body: { ok: true } });
+    expect(door.upload(linkCode(issued.uploadUrl), { code: CODE }).status).toBe(404);
+  });
+
+  it("the upload seals with the key of the call that made the link", () => {
+    const { root, door } = open();
+    const issued = door.issueUpload("side gate", KEY, BASE);
+    if (!issued.ok) throw new Error(issued.error);
+    door.upload(linkCode(issued.uploadUrl), { code: CODE });
+    resetHubs();
+    const again = open(root).door;
+    expect(again.codeForChecks(KEY)).toBe(CODE);
+    expect(again.lockLocation()).toBe("side gate");
+  });
+
+  it("never hands out a link the guard says leaks", () => {
+    const { hub, door } = open();
+    let calls = 0;
+    hub.useGuards(() => ({ carriesCode: () => false, wouldCancel: async () => [], leaks: () => ++calls === 1 }));
+    const issued = door.issueUpload(undefined, KEY, BASE);
+    expect(issued.ok).toBe(true);
+    expect(calls).toBe(2);
+  });
+
+  it("no reply holds the code", () => {
+    const { door } = open();
+    const issued = door.issueUpload(undefined, KEY, BASE);
+    if (!issued.ok) throw new Error(issued.error);
+    const replies = [issued, door.upload(linkCode(issued.uploadUrl), { code: `${CODE}x` }), door.upload(linkCode(issued.uploadUrl), { code: CODE })];
+    for (const reply of replies) expect(JSON.stringify(reply)).not.toContain(CODE);
   });
 });

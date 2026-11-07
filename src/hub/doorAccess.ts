@@ -1,9 +1,12 @@
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "../storage/atomicWrite";
 import { holdsCodeToken, joinSplitDigits } from "./digits";
 import { openPin, sealPin, serverPinKey, type PinSeal } from "./pinSeal";
+import { HUB_DOOR_CODE_PREFIX } from "./paths";
 import type { HubCaller } from "./store";
+import { sameHash, UPLOAD_GONE, UPLOAD_MINUTES, uploadHash } from "./uploadCode";
 
 /**
  * One property's door access: its sealed door code, where the lock is, and the pending upload link,
@@ -31,9 +34,17 @@ export const DOOR_CODE_SHAPE_REFUSED = "Send the door code as 4 to 8 digits.";
 export const LOCK_LOCATION_REFUSED = `Say where the lock is in under ${MAX_LOCK_LOCATION} characters, with no code or long number in it.`;
 export const PIN_KEY_MISSING = "I can't send the door code yet. Let's finish setting up Cleaner Core first.";
 export const SEAL_FAILED = "Could not seal the door code.";
+export const DOOR_CODE_UPLOAD_REFUSED = "Send the door code as 4 to 8 digits in code.";
+export const UPLOAD_LINK_OFF = "I can't make an upload link until the server's public address is saved.";
+const UPLOAD_RETRY = "That didn't work. Try again.";
 
-/** The guard the flow on the property plugs in. Undefined when no flow guards the code. */
-export type CodeRefused = ((code: string, lockLocation?: string) => string | undefined) | undefined;
+/** The checks the flow on the property plugs in (HubGuards' door code ones). Undefined when none runs. */
+export interface DoorGuards {
+  codeRefused?(code: string, lockLocation?: string): string | undefined;
+  leaks?(text: string): boolean;
+}
+
+export type DoorUpload = { status: 200 | 400 | 404; body: { ok: boolean; error?: string } };
 
 export function doorAccessPath(root: string): string {
   return join(root, DOOR_ACCESS_FILE);
@@ -56,10 +67,13 @@ export class DoorAccess {
   /** The open code, only in memory. */
   private open: string | undefined;
   private env: () => NodeJS.ProcessEnv = () => ({});
+  /** The key of the call that made the pending upload link. Only in memory. */
+  private uploadKey: Buffer | undefined;
 
   constructor(
     readonly root: string,
-    private readonly guard: () => CodeRefused,
+    private readonly now: () => Date,
+    private readonly guards: () => DoorGuards | undefined,
   ) {
     this.file = readDoorAccessFile(root) ?? { schemaVersion: 1 };
   }
@@ -106,7 +120,7 @@ export class DoorAccess {
     if (!CODE_SHAPE.test(trimmed)) return { ok: false, reason: "code", error: DOOR_CODE_SHAPE_REFUSED };
     const lock = lockLocation?.trim();
     if (lock && (lockLocationRefused(lock) || joinSplitDigits(lock).includes(trimmed))) return { ok: false, reason: "lock", error: LOCK_LOCATION_REFUSED };
-    const refused = this.guard()?.(trimmed, lock);
+    const refused = this.guards()?.codeRefused?.(trimmed, lock);
     if (refused) return { ok: false, reason: "guard", error: refused };
     const usable = this.keyFor(key);
     if (!usable) return { ok: false, reason: "key", error: PIN_KEY_MISSING };
@@ -125,6 +139,61 @@ export class DoorAccess {
       return { ok: true };
     }
     return { ok: false, reason: "seal", error: SEAL_FAILED };
+  }
+
+  /**
+   * Makes a one-time upload link for the door code. Only the link code's sha256, its expiry, the lock
+   * location and who asked are kept; the key stays in memory. A new link replaces the last one.
+   * `base` is the asking flow's public address for this property.
+   */
+  issueUpload(lockLocation: string | undefined, key: Buffer | undefined, base: string | undefined, by?: HubCaller): { ok: true; uploadUrl: string; expiresInMinutes: number } | { ok: false; error: string } {
+    const lock = lockLocation?.trim();
+    if (lock && lockLocationRefused(lock)) return { ok: false, error: LOCK_LOCATION_REFUSED };
+    if (!this.keyFor(key)) return { ok: false, error: PIN_KEY_MISSING };
+    if (!base) return { ok: false, error: UPLOAD_LINK_OFF };
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const code = randomBytes(32).toString("base64url");
+      const uploadUrl = `${base}${HUB_DOOR_CODE_PREFIX}${code}`;
+      if (this.guards()?.leaks?.(uploadUrl)) continue;
+      const expiresAt = new Date(this.now().getTime() + UPLOAD_MINUTES * 60_000).toISOString();
+      this.write({ ...this.file, upload: { hash: uploadHash(code), expiresAt, ...(lock ? { lockLocation: lock } : {}), ...(by ? { by } : {}) } });
+      this.uploadKey = key;
+      return { ok: true, uploadUrl, expiresInMinutes: UPLOAD_MINUTES };
+    }
+    return { ok: false, error: UPLOAD_RETRY };
+  }
+
+  /** True when `code` is the pending link's code and the link hasn't expired. */
+  uploadPending(code: string): boolean {
+    const pending = this.file.upload;
+    return Boolean(pending && sameHash(uploadHash(code), pending.hash) && this.now().getTime() < Date.parse(pending.expiresAt));
+  }
+
+  /**
+   * Seals a door code posted to its upload link, with the same checks as save(). Only a save uses the
+   * link up; a refused code keeps it. The reply never holds the code.
+   */
+  upload(code: string, body: Record<string, unknown>): DoorUpload {
+    const pending = this.file.upload;
+    if (!pending || !sameHash(uploadHash(code), pending.hash)) return { status: 404, body: { ok: false, error: UPLOAD_GONE } };
+    if (this.now().getTime() >= Date.parse(pending.expiresAt)) {
+      const { upload: _gone, ...rest } = this.file;
+      this.write(rest);
+      this.uploadKey = undefined;
+      return { status: 404, body: { ok: false, error: UPLOAD_GONE } };
+    }
+    const doorCode = typeof body.code === "string" ? body.code.trim() : typeof body.code === "number" ? String(body.code) : "";
+    if (!CODE_SHAPE.test(doorCode)) return { status: 400, body: { ok: false, error: DOOR_CODE_UPLOAD_REFUSED } };
+    const lockLocation = typeof body.lockLocation === "string" ? body.lockLocation : pending.lockLocation;
+    const { upload: _used, ...rest } = this.file;
+    this.file = rest;
+    const saved = this.save(doorCode, lockLocation, this.uploadKey);
+    if (!saved.ok) {
+      this.file = { ...this.file, upload: pending };
+      return { status: 400, body: { ok: false, error: saved.error } };
+    }
+    this.uploadKey = undefined;
+    return { status: 200, body: { ok: true } };
   }
 
   /** Writes the file, refusing one that would hold the open code as its own token. */

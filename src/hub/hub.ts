@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import {
@@ -20,6 +20,7 @@ import { calendarFetch } from "./calendarFetch";
 import { calendarUrlAllowed, readPublicCalendar } from "./fetchLimits";
 import { googleCalendarSource, type GoogleEventList, type SourceSnapshot } from "./sources";
 import { DoorAccess } from "./doorAccess";
+import { sameHash, UPLOAD_GONE, UPLOAD_MINUTES, uploadHash } from "./uploadCode";
 import { folderNeedsMove, migrateFolder } from "./migrate";
 import { HUB_CALENDAR_PREFIX } from "./paths";
 import { emptyHub, hubPath, readHubFile, type HubCaller, type HubFile, type HubProperty } from "./store";
@@ -55,8 +56,7 @@ export interface HubDeps {
 
 export type HubSave = { ok: true } | { ok: false; error: string; reason: CalendarRefusal };
 
-export const UPLOAD_MINUTES = 10;
-export const UPLOAD_GONE = "This upload link isn't valid anymore. Ask for a new one.";
+export { UPLOAD_GONE, UPLOAD_MINUTES };
 export const CALENDAR_UPLOAD_REFUSED = "Send the calendar's public https link as url.";
 export const CALENDAR_UPLOAD_SAVED = "Saved the calendar link.";
 export const CALENDARS_BUSY = "The calendars changed while this link was saving. Send it again.";
@@ -68,16 +68,6 @@ export interface UploadResult {
   body: { ok: boolean; message?: string; error?: string };
 }
 
-function uploadHash(code: string): string {
-  return createHash("sha256").update(code).digest("hex");
-}
-
-/** Compares two sha256 hex digests in constant time. */
-function sameHash(a: string, b: string): boolean {
-  const left = Buffer.from(a, "hex");
-  const right = Buffer.from(b, "hex");
-  return left.length === 32 && right.length === 32 && timingSafeEqual(left, right);
-}
 
 /** One read of every saved calendar, for each flow to use its own way. */
 export interface HubRead {
@@ -180,10 +170,7 @@ export class Hub {
    */
   doorAccess(env: () => NodeJS.ProcessEnv): DoorAccess {
     if (!this.door) {
-      this.door = new DoorAccess(this.root, () => {
-        const guards = this.guards();
-        return guards?.codeRefused ? (code, lock) => guards.codeRefused!(code, lock) : undefined;
-      });
+      this.door = new DoorAccess(this.root, this.deps.now, () => this.guards());
     }
     this.door.useEnv(env);
     return this.door;
