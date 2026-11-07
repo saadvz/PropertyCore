@@ -404,7 +404,8 @@ describe("the number pool on the admin page (saadvz/TourCore#163)", () => {
     const added = await admin.post("/admin/pool", { numbers: `${POOL_A}\n${POOL_B}\n+15555550199` });
     expect(added.status).toBe(200);
     expect(added.html).toContain("Added 2 numbers.");
-    expect(added.html).toContain("+15555550199: not on the Twilio account.");
+    expect(added.html).toContain("Line 3: not on the Twilio account.");
+    expect(added.html).not.toContain("+15555550199");
     const res = await admin.post("/admin/tenants", { label: "Lane", number: "" });
     expect(res.status).toBe(200);
     expect(res.html).toContain(`Text line: ${POOL_A}.`);
@@ -425,7 +426,54 @@ describe("the number pool on the admin page (saadvz/TourCore#163)", () => {
     await admin.post("/admin/tenants", { label: "Lane", number: LANE_LINE });
     const lane = m.registry.list()[0]!;
     expect((await admin.page("/admin/pool")).html).toContain(`<tr><td>${LANE_LINE}</td><td>in use</td><td><a href="/admin/tenants/${lane.id}">Lane</a></td>`);
-    expect((await admin.post("/admin/pool", { numbers: LANE_LINE })).html).toContain(`${LANE_LINE}: a tenant already uses it.`);
+    expect((await admin.post("/admin/pool", { numbers: LANE_LINE })).html).toContain("Line 1: a tenant already uses it.");
+  });
+
+  it("refuses a typed number that is resting in the pool", async () => {
+    const m = await start();
+    fakeTwilio({ [POOL_A]: "PNa" });
+    const admin = await signIn(m);
+    await admin.post("/admin/pool", { numbers: POOL_A });
+    await admin.post("/admin/tenants", { label: "Lane", number: "" });
+    await admin.post(`/admin/tenants/${m.registry.list()[0]!.id}/delete`, { confirm: "Lane" });
+    const refused = await admin.post("/admin/tenants", { label: "Court", number: POOL_A });
+    expect(refused.status).toBe(400);
+    expect(refused.html).toContain("That number is resting in the pool until ");
+    expect(m.registry.list()).toHaveLength(0);
+  });
+
+  it("counts and manages an account made before the pool", async () => {
+    const m = await start();
+    const calls = fakeTwilio({ [LANE_LINE]: "PN1" });
+    const admin = await signIn(m);
+    const lane = m.registry.create({ label: "Lane", twilioNumber: LANE_LINE }).tenant;
+    expect((await admin.page("/admin")).html).toContain("Number pool: 0 ready, 0 resting, 1 in use.");
+    expect((await admin.page("/admin/pool")).html).toContain(`<tr><td>${LANE_LINE}</td><td>in use</td><td><a href="/admin/tenants/${lane.id}">Lane</a></td><td>—</td>`);
+    // Its sid is looked up when it's first needed, and the line can be pointed again.
+    expect((await admin.post(`/admin/tenants/${lane.id}/line`, {})).status).toBe(303);
+    expect(calls.at(-1)).toEqual({ method: "POST", url: "https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/IncomingPhoneNumbers/PN1.json", body: new URLSearchParams({ SmsUrl: `${BASE}/webhooks/twilio/cleaner-core`, SmsMethod: "POST" }).toString() });
+    expect((await admin.page("/admin/pool")).html).toContain(`<td>pointed</td>`);
+    await admin.post(`/admin/tenants/${lane.id}/delete`, { confirm: "Lane" });
+    expect((await admin.page("/admin/pool")).html).toMatch(new RegExp(`<tr><td>\\${LANE_LINE}</td><td>resting until `));
+  });
+
+  it("warns on the invite page when Twilio refuses the webhook, and says so when a release fails on delete", async () => {
+    const m = await start();
+    setTwilioNumbersFetch(async (input, init) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET") return new Response(JSON.stringify({ incoming_phone_numbers: [{ sid: "PNa" }] }), { status: 200 });
+      return new Response("{}", { status: 500 });
+    });
+    const admin = await signIn(m);
+    await admin.post("/admin/pool", { numbers: POOL_A });
+    const res = await admin.post("/admin/tenants", { label: "Lane", number: "" });
+    expect(res.html).toContain(html("Twilio didn't take this number's webhook, so its texts won't arrive yet."));
+    expect((await admin.page("/admin/pool")).html).toContain("not pointed");
+    const lane = m.registry.list()[0]!;
+    const deleted = await admin.post(`/admin/tenants/${lane.id}/delete`, { confirm: "Lane", release: "1" });
+    expect(deleted.status).toBe(200);
+    expect(deleted.html).toContain(html("Deleted. Twilio didn't release the number, so it rests in the pool."));
+    expect(m.registry.get(lane.id)).toBeUndefined();
   });
 
   it("gives a deleted host's number back to rest, or releases it when asked", async () => {
