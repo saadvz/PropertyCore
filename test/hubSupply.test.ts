@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { setCalendarFetch } from "../src/hub/calendarFetch";
 import { hubFor, resetHubs } from "../src/hub/hub";
 import { resetSupplyDesks, supplyDeskFor, type SupplyDesk } from "../src/supply-core/desk";
+import { SUPPLY_TOOLS } from "../src/supply-core/tools";
 
 /** Supply Core reads the property and its booking calendars from the property hub. Made-up links only. */
 
@@ -128,5 +129,23 @@ describe("Supply Core on the property hub", () => {
     const state = await again.state();
     expect(state.structured?.setAside).toBe("Supply Core had its own calendars (Vrbo) that aren't in this property's list. Ask the host whether to add them.");
     expect(JSON.stringify(state)).not.toContain("vrbo.ics");
+  });
+
+  it("save_supply_sources says it saves the property's shared calendars", () => {
+    const tool = SUPPLY_TOOLS.find((t) => t.name === "save_supply_sources")!;
+    expect(tool.description).not.toContain("Standalone");
+    expect(tool.description).toContain("shared with Cleaner Core");
+  });
+
+  it("with Google saved and no events passed, check_supplies asks for the events", async () => {
+    const root = folder();
+    const hub = hubFor(root, { now: () => NOW });
+    hub.saveProperty(PLACE);
+    hub.setCalendars({ google: true, done: true });
+    const desk = supplyDeskFor(root, { now: () => NOW, cleaningOn: () => true, uploadBase: () => BASE });
+    await activate(desk);
+    const checked = await desk.checkSupplies({});
+    expect(checked.structured?.sourcesFailed).toBe(true);
+    expect(checked.structured?.next).toBe("Google Calendar is saved for this property: read its events and call check_supplies again with them as googleEvents. Until then, by-bookings items wait.");
   });
 });
