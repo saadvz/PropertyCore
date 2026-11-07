@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { tenantFolder } from "../src/cleaner-core/hosted/registry";
+import { hubFor } from "../src/hub/hub";
 import { liveDeskFor, resetLiveDesks } from "../src/cleaner-core/liveDesk";
 import { isAllowlisted } from "../src/cleaner-core/liveSms";
 import { drainAllTenants, hostedCleaner, splitTenantPath, touringAccountContext } from "../src/cleaner-core/hosted/router";
@@ -290,5 +292,86 @@ describe("routing on the multi-tenant service", () => {
     const res = await m.app.http(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: GROK_HOOK, token: "grok-routine-key-1" }) });
     expect(res.status).toBe(200);
     expect(m.registry.get(lane.id)!.primaryGrantId).toBe(grantOf(m, grok).id);
+  });
+});
+
+describe("calendar links on the shared service go to the property's hub", () => {
+  const LINK = "https://calendar.example/lane.ics";
+  const base = (tenantId: string, propertyId: string) => `/t/${tenantId}/p/${propertyId}`;
+  const postJson = (m: MultiTenantApp, path: string, url: string) =>
+    m.app.http(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url }) });
+
+  /** An account whose one property runs only Supply Core: its env has CLEANER_CORE_ENABLED=0. */
+  function suppliesOnly(m: MultiTenantApp, tenantId: string) {
+    const property = m.registry.addProperty(tenantId, "12 Scratch Lane");
+    m.registry.setFlow(tenantId, property.id, "supplies", true);
+    const root = propertyFolder(m.app.root, tenantId, property);
+    return { property, root, hub: hubFor(root, { now: clock }) };
+  }
+
+  const issue = (hub: ReturnType<typeof hubFor>, prefix: string, assistant = "claude") => {
+    const made = hub.issueCalendarUpload({ name: "Airbnb", base: prefix, by: { assistant } });
+    if ("error" in made) throw new Error(made.error);
+    return made.uploadUrl;
+  };
+
+  it("new /calendar-link/ path saves to the hub", async () => {
+    const { m, lane } = await start();
+    const { property, hub } = suppliesOnly(m, lane.id);
+    const link = issue(hub, base(lane.id, property.id));
+    expect(link).toContain("/calendar-link/");
+    expect((await postJson(m, link, LINK)).status).toBe(200);
+    expect(hub.stored()).toEqual([{ name: "Airbnb", url: LINK }]);
+  });
+
+  it("old /cleaner-core/calendar-link/ and /supply/calendar/ paths still save", async () => {
+    const { m, lane } = await start();
+    const { property, hub } = suppliesOnly(m, lane.id);
+    for (const older of ["/cleaner-core/calendar-link/", "/supply/calendar/"]) {
+      const code = issue(hub, base(lane.id, property.id)).split("/calendar-link/")[1]!;
+      expect((await postJson(m, `${base(lane.id, property.id)}${older}${code}`, LINK)).status).toBe(200);
+    }
+    expect(hub.stored()).toEqual([{ name: "Airbnb", url: LINK }]);
+  });
+
+  it("supply-only property: the calendar page opens and saves", async () => {
+    const { m, lane } = await start();
+    const { property, hub } = suppliesOnly(m, lane.id);
+    const link = issue(hub, base(lane.id, property.id));
+    const page = await m.app.http(link);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("<form");
+    const saved = await m.app.http(link, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `url=${encodeURIComponent(LINK)}` });
+    expect(saved.status).toBe(200);
+    expect(await saved.text()).not.toContain(LINK);
+    expect(hub.stored()).toEqual([{ name: "Airbnb", url: LINK }]);
+  });
+
+  it("a property with no flow on: 404", async () => {
+    const { m, lane } = await start();
+    const property = m.registry.addProperty(lane.id, "12 Scratch Lane");
+    const hub = hubFor(propertyFolder(m.app.root, lane.id, property), { now: clock });
+    const link = issue(hub, base(lane.id, property.id));
+    expect((await postJson(m, link, LINK)).status).toBe(404);
+    expect((await m.app.http(link)).status).toBe(404);
+    expect(hub.stored()).toEqual([]);
+  });
+
+  it("after a restart, a cleaning property's upload still goes through Cleaner Core's door-code check", async () => {
+    const { m, lane } = await start();
+    const claude = await m.joinCleaning(lane.id, "claude");
+    const call = (name: string, args: Record<string, unknown> = {}) => m.tool(claude, name, args);
+    await call("get_state", { choice: "cleaners" });
+    await call("save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE });
+    await call("save_people", { host: LANE_HOST, cleaner: LANE_CLEANER });
+    await call("save_calendar_link", { url: CALENDAR_URL });
+    expect((await call("save_door_code", { code: DOOR_CODE })).isError).toBe(false);
+    const issued = await call("save_sources", { uploadLink: { name: "Vrbo" } });
+    const link = String(issued.structured?.uploadUrl);
+    // A restart: no desk and no hub in memory, so nothing has connected Cleaner Core's guards yet.
+    resetLiveDesks();
+    const refused = await postJson(m, link.slice(link.indexOf("/t/")), `https://calendar.example/${DOOR_CODE}.ics`);
+    expect(refused.status).toBe(400);
+    expect(await refused.text()).not.toContain(DOOR_CODE);
   });
 });

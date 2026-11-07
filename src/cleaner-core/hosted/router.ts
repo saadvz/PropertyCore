@@ -1,3 +1,5 @@
+import { hubFor } from "../../hub/hub";
+import { hubCalendarCode } from "../../hub/paths";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { ASSISTANT_PROFILES, type CleanerAssistant } from "../assistant";
@@ -22,7 +24,6 @@ import {
   uploadPageOf,
 } from "../http";
 import { drainCleanerAlerts, liveDeskFor } from "../liveDesk";
-import { supplyCalendarCode } from "../../supply-core/desk";
 import { supplyDesk } from "../../supply-core/hosted";
 import type { DeleteSecrets, SaveSecrets } from "../mcp";
 import { CLEANER_PHOTO_PREFIX, photoKey, servePhoto } from "../photos";
@@ -226,7 +227,6 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
     path.startsWith(CLEANER_PHOTO_PREFIX) ||
     alertUploadCode(path) ||
     calendarUploadCode(path) ||
-    supplyCalendarCode(path) ||
     doorCodeUploadCode(path) ||
     uploadPageOf(path)
   ) {
@@ -313,10 +313,11 @@ async function touringText(h: HostedCleaner, r: HostedRequest, tenant: Tenant, r
 async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tenant, property: Property, rest: string, signedUrl: string | undefined, now: () => Date): Promise<boolean> {
   const { method } = r;
   const ctx = propertyContext(h, tenant, property);
-  // Supply Core's calendar upload needs supplies on for this property; every other link needs cleaning on.
-  const supplyCalendarLink = method === "POST" ? supplyCalendarCode(rest) : undefined;
-  if (supplyCalendarLink ? !property.flows.supplies.on : !property.flows.cleaning.on) return false;
+  // A calendar link is the property's, in its hub: it works while any flow is on. Every other link needs cleaning on.
+  const calendarCode = hubCalendarCode(rest);
+  if (calendarCode ? !property.flows.cleaning.on && !property.flows.supplies.on : !property.flows.cleaning.on) return false;
   const contentType = String(r.req.headers["content-type"] ?? "");
+  if (calendarCode) return handleHubCalendar(h, r, tenant, property, ctx, calendarCode, contentType, now);
   if (method === "POST" && rest === CLEANER_TWILIO_STATUS_PATH) {
     const result = await handleCleanerTwilioStatus({ rawBody: await r.readRaw(), headers: r.req.headers, url: signedUrl, env: ctx.env, root: ctx.root, now });
     r.send(result.status, JSON_TYPE, result.body);
@@ -354,24 +355,47 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
   if (method !== "POST") return false;
   const upload = { contentType, readBody: () => r.readCapped(ALERT_UPLOAD_MAX_BYTES), env: ctx.env, root: ctx.root, now };
   const alert = alertUploadCode(rest);
-  const calendar = calendarUploadCode(rest);
   const door = doorCodeUploadCode(rest);
-  const supplyCalendar = supplyCalendarCode(rest);
-  if (supplyCalendar) {
-    const read = await uploadBody(contentType, () => r.readCapped(ALERT_UPLOAD_MAX_BYTES));
-    const saved = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : await supplyDesk(h, tenant, property).uploadCalendarLink(supplyCalendar, read.parsed);
-    r.send(saved.status, JSON_TYPE, JSON.stringify(saved.body), saved.status === 413 ? { Connection: "close" } : {});
-    return true;
-  }
   const result = alert
     ? await handleCleanerAlertUpload({ ...upload, code: alert, saveSecrets: ctx.saveSecrets })
-    : calendar
-      ? await handleCleanerCalendarUpload({ ...upload, code: calendar })
-      : door
-        ? await handleCleanerDoorCodeUpload({ ...upload, code: door })
-        : undefined;
+    : door
+      ? await handleCleanerDoorCodeUpload({ ...upload, code: door })
+      : undefined;
   if (!result) return false;
   r.send(result.status, JSON_TYPE, result.body, result.status === 413 ? { Connection: "close" } : {});
+  return true;
+}
+
+/**
+ * A calendar upload link: Grok's own computer posts JSON, and other chats use the private page. Both
+ * save through the property's hub. With cleaning on, Cleaner Core's desk opens first, so its checks
+ * (the door code, and cleanings a change would call off) guard the save even right after a restart.
+ */
+async function handleHubCalendar(h: HostedCleaner, r: HostedRequest, tenant: Tenant, property: Property, ctx: TenantContext, code: string, contentType: string, now: () => Date): Promise<boolean> {
+  if (property.flows.cleaning.on) liveDeskFor(ctx.root, ctx.env, now);
+  const hub = hubFor(ctx.root, { now });
+  const { method } = r;
+  if (method === "GET" || (method === "POST" && isFormPost(contentType))) {
+    const result = await handleCleanerUploadPage({
+      kind: "calendar-link",
+      code,
+      method,
+      contentType,
+      readBody: () => r.readCapped(ALERT_UPLOAD_MAX_BYTES),
+      env: ctx.env,
+      root: ctx.root,
+      now,
+      saveSecrets: ctx.saveSecrets,
+      multiTenant: { fallback: pageAssistant(h, tenant) },
+      hub,
+    });
+    r.send(result.status, result.headers["Content-Type"] ?? "text/html; charset=utf-8", result.body, { ...result.headers, ...(result.status === 413 ? { Connection: "close" } : {}) });
+    return true;
+  }
+  if (method !== "POST") return false;
+  const read = await uploadBody(contentType, () => r.readCapped(ALERT_UPLOAD_MAX_BYTES));
+  const saved = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : await hub.uploadCalendarLink(code, read.parsed);
+  r.send(saved.status, JSON_TYPE, JSON.stringify(saved.body), saved.status === 413 ? { Connection: "close" } : {});
   return true;
 }
 
