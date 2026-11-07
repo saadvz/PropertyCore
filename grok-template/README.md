@@ -2,11 +2,11 @@
 
 Everything that belongs in the **Tour Core** Grok Bot team template, versioned
 with the code. Grok Bot is the installer and operator console; Tour Core stays
-the system of record and policy authority. It is built on the Durin Access
-Platform; Durin carries out approved access.
+the system of record and policy authority. A door access provider carries out
+the access Tour Core approves.
 
 ```
-Operator ─► Tour Core Bot ─► hosted Tour Core (hostedTourCoreUrl) ─► Durin
+Operator ─► Tour Core Bot ─► hosted Tour Core (hostedTourCoreUrl) ─► door access
                │
                └─ open-source fallback: clone and run Tour Core on the
                   Bot's computer (npm run bootstrap:grok)
@@ -53,7 +53,7 @@ and `npm run bootstrap:grok` refuses to start a clone from another origin.
 ## What's never in the template
 
 Sendblue keys or secrets, the webhook secret, the Grok Routine's webhook
-address or key, Tour Core connector or OAuth tokens, Durin credentials,
+address or key, Tour Core connector or OAuth tokens, door access credentials,
 visitor names or phone numbers, live property records, tour history, any
 canonical Tour Core state, or a private repository address.
 `test/grokTemplate.test.ts` fails if any of these patterns show up in this
