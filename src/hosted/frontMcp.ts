@@ -5,7 +5,7 @@ import { CLEANER_MCP_PATH, CLEANER_TOOL_NAMES, cleanerInstructions } from "../cl
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { Property } from "../cleaner-core/hosted/properties";
 import { promoteRoutineOwner, propertyContext, shareRoutine, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
-import { afterPeopleSaved, peopleRefusal } from "./lineRouter";
+import { afterPeopleSaved, peopleRefusal } from "./sharedPeople";
 import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
 import { OPERATOR_TOOL_NAMES } from "../operator/tools";
 import { ServiceNotices } from "./crossService";

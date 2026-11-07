@@ -68,9 +68,21 @@ describe("a desk on an account", () => {
     expect(seen).toEqual([{ phone: CLEANER, kind: "opted-in", from: A, properties: [A, B] }]);
   });
 
+  it("an open desk hears the YES at once and goes on with its own offer", async () => {
+    const s = await account();
+    const before = toCleaner(s.sms).length;
+    await s.a.desk.inbound({ id: "SM-yes", from: CLEANER, text: "YES" });
+    await new Promise((resolve) => setImmediate(resolve));
+    ok(await s.b.desk.checkNow());
+    const after = toCleaner(s.sms).slice(before);
+    expect(after.some((body) => body.startsWith("8 Practice Court: ") && body.includes("8 Practice Court"))).toBe(true);
+    expect(after.some((body) => body.includes(INVITE))).toBe(false);
+  });
+
   it("a desk opened after the YES finds the cleaner opted in, with no invite of its own", async () => {
     const s = await account();
-    await s.a.desk.inbound({ id: "SM-yes", from: CLEANER, text: "YES" });
+    // The YES was saved, but the process stopped before the other desk heard of it.
+    s.people.optIn(CLEANER, A);
     const before = toCleaner(s.sms).length;
     resetLiveDesks();
     const court = liveDeskFor(s.rootB, () => s.b.env, s.b.now);

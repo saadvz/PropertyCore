@@ -32,7 +32,7 @@ import { cleanerPinStatusUrl, deleteLiveGroup, isAllowlisted, liveSmsOn, sendLiv
 import { LOCK_LOCATION_REFUSED, serverPinKey, type AccessRefusal, type DoorAccess } from "../hub/doorAccess";
 import { DOOR_WINDOW_OVER, type AccessRefusedLines, type DoorAccessPort } from "./doorPort";
 import { HUB_DOOR_CODE_PREFIX } from "../hub/paths";
-import { accountOf, peopleFor, resetPeople, streetOf, type MoveSource, type People, type Role } from "../hub/people";
+import { accountOf, peopleFor, resetPeople, streetOf, type MoveSource, type People, type PersonChange, type Role } from "../hub/people";
 import { containsCodeToken, redactPhone } from "./redact";
 import { isScratchTestNumber } from "./scratch";
 import { guestyLiteSource, icalSource, type BookingSource, type GoogleEventList } from "../hub/sources";
@@ -329,6 +329,8 @@ interface PeopleInput {
   groupChat?: string;
   /** Who gets the door code once others are in the group. */
   doorCodeTo?: string;
+  /** The host confirmed a person already on another property (saadvz/TourCore#190). The hosted layer reads it; the desk ignores it. */
+  shared?: boolean;
 }
 
 interface SourcesInput {
@@ -515,6 +517,21 @@ export async function drainCleanerAlerts(root: string, env: () => NodeJS.Process
   await liveDeskFor(root, env, now).drainAlerts();
 }
 
+/**
+ * Tells every other open desk on the account about a person's YES, STOP or START. A desk that isn't open
+ * applies the account's state when its engine next opens.
+ */
+async function relayToOpenDesks(accountRoot: string, change: PersonChange): Promise<void> {
+  for (const propertyId of change.properties) {
+    if (propertyId === change.from) continue;
+    const desk = desks.get(join(accountRoot, "properties", propertyId));
+    if (!desk) continue;
+    if (change.kind === "opted-in") await desk.accountOptIn(change.phone);
+    else if (change.kind === "stopped") await desk.accountStop(change.phone);
+    else await desk.accountStart(change.phone);
+  }
+}
+
 export function resetLiveDesks(): void {
   desks.clear();
   resetHubs();
@@ -653,6 +670,8 @@ export class LiveDesk {
     this.hub = hubFor(root, { now });
     this.account = accountOf(root);
     this.people = this.account ? peopleFor(this.account.accountRoot, { now }) : undefined;
+    const accountRoot = this.account?.accountRoot;
+    if (accountRoot) this.people?.onChange((change) => relayToOpenDesks(accountRoot, change));
     this.approvals = new ConfirmationBook(10 * 60_000, () => this.now().getTime(), { file: join(root, "cleaner-approvals.json") });
     this.draftApprovals = new ConfirmationBook(Number.POSITIVE_INFINITY, () => this.now().getTime(), { file: join(root, "cleaner-draft-approvals.json") });
     this.load();
@@ -2269,10 +2288,10 @@ export class LiveDesk {
   }
 
   /**
-   * Records that this phone opted out of the shared line before it was saved here. Nothing is sent to
-   * it, and nothing is sent by this call, until it texts START or YES.
+   * Records that the landlord's phone opted out of the shared line before this property saved it.
+   * Nothing is sent to it, and nothing is sent by this call, until it texts START or YES.
    */
-  markOptedOut(phone: string): Promise<void> {
+  markHostOptedOut(phone: string): Promise<void> {
     return this.serial(async () => {
       const e164 = parsePhone(phone);
       if (!e164) return;
@@ -2320,10 +2339,11 @@ export class LiveDesk {
 
   /** True while the phone opted out of the shared line before it was saved here. */
   private lineOptedOut(phone: string): boolean {
-    // On an account, the person's own STOP lives in the account's people list, for every property.
-    // Until the account's one-time move has run, the desk's older list still counts.
+    // On an account, a person's own STOP lives in the account's people list, for every property. The
+    // landlord is never a person there: their line STOP stays in this desk's list. Until the account's
+    // one-time move has run, the desk's list still counts for everyone.
     if (this.people?.stopped(phone)) return true;
-    if (this.people?.moved()) return false;
+    if (this.people?.moved() && phone !== parsePhone(this.file.host ?? "")) return false;
     return (this.file.lineOptOuts ?? []).includes(phone);
   }
 

@@ -8,6 +8,8 @@ import { hostedCleaner, propertyContext } from "../src/cleaner-core/hosted/route
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
 import { liveDeskFor } from "../src/cleaner-core/liveDesk";
 import { LANDLORD_USE_AGENT, routeLineText } from "../src/hosted/lineRouter";
+import { sharedRefusal } from "../src/hosted/sharedRoute";
+import type { PeopleFile } from "../src/hub/people";
 import { BASE, closeHostedApps } from "./cleanerOauthHarness";
 import { ROUTINE, setUp } from "./cleanerDeskHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
@@ -220,9 +222,10 @@ describe("texts on the shared line", () => {
     await m.toolAt(PATH, token, "save_property", { property: court.id, business: "Court", address: "8 Scratch Court, Teaneck, NJ 07666", timeZone: "America/New_York" });
     const savedCy = await m.toolAt(PATH, token, "save_people", { property: court.id, host: HOST, cleaner: STRANGER, cleanerName: "Cy" });
     expect(savedCy.isError, savedCy.text).toBe(false);
-    const h = hostedCleaner({ registry: m.registry, secrets: new TenantSecrets(m.app.root), dataRoot: m.app.root, origin: () => BASE, baseEnv: () => m.app.inst.env(), grantLive: () => true, now: clock, log: () => undefined });
-    const root = propertyContext(h, m.registry.get(made.id)!, m.registry.get(made.id)!.properties.find((p) => p.id === court.id)!).root;
-    expect((JSON.parse(readFileSync(join(root, "cleaner-live.json"), "utf8")) as { lineOptOuts?: string[] }).lineOptOuts).toContain(STRANGER);
+    // The account's people list keeps the STOP, for every property that saves the phone (saadvz/TourCore#190).
+    const people = JSON.parse(readFileSync(join(m.app.root, "tenants", made.id, "people.json"), "utf8")) as PeopleFile;
+    expect(people.people.find((p) => p.phone === STRANGER)?.stopped).toBeDefined();
+    expect(people.people.find((p) => p.phone === STRANGER)?.where).toEqual([{ propertyId: court.id, role: "cleaner" }]);
   });
 
   it("a forged text changes nothing", SLOW, async () => {
@@ -234,7 +237,8 @@ describe("texts on the shared line", () => {
 
   it("saving one property's cleaner on the other is refused, however the phone is typed", SLOW, async () => {
     const s = await twoProperties();
-    const taken = "That number is already on 12 Scratch Lane. For now one person can be on only one property.";
+    // Without the host's shared: true (saadvz/TourCore#190).
+    const taken = sharedRefusal([{ label: "12 Scratch Lane", role: "cleaner" }]);
     for (const cleaner of [CLEANER, "(555) 555-0131"]) {
       const refused = await s.m.toolAt(PATH, s.token, "save_people", { property: s.court.id, host: HOST, cleaner, cleanerName: "Ana" });
       expect(refused).toMatchObject({ isError: true, text: taken });

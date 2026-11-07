@@ -40,7 +40,7 @@ const TOOLS = [
     name: "save_people",
     title: "Save the people",
     description:
-      "Saves the host and the cleaner. Each one is a phone number. An observer is optional. Optional: hostName (what the group calls the host; unset uses the business name), cleanerName, up to 4 contacts (name, role co-host, assistant, or observer, and phone), and groupChat: cleaner-only (one-to-one texts), cleaner-and-host, or everyone. When contacts are in the group, also doorCodeTo: group (the whole group gets the door code) or cleaner (only the cleaner, privately).",
+      "Saves the host and the cleaner. Each one is a phone number. An observer is optional. Optional: hostName (what the group calls the host; unset uses the business name), cleanerName, up to 4 contacts (name, role co-host, assistant, or observer, and phone), and groupChat: cleaner-only (one-to-one texts), cleaner-and-host, or everyone. When contacts are in the group, also doorCodeTo: group (the whole group gets the door code) or cleaner (only the cleaner, privately). shared: true only after the host confirmed that a person already on another of their properties helps here too.",
     input: z.object({
       host: z.string(),
       hostName: z.string().optional(),
@@ -50,6 +50,7 @@ const TOOLS = [
       contacts: z.array(z.object({ name: z.string(), role: z.enum(["co-host", "assistant", "observer"]), phone: z.string() })).max(4).optional(),
       groupChat: z.enum(["cleaner-only", "cleaner-and-host", "everyone"]).optional(),
       doorCodeTo: z.enum(["group", "cleaner"]).optional(),
+      shared: z.boolean().optional(),
     }),
   },
   {

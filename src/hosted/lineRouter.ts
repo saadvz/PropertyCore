@@ -127,35 +127,3 @@ export async function handleLineText(h: HostedCleaner, r: HostedRequest, tenant:
   h.log(route.kind === "host-help" ? `The host texted HELP to ${tenant.id}'s line. Twilio answers it.` : `A text reached ${tenant.id}'s line from someone on no property. Nothing was sent.`);
   return r.send(200, "text/xml", EMPTY_TWIML);
 }
-
-export const phoneTaken = (label: string) => `That number is already on ${label}. For now one person can be on only one property.`;
-
-/**
- * Until people can be shared: a phone can be the cleaner or a contact on only one of the account's
- * properties, and the landlord's phone can be the host on every property but a person on none.
- * The refusal goes to the agent only. Nobody is texted.
- */
-export async function peopleRefusal(h: HostedCleaner, tenant: Tenant, property: Property, args: Record<string, unknown>): Promise<string | undefined> {
-  const phone = (raw: unknown) => (typeof raw === "string" ? parsePhone(raw) : undefined);
-  const contacts = Array.isArray(args.contacts) ? (args.contacts as { phone?: unknown }[]).map((c) => phone(c?.phone)) : [];
-  const people = [phone(args.cleaner), phone(args.observer), ...contacts].filter((p): p is string => !!p);
-  const host = phone(args.host);
-  for (const other of tenant.properties) {
-    if (other.id === property.id) continue;
-    const ctx = propertyContext(h, tenant, other);
-    if (!existsSync(join(ctx.root, "cleaner-live.json"))) continue;
-    const saved = await liveDeskFor(ctx.root, ctx.env, () => h.now()).phonesOnProperty();
-    if (people.some((p) => saved.people.includes(p) || p === saved.host)) return phoneTaken(other.label);
-    if (host && saved.people.includes(host)) return phoneTaken(other.label);
-  }
-  return undefined;
-}
-
-/** After people are saved: anyone who texted STOP to the line before stays opted out on this property. */
-export async function afterPeopleSaved(h: HostedCleaner, tenant: Tenant, property: Property): Promise<void> {
-  const ctx = propertyContext(h, tenant, property);
-  const desk = liveDeskFor(ctx.root, ctx.env, () => h.now());
-  const optOuts = new TenantOptOuts(h.dataRoot);
-  const { host, people } = await desk.phonesOnProperty();
-  for (const phone of [...(host ? [host] : []), ...people]) if (optOuts.stopped(tenant.id, phone)) await desk.markOptedOut(phone);
-}
