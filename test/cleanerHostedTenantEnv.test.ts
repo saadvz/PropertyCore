@@ -58,7 +58,8 @@ describe("buildTenantEnv", () => {
     expect(buildTenantEnv({ base, tenant: t, secrets, primary: undefined, origin: ORIGIN }).CLEANER_CORE_LANDLORD_PHONE).toBeUndefined();
     const { phoneVerifiedAt: _unverified, ...pending } = owner;
     const unconfirmed = { ...t, owner: pending as typeof owner };
-    expect(buildTenantEnv({ base, tenant: unconfirmed, secrets, primary: undefined, origin: ORIGIN }).CLEANER_CORE_LANDLORD_PHONE).toBeUndefined();
+    // An owner whose code hasn't checked out is still a landlord record, so it fails closed instead of falling back to the allowlist.
+    expect(buildTenantEnv({ base, tenant: unconfirmed, secrets, primary: undefined, origin: ORIGIN }).CLEANER_CORE_LANDLORD_PHONE).toBe("unconfirmed");
     expect(buildTenantEnv({ base, tenant: { ...t, owner }, secrets, primary: undefined, origin: ORIGIN }).CLEANER_CORE_LANDLORD_PHONE).toBe("+15555550160");
   });
 
