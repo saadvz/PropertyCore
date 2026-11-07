@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import {
   CALENDAR_COUNT_REFUSED,
@@ -34,7 +34,7 @@ import { emptyHub, hubPath, readHubFile, type HubCaller, type HubFile, type HubP
 export interface HubGuards {
   /** True when a calendar name or link carries the door code. */
   carriesCode(text: string): boolean;
-  /** The upcoming cleanings this calendar list would call off. */
+  /** The upcoming cleanings this calendar list would call off, by checkout date. */
   wouldCancel(next: CalendarClaim[]): Promise<string[]>;
 }
 
@@ -118,12 +118,13 @@ export class Hub {
     return { ...this.file.property };
   }
 
-  /** Saves the given details. A field passed as undefined is left as it is. */
-  saveProperty(details: Partial<HubProperty>): void {
+  /** Saves the given details. A field passed as undefined is left as it is; a field in `clear` is removed. */
+  saveProperty(details: Partial<HubProperty>, clear: readonly (keyof HubProperty)[] = []): void {
     const next = { ...this.file.property };
     for (const [key, value] of Object.entries(details) as [keyof HubProperty, string | undefined][]) {
       if (value !== undefined) next[key] = value;
     }
+    for (const key of clear) delete next[key];
     this.file = { ...this.file, property: next };
     this.save();
   }
@@ -324,6 +325,12 @@ export class Hub {
     const guards = this.guards();
     if (guards) return guards.carriesCode(text);
     return !isLink && /\d{4,}/.test(text.replace(/[\s.-]/g, ""));
+  }
+
+  /** Forgets everything the hub holds and removes hub.json. Memory is cleared even if the delete fails. */
+  clear(): void {
+    this.file = emptyHub();
+    rmSync(hubPath(this.root), { force: true });
   }
 
   protected save(): void {

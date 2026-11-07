@@ -183,7 +183,6 @@ describe("moving data into hub.json", () => {
     expect(open(root).property().address).toBe(CLEANER_PLACE.address);
   });
 
-  it.todo("a desk opened after the move never writes calendars back");
 });
 
 describe("moving every property at startup", () => {

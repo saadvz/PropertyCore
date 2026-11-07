@@ -33,6 +33,7 @@ import { forkTouringWorker, TouringSupervisor } from "../hosted/touringSuperviso
 import { assistantProfile, cleanerAssistant, type CleanerAssistant } from "../cleaner-core/assistant";
 import { TenantRegistry, type InviteRefusal } from "../cleaner-core/hosted/registry";
 import { migrateRegistry, MigrationError } from "../cleaner-core/hosted/migrate";
+import { migrateHubs } from "../hosted/hubStartup";
 import { drainAllTenants, handleHostedCleaner, hostedCleaner, splitTenantPath, type HostedCleaner } from "../cleaner-core/hosted/router";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import { TenantSecrets } from "../cleaner-core/hosted/tenantSecrets";
@@ -400,6 +401,9 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     }
   }
   const tenants = new TenantRegistry(installation.root, () => options.now?.() ?? new Date());
+  // Each property's details and calendars move into its hub before any desk opens, with its own
+  // cleaning switch picking the calendar list when both flows saved one.
+  if (multiTenant()) migrateHubs(installation.root, tenants.list(), () => options.now?.() ?? new Date());
   const serviceOrigin = () => {
     const base = installation.publicBaseUrl();
     return base ? new URL(base).origin : undefined;

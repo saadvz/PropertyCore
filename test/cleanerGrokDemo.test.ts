@@ -584,6 +584,12 @@ function cleaningUpdates(wired: WiredApp) {
   return outbox.records().filter((record) => record.event.eventType === "cleaning.update");
 }
 
+/** The calendars saved in the property's hub.json. */
+function hubCalendars(wired: WiredApp): { name: string; url: string; legacy?: true }[] {
+  const path = join(wired.root, "hub.json");
+  return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as { calendars: { name: string; url: string; legacy?: true }[] }).calendars : [];
+}
+
 function liveFile(wired: WiredApp): string {
   const path = join(wired.root, "cleaner-live.json");
   return existsSync(path) ? readFileSync(path, "utf8") : "";
@@ -1318,7 +1324,8 @@ describe("Cleaner Core Grok demo: several calendar links", () => {
     await setUpTo(wired);
     expect((await call(wired, "save_calendar_link", { url: CALENDAR_URL })).isError).toBe(false);
     expect(await done(wired)).toContain("Calendar link saved.");
-    expect(JSON.parse(liveFile(wired)).calendarLink).toBe(CALENDAR_URL);
+    // The calendars are the property's, in its hub: the Guesty Lite link is the legacy entry there.
+    expect(hubCalendars(wired).find((calendar) => calendar.legacy)?.url).toBe(CALENDAR_URL);
     expect((await call(wired, "save_door_code", { code: DOOR_CODE })).isError).toBe(false);
     expect((await call(wired, "set_up_texting")).isError).toBe(false);
     const checks = await call(wired, "run_checks");
@@ -1385,9 +1392,9 @@ describe("Cleaner Core Grok demo: editing calendars never silently cancels a cle
     expect((await call(wired, "save_sources", { calendars: [AIRBNB, VRBO] })).isError).toBe(false);
     expect((await call(wired, "save_calendar_link", { url: CALENDAR_URL })).isError).toBe(false);
     expect(await done(wired)).toContain("3 calendar links saved.");
-    const file = JSON.parse(liveFile(wired)) as { calendarLink?: string; calendars?: unknown[] };
-    expect(file.calendarLink).toBe(CALENDAR_URL);
-    expect(file.calendars).toEqual([AIRBNB, VRBO]);
+    const calendars = hubCalendars(wired);
+    expect(calendars.find((calendar) => calendar.legacy)?.url).toBe(CALENDAR_URL);
+    expect(calendars.filter((calendar) => !calendar.legacy)).toEqual([AIRBNB, VRBO]);
     expect((await call(wired, "save_door_code", { code: DOOR_CODE })).isError).toBe(false);
     expect((await call(wired, "set_up_texting")).isError).toBe(false);
     const checks = await call(wired, "run_checks");

@@ -21,6 +21,12 @@ export const CALENDAR_MASKED = "That link came through masked, so I didn't save 
 export const CALENDAR_CARD = "That looks like a card number. A calendar link never holds card details.";
 export const calendarPrivate = (name: string) => `I can't use the ${name} link. It has to be a public https address, and not a private network.`;
 
+/** The line get_state and get_supply_state carry while calendars wait in the set-aside list. Names only. */
+export function setAsideLine(names: readonly string[]): string | undefined {
+  if (names.length === 0) return undefined;
+  return `Supply Core had its own calendars (${names.join(", ")}) that aren't in this property's list. Ask the host whether to add them.`;
+}
+
 /** A calendar as hub.json keeps it. `legacy` marks the single link from save_calendar_link. */
 export interface StoredCalendar {
   name: string;
