@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { liveDeskFor, resetLiveDesks, setCleanerCalendarFetch } from "../src/cleaner-core/liveDesk";
 import { GroupNotConfirmed } from "../src/cleaner-core/groupThread";
-import { isAllowlisted, sendLiveGroup, sendLiveSms, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
+import { isAllowlisted, landlordConfirmed, mayText, sendLiveGroup, sendLiveSms, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import {
   CALENDAR_ICS,
   CALENDAR_URL,
@@ -22,6 +22,7 @@ const BUSINESS = "Harbor";
 const DOOR = "8088";
 const STRANGER = "+15555550199";
 const TOUR_NUMBER = "+15555550123";
+const HOST_UNCONFIRMED = "I can text only after the host's phone is confirmed. Save the phone you confirmed when you signed in as the host's number.";
 const BLANK_LISTS: Array<string | undefined> = [undefined, "", "   ", ",", " , , "];
 
 afterEach(() => {
@@ -71,24 +72,16 @@ async function readyDesk(env: NodeJS.ProcessEnv) {
   };
 }
 
-describe("live texts with a blank or incomplete allowlist", () => {
-  it.each(BLANK_LISTS)("sends nothing and does not mark a job delivered when the allowlist is %j", async (allowlist) => {
+describe("per-account texting consent (saadvz/TourCore#164)", () => {
+  it.each(BLANK_LISTS)("texts nobody on an account whose host phone isn't confirmed, when the allowlist is %j", async (allowlist) => {
     const client = fakeSms();
     setCleanerTwilioClient(client);
     calendar();
-    const env = envFor(allowlist);
-    expect(await sendLiveSms(env, { to: HOST, body: "checkout question" })).toBeUndefined();
-    expect(await sendLiveSms(env, { to: CLEANER, body: "opt in" })).toBeUndefined();
-    expect(client.sent).toEqual([]);
-
-    const { desk, close } = await readyDesk(env);
+    const { desk, close } = await readyDesk(envFor(allowlist));
     try {
-      const checks = await desk.runChecks();
-      expect(checks.ok).toBe(false);
-      const times = await desk.confirmTimes({ checkout: "10:30", checkIn: "15:00" });
-      expect(times.ok).toBe(false);
-      const turns = await desk.getTurns();
-      expect(turns).toEqual({ ok: true, result: { turns: [] } });
+      expect(await desk.runChecks()).toEqual({ ok: false, error: HOST_UNCONFIRMED });
+      expect((await desk.confirmTimes({ checkout: "10:30", checkIn: "15:00" })).ok).toBe(false);
+      expect(await desk.getTurns()).toEqual({ ok: true, result: { turns: [] } });
       await desk.inbound({ id: "blank-yes", from: CLEANER, text: "YES" });
       expect(await desk.getTurns()).toEqual({ ok: true, result: { turns: [] } });
       expect(client.sent).toEqual([]);
@@ -97,32 +90,103 @@ describe("live texts with a blank or incomplete allowlist", () => {
     }
   });
 
-  it("sends nothing to a number that is off a non-empty allowlist", async () => {
+  it("needs no operator step once the landlord's phone is confirmed: the cleaner gets only the opt-in until their YES", async () => {
     const client = fakeSms();
     setCleanerTwilioClient(client);
     calendar();
-    const env = envFor(HOST);
-    expect(await sendLiveSms(env, { to: CLEANER, body: "opt in" })).toBeUndefined();
-    expect(await sendLiveSms(env, { to: OBSERVER, body: "copy" })).toBeUndefined();
-    expect(client.sent).toEqual([]);
-    const hostSid = await sendLiveSms(env, { to: HOST, body: "checkout question" });
-    expect(hostSid).toBeTruthy();
-    expect(client.sent.map((item) => item.to)).toEqual([HOST]);
-
-    const { desk, close } = await readyDesk(env);
+    const { desk, close } = await readyDesk({ ...envFor(undefined), CLEANER_CORE_LANDLORD_PHONE: HOST });
     try {
-      const checks = await desk.runChecks();
-      expect(checks.ok).toBe(false);
-      const times = await desk.confirmTimes({ checkout: "10:30", checkIn: "15:00" });
-      expect(times.ok).toBe(false);
-      expect(await desk.getTurns()).toEqual({ ok: true, result: { turns: [] } });
-      await desk.inbound({ id: "off-yes", from: CLEANER, text: "YES" });
-      expect(client.sent.map((item) => ({ to: item.to, body: item.body }))).toEqual([
-        { to: HOST, body: "checkout question" },
-      ]);
+      expect((await desk.runChecks()).ok).toBe(true);
+      expect((await desk.confirmTimes({ checkout: "10:30", checkIn: "15:00" })).ok).toBe(true);
+      const toCleaner = client.sent.filter((item) => item.to === CLEANER);
+      expect(toCleaner.length).toBe(1);
+      expect(toCleaner[0]?.body).toMatch(/Reply YES to get cleaning texts, or STOP to opt out\./);
+      // The observer the host saved gets nothing before the cleaner's YES, and nobody gets the door code.
+      expect(client.sent.filter((item) => item.to === OBSERVER)).toEqual([]);
+      expect(client.sent.some((item) => item.body.includes(DOOR))).toBe(false);
+      await desk.inbound({ id: "consent-yes", from: CLEANER, text: "YES" });
+      const after = client.sent.filter((item) => item.to === CLEANER);
+      expect(after.length).toBeGreaterThan(1);
+      expect(after.some((item) => /Turnover at/.test(item.body))).toBe(true);
+      expect(client.sent.some((item) => item.body.includes(DOOR))).toBe(false);
     } finally {
       close();
     }
+  });
+
+  it("on an account made in /admin with no confirmed phone, the old allowlist vouches for the host only", async () => {
+    const client = fakeSms();
+    setCleanerTwilioClient(client);
+    calendar();
+    const { desk, close } = await readyDesk(envFor(HOST));
+    try {
+      expect((await desk.runChecks()).ok).toBe(true);
+      expect((await desk.confirmTimes({ checkout: "10:30", checkIn: "15:00" })).ok).toBe(true);
+      // The cleaner isn't on the list, and still gets the opt-in: their own YES decides now.
+      expect(client.sent.filter((item) => item.to === CLEANER).map((item) => item.body)).toEqual([expect.stringMatching(/Reply YES to get cleaning texts/)]);
+    } finally {
+      close();
+    }
+  });
+
+  it("sends the cleaner nothing after their STOP, apart from the STOP reply", async () => {
+    const client = fakeSms();
+    setCleanerTwilioClient(client);
+    calendar();
+    const { desk, close } = await readyDesk({ ...envFor(undefined), CLEANER_CORE_LANDLORD_PHONE: HOST });
+    try {
+      expect((await desk.runChecks()).ok).toBe(true);
+      expect((await desk.confirmTimes({ checkout: "10:30", checkIn: "15:00" })).ok).toBe(true);
+      await desk.inbound({ id: "consent-stop", from: CLEANER, text: "STOP" });
+      const sentBefore = client.sent.filter((item) => item.to === CLEANER).length;
+      await desk.runChecks();
+      const late = client.sent.filter((item) => item.to === CLEANER).slice(sentBefore);
+      expect(late.some((item) => /Turnover at/.test(item.body) || item.body.includes(DOOR))).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  it("refuses a host other than the phone confirmed at sign-up, even when the allowlist is *", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cleaner-allow-"));
+    try {
+      const desk = liveDeskFor(root, () => ({ ...envFor("*"), CLEANER_CORE_LANDLORD_PHONE: STRANGER }), () => new Date(FROZEN));
+      expect((await desk.getState("cleaners")).ok).toBe(true);
+      expect((await desk.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: "America/New_York" })).ok).toBe(true);
+      expect(await desk.savePeople({ host: HOST, cleaner: CLEANER })).toEqual({ ok: false, error: "The host's number has to be the phone you confirmed when you signed in." });
+      expect((await desk.savePeople({ host: STRANGER, cleaner: CLEANER })).ok).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never texts this service's own lines, and texts nothing with live texts off", async () => {
+    const client = fakeSms();
+    setCleanerTwilioClient(client);
+    const env = { ...envFor(undefined), TOURCORE_TWILIO_PHONE_NUMBER: TOUR_NUMBER, CLEANER_CORE_SERVICE_LINES: STRANGER };
+    expect(mayText(env, CLEANER)).toBe(true);
+    expect(mayText(env, CLEANER_LINE)).toBe(false);
+    expect(mayText(env, TOUR_NUMBER)).toBe(false);
+    expect(mayText(env, STRANGER)).toBe(false);
+    expect(mayText(env, "not a phone")).toBe(false);
+    expect(await sendLiveSms(env, { to: CLEANER_LINE, body: "loop" })).toBeUndefined();
+    expect(await sendLiveSms(env, { to: STRANGER, body: "loop" })).toBeUndefined();
+    expect(await sendLiveSms({ ...env, CLEANER_CORE_LIVE_SMS: "0" }, { to: CLEANER, body: "off" })).toBeUndefined();
+    expect(client.sent).toEqual([]);
+    expect(await sendLiveSms(env, { to: CLEANER, body: "opt in" })).toBeTruthy();
+    expect(client.sent.map((item) => item.to)).toEqual([CLEANER]);
+  });
+
+  it("confirms the landlord by the phone verified at sign-up first, then by the old allowlist", () => {
+    expect(landlordConfirmed({ CLEANER_CORE_LANDLORD_PHONE: HOST }, HOST)).toBe(true);
+    expect(landlordConfirmed({ CLEANER_CORE_LANDLORD_PHONE: HOST }, CLEANER)).toBe(false);
+    // A confirmed phone wins over the allowlist.
+    expect(landlordConfirmed({ CLEANER_CORE_LANDLORD_PHONE: HOST, CLEANER_CORE_SMS_ALLOWLIST: "*" }, CLEANER)).toBe(false);
+    expect(landlordConfirmed({ CLEANER_CORE_SMS_ALLOWLIST: HOST }, HOST)).toBe(true);
+    expect(landlordConfirmed({ CLEANER_CORE_SMS_ALLOWLIST: HOST }, CLEANER)).toBe(false);
+    expect(landlordConfirmed({}, HOST)).toBe(false);
+    expect(landlordConfirmed({ CLEANER_CORE_LANDLORD_PHONE: HOST }, undefined)).toBe(false);
+    expect(landlordConfirmed({ CLEANER_CORE_LANDLORD_PHONE: CLEANER_LINE, CLEANER_CORE_TWILIO_PHONE_NUMBER: CLEANER_LINE }, CLEANER_LINE)).toBe(false);
   });
 });
 
