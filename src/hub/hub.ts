@@ -19,6 +19,7 @@ import { interpretFeed } from "./calendar";
 import { calendarFetch } from "./calendarFetch";
 import { calendarUrlAllowed, readPublicCalendar } from "./fetchLimits";
 import { googleCalendarSource, type GoogleEventList, type SourceSnapshot } from "./sources";
+import { folderNeedsMove, migrateFolder } from "./migrate";
 import { HUB_CALENDAR_PREFIX } from "./paths";
 import { emptyHub, hubPath, readHubFile, type HubCaller, type HubFile, type HubProperty } from "./store";
 
@@ -39,6 +40,12 @@ export interface HubGuards {
 
 export interface HubDeps {
   now(): Date;
+  /**
+   * Which calendar list wins when both flows saved one and the data moves on this open. The shared
+   * service moves every property at startup with its own cleaning switch; a single folder runs
+   * Cleaner Core, so its list wins by default.
+   */
+  migrate?: { cleaningInUse: boolean };
 }
 
 export type HubSave = { ok: true } | { ok: false; error: string; reason: CalendarRefusal };
@@ -103,6 +110,7 @@ export class Hub {
     readonly root: string,
     protected readonly deps: HubDeps,
   ) {
+    if (folderNeedsMove(root)) migrateFolder(root, deps.migrate?.cleaningInUse ?? true);
     this.file = readHubFile(root) ?? emptyHub();
   }
 
