@@ -526,9 +526,14 @@ async function relayToOpenDesks(accountRoot: string, change: PersonChange): Prom
     if (propertyId === change.from) continue;
     const desk = desks.get(join(accountRoot, "properties", propertyId));
     if (!desk) continue;
-    if (change.kind === "opted-in") await desk.accountOptIn(change.phone);
-    else if (change.kind === "stopped") await desk.accountStop(change.phone);
-    else await desk.accountStart(change.phone);
+    // One desk that can't apply it doesn't stop the others. It applies the account's state when its engine next opens.
+    try {
+      if (change.kind === "opted-in") await desk.accountOptIn(change.phone);
+      else if (change.kind === "stopped") await desk.accountStop(change.phone);
+      else await desk.accountStart(change.phone);
+    } catch {
+      continue;
+    }
   }
 }
 
@@ -1563,7 +1568,11 @@ export class LiveDesk {
     for (const phone of this.personPhones()) {
       try {
         if (people.stopped(phone)) await engine.accountStop(phone);
-        else if (people.optedIn(phone)) await engine.accountOptIn(phone);
+        else {
+          // A START this desk didn't hear while it was closed: only a STOP leaves a phone "out".
+          if (engine.consentOf(phone) === "out") await engine.accountStart(phone);
+          if (people.optedIn(phone)) await engine.accountOptIn(phone);
+        }
       } catch {
         // A send that fails here is the engine's to retry; the step's own result stands.
       }
@@ -1586,7 +1595,7 @@ export class LiveDesk {
     void people.relay(change ? { ...change, from: id } : undefined).catch(() => undefined);
   }
 
-  /** True when this property is waiting on a reply from this phone. Opens nothing new. */
+  /** True when this property is waiting on a reply from this phone. It may open the engine, as any step does. */
   waitingOn(phone: string): Promise<boolean> {
     return this.serial(async () => {
       this.resume();

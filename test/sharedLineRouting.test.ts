@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { liveDeskFor } from "../src/cleaner-core/liveDesk";
 import { lineStartText, lineStopText, whichPropertyText } from "../src/hosted/sharedRoute";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { CLEANER, COURT, INVITE, LANDLORD, LANE, LINE, sharedAccount, type SharedAccount } from "./sharedHarness";
@@ -17,6 +18,7 @@ const ASK = whichPropertyText([
 let open: SharedAccount | undefined;
 let at = Date.parse("2026-10-14T13:00:00.000Z");
 afterEach(() => {
+  vi.restoreAllMocks();
   open?.m.close();
   open = undefined;
   closeHostedApps();
@@ -88,6 +90,24 @@ describe("a shared cleaner's one-to-one text", () => {
     expect(s.seen(lane)).not.toContain("SM-which");
     expect(s.seen(court)).not.toContain("SM-answer");
     expect(s.seen(lane)).not.toContain("SM-answer");
+  });
+
+  it("an answer with more to say delivers both, the held text first", SLOW, async () => {
+    const { s, lane, court } = await optedIn();
+    await s.m.text(LINE, CLEANER, "running late", "SM-held");
+    await s.m.text(LINE, CLEANER, "8 Scratch Court, and the dryer is broken", "SM-more");
+    expect(s.seen(court)).toEqual(expect.arrayContaining(["SM-held", "SM-more"]));
+    expect(s.seen(court).indexOf("SM-held")).toBeLessThan(s.seen(court).indexOf("SM-more"));
+    expect(s.seen(lane)).not.toContain("SM-more");
+  });
+
+  it("the line's STOP reply still goes when a property fails to apply it", SLOW, async () => {
+    const { s, lane } = await optedIn();
+    const desk = liveDeskFor(s.root(lane), () => process.env, () => new Date(at));
+    vi.spyOn(desk, "accountStop").mockRejectedValue(new Error("unreadable store"));
+    const before = s.m.sms.sent.length;
+    await s.m.text(LINE, CLEANER, "STOP", "SM-stop");
+    expect(sentSince(s, before)).toEqual([lineStopText("Scratch")]);
   });
 
   it("answers by name too", SLOW, async () => {
@@ -186,5 +206,30 @@ describe("a cleaner on one property", () => {
     expect(replies[0]).toContain("opted out");
     expect(replies[0]).toContain("8 Scratch Court");
     expect(s.peopleFile()!.people.find((p) => p.phone === COURT.cleanerPhone)?.stopped).toBeDefined();
+  });
+});
+
+describe("an answer is read against the list that was asked", () => {
+  it("with a property switched off after the ask, its number still means what the ask said", SLOW, async () => {
+    at = Date.parse("2026-10-14T13:00:00.000Z");
+    open = await sharedAccount({ now: () => new Date(at) });
+    const s = open;
+    const annexScratch = { ...LANE, property: { ...LANE.property, address: "9 Scratch Annex, Teaneck, NJ 07666" } };
+    const lane = await s.liveProperty("Scratch Lane", LANE, { cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" });
+    const ids = [lane];
+    for (const [label, scratch] of [["Scratch Court", COURT], ["Scratch Annex", annexScratch]] as const) {
+      const id = await s.add(label);
+      await s.startProperty(id, scratch);
+      await s.tool("save_people", { property: id, host: LANDLORD, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only", shared: true });
+      await s.finishProperty(id, scratch);
+      ids.push(id);
+    }
+    await s.m.text(LINE, CLEANER, "YES", "SM-opt-yes");
+    await s.m.text(LINE, CLEANER, "what time is checkout?", "SM-held");
+    // The ask listed 1 Lane, 2 Court, 3 Annex. Court's cleaning is switched off before the answer.
+    s.m.registry.setFlow(s.accountId, ids[1]!, "cleaning", false);
+    await s.m.text(LINE, CLEANER, "3", "SM-three");
+    expect(s.seen(ids[2]!)).toContain("SM-held");
+    expect(s.seen(lane)).not.toContain("SM-held");
   });
 });

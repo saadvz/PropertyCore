@@ -17,7 +17,7 @@ import { writeJsonAtomic } from "../storage/atomicWrite";
 import { isStartText, isStopText, TenantOptOuts } from "./crossService";
 import { LineAsks } from "./lineAsks";
 import { accountPeople } from "./sharedPeople";
-import { answerOf, businessFor, droppedNote, lineStartText, lineStopText, namedProperty, whichPropertyText, type Named } from "./sharedRoute";
+import { answerOf, bareAnswer, businessFor, droppedNote, lineStartText, lineStopText, namedProperty, whichPropertyText, type Named } from "./sharedRoute";
 
 /**
  * One-to-one texts on an account's shared line. The `To` number names the account; the sender names
@@ -142,12 +142,17 @@ async function routeShared(h: HostedCleaner, tenant: Tenant, people: People, pro
   };
   const asks = new LineAsks(tenantFolder(h.dataRoot, tenant.id), () => h.now());
   const held = asks.held(from);
-  const answer = held ? answerOf(text, named) : undefined;
-  if (held && answer) {
-    asks.take(from);
-    return deliver(answer, { id: held.id, text: held.text, ...(held.media ? { media: held.media } : {}) });
-  }
   const current = { id, text, ...(media.length > 0 ? { media } : {}) };
+  // The answer is read against the list that was asked, so a property switched off since doesn't shift the numbers.
+  const asked = held ? held.propertyIds.map((pid) => named.find((n) => n.id === pid) ?? { id: pid, label: "" }) : [];
+  const answer = held ? answerOf(text, asked) : undefined;
+  if (held && answer && properties.some((p) => p.id === answer)) {
+    asks.take(from);
+    await deliver(answer, { id: held.id, text: held.text, ...(held.media ? { media: held.media } : {}) });
+    // An answer with more to say goes to the same property, after the held text.
+    if (!bareAnswer(text, asked) || media.length > 0) await deliver(answer, current);
+    return;
+  }
   const byName = namedProperty(text, named);
   if (byName) return deliver(byName, current);
   const waiting: string[] = [];
@@ -164,9 +169,10 @@ async function routeShared(h: HostedCleaner, tenant: Tenant, people: People, pro
 async function personAll(h: HostedCleaner, tenant: Tenant, people: People, properties: Property[], from: string, text: string): Promise<void> {
   const stop = isStopText(text);
   const change = stop ? people.stop(from) : people.start(from);
-  await people.relay(change);
   if (!change) return;
-  const names = await Promise.all(properties.map((property) => deskOf(h, tenant, property).desk.businessName()));
+  // The line's reply goes whether or not every property applied it: a property that missed it catches up when it opens.
+  await people.relay(change).catch(() => h.log(`A property on ${tenant.id} couldn't apply a shared person's ${stop ? "STOP" : "START"} yet.`));
+  const names = await Promise.all(properties.map((property) => deskOf(h, tenant, property).desk.businessName().catch(() => undefined)));
   const business = businessFor(names);
   await sendLiveSms(deskOf(h, tenant, properties[0]!).ctx.env(), { to: from, body: stop ? lineStopText(business) : lineStartText(business) }).catch(() => undefined);
 }
@@ -195,7 +201,7 @@ export async function handleLineText(h: HostedCleaner, r: HostedRequest, tenant:
     const result = await toDesk(route.property);
     // A person's STOP holds on every property that saves them, now or later; their START or YES lifts it.
     // The desk answers first, so its STOP reply still goes.
-    if (from && !landlord) await markPerson(people, from, text, route.property.id);
+    if (from && !landlord) await markPerson(people, from, text, route.property.id).catch(() => h.log(`A property on ${tenant.id} couldn't apply a person's STOP or START yet.`));
     return r.send(result.status, result.contentType ?? "text/xml", result.body);
   }
   if (route.kind === "person-all") {
@@ -222,7 +228,7 @@ export async function handleLineText(h: HostedCleaner, r: HostedRequest, tenant:
     return r.send(200, "text/xml", EMPTY_TWIML);
   }
   // A STOP from someone on no property holds for the whole line, and START or YES lifts it.
-  if (route.kind === "unknown" && from && !landlord) await markPerson(people, from, text);
+  if (route.kind === "unknown" && from && !landlord) await markPerson(people, from, text).catch(() => undefined);
   const said =
     route.kind === "host-help"
       ? `The host texted HELP to ${tenant.id}'s line. Twilio answers it.`

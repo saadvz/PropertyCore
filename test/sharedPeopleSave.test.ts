@@ -1,7 +1,8 @@
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { resetLiveDesks } from "../src/cleaner-core/liveDesk";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { liveDeskFor, resetLiveDesks } from "../src/cleaner-core/liveDesk";
+import { resetPeople } from "../src/hub/people";
 import { sharedRefusal } from "../src/hosted/sharedRoute";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { CLEANER, COURT, INVITE, LANDLORD, LANE, LINE, sharedAccount, STRANGER, type SharedAccount } from "./sharedHarness";
@@ -11,6 +12,7 @@ import { CLEANER, COURT, INVITE, LANDLORD, LANE, LINE, sharedAccount, STRANGER, 
 const SLOW = { timeout: 180_000 };
 let open: SharedAccount | undefined;
 afterEach(() => {
+  vi.restoreAllMocks();
   open?.m.close();
   open = undefined;
   closeHostedApps();
@@ -23,6 +25,24 @@ async function laneLive() {
   await open.startProperty(court, COURT);
   return { s: open, lane, court };
 }
+
+describe("the one-time move", () => {
+  it("one property that can't be read doesn't stop the move, and its older STOPs still count", SLOW, async () => {
+    const { s, lane, court } = await laneLive();
+    await s.tool("save_people", { property: court, host: LANDLORD, cleaner: COURT.cleanerPhone, groupChat: "cleaner-only" });
+    rmSync(join(s.accountRoot(), "people.json"));
+    const file = join(s.root(court), "cleaner-live.json");
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), lineOptOuts: [STRANGER] }));
+    resetPeople();
+    const desk = liveDeskFor(s.root(court), () => process.env, () => new Date());
+    vi.spyOn(desk, "moveSource").mockRejectedValue(new Error("unreadable store"));
+    await s.tool("save_people", { property: lane, host: LANDLORD, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" });
+    const moved = s.peopleFile()!;
+    expect(moved.movedAt).toBeDefined();
+    expect(moved.people.find((p) => p.phone === STRANGER)?.stopped).toBeDefined();
+    expect(moved.people.find((p) => p.phone === COURT.cleanerPhone)?.where).toEqual([{ propertyId: court, role: "cleaner" }]);
+  });
+});
 
 describe("save_people with someone already on another property", () => {
   it("is refused to the agent until the host's shared: true, and nobody is texted", SLOW, async () => {

@@ -1,11 +1,11 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parsePhone } from "../core/phone";
 import type { Property } from "../cleaner-core/hosted/properties";
 import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
-import { peopleFor, type MoveSource, type People } from "../hub/people";
+import { peopleFor, type MoveSource, type People, type Role } from "../hub/people";
 import { TenantOptOuts } from "./crossService";
 import { sharedRefusal } from "./sharedRoute";
 
@@ -29,10 +29,41 @@ export async function movePeople(h: HostedCleaner, tenant: Tenant, people = peop
   for (const property of tenant.properties) {
     const ctx = propertyContext(h, tenant, property);
     if (!existsSync(join(ctx.root, "cleaner-live.json"))) continue;
-    sources.push({ ...(await liveDeskFor(ctx.root, ctx.env, () => h.now()).moveSource()), propertyId: property.id });
+    try {
+      sources.push({ ...(await liveDeskFor(ctx.root, ctx.env, () => h.now()).moveSource()), propertyId: property.id });
+    } catch {
+      // One property that can't open doesn't stop the move: its people and older STOPs come from its file.
+      h.log(`Couldn't open ${tenant.id}/${property.id} for the people move; read its saved people instead.`);
+      sources.push(fileSource(ctx.root, property.id));
+    }
   }
   sources.push({ propertyId: "", people: [], stopped: new TenantOptOuts(h.dataRoot).phones(tenant.id), optedIn: [], optedOut: [] });
   people.move(sources);
+}
+
+/** A property's people and older STOPs from its cleaner-live.json alone, without opening its desk. */
+function fileSource(root: string, propertyId: string): MoveSource {
+  let file: { host?: string; cleaner?: string; cleanerName?: string; observer?: string; contacts?: { name?: string; role?: string; phone?: string }[]; lineOptOuts?: string[]; cleanerOut?: boolean } = {};
+  try {
+    file = JSON.parse(readFileSync(join(root, "cleaner-live.json"), "utf8")) as typeof file;
+  } catch {
+    file = {};
+  }
+  const host = file.host ? parsePhone(file.host) : undefined;
+  const people: MoveSource["people"] = [];
+  const add = (raw: string | undefined, role: Role, name?: string) => {
+    const phone = raw ? parsePhone(raw) : undefined;
+    if (phone && phone !== host && !people.some((p) => p.phone === phone)) people.push({ phone, role, ...(name ? { name } : {}) });
+  };
+  add(file.cleaner, "cleaner", file.cleanerName);
+  add(file.observer, "observer");
+  for (const contact of file.contacts ?? []) {
+    const role = (["co-host", "assistant", "observer"] as const).find((r) => r === contact.role) ?? "observer";
+    add(contact.phone, role, contact.name);
+  }
+  const cleaner = file.cleaner ? parsePhone(file.cleaner) : undefined;
+  const stopped = [...(file.lineOptOuts ?? []), ...(file.cleanerOut && cleaner ? [cleaner] : [])];
+  return { propertyId, ...(host ? { host } : {}), people, stopped, optedIn: [], optedOut: [] };
 }
 
 const phoneOf = (raw: unknown) => (typeof raw === "string" ? parsePhone(raw) : undefined);

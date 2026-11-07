@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetLiveDesks, liveDeskFor, type LiveDesk } from "../src/cleaner-core/liveDesk";
 import { peopleFor, type PersonChange } from "../src/hub/people";
 import { cleanupDesks, LOCK, ok, openDeskAt, PIN_KEY, ROUTINE, ZONE } from "./cleanerDeskHarness";
@@ -18,7 +18,10 @@ const A = "prp_aaaaaaaaaa";
 const B = "prp_bbbbbbbbbb";
 const INVITE = "Reply YES to get cleaning texts";
 
-afterEach(() => cleanupDesks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  cleanupDesks();
+});
 
 async function setUpAt(desk: LiveDesk, address: string) {
   ok(await desk.getState("cleaners"));
@@ -119,6 +122,29 @@ describe("a desk on an account", () => {
     await lane.inbound({ id: "SM-take", from: CLEANER, text: "running late" });
     await lane.markGuestsLeft({ confirmed: true }, PIN_KEY);
     expect(toCleaner(s.sms).slice(before)).toEqual([]);
+  });
+
+  it("a desk that was closed when the cleaner texted START brings them back in when it opens", async () => {
+    const s = await account();
+    await s.a.desk.inbound({ id: "SM-yes", from: CLEANER, text: "YES" });
+    await s.people.relay(s.people.stop(CLEANER));
+    expect((await s.b.desk.moveSource()).optedOut).toContain(CLEANER);
+    resetLiveDesks();
+    // The START was saved, but no desk was open to hear it.
+    s.people.start(CLEANER);
+    const court = liveDeskFor(s.rootB, () => s.b.env, s.b.now);
+    ok(await court.checkNow());
+    const after = await court.moveSource();
+    expect(after.optedOut).not.toContain(CLEANER);
+    expect(after.optedIn).toContain(CLEANER);
+  });
+
+  it("one desk that fails to apply a change doesn't stop the others", async () => {
+    const s = await account();
+    vi.spyOn(s.a.desk, "accountStop").mockRejectedValue(new Error("unreadable store"));
+    const court = vi.spyOn(s.b.desk, "accountStop");
+    await s.people.relay(s.people.stop(CLEANER));
+    expect(court).toHaveBeenCalledWith(CLEANER);
   });
 
   it("a desk opened after a STOP sends nothing to the cleaner", async () => {

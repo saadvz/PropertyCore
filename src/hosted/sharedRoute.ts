@@ -41,6 +41,12 @@ export function answerOf(text: string, own: Named[]): string | undefined {
   return namedProperty(text, own);
 }
 
+/** True when the whole text is only a number or one of a property's names: an answer with nothing more to say. */
+export function bareAnswer(text: string, own: Named[]): boolean {
+  const folded = fold(text).replace(/[.!?,]+$/, "").trim();
+  return /^\d+$/.test(folded) || own.some((property) => namesOf(property).includes(folded));
+}
+
 /** The ask, by the street part of each address. Labels are the host's own names and aren't used. */
 export function whichPropertyText(own: Named[]): string {
   const items = own.map((property, i) => `${i + 1} for ${property.address ? streetOf(property.address) : `property ${i + 1}`}`);
