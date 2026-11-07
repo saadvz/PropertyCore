@@ -2286,10 +2286,12 @@ export class LiveDesk {
 
   /** Every phone this setup saved: host, cleaner, observer, and contacts. Sends nothing. */
   knownPhones(): Promise<string[]> {
-    return this.serial(async () => {
-      const raw = [this.file.host, this.file.cleaner, this.file.observer, ...(this.file.contacts ?? []).map((contact) => contact.phone)];
-      return raw.map((phone) => (phone ? parsePhone(phone) : undefined)).filter((phone): phone is string => !!phone);
-    });
+    return this.serial(async () => this.savedPhones());
+  }
+
+  private savedPhones(): string[] {
+    const raw = [this.file.host, this.file.cleaner, this.file.observer, ...(this.file.contacts ?? []).map((contact) => contact.phone)];
+    return raw.map((phone) => (phone ? parsePhone(phone) : undefined)).filter((phone): phone is string => !!phone);
   }
 
   /** The saved host, and every other person the property texts, as E.164. */
@@ -2921,6 +2923,8 @@ export class LiveDesk {
     const guard = this.testTurnGuard();
     if (guard) return this.fail(guard);
     if (!this.file.texting || !this.codeSaved() || !this.file.host || !this.file.cleaner) return this.fail("Set up texting first.");
+    if (!this.hostConfirmed()) return this.fail(HOST_UNCONFIRMED);
+    if (!mayText(this.env(), this.file.cleaner)) return this.fail(CLEANER_IS_LINE);
     const checkout = input.checkout?.trim() ?? "";
     const checkIn = input.checkIn?.trim() ?? "";
     if (!statedClock(checkout) || !statedClock(checkIn)) {
@@ -2935,7 +2939,7 @@ export class LiveDesk {
     const created = await this.engine.addTestTurn({ checkout, checkIn });
     if (!created.created) {
       if (created.reason === "exists") return this.reply({ next: "That test turnover is already saved.", turns: this.turns() });
-      if (created.reason === "refused") return this.fail(HOST_UNCONFIRMED);
+      if (created.reason === "refused") return this.fail(CLEANER_IS_LINE);
       return this.fail("Tell me the checkout time and the next check-in time, like 10:30 AM and 3:00 PM.");
     }
     const invited = this.engine.outbox().some((item) => item.kind === "opt-in" && item.status === "sent");
@@ -3022,7 +3026,9 @@ export class LiveDesk {
 
   private async inboundNow(input: Inbound): Promise<{ sent: CleanerText[] }> {
     const from = parsePhone(input.from);
-    if (!from || !mayText(this.env(), from)) return { sent: [] };
+    // Only the people the host saved are read (saadvz/TourCore#164). A stranger's text, STOP or
+    // "someone is hurt" never reaches the engine, changes nothing, and gets no reply with the address.
+    if (!from || !mayText(this.env(), from) || !this.savedPhones().includes(from)) return { sent: [] };
     if (this.claiming.has(input.id)) return { sent: [] };
     if (this.file.seenInbound?.includes(input.id)) {
       this.resume();
@@ -3622,10 +3628,13 @@ export class LiveDesk {
       accessRefused: this.accessRefusedLines(),
       hostName: file.business,
       consented: file.texting === true,
-      // Consent is per account: nobody is texted until the host's phone is confirmed, and then the
-      // engine's own YES and STOP decide. The service's own lines are never texted.
-      allowlist: (phone: string) => landlordConfirmed(env(), this.file.host) && mayText(env(), phone),
-      holdSends: () => this.checking || (!liveSmsOn(env()) && !this.scratchCapture()),
+      // Consent is per account: the engine's own YES and STOP decide, and the service's own lines are
+      // never texted. Until the host's phone is confirmed the engine reads no calendar and the host's
+      // number doesn't pass, but texts in from the cleaner and contacts, such as a STOP, are still taken.
+      allowlist: (phone: string) => mayText(env(), phone) && (phone !== parsePhone(this.file.host ?? "") || this.hostConfirmed()),
+      // Nothing goes out until the host's phone is confirmed. Texts in from saved people, such as a
+      // cleaner's STOP, are still taken, so consent is never lost while it waits.
+      holdSends: () => this.checking || !this.hostConfirmed() || (!liveSmsOn(env()) && !this.scratchCapture()),
       deferCleanerTexts: this.file.released !== true,
       ...(this.file.cleanerOut ? { cleanerConsent: "out" as const } : {}),
       ...(this.people && this.account
