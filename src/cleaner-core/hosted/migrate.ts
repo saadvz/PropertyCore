@@ -23,6 +23,7 @@ export const PROPERTY_FILES: readonly string[] = [
   "supply-approvals.json",
   "supply-approvals-front.json",
   "flow-approvals.json",
+  "hub.json",
 ];
 
 export class MigrationError extends Error {

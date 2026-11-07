@@ -1,10 +1,11 @@
+import { hubFor } from "../src/hub/hub";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { supplyDeskFor, type SupplyDeps, type SupplyDesk } from "../src/supply-core/desk";
 import { readSupply } from "../src/supply-core/store";
-import { interpretFeed } from "../src/cleaner-core/calendar";
+import { interpretFeed } from "../src/hub/calendar";
 import { setCleanerCalendarFetch } from "../src/cleaner-core/liveDesk";
 
 /** Supply Core's ordering tools on a made-up property. Made-up stores, links, and order numbers only. */
@@ -33,7 +34,7 @@ async function activated(over: { mode?: "hands-off" | "checkout"; perMonthCapCen
   const root = mkdtempSync(join(tmpdir(), "supply-order-"));
   dirs.push(root);
   const clock = { now: START };
-  const deps: SupplyDeps = { now: () => clock.now, standalone: true };
+  const deps: SupplyDeps = { now: () => clock.now };
   const desk = supplyDeskFor(root, deps);
   await desk.saveSettings({ property: PROPERTY });
   await desk.saveItem(towels);
@@ -252,7 +253,7 @@ describe("bookings", () => {
     const root = mkdtempSync(join(tmpdir(), "supply-book-"));
     dirs.push(root);
     const clock = { now };
-    const deps: SupplyDeps = { now: () => clock.now, standalone: true, uploadBase: () => "https://supply.example/t/tnt_scratch000" };
+    const deps: SupplyDeps = { now: () => clock.now, uploadBase: () => "https://supply.example/t/tnt_scratch000" };
     const desk = supplyDeskFor(root, deps);
     await desk.saveSettings({ property: PROPERTY });
     await desk.saveItem({ ...towels, schedule: { kind: "bookings", stays: 1 } });
@@ -274,14 +275,14 @@ describe("bookings", () => {
     const { desk, root } = await bookingsDesk(START);
     const first = await desk.saveSources({ uploadLink: { name: "Airbnb" } });
     const url = first.structured!.uploadUrl as string;
-    expect(url).toMatch(/^https:\/\/supply\.example\/t\/tnt_scratch000\/supply\/calendar\/[A-Za-z0-9_-]{43}$/);
+    expect(url).toMatch(/^https:\/\/supply\.example\/t\/tnt_scratch000\/calendar-link\/[A-Za-z0-9_-]{43}$/);
     const code = url.slice(url.lastIndexOf("/") + 1);
     expect((await desk.uploadCalendarLink(code, { url: FEED_URL })).status).toBe(200);
     expect((await desk.uploadCalendarLink(code, { url: FEED_URL })).status).toBe(404);
     const second = await desk.saveSources({ uploadLink: { name: "Vrbo" } });
     const code2 = (second.structured!.uploadUrl as string).split("/").pop()!;
     expect((await desk.uploadCalendarLink(code2, { url: "https://calendar.example/vrbo.ics" })).status).toBe(200);
-    expect(readSupply(root).sources.map((s) => s.name)).toEqual(["Airbnb", "Vrbo"]);
+    expect(hubFor(root, { now: () => START }).calendars().map((c) => c.name)).toEqual(["Airbnb", "Vrbo"]);
     const state = await desk.state();
     expect(JSON.stringify(state)).not.toContain("calendar.example");
     expect((await desk.saveSources({ done: true })).isError).toBe(false);
@@ -325,23 +326,28 @@ describe("bookings", () => {
     expect(check.structured!.due).toEqual([]);
   });
 
-  it("a cleaning tenant takes checkouts from Cleaner Core and never fetches", async () => {
+  it("a cleaning property takes checkouts from the shared calendars, and the next one is the next cleaning", async () => {
+    // Two stays, checking out Nov 6 and Nov 20, on the calendar Cleaner Core saved in the hub.
+    const stays = ["BEGIN:VCALENDAR", "BEGIN:VEVENT", "UID:a", "DTSTART;VALUE=DATE:20261103", "DTEND;VALUE=DATE:20261106", "SUMMARY:Guest", "END:VEVENT", "BEGIN:VEVENT", "UID:b", "DTSTART;VALUE=DATE:20261117", "DTEND;VALUE=DATE:20261120", "SUMMARY:Guest", "END:VEVENT", "END:VCALENDAR"].join("\r\n");
     let fetched = 0;
     setCleanerCalendarFetch(async () => {
       fetched += 1;
-      return { status: 200, url: FEED_URL, async text() { return FEED; } };
+      return { status: 200, url: FEED_URL, async text() { return stays; } };
     });
     const root = mkdtempSync(join(tmpdir(), "supply-book-"));
     dirs.push(root);
     const clock = { now: START };
-    const desk = supplyDeskFor(root, { now: () => clock.now, standalone: false, cleaning: { property: () => PROPERTY, turnovers: async () => [{ checkoutYmd: "2026-11-06" }, { checkoutYmd: "2026-11-20" }] } });
+    const hub = hubFor(root, { now: () => clock.now });
+    hub.saveProperty({ nickname: PROPERTY.name, address: PROPERTY.address, timeZone: PROPERTY.timeZone });
+    hub.setCalendars({ calendars: [{ name: "Airbnb", url: FEED_URL }], done: true });
+    const desk = supplyDeskFor(root, { now: () => clock.now, cleaningOn: () => true });
     await desk.saveItem({ ...towels, schedule: { kind: "bookings", stays: 1 } });
     await desk.saveItem({ done: true });
     await finish(desk);
     clock.now = new Date("2026-11-07T15:00:00.000Z");
     const check = await desk.checkSupplies({});
     expect(check.structured!.due).toEqual([expect.objectContaining({ name: "Paper towels", deadline: "2026-11-19" })]);
-    expect(fetched).toBe(0);
+    expect(fetched).toBe(1);
   });
 });
 

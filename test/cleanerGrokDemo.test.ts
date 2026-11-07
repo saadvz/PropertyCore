@@ -5,14 +5,14 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NoopOperatorNotificationSink } from "../src/alerts/operatorEvents";
 import { OperatorEventOutbox } from "../src/alerts/outbox";
-import { zonedInstant } from "../src/cleaner-core/calendar";
+import { zonedInstant } from "../src/hub/calendar";
 import { privateCodeLine } from "../src/cleaner-core/cleanerTexts";
 import type { CleanerCore } from "../src/cleaner-core/core";
 import { drainCleanerAlerts, liveDeskFor, resetLiveDesks, setCleanerAlertFetch, setCleanerCalendarFetch, type LiveDesk, type ToolReply } from "../src/cleaner-core/liveDesk";
 import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
 import { setCleanerGroupFetch, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import { fakeConversations } from "./fakeConversations";
-import type { GoogleEventList } from "../src/cleaner-core/sources";
+import type { GoogleEventList } from "../src/hub/sources";
 import { SCRATCH_TENANTS } from "../src/cleaner-core/tenants";
 import { FileRuntimeStore } from "../src/storage/runtimeStore";
 import {
@@ -582,6 +582,12 @@ function drain(wired: WiredApp, now: () => Date = () => new Date(FROZEN)): Promi
 function cleaningUpdates(wired: WiredApp) {
   const outbox = new OperatorEventOutbox(new FileRuntimeStore(join(wired.root, "cleaner-alerts")), () => new NoopOperatorNotificationSink());
   return outbox.records().filter((record) => record.event.eventType === "cleaning.update");
+}
+
+/** The calendars saved in the property's hub.json. */
+function hubCalendars(wired: WiredApp): { name: string; url: string; legacy?: true }[] {
+  const path = join(wired.root, "hub.json");
+  return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as { calendars: { name: string; url: string; legacy?: true }[] }).calendars : [];
 }
 
 function liveFile(wired: WiredApp): string {
@@ -1318,7 +1324,8 @@ describe("Cleaner Core Grok demo: several calendar links", () => {
     await setUpTo(wired);
     expect((await call(wired, "save_calendar_link", { url: CALENDAR_URL })).isError).toBe(false);
     expect(await done(wired)).toContain("Calendar link saved.");
-    expect(JSON.parse(liveFile(wired)).calendarLink).toBe(CALENDAR_URL);
+    // The calendars are the property's, in its hub: the Guesty Lite link is the legacy entry there.
+    expect(hubCalendars(wired).find((calendar) => calendar.legacy)?.url).toBe(CALENDAR_URL);
     expect((await call(wired, "save_door_code", { code: DOOR_CODE })).isError).toBe(false);
     expect((await call(wired, "set_up_texting")).isError).toBe(false);
     const checks = await call(wired, "run_checks");
@@ -1385,9 +1392,9 @@ describe("Cleaner Core Grok demo: editing calendars never silently cancels a cle
     expect((await call(wired, "save_sources", { calendars: [AIRBNB, VRBO] })).isError).toBe(false);
     expect((await call(wired, "save_calendar_link", { url: CALENDAR_URL })).isError).toBe(false);
     expect(await done(wired)).toContain("3 calendar links saved.");
-    const file = JSON.parse(liveFile(wired)) as { calendarLink?: string; calendars?: unknown[] };
-    expect(file.calendarLink).toBe(CALENDAR_URL);
-    expect(file.calendars).toEqual([AIRBNB, VRBO]);
+    const calendars = hubCalendars(wired);
+    expect(calendars.find((calendar) => calendar.legacy)?.url).toBe(CALENDAR_URL);
+    expect(calendars.filter((calendar) => !calendar.legacy)).toEqual([AIRBNB, VRBO]);
     expect((await call(wired, "save_door_code", { code: DOOR_CODE })).isError).toBe(false);
     expect((await call(wired, "set_up_texting")).isError).toBe(false);
     const checks = await call(wired, "run_checks");

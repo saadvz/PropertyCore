@@ -1,13 +1,12 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
-import { interpretFeed } from "../cleaner-core/calendar";
-import { calendarUrlAllowed, readPublicCalendar } from "../cleaner-core/fetchLimits";
-import { cleanerCalendarFetch } from "../cleaner-core/liveDesk";
-import { googleCalendarSource, type GoogleEventList } from "../cleaner-core/sources";
+import { setAsideLine } from "../hub/calendars";
+import { hubFor, type Hub, type UploadResult } from "../hub/hub";
+import type { GoogleEventList } from "../hub/sources";
 import { isValidTimeZone, localDateOf } from "../core/timezone";
-import { askNext } from "../cleaner-core/setupAsk";
+import { askNext } from "../hub/ask";
 import { ConfirmationBook } from "../operator/confirmations";
-import { refuseCards } from "./cards";
+import { refuseCards } from "../hub/cards";
 import { cartFingerprint, checkCart, type CartInput, type GateContext, type Hold, type Mode } from "./gate";
 import { deadlineFor, dueOn, nextDates, scheduleProblem, type Schedule } from "./schedule";
 import { planStores, supplySetupAsk } from "./setupAsk";
@@ -26,27 +25,12 @@ export interface SupplyReply {
 
 export interface SupplyDeps {
   now(): Date;
-  /** True for a supplies tenant; false for a cleaning tenant with the add-on. */
-  standalone: boolean;
-  cleaning?: {
-    property(): { name: string; address: string; timeZone: string } | undefined;
-    turnovers(): Promise<{ checkoutYmd: string }[]>;
-  };
-  /** This tenant's public base, like https://host/t/tnt_x, for one-time upload links. */
+  /** The property's hub: its details and booking calendars. Defaults to the hub in this desk's folder. */
+  hub?(): Hub;
+  /** True while Cleaner Core runs on the property, so the next checkout is the next cleaning. */
+  cleaningOn?(): boolean;
+  /** This property's public base, like https://host/t/tnt_x/p/prp_y, for one-time upload links. */
   uploadBase?(): string | undefined;
-}
-
-/** Where Grok's own computer posts a booking calendar link, under the tenant's /t/<id>/ prefix. */
-export const SUPPLY_CALENDAR_PREFIX = "/supply/calendar/";
-const UPLOAD_MINUTES = 10;
-const MAX_CALENDARS = 8;
-const UPLOAD_CODE = /^[A-Za-z0-9_-]{43}$/;
-
-/** The one-time code in a Supply Core calendar upload path, or undefined. */
-export function supplyCalendarCode(pathname: string): string | undefined {
-  if (!pathname.startsWith(SUPPLY_CALENDAR_PREFIX)) return undefined;
-  const code = pathname.slice(SUPPLY_CALENDAR_PREFIX.length);
-  return UPLOAD_CODE.test(code) ? code : undefined;
 }
 
 const hashOf = (code: string) => createHash("sha256").update(code).digest("hex");
@@ -149,6 +133,8 @@ export class SupplyDesk {
   ) {
     // Kept in the tenant's folder, so a host's yes still counts after a restart.
     this.approvals = new ConfirmationBook(10 * 60_000, () => deps.now().getTime(), { file: join(root, "supply-approvals.json") });
+    // The hub moves any old property and calendar fields out of supply.json before this desk reads it.
+    this.hub();
   }
 
   /** Runs calls one at a time, so two tools never write the record at once. */
@@ -172,8 +158,16 @@ export class SupplyDesk {
     writeSupply(this.root, file);
   }
 
-  protected property(file: SupplyFile): { name: string; address: string; timeZone: string } | undefined {
-    return this.deps.standalone ? file.settings.property : this.deps.cleaning?.property();
+  /** The property's hub. Opening it first moves any old fields out of supply.json. */
+  protected hub(): Hub {
+    return this.deps.hub?.() ?? hubFor(this.root, { now: () => this.deps.now() });
+  }
+
+  /** The property, from its hub. The name is its nickname, else the street address. */
+  protected property(_file?: SupplyFile): { name: string; address: string; timeZone: string } | undefined {
+    const place = this.hub().property();
+    if (!place.address || !place.timeZone) return undefined;
+    return { name: place.nickname ?? place.address.split(",")[0]!.trim(), address: place.address, timeZone: place.timeZone };
   }
 
   protected timeZone(file: SupplyFile): string {
@@ -227,14 +221,18 @@ export class SupplyDesk {
   state(): Promise<SupplyReply> {
     return this.serial(() => {
       const file = this.read();
-      const ask = supplySetupAsk(file, this.deps.standalone);
+      const ask = supplySetupAsk(file, this.hub());
+      // Calendars set aside when the data moved: names only, never links.
+      const aside = setAsideLine(this.hub().setAside());
+      const setAside = aside ? { setAside: aside } : {};
       if (ask) {
         const next = ask.step === "products" && file.draft.length > 0 ? `${askNext(ask.tool)} Next item: ${file.draft[0]}.` : askNext(ask.tool);
-        return ok({ ask, next, items: file.items.map((item) => item.name), ...(file.draft.length > 0 ? { draft: file.draft } : {}), ...(file.settings.stores ? { stores: file.settings.stores } : {}) });
+        return ok({ ask, next, items: file.items.map((item) => item.name), ...(file.draft.length > 0 ? { draft: file.draft } : {}), ...(file.settings.stores ? { stores: file.settings.stores } : {}), ...setAside });
       }
       const tz = this.timeZone(file);
       const now = this.deps.now();
       return ok({
+        ...setAside,
         line: file.offAt ? "Supplies: off." : this.line(file),
         summary: {
           items: file.items.map((item) => ({ itemId: item.id, name: item.name, qtyPerOrder: item.qtyPerOrder, store: item.preferred.store, schedule: item.schedule })),
@@ -254,7 +252,6 @@ export class SupplyDesk {
       const file = this.read();
       const s = file.settings;
       if (input.property) {
-        if (!this.deps.standalone) return fail("This property's details come from Cleaner Core.");
         const p = input.property;
         if (!isText(p.address, 200)) return fail("The property needs its delivery address.");
         if (p.name !== undefined && !isText(p.name, 80)) return fail("Keep the property's name under 80 characters.");
@@ -275,8 +272,11 @@ export class SupplyDesk {
       if (unknown.length > 0) return fail(plan.length > 0 ? `Only the plan's stores can be checked: ${plan.join(" or ")}.` : "Save the store plan first.");
       const gate = this.approved(file, "supply-settings", "settings", input, "Save these settings?");
       if (gate !== "go") return gate;
-      // The name defaults to the street address: the part before the first comma.
-      if (input.property) s.property = { name: input.property.name?.trim() || input.property.address.split(",")[0]!.trim(), address: input.property.address.trim(), timeZone: input.property.timeZone };
+      // The property is the hub's, shared with Cleaner Core. Without a name it reads as the street address.
+      if (input.property) {
+        const saved = this.hub().saveProperty({ address: input.property.address.trim(), timeZone: input.property.timeZone, nickname: input.property.name?.trim() || undefined });
+        if (!saved.ok) return fail(saved.error);
+      }
       if (input.mode) s.mode = input.mode;
       for (const key of ["perOrderCapCents", "perMonthCapCents"] as const) {
         if (input[key] === null) delete s[key];
@@ -297,7 +297,7 @@ export class SupplyDesk {
         s.storesReady = [...new Set([...(s.storesReady ?? []), ...names])];
       }
       this.write(file);
-      return ok({ saved: true, ...(supplySetupAsk(file, this.deps.standalone) ? { next: "Call get_supply_state for the next step." } : {}) });
+      return ok({ saved: true, ...(supplySetupAsk(file, this.hub()) ? { next: "Call get_supply_state for the next step." } : {}) });
     });
   }
 
@@ -432,87 +432,38 @@ export class SupplyDesk {
     });
   }
 
-  /**
-   * Checkout dates. A cleaning tenant reads Cleaner Core's turnovers. A standalone tenant uses the
-   * dates its last check_supplies read from its saved calendars.
-   */
-  protected async checkouts(file: SupplyFile): Promise<string[]> {
-    if (this.deps.cleaning) return (await this.deps.cleaning.turnovers()).map((turn) => turn.checkoutYmd);
-    return file.checkouts?.dates ?? [];
-  }
-
-  /** Reads every saved calendar now. Any failed read marks the read failed, and nothing is kept from it. */
-  protected async readCalendars(file: SupplyFile, googleEvents: GoogleEventList | undefined): Promise<{ dates: string[]; failed: boolean }> {
-    const dates = new Set<string>();
-    let failed = false;
-    for (const source of file.sources) {
-      if (source.kind === "google-calendar") {
-        if (!googleEvents) {
-          failed = true;
-          continue;
-        }
-        const read = await googleCalendarSource(googleEvents, "supply").read();
-        for (const turn of read.turnovers) dates.add(turn.checkoutDate);
-        continue;
-      }
-      const read = await readPublicCalendar(source.url ?? "", cleanerCalendarFetch());
-      if (!read.ok) {
-        failed = true;
-        continue;
-      }
-      for (const turn of interpretFeed(read.body).turnovers) dates.add(turn.checkoutDate);
-    }
-    return { dates: [...dates].sort(), failed };
+  /** Checkout dates from the hub's last read where every booking calendar read cleanly. */
+  protected async checkouts(_file?: SupplyFile): Promise<string[]> {
+    return this.hub().checkouts()?.dates ?? [];
   }
 
   saveSources(input: { uploadLink?: { name?: string }; google?: boolean; done?: true }): Promise<SupplyReply> {
     return this.guarded(input, () => {
-      if (!this.deps.standalone) return fail("Booking dates come from Cleaner Core for this property.");
-      const file = this.read();
+      // The calendars are the property's, in its hub: Cleaner Core reads the same ones.
+      const hub = this.hub();
       if (input.uploadLink) {
         const name = input.uploadLink.name?.trim() ?? "";
         if (!isText(name, 40)) return fail("Give the calendar a short name, like Airbnb.");
-        if (file.sources.filter((s) => s.kind === "ical" && s.name.toLowerCase() !== name.toLowerCase()).length >= MAX_CALENDARS) return fail(`I can keep up to ${MAX_CALENDARS} calendar links.`);
         const base = this.deps.uploadBase?.();
         if (!base) return fail("I can't make an upload link until the server's public address is saved.");
-        const code = randomBytes(32).toString("base64url");
-        file.calendarUpload = { hash: hashOf(code), name, expiresAt: new Date(this.deps.now().getTime() + UPLOAD_MINUTES * 60_000).toISOString() };
-        this.write(file);
+        const made = hub.issueCalendarUpload({ name, base, ...(input.google ? { google: true } : {}) });
+        if ("error" in made) return fail(made.error);
         return ok({
-          uploadUrl: `${base}${SUPPLY_CALENDAR_PREFIX}${code}`,
-          expiresInMinutes: UPLOAD_MINUTES,
+          uploadUrl: made.uploadUrl,
+          expiresInMinutes: made.expiresInMinutes,
           next: 'From your own cloud computer, POST JSON {"url": "<calendar link>"} to uploadUrl with Content-Type: application/json. Never send the link or uploadUrl to the host. Then call get_supply_state.',
         });
       }
-      if (input.google && !file.sources.some((s) => s.kind === "google-calendar")) file.sources.push({ name: "Google Calendar", kind: "google-calendar" });
-      if (input.done) {
-        if (file.sources.length === 0) return fail("Save at least one booking calendar first.");
-        file.setup.sourcesDone = true;
-      }
-      this.write(file);
-      return ok({ calendars: file.sources.map((s) => s.name) });
+      if (input.done && hub.calendars().length === 0 && !hub.google() && !input.google) return fail("Save at least one booking calendar first.");
+      const saved = hub.setCalendars({ ...(input.google ? { google: true } : {}), ...(input.done ? { done: true } : {}) });
+      if (!saved.ok) return fail(saved.error);
+      return ok({ calendars: [...hub.calendars().map((c) => c.name), ...(hub.google() ? ["Google Calendar"] : [])] });
     });
   }
 
-  /** Saves a calendar link posted to its upload link. The link is never repeated or logged. */
-  uploadCalendarLink(code: string, body: Record<string, unknown>): Promise<{ status: 200 | 400 | 404; body: { ok: boolean; message?: string; error?: string } }> {
-    return this.serial(() => {
-      const gone = { status: 404 as const, body: { ok: false, error: "This upload link isn't valid anymore. Call save_supply_sources for a new one." } };
-      const file = this.read();
-      const pending = file.calendarUpload;
-      if (!pending || !sameHash(hashOf(code), pending.hash)) return gone;
-      if (this.deps.now().getTime() >= Date.parse(pending.expiresAt)) {
-        delete file.calendarUpload;
-        this.write(file);
-        return gone;
-      }
-      const url = typeof body.url === "string" ? body.url.trim() : "";
-      if (!url || !calendarUrlAllowed(url) || url.length > 2000 || refuseCards(url)) return { status: 400 as const, body: { ok: false, error: "Send the calendar's public https link as url." } };
-      file.sources = [...file.sources.filter((s) => s.name.toLowerCase() !== pending.name.toLowerCase()), { name: pending.name, kind: "ical" as const, url }];
-      delete file.calendarUpload;
-      this.write(file);
-      return { status: 200 as const, body: { ok: true, message: "Saved the calendar link." } };
-    });
+  /** Saves a calendar link posted to its upload link, through the hub. The link is never repeated or logged. */
+  uploadCalendarLink(code: string, body: Record<string, unknown>): Promise<UploadResult> {
+    return this.hub().uploadCalendarLink(code, body);
   }
 
   /** The host's one-line summary, or the setup line while setup is open. */
@@ -542,16 +493,6 @@ export class SupplyDesk {
     });
   }
 
-  /** A number switched to Supply Core keeps the property Cleaner Core had saved, when it has none of its own. */
-  adoptProperty(property: { name: string; address: string; timeZone: string } | undefined): Promise<void> {
-    return this.serial(() => {
-      const file = this.read();
-      if (file.settings.property || !property) return;
-      file.settings.property = { ...property };
-      this.write(file);
-    });
-  }
-
   /** Stand-down: every open cart closes. Orders on their way stay recorded. */
   clearCarts(): Promise<number> {
     return this.serial(() => {
@@ -570,7 +511,7 @@ export class SupplyDesk {
       if (file.items.length === 0) return fail("Add at least one item first.");
       if (!file.settings.mode) return fail("Choose hands-off or stop at checkout first.");
       if (!file.settings.checkTime) return fail("Choose the daily check time first.");
-      if (!this.property(file)) return fail(this.deps.standalone ? "Save the property first." : "Finish Cleaner Core's property step first.");
+      if (!this.property(file)) return fail("Save the property first.");
       const unready = planStores(file).filter((name) => !(file.settings.storesReady ?? []).some((ready) => ready.toLowerCase() === name.toLowerCase()));
       if (unready.length > 0) return fail(`Check that you can check out at ${unready.join(" and ")} first: signed in, delivering to the property, and a payment method ready. Then save storesReady.`);
       file.settings.activatedAt = this.deps.now().toISOString();
@@ -636,7 +577,7 @@ export class SupplyDesk {
   protected async dueItems(file: SupplyFile): Promise<Map<string, { item: Item; why: "schedule" | "report"; deadline: string }>> {
     const today = this.today(file);
     const checkouts = await this.checkouts(file);
-    const nextCleaningYmd = this.deps.cleaning ? checkouts.filter((day) => day >= today).sort()[0] : undefined;
+    const nextCleaningYmd = this.deps.cleaningOn?.() ? checkouts.filter((day) => day >= today).sort()[0] : undefined;
     const activated = file.settings.activatedAt ? this.ymd(file, file.settings.activatedAt) : today;
     const out = new Map<string, { item: Item; why: "schedule" | "report"; deadline: string }>();
     for (const item of file.items) {
@@ -666,11 +607,12 @@ export class SupplyDesk {
       if (!file.settings.activatedAt || file.offAt) return fail("Supply Core isn't active yet. Call get_supply_state.");
       this.sweep(file);
       let sourcesFailed = false;
-      if (this.deps.standalone && file.sources.length > 0) {
-        const read = await this.readCalendars(file, input.googleEvents);
-        sourcesFailed = read.failed;
-        // A failed read keeps nothing: an under-read would never order early, but it could skip a due item.
-        file.checkouts = read.failed ? { dates: file.checkouts?.dates ?? [], failedAt: this.deps.now().toISOString() } : { dates: read.dates, at: this.deps.now().toISOString() };
+      const hub = this.hub();
+      if (hub.calendars().length > 0 || hub.google()) {
+        // The hub keeps the dates only when every calendar read; a failed read keeps the last good
+        // ones. An under-read would never order early, but it could skip a due item.
+        const read = await hub.readCalendars({ ...(input.googleEvents ? { googleEvents: input.googleEvents } : {}), tenantId: "supply" });
+        sourcesFailed = read.links.some((link) => !link.read.ok) || (hub.google() && read.google === undefined);
       }
       const now = this.deps.now();
       const away = onItsWay(file, now);

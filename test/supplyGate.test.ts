@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { looksLikeCard, refuseCards } from "../src/supply-core/cards";
+import { looksLikeCard, refuseCards } from "../src/hub/cards";
 import { cartFingerprint, checkCart, type CartInput, type GateContext } from "../src/supply-core/gate";
 
 describe("looksLikeCard / refuseCards", () => {

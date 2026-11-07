@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { SettingName } from "../install/secretStore";
 import { ASSISTANT_PROFILES, CHATGPT_INSTRUCTIONS, CLAUDE_INSTRUCTIONS, MUSE_INSTRUCTIONS, type CleanerAssistant } from "./assistant";
 import { DOOR_CODE_IN_CHAT, type LiveDesk, type ToolReply } from "./liveDesk";
-import type { GoogleEventList } from "./sources";
+import type { GoogleEventList } from "../hub/sources";
 import { DELIVERY_REPORTS, SCRATCH_TOOLS } from "./scratchQa";
 
 export const CLEANER_MCP_PATH = "/mcp/cleaner-core";

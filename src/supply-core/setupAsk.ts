@@ -1,4 +1,5 @@
-import type { AskQuestion } from "../cleaner-core/setupAsk";
+import type { AskQuestion } from "../hub/ask";
+import type { Hub } from "../hub/hub";
 import type { SupplyFile } from "./store";
 
 /**
@@ -122,10 +123,12 @@ export function planStores(file: SupplyFile): string[] {
   return plan ? [plan.primary.name, ...(plan.fast ? [plan.fast.name] : [])] : [];
 }
 
-export function supplySetupAsk(file: SupplyFile, standalone: boolean): SupplyAsk | undefined {
+/** The next setup question. The property and the booking calendars are the hub's: a step another flow finished is skipped. */
+export function supplySetupAsk(file: SupplyFile, hub: Hub): SupplyAsk | undefined {
   if (file.settings.activatedAt) return undefined;
   const s = file.settings;
-  if (standalone && !s.property) {
+  const place = hub.property();
+  if (!place.address || !place.timeZone) {
     return {
       step: "property",
       tool: "save_supply_settings",
@@ -144,7 +147,7 @@ export function supplySetupAsk(file: SupplyFile, standalone: boolean): SupplyAsk
     if (file.draft.length > 0) return { step: "products", tool: "save_supply_item", questions: perItem };
     return { step: "products", tool: "save_supply_item", questions: [MORE] };
   }
-  if (standalone && !file.setup.sourcesDone && file.items.some((item) => item.schedule.kind === "bookings")) {
+  if (!hub.calendarsDone() && file.items.some((item) => item.schedule.kind === "bookings")) {
     return {
       step: "sources",
       tool: "save_supply_sources",

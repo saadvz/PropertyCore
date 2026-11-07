@@ -1,3 +1,4 @@
+import { hubCalendarCode } from "../hub/paths";
 import { withCaller, type CleanerCaller } from "./callerContext";
 import { authorized } from "../mcp/mcpBridge";
 import { cleanerAssistant } from "./assistant";
@@ -97,9 +98,8 @@ export function alertUploadCode(pathname: string): string | undefined {
 
 /** The one-time code in a calendar upload path, or undefined when the path isn't one. */
 export function calendarUploadCode(pathname: string): string | undefined {
-  if (!pathname.startsWith(CALENDAR_UPLOAD_PREFIX)) return undefined;
-  const code = pathname.slice(CALENDAR_UPLOAD_PREFIX.length);
-  return UPLOAD_CODE.test(code) ? code : undefined;
+  // The hub's link, and both flows' older prefixes for a link issued before a deploy.
+  return hubCalendarCode(pathname);
 }
 
 /** The one-time code in a door code upload path, or undefined when the path isn't one. */

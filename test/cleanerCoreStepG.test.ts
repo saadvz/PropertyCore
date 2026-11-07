@@ -366,7 +366,7 @@ describe("step G safety gates", () => {
         sqlite: true,
         watchFreshness: true,
       });
-      await courtJob.readSource((await import("../src/cleaner-core/sources")).googleCalendarFixtureSource(feed("google-court-stay.json")));
+      await courtJob.readSource((await import("../src/hub/sources")).googleCalendarFixtureSource(feed("google-court-stay.json")));
       expect(courtJob.reviews()).toEqual([]);
       expect(courtBox.sent.every((text) => text.to === court.ownerPhone || text.to === court.cleanerPhone)).toBe(true);
       expect(laneBox.sent.every((text) => text.to === OWNER || text.to === CLEANER)).toBe(true);

@@ -1,3 +1,5 @@
+import { migrateHubs } from "../src/hosted/hubStartup";
+import { hubFor } from "../src/hub/hub";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,11 +10,11 @@ import { liveDeskFor, resetLiveDesks } from "../src/cleaner-core/liveDesk";
 import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { hostedCleaner } from "../src/cleaner-core/hosted/router";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
-import { supplyDesk } from "../src/supply-core/hosted";
+import { supplyDesk } from "../src/hosted/supplies";
 import { openPin } from "../src/cleaner-core/pinSeal";
 import { BASE, closeHostedApps, hostedApp, hostedEnv } from "./cleanerOauthHarness";
 import { cleanupDesks, openDesk, PIN_KEY, setUp } from "./cleanerDeskHarness";
-import { CLEANER, DOOR_CODE, FROZEN, HOST } from "./wiringProof";
+import { ADDRESS, CLEANER, DOOR_CODE, FROZEN, HOST } from "./wiringProof";
 
 /** A v2 data folder written by hand, the way a live service holds it today. Only 555 numbers. */
 
@@ -214,11 +216,9 @@ describe("after the migration", () => {
     expect(yes.ok).toBe(true);
   });
 
-  it("Supply Core reads Cleaner Core's real turnovers on a migrated property with both flows on", async () => {
+  it("Supply Core reads the property and calendars Cleaner Core saved, through the hub, on a migrated property with both flows on", async () => {
     const opened = openDesk([HOST, CLEANER], "0");
     await setUp(opened.desk, { groupChat: "cleaner-only" });
-    const turnoversBefore = await opened.desk.turnoverDates();
-    expect(turnoversBefore.length).toBeGreaterThan(0);
     resetLiveDesks();
     const root = dataRoot();
     writeV2(root, [tenant(LANE, "+15555550150", { service: "cleaning", supplies: true })]);
@@ -227,10 +227,16 @@ describe("after the migration", () => {
     migrateRegistry(root, NOW);
     const registry = new TenantRegistry(root, NOW);
     const account = registry.get(LANE)!;
+    migrateHubs(root, registry.list(), () => new Date(FROZEN));
     const h = hostedCleaner({ registry, secrets: new TenantSecrets(root), dataRoot: root, origin: () => BASE, baseEnv: () => ({ ...opened.env, CLEANER_CORE_MULTI_TENANT: "1" }), grantLive: () => true, now: () => new Date(FROZEN), log: () => undefined });
-    const desk = supplyDesk(h, account, account.properties[0]!);
-    expect(desk.deps.standalone).toBe(false);
-    expect(await desk.deps.cleaning!.turnovers()).toEqual(turnoversBefore);
+    const property = account.properties[0]!;
+    const desk = supplyDesk(h, account, property);
+    expect(desk.deps.cleaningOn?.()).toBe(true);
+    const hub = hubFor(propertyFolder(root, LANE, property), { now: () => new Date(FROZEN) });
+    expect(hub.property().address).toBe(ADDRESS);
+    expect(hub.calendars().length).toBeGreaterThan(0);
+    // Supply Core's setup doesn't ask for the property Cleaner Core already saved.
+    expect(((await desk.state()).structured?.ask as { step?: string } | undefined)?.step).not.toBe("property");
   });
 });
 

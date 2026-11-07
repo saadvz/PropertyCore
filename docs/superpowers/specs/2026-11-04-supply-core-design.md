@@ -1,5 +1,7 @@
 # Supply Core: keeping a rental stocked
 
+> Superseded in part by `docs/superpowers/specs/2026-11-07-property-hub-details-calendars-design.md` (#165): the property and booking calendars now live in the property hub, shared with Cleaner Core, with one upload flow. Supply Core counts checkouts from the shared calendars whether Cleaner Core is on or off.
+
 Date: 2026-11-04. Approved in conversation with Saad, section by section. Status: written spec for Saad's review.
 
 ## Goal

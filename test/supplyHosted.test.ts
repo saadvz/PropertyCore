@@ -1,3 +1,4 @@
+import { hubFor } from "../src/hub/hub";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -157,8 +158,9 @@ describe("two properties", () => {
     expect(settings.inputSchema.required).toContain("propertyId");
     const saved = await m.toolAt(PATH, token, "save_supply_settings", { propertyId: court.id, property: PROPERTY });
     expect(saved.isError).toBe(false);
-    expect(readSupply(folder(m, tenant, court)).settings.property).toEqual(PROPERTY);
-    expect(readSupply(folder(m, tenant, property)).settings.property).toBeUndefined();
+    // The property is the hub's, in each property's own folder.
+    expect(hubFor(folder(m, tenant, court), { now: () => new Date() }).property()).toEqual({ nickname: PROPERTY.name, address: PROPERTY.address, timeZone: PROPERTY.timeZone });
+    expect(hubFor(folder(m, tenant, property), { now: () => new Date() }).property()).toEqual({});
     expect((await m.toolAt(PATH, token, "save_supply_settings", { property: PROPERTY })).text).toContain("Which property?");
   });
 });

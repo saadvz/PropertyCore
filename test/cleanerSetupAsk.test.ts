@@ -28,7 +28,7 @@ import { filesUnder } from "./files";
 const PATH = "/mcp/cleaner-core";
 const ZONE = "America/New_York";
 const PIN_KEY = Buffer.from(TEST_PIN_KEY, "base64");
-const CALENDAR_PREFIX = `${PUBLIC}/cleaner-core/calendar-link/`;
+const CALENDAR_PREFIX = `${PUBLIC}/calendar-link/`;
 const GUESTY_LINK = "https://app.guesty.com/api/public/icalendar-dashboard-api/export/made-up-test-calendar";
 
 const open: WiredApp[] = [];

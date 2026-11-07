@@ -3,12 +3,12 @@ import type { Tenant } from "../cleaner-core/hosted/registry";
 import { propertyBasePath, propertyFolder, type Property } from "../cleaner-core/hosted/properties";
 import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
-import { supplyDeskFor, type SupplyDesk, type SupplyReply } from "./desk";
-import { handleSupplyTool, listedSupplyTools, SUPPLY_TOOL_NAMES, SUPPLY_TOOLS } from "./tools";
+import { supplyDeskFor, type SupplyDesk, type SupplyReply } from "../supply-core/desk";
+import { handleSupplyTool, listedSupplyTools, SUPPLY_TOOL_NAMES, SUPPLY_TOOLS } from "../supply-core/tools";
 
 /**
- * Supply Core on the shared service, answered in this process, one desk per property. With Cleaner
- * Core on for the same property, it reads that property and its turnovers. Nothing here texts anyone.
+ * Supply Core on the shared service, answered in this process, one desk per property. The property's
+ * details and booking calendars come from its hub, shared with Cleaner Core. Nothing here texts anyone.
  */
 
 /** Cleaner Core's setup question: set up Supply Core for this property now, or not now. */
@@ -21,7 +21,7 @@ function cleaningDesk(h: HostedCleaner, tenant: Tenant, property: Property) {
   return liveDeskFor(ctx.root, ctx.env, () => h.now());
 }
 
-/** The property's Supply Core desk. With cleaning on, the property and turnovers come from its Cleaner Core. */
+/** The property's Supply Core desk. Its details and calendars come from the property's hub, shared with Cleaner Core. */
 export function supplyDesk(h: HostedCleaner, tenant: Tenant, property: Property): SupplyDesk {
   const id = tenant.id;
   const root = propertyFolder(h.dataRoot, id, property);
@@ -31,17 +31,7 @@ export function supplyDesk(h: HostedCleaner, tenant: Tenant, property: Property)
   };
   return supplyDeskFor(root, {
     now: () => h.now(),
-    get standalone() {
-      return !current().property.flows.cleaning.on;
-    },
-    get cleaning() {
-      const now = current();
-      if (!now.property.flows.cleaning.on) return undefined;
-      return {
-        property: () => cleaningDesk(h, now.account, now.property).propertyForSupplies(),
-        turnovers: () => cleaningDesk(h, now.account, now.property).turnoverDates(),
-      };
-    },
+    cleaningOn: () => current().property.flows.cleaning.on,
     uploadBase: () => {
       const origin = h.origin();
       return origin ? `${origin}${propertyBasePath(id, current().property)}` : undefined;

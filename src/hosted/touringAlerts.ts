@@ -6,7 +6,7 @@ import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { ASSISTANT_PROFILES, CLAUDE_FIRE_URL, type CleanerAssistant } from "../cleaner-core/assistant";
-import { formatWhen } from "../cleaner-core/calendar";
+import { formatWhen } from "../hub/calendar";
 import { PropertyWorkspace } from "../setup/workspace";
 import { sendHostText } from "./hostTexts";
 import { appendUpdate, lastCheckAt, UpdateFeedSink } from "./touringUpdates";

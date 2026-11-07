@@ -1,5 +1,5 @@
 /**
- * Supply Core never takes card details. A run of 13 to 19 digits, with single spaces or dashes
+ * No flow takes card details. A run of 13 to 19 digits, with single spaces or dashes
  * between them, that passes the Luhn check is treated as a card number wherever it appears.
  */
 
