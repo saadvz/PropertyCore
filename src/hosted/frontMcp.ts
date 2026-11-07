@@ -1,4 +1,5 @@
-import type { CleanerAssistant } from "../cleaner-core/assistant";
+import { runsSupplies, type CleanerAssistant } from "../cleaner-core/assistant";
+import { supplyReplyFor } from "./supplyWording";
 import { handleCleanerMcpHttp } from "../cleaner-core/http";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { CLEANER_MCP_PATH, CLEANER_TOOL_NAMES, cleanerInstructions } from "../cleaner-core/mcp";
@@ -6,6 +7,7 @@ import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { Property } from "../cleaner-core/hosted/properties";
 import { promoteRoutineOwner, propertyContext, shareRoutine, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
 import { sweepHeldTexts } from "./lineRouter";
+import { signUpFlag } from "./signUp";
 import { afterPeopleSaved, draftPeople, peopleRefusal } from "./sharedPeople";
 import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
 import { OPERATOR_TOOL_NAMES } from "../operator/tools";
@@ -30,6 +32,8 @@ const UNLINKED: Record<string, string> = {
   [CLEANER_MCP_PATH]: "This connection isn't linked to a Cleaner Core account. Reconnect with an invite code from Saad.",
   shared: "This connection isn't linked to an account on this service. Reconnect with an invite code from Saad.",
 };
+/** With sign-up open, the connect page offers Sign in, so the invite code isn't the only way back. */
+const UNLINKED_SIGN_IN = "This connection isn't linked to an account on this service. Reconnect, then sign in on the page that opens.";
 const TOURING_DOWN = "Touring isn't answering right now. Try again in a minute.";
 
 const TOURING_TOOLS = new Set(OPERATOR_TOOL_NAMES);
@@ -61,7 +65,10 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
   if (!auth) return;
   const extra = (auth.extra ?? {}) as { grantId?: string; tenantId?: string; assistant?: CleanerAssistant };
   const tenant = extra.tenantId ? h.registry.get(extra.tenantId) : undefined;
-  if (!tenant || tenant.disabled || !extra.grantId || !extra.assistant) return r.send(403, JSON_TYPE, JSON.stringify({ error: { message: UNLINKED[path] ?? UNLINKED.shared } }));
+  if (!tenant || tenant.disabled || !extra.grantId || !extra.assistant) {
+    const message = signUpFlag(h.baseEnv()) ? UNLINKED_SIGN_IN : (UNLINKED[path] ?? UNLINKED.shared);
+    return r.send(403, JSON_TYPE, JSON.stringify({ error: { message } }));
+  }
   const caller = { grantId: extra.grantId, assistant: extra.assistant };
   h.registry.touch(tenant.id);
   if (toolsFor(tenant) === "properties") return propertiesAnswer(h, r, tenant, caller, `grant:${caller.grantId}`);
@@ -264,12 +271,12 @@ function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, call
     const structured = { ...reply.structured, supplies: line };
     return { ...reply, text: JSON.stringify(structured), structured };
   };
-  const supplies = async (property: Property): Promise<FrontReply> => supplyDesk(h, tenant, property).state();
+  const supplies = async (property: Property): Promise<FrontReply> => supplyReplyFor(caller.assistant, "get_supply_state", await supplyDesk(h, tenant, property).state());
   return {
     cleaning,
     supplies,
     next: async (property) => {
-      const reply = property.flows.cleaning.on ? await cleaning(property, {}) : property.flows.supplies.on && caller.assistant === "grok" ? await supplies(property) : undefined;
+      const reply = property.flows.cleaning.on ? await cleaning(property, {}) : property.flows.supplies.on && runsSupplies(caller.assistant) ? await supplies(property) : undefined;
       // A setup still in its draft (#166) has no ask yet: its next step is the draft.
       if (reply?.structured?.draft) return "draft";
       const ask = reply?.structured?.ask as { step?: unknown } | undefined;

@@ -57,7 +57,7 @@ export type InviteRefusal = "invalid" | "expired" | "used" | "disabled";
 
 export class RegistryError extends Error {
   constructor(
-    readonly reason: "bad-label" | "bad-number" | "number-taken" | "unknown-tenant" | "needs-migration" | "unknown-property" | "has-properties" | "fixer-not-yet" | "duplicate-label",
+    readonly reason: "bad-label" | "bad-number" | "number-taken" | "unknown-tenant" | "needs-migration" | "unknown-property" | "has-properties" | "fixer-not-yet" | "duplicate-label" | "owner-taken",
   ) {
     super(reason);
     this.name = "RegistryError";
@@ -203,6 +203,25 @@ export class TenantRegistry {
       return { tenantId: tenant.id };
     }
     return { refused: "invalid" };
+  }
+
+  /** The account whose signed-up landlord has this phone. Admin-made accounts have none until one is set. */
+  byOwnerPhone(raw: string): Tenant | undefined {
+    const phone = parsePhone(raw);
+    if (!phone) return undefined;
+    return this.read().tenants.find((t) => t.owner?.phone === phone);
+  }
+
+  /** Records the landlord who signed up. Refused when another account already has that phone. */
+  setOwner(tenantId: string, owner: TenantOwner): void {
+    const phone = parsePhone(owner.phone);
+    if (!phone) throw new RegistryError("bad-number");
+    const doc = this.read();
+    const tenant = doc.tenants.find((t) => t.id === tenantId);
+    if (!tenant) throw new RegistryError("unknown-tenant");
+    if (doc.tenants.some((t) => t.id !== tenantId && t.owner?.phone === phone)) throw new RegistryError("owner-taken");
+    tenant.owner = { ...owner, phone };
+    this.write(doc);
   }
 
   connect(tenantId: string, connection: TenantConnection): void {

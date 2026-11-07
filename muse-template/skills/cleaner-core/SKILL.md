@@ -18,6 +18,9 @@ left.
   summary in your own words. You never text anyone yourself. Cleaner Core
   sends.
 
+With Supply Core on for a property, you also keep it stocked: see your Supply
+Core skill.
+
 ## Voice
 
 - Setup starts with a draft: fill in what you already know, and show the host
@@ -147,11 +150,23 @@ with `choice: "cleaners"`, which picks scheduling cleaners.
    `lockLocation`. Then call `save_door_code` with no `code` and fill the
    private page. Then call `get_state` to confirm.
 7. Preferences: `save_preferences`. The checklist, photos, supply notes, and
-   other instructions.
+   other instructions. Then Payments (optional): `save_payments`. Whether to
+   help pay the cleaner after each cleaning, the flat pay per cleaning, and
+   the cleaner's Venmo username. Not now saves `{ on: false }`. Otherwise call
+   it without `confirmation`, show the host the `profile` link ("make sure
+   it's the cleaner's profile") and the `question`, and call again with the
+   code only after the host says yes.
+   Then `get_state` may ask whether to set up Supply Core: explain it
+   briefly, offer Yes or Not now, say it can be set up later, and call
+   `choose_supplies` with the answer. On Yes, save the folder
+   `muse-template/skills/supply-core` from the repository as a skill named
+   Supply Core, follow it from `get_supply_state`, then come back to
+   `get_state`.
 8. Recurring task: Cleaner Core can't wake you, so a recurring task checks.
    Ask the host how often, on a choice card: every minute, every 5 minutes,
-   every 15 minutes, or every hour. Say a cleaner's text reaches you at the
-   next check, and every check uses Muse's usage. Then create the **Cleaner
+   every 15 minutes, or every hour, with every 5 minutes as the default. Say
+   a cleaner's text and anything urgent reach you at the next check, and
+   every check uses Muse's usage. Then create the **Cleaner
    Core** recurring task yourself at that frequency, from
    [`references/cleaner-core-task.md`](references/cleaner-core-task.md), with
    its prompt word for word. Then call `save_alert_routine` with no arguments
@@ -213,6 +228,23 @@ When `get_state` returns `warning`, tell the host first. A warning that no
 check has come in means the recurring task may be paused or deleted: ask the host
 to turn it back on, or create it again.
 
+## Urgent news
+
+Cleaner Core can't wake you, and it never texts the host about the property.
+Urgent news reaches the host through you:
+
+- The recurring task's run finds it. Put anything urgent first in the run's
+  reply, in one plain line: an injury, a problem that could stop the
+  cleaning, STOP, a decline, a text that may not have gone out, or the
+  checkout nudge. Muse shows the host each run's reply.
+- A run with nothing for the host says only "Nothing new.", so the host
+  learns that a reply from the task means something.
+- With a group text, the host sees the cleaner's words on their phone as
+  they're sent, before your next check.
+- Nothing waits on you to stay safe: the door code goes only after the host's
+  yes, and a cleaning is never paused because of how a message sounds. A
+  slower check delays an answer, never a safety rule.
+
 ## Every booking
 
 Call `check_now` when the recurring task runs or the host says "check my
@@ -261,6 +293,10 @@ When a message has `photos`, open each link in your browser and look at it
 before you tell the host about the message. Each link works for one hour.
 When a message gives an arrival time, call `save_arrival` with it as 24-hour
 `HH:MM`.
+With Supply Core on, a message handled `supply-report` is the cleaner's answer
+to `Anything running low?` after DONE: match it to the list and call
+`report_low` with the item ids and `source: "cleaner"`, as your Supply Core
+skill says. Never pass the cleaner's words.
 To reply to a message with `reply: open`, write one short reply and save it
 with `save_draft` (`replyTo` is the message's id). It sends nothing. Show the
 host who wrote, their words, and the draft exactly as saved, with three

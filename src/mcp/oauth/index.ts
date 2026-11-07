@@ -39,7 +39,7 @@ export const OAUTH_PUBLIC_PATHS = [
   "/register",
   "/revoke",
 ];
-const REQUEST_PATH = /^\/oauth\/requests\/[A-Za-z0-9_-]{16,64}(\/(continue|deny|approve))?$/;
+const REQUEST_PATH = /^\/oauth\/requests\/[A-Za-z0-9_-]{16,64}(\/(continue|deny|approve|phone-code))?$/;
 export const isOAuthPublicPath = (path: string, paths: string[]) =>
   OAUTH_PUBLIC_PATHS.includes(path) || paths.some((p) => path === `/.well-known/oauth-protected-resource${p}`) || REQUEST_PATH.test(path);
 export const isOAuthLocalPath = (path: string) => path === "/api/grok" || path.startsWith("/api/grok/");
@@ -234,12 +234,25 @@ export class McpOAuth {
       provider.denyFromBrowser(String(req.params.id));
       res.set("Cache-Control", "no-store").json({ ok: true });
     });
-    app.post("/oauth/requests/:id/approve", express.json({ limit: "4kb" }), (req, res) => {
+    app.post("/oauth/requests/:id/phone-code", express.json({ limit: "4kb" }), async (req, res) => {
+      const matchCode = typeof req.body?.matchCode === "string" ? req.body.matchCode : "";
+      const result = await provider.sendPhoneCode(String(req.params.id), matchCode, req.body?.phone);
+      res.status(result.ok ? 200 : 403).set("Cache-Control", "no-store").json(result.ok ? { ok: true } : { ok: false, error: { message: result.message } });
+    });
+    app.post("/oauth/requests/:id/approve", express.json({ limit: "4kb" }), async (req, res) => {
       if (req.headers.authorization) {
         res.status(401).set("Cache-Control", "no-store").json({ ok: false, error: { message: "Connecting to Tour Core is not approval. Click Allow on the approval page." } });
         return;
       }
       const matchCode = typeof req.body?.matchCode === "string" ? req.body.matchCode : "";
+      // Sign in or Create account: the phone code says whose this connection is.
+      const accountMode = req.body?.signIn && typeof req.body.signIn === "object" ? "sign-in" : req.body?.signUp && typeof req.body.signUp === "object" ? "sign-up" : undefined;
+      if (accountMode) {
+        const fields = (accountMode === "sign-in" ? req.body.signIn : req.body.signUp) as Record<string, unknown>;
+        const result = await provider.approveWithAccount(String(req.params.id), matchCode, accountMode, fields, req.body.service);
+        res.status(result.ok ? 200 : 403).set("Cache-Control", "no-store").json(result.ok ? { ok: true } : { ok: false, error: { message: result.message } });
+        return;
+      }
       if (typeof req.body?.inviteCode === "string") {
         const result = provider.approveWithInvite(String(req.params.id), matchCode, req.body.inviteCode, req.body.service);
         if (!result.ok) {

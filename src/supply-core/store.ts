@@ -52,7 +52,8 @@ export interface Order {
   deadline?: string;
   deliveredAt?: string;
   source: "schedule" | "cleaner" | "host";
-  approvedBy: "rules" | "landlord" | "grok-card";
+  /** grok-card: the host tapped Pay on Grok's own card. host-browser: the host placed it themselves in Muse's browser. */
+  approvedBy: "rules" | "landlord" | "grok-card" | "host-browser";
   status: "placed" | "unconfirmed" | "delivered";
   lateTold?: boolean;
 }

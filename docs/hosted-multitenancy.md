@@ -14,7 +14,8 @@ single-tenant and unchanged.
 The service runs `TOURCORE_DEPLOYMENT_MODE=HOSTED_RAILWAY_P0` with
 `CLEANER_CORE_MULTI_TENANT=1`. The flag makes the service multi-tenant: `/mcp`
 and `/mcp/cleaner-core` both take an invite code. `TOUR_CORE_TENANTS=1` adds
-touring. The variables are in `docs/deployment.md`.
+touring. `CLEANER_CORE_SIGNUP=1` adds Sign in and Create account to the connect
+page (below). The variables are in `docs/deployment.md`.
 
 ## The boundary
 
@@ -22,7 +23,7 @@ Every request resolves exactly one tenant before it reads or writes anything:
 
 | Way in | How the tenant is found |
 | --- | --- |
-| `/mcp/cleaner-core` | The OAuth grant. The host's invite code on the Allow page bound it to a tenant |
+| `/mcp/cleaner-core` | The OAuth grant. The host's invite code, sign-in, or new account on the Allow page bound it to a tenant |
 | A text to `/webhooks/twilio/cleaner-core` | The `To` number. Each tenant has its own Twilio number |
 | Everything Cleaner Core hands out: group webhooks, status callbacks, upload pages, photo links | The `/t/<tenantId>/` path prefix, and `/p/<propertyId>/` after it for every property but a migrated one. Twilio signs the full URL, and photo links are signed with the tenant's own key |
 
@@ -159,12 +160,28 @@ while `TOUR_CORE_TENANTS` is on.
   reply, and the host is told once.
 - **Gates.** `docs/tour-core-safety-gates.md`.
 
+## Sign in and Create account
+
+The design is
+`docs/superpowers/specs/2026-11-07-connect-page-sign-up-design.md`. With
+sign-up open, the connect page offers Sign in, Create account, and the invite
+code. A phone code from Twilio Verify proves the landlord holds their phone.
+A code is a text, so it waits for `CLEANER_CORE_LIVE_SMS` and goes only to
+phones `CLEANER_CORE_SMS_ALLOWLIST` allows, and only to US and Canadian
+numbers. Sign in binds the grant to the account that phone signed up; Create account
+opens a new account with a line from the number pool and records its landlord
+(`owner` in `tenants.json`: phone, email, when the phone was verified, and the
+terms version). Codes are limited per phone, per page, and for the whole
+service, and five wrong codes lock a phone out for an hour. A page that
+confirmed a phone keeps it confirmed, so switching between Sign in and Create
+account doesn't need a second code. Invite codes keep
+working for accounts made on `/admin`.
+
 ## Not yet
 
-Self-serve signup (a phone check in place of the invite code; it will take its
-line from the number pool), buying numbers from `/admin`, and copying backups
-off Railway. Texting consent is already per account: a tenant's desk
-texts nobody until its host is the landlord's phone confirmed at sign-up
+Buying numbers from `/admin`, copying backups off Railway, and claiming an
+admin-made account by phone. Texting consent is already per account: a tenant's
+desk texts nobody until its host is the landlord's phone confirmed at sign-up
 (`tenant.owner`, passed as `CLEANER_CORE_LANDLORD_PHONE`), and then each
 person's own YES and STOP decide.
 
