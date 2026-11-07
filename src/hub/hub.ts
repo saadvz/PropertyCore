@@ -36,6 +36,8 @@ export interface HubGuards {
   carriesCode(text: string): boolean;
   /** The upcoming cleanings this calendar list would call off, by checkout date. */
   wouldCancel(next: CalendarClaim[]): Promise<string[]>;
+  /** True when a generated upload link happens to hold the door code or the server's key. */
+  leaks?(text: string): boolean;
 }
 
 export interface HubDeps {
@@ -54,6 +56,7 @@ export const UPLOAD_MINUTES = 10;
 export const UPLOAD_GONE = "This upload link isn't valid anymore. Ask for a new one.";
 export const CALENDAR_UPLOAD_REFUSED = "Send the calendar's public https link as url.";
 export const CALENDAR_UPLOAD_SAVED = "Saved the calendar link.";
+export const CALENDARS_BUSY = "The calendars changed while this link was saving. Send it again.";
 export const wouldCallOff = (count: number) =>
   `Removing that calendar would call off ${count} upcoming ${count === 1 ? "cleaning" : "cleanings"}. Ask the host, then save again with dropJobs: true.`;
 
@@ -118,8 +121,16 @@ export class Hub {
     return { ...this.file.property };
   }
 
-  /** Saves the given details. A field passed as undefined is left as it is; a field in `clear` is removed. */
-  saveProperty(details: Partial<HubProperty>, clear: readonly (keyof HubProperty)[] = []): void {
+  /**
+   * Saves the given details. A field passed as undefined is left as it is; a field in `clear` is
+   * removed. A nickname or property type that carries the door code is refused: either flow may
+   * save them, and Cleaner Core's texts use them. The address isn't checked: it holds house numbers.
+   */
+  saveProperty(details: Partial<HubProperty>, clear: readonly (keyof HubProperty)[] = []): HubSave {
+    for (const key of ["nickname", "propertyType"] as const) {
+      const text = details[key]?.trim();
+      if (text && this.carriesCode(text)) return { ok: false, reason: "code", error: DOOR_CODE_IN_CHAT };
+    }
     const next = { ...this.file.property };
     for (const [key, value] of Object.entries(details) as [keyof HubProperty, string | undefined][]) {
       if (value !== undefined) next[key] = value;
@@ -127,6 +138,7 @@ export class Hub {
     for (const key of clear) delete next[key];
     this.file = { ...this.file, property: next };
     this.save();
+    return { ok: true };
   }
 
   stored(): StoredCalendar[] {
@@ -212,8 +224,9 @@ export class Hub {
     for (let attempt = 0; attempt < 8; attempt++) {
       const code = randomBytes(32).toString("base64url");
       const uploadUrl = `${input.base}${HUB_CALENDAR_PREFIX}${code}`;
-      // A link that happens to carry the door code is never handed out.
-      if (this.carriesCode(uploadUrl, true)) continue;
+      // A link that happens to hold the door code is never handed out. Only the code itself counts:
+      // the base address may hold digit runs, like a port, that a shut seal's broader check refuses.
+      if (this.guards()?.leaks?.(uploadUrl)) continue;
       const expiresAt = new Date(this.deps.now().getTime() + UPLOAD_MINUTES * 60_000).toISOString();
       this.file = { ...this.file, calendarUpload: { hash: uploadHash(code), expiresAt, name, ...(input.by ? { by: input.by } : {}) }, ...(input.google === true ? { google: true } : {}) };
       this.save();
@@ -242,20 +255,24 @@ export class Hub {
     }
     const url = typeof body.url === "string" ? body.url.trim() : "";
     if (!url || url.length > 2000 || !calendarUrlAllowed(url)) return { status: 400, body: { ok: false, error: CALENDAR_UPLOAD_REFUSED } };
-    const wanted = pending.name.toLowerCase();
-    const at = this.file.calendars.findIndex((calendar) => calendar.name.toLowerCase() === wanted);
-    const next = at >= 0
-      ? this.file.calendars.map((calendar, i) => (i === at ? { name: calendar.name, url } : { ...calendar }))
-      : [...this.file.calendars.map((calendar) => ({ ...calendar })), { name: pending.name, url }];
-    const refused = this.refusal(next);
-    if (refused) return { status: 400, body: { ok: false, error: refused.reason === "count" ? refused.error : CALENDAR_UPLOAD_REFUSED } };
-    const guards = this.guards();
-    if (guards) {
-      const lost = await guards.wouldCancel(this.claims(next));
-      if (lost.length > 0) return { status: 409, body: { ok: false, error: wouldCallOff(lost.length) } };
+    // The list is built from the saved one, and checked again whenever another save changed it while
+    // wouldCancel ran, so an upload never writes back a calendar the host just removed.
+    let next: StoredCalendar[] = [];
+    for (let attempt = 0; ; attempt++) {
+      const base = JSON.stringify(this.file.calendars);
+      next = this.withUpload(pending.name, url);
+      const refused = this.refusal(next);
+      if (refused) return { status: 400, body: { ok: false, error: refused.reason === "count" ? refused.error : CALENDAR_UPLOAD_REFUSED } };
+      const guards = this.guards();
+      if (guards) {
+        const lost = await guards.wouldCancel(this.claims(next));
+        if (lost.length > 0) return { status: 409, body: { ok: false, error: wouldCallOff(lost.length) } };
+      }
+      // Something else may have used or replaced the link while the guard ran.
+      if (this.pending(code)?.hash !== pending.hash) return { status: 404, body: { ok: false, error: UPLOAD_GONE } };
+      if (JSON.stringify(this.file.calendars) === base) break;
+      if (attempt >= 3) return { status: 409, body: { ok: false, error: CALENDARS_BUSY } };
     }
-    // Something else may have used or replaced the link while the guard ran.
-    if (this.pending(code)?.hash !== pending.hash) return { status: 404, body: { ok: false, error: UPLOAD_GONE } };
     const saved = this.setCalendars({ calendars: next });
     if (!saved.ok) return { status: 400, body: { ok: false, error: CALENDAR_UPLOAD_REFUSED } };
     this.dropUpload();
@@ -300,6 +317,15 @@ export class Hub {
   checkouts(): { dates: string[]; at?: string; failedAt?: string } | undefined {
     const checkouts = this.file.checkouts;
     return checkouts ? { ...checkouts, dates: [...checkouts.dates] } : undefined;
+  }
+
+  /** The saved list with this upload's link: replacing the calendar of the same name, else added last. */
+  private withUpload(name: string, url: string): StoredCalendar[] {
+    const wanted = name.toLowerCase();
+    const at = this.file.calendars.findIndex((calendar) => calendar.name.toLowerCase() === wanted);
+    return at >= 0
+      ? this.file.calendars.map((calendar, i) => (i === at ? { name: calendar.name, url } : { ...calendar }))
+      : [...this.file.calendars.map((calendar) => ({ ...calendar })), { name, url }];
   }
 
   private pending(code: string): NonNullable<HubFile["calendarUpload"]> | undefined {

@@ -403,7 +403,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
   const tenants = new TenantRegistry(installation.root, () => options.now?.() ?? new Date());
   // Each property's details and calendars move into its hub before any desk opens, with its own
   // cleaning switch picking the calendar list when both flows saved one.
-  if (multiTenant()) migrateHubs(installation.root, tenants.list(), () => options.now?.() ?? new Date());
+  if (multiTenant()) migrateHubs(installation.root, tenants.list(), () => options.now?.() ?? new Date(), log);
   const serviceOrigin = () => {
     const base = installation.publicBaseUrl();
     return base ? new URL(base).origin : undefined;

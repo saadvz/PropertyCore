@@ -217,3 +217,23 @@ describe("moving every property at startup", () => {
     expect(hubOf(off.id).stored()).toEqual([{ name: "Vrbo", url: VRBO }]);
   });
 });
+
+describe("startup with a bad property folder", () => {
+  it("one unreadable property is logged and skipped; the others still move", async () => {
+    const { migrateHubs } = await import("../src/hosted/hubStartup");
+    const dataRoot = folder();
+    const flows = { cleaning: { on: true }, supplies: { on: false }, fixer: { on: false } };
+    const bad = { id: "prp_aaaaaaaaaa", label: "Lane", createdAt: NOW.toISOString(), flows };
+    const good = { id: "prp_bbbbbbbbbb", label: "Court", createdAt: NOW.toISOString(), flows };
+    const tenant = { id: "tnt_cccccccccc", properties: [bad, good] };
+    const rootOf = (id: string) => join(dataRoot, "tenants", tenant.id, "properties", id);
+    mkdirSync(rootOf(bad.id), { recursive: true });
+    writeFileSync(join(rootOf(bad.id), "cleaner-live.json"), "{ not json");
+    mkdirSync(rootOf(good.id), { recursive: true });
+    cleaner(rootOf(good.id), { ...CLEANER_PLACE });
+    const logs: string[] = [];
+    expect(() => migrateHubs(dataRoot, [tenant as never], () => NOW, (line) => logs.push(line))).not.toThrow();
+    expect(logs).toEqual([`Couldn't move ${tenant.id}/${bad.id} into its hub; it will try again when it opens.`]);
+    expect(existsSync(join(rootOf(good.id), "hub.json"))).toBe(true);
+  });
+});

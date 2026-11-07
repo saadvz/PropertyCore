@@ -273,7 +273,10 @@ export class SupplyDesk {
       const gate = this.approved(file, "supply-settings", "settings", input, "Save these settings?");
       if (gate !== "go") return gate;
       // The property is the hub's, shared with Cleaner Core. Without a name it reads as the street address.
-      if (input.property) this.hub().saveProperty({ address: input.property.address.trim(), timeZone: input.property.timeZone, nickname: input.property.name?.trim() || undefined });
+      if (input.property) {
+        const saved = this.hub().saveProperty({ address: input.property.address.trim(), timeZone: input.property.timeZone, nickname: input.property.name?.trim() || undefined });
+        if (!saved.ok) return fail(saved.error);
+      }
       if (input.mode) s.mode = input.mode;
       for (const key of ["perOrderCapCents", "perMonthCapCents"] as const) {
         if (input[key] === null) delete s[key];

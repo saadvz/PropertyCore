@@ -91,11 +91,20 @@ export function claimsOf(list: readonly StoredCalendar[], google: boolean): Cale
   return [...savedCalendars(list).map((calendar) => ({ id: calendar.sourceId, origin: calendar.origin })), ...(google ? [{ id: "google-calendar" }] : [])];
 }
 
+/**
+ * The part of a link after its path: the query and fragment. A card number is looked for only there,
+ * because a booking site's listing id in the path (Airbnb's run to 19 digits) can pass the card check.
+ */
+function linkQuery(url: string): string {
+  const at = url.search(/[?#]/);
+  return at < 0 ? "" : url.slice(at);
+}
+
 /** Why a calendar's link can't be saved, without its door-code check, or undefined. */
 export function calendarRefusal(name: string, url: string): { reason: CalendarRefusal; error: string } | undefined {
   if (!name) return { reason: "name", error: CALENDAR_NAME_MISSING };
   if (maskedLink(url)) return { reason: "masked", error: CALENDAR_MASKED };
-  if (refuseCards(url) || refuseCards(name)) return { reason: "card", error: CALENDAR_CARD };
+  if (refuseCards(name) || refuseCards(linkQuery(url))) return { reason: "card", error: CALENDAR_CARD };
   if (!calendarUrlAllowed(url)) return { reason: "private", error: calendarPrivate(name) };
   return undefined;
 }

@@ -323,3 +323,61 @@ describe("hub calendar reads", () => {
     expect(existsSync(join(root, "hub.json"))).toBe(false);
   });
 });
+
+describe("final review fixes", () => {
+  it("an upload re-checks a calendar list that changed while wouldCancel ran", async () => {
+    const { hub } = open();
+    hub.setCalendars({ calendars: [{ name: "Airbnb", url: AIRBNB }, { name: "Vrbo", url: VRBO }] });
+    const checked: string[][] = [];
+    let first = true;
+    hub.useGuards(() => ({
+      carriesCode: () => false,
+      wouldCancel: async (claims) => {
+        checked.push(claims.map((c) => c.id));
+        // A save_sources that drops Vrbo lands while the upload waits for this check.
+        if (first) {
+          first = false;
+          hub.setCalendars({ calendars: [{ name: "Airbnb", url: AIRBNB }] });
+        }
+        return [];
+      },
+    }));
+    const code = issued(hub.issueCalendarUpload({ name: "Booking", base: BASE }));
+    // The save above cleared nothing about the link; re-issue is not needed.
+    const saved = await hub.uploadCalendarLink(code, { url: "https://calendar.example/booking.ics" });
+    expect(saved.status).toBe(200);
+    expect(hub.stored().map((c) => c.name)).toEqual(["Airbnb", "Booking"]);
+    expect(checked[checked.length - 1]).toEqual(["ical:airbnb", "ical:booking"]);
+  });
+
+  it("an Airbnb link whose listing id passes the card check is saved", () => {
+    const { hub } = open();
+    const listing = "https://www.airbnb.com/calendar/ical/7349201855637120484.ics?s=abc";
+    expect(hub.setCalendars({ calendars: [{ name: "Airbnb", url: listing }] })).toEqual({ ok: true });
+    expect(hub.setCalendars({ calendars: [{ name: "Airbnb", url: listing }, { name: "Vrbo", url: VRBO }] })).toEqual({ ok: true });
+    // A card number in the query is still refused.
+    expect(hub.setCalendars({ calendars: [{ name: "Vrbo", url: `${VRBO}?c=7349201855637120484` }] })).toMatchObject({ ok: false, reason: "card" });
+  });
+
+  it("a property nickname or type carrying the door code is refused", () => {
+    const { hub } = open();
+    hub.useGuards(() => ({ carriesCode: (text) => text.includes("5097"), wouldCancel: noCancel }));
+    expect(hub.saveProperty({ nickname: "Unit 5097" })).toMatchObject({ ok: false, reason: "code" });
+    expect(hub.saveProperty({ propertyType: "flat 5097" })).toMatchObject({ ok: false, reason: "code" });
+    expect(hub.property()).toEqual({});
+    expect(hub.saveProperty({ nickname: "Lane House", address: "5097 Scratch Lane" })).toEqual({ ok: true });
+  });
+
+  it("without guards, a nickname with 4 digits is refused", () => {
+    const { hub } = open();
+    expect(hub.saveProperty({ nickname: "Unit 9076" })).toMatchObject({ ok: false, reason: "code" });
+  });
+
+  it("an upload link is issued when the base address holds a 4-digit run", () => {
+    const { hub } = open();
+    // Cleaner Core's full door-code check refuses every 4-digit run while its seal is shut.
+    hub.useGuards(() => ({ carriesCode: (text) => /\d{4,}/.test(text), leaks: () => false, wouldCancel: noCancel }));
+    const made = hub.issueCalendarUpload({ name: "Airbnb", base: "https://cleaner.example:8443/t/tnt_ab12345678/p/prp_abcdefghij" });
+    expect("error" in made).toBe(false);
+  });
+});

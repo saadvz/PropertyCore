@@ -649,6 +649,7 @@ export class LiveDesk {
         this.openSeal(this.calendarUploadKey);
         return this.carriesCode(text) || this.leaks(text);
       },
+      leaks: (text) => this.leaks(text),
       wouldCancel: (claims) =>
         this.env().CLEANER_CORE_ENABLED?.trim() === "0"
           ? Promise.resolve([])
@@ -1026,13 +1027,14 @@ export class LiveDesk {
     if ((checkoutText && !checkoutTime) || (checkInText && !checkInTime)) {
       return this.fail("Send the usual checkout and check-in times as 24-hour HH:MM, like 11:00 and 15:00.");
     }
-    this.file.business = business;
-    this.file.propertyId = propertyIdFor(business);
     // The details are the property's, in its hub: Supply Core reads the same ones.
-    this.hub.saveProperty(
+    const saved = this.hub.saveProperty(
       { address, timeZone, nickname: nickname || undefined, propertyType: propertyType || undefined, checkoutTime, checkInTime },
       [...(nickname ? [] : ["nickname" as const]), ...(propertyType ? [] : ["propertyType" as const])],
     );
+    if (!saved.ok) return this.fail(saved.error);
+    this.file.business = business;
+    this.file.propertyId = propertyIdFor(business);
     this.persist();
     // The engine reads the usual times when it opens.
     this.stale = true;
