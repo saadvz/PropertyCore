@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DOOR_ACCESS_FILE, DOOR_CODE_UPLOAD_REFUSED, UPLOAD_LINK_OFF } from "../src/hub/doorAccess";
+import { DOOR_ACCESS_FILE, DOOR_CODE_UPLOAD_REFUSED, UPLOAD_LINK_OFF, type AccessProvider } from "../src/hub/doorAccess";
 import { hubFor, resetHubs, UPLOAD_GONE, type HubGuards } from "../src/hub/hub";
 
 /** The hub's door access: the sealed door code in door-access.json. Made-up codes only. */
@@ -184,5 +184,69 @@ describe("hub door access: the upload link", () => {
     if (!issued.ok) throw new Error(issued.error);
     const replies = [issued, door.upload(linkCode(issued.uploadUrl), { code: `${CODE}x` }), door.upload(linkCode(issued.uploadUrl), { code: CODE })];
     for (const reply of replies) expect(JSON.stringify(reply)).not.toContain(CODE);
+  });
+});
+
+const OTHER = ["7", "3", "9", "2"].join("");
+const PERSON = "+15555550123";
+const WINDOW = { from: "2026-11-07T15:00:00Z", until: "2026-11-09T05:00:00Z" };
+
+describe("hub door access: the request", () => {
+  it("grants the saved code and lock location", () => {
+    const { door } = open();
+    door.save(CODE, "back door", KEY);
+    expect(door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toEqual({ ok: true, kind: "code", code: CODE, lockLocation: "back door", until: WINDOW.until });
+  });
+
+  it("refuses no-code before anything is saved", () => {
+    expect(open().door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toEqual({ ok: false, reason: "no-code" });
+  });
+
+  it("refuses no-key with an empty env and no key", () => {
+    const { root, door } = open();
+    door.save(CODE, undefined, KEY);
+    resetHubs();
+    expect(open(root).door.request({ person: PERSON, window: WINDOW, purpose: "cleaning" })).toEqual({ ok: false, reason: "no-key" });
+  });
+
+  it("refuses sealed when the key doesn't open the seal", () => {
+    const { root, door } = open();
+    door.save(CODE, undefined, KEY);
+    resetHubs();
+    expect(open(root).door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: randomBytes(32) })).toEqual({ ok: false, reason: "sealed" });
+  });
+
+  it("refuses window-over when now is at or past until", () => {
+    let now = new Date(WINDOW.until);
+    const root = folder();
+    const door = hubFor(root, { now: () => now }).doorAccess(() => ({}));
+    door.save(CODE, undefined, KEY);
+    expect(door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toEqual({ ok: false, reason: "window-over" });
+    now = new Date(Date.parse(WINDOW.until) - 1);
+    expect(door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY }).ok).toBe(true);
+  });
+
+  it("a fake second provider answers behind request()", () => {
+    const { door } = open();
+    door.save(CODE, undefined, KEY);
+    const seen: string[] = [];
+    const partner: AccessProvider = {
+      grant: (request) => {
+        seen.push(`${request.person}:${request.purpose}`);
+        return { ok: true, kind: "code", code: OTHER, until: request.window.until };
+      },
+    };
+    door.useProvider(partner);
+    expect(door.request({ person: PERSON, window: WINDOW, purpose: "repair", key: KEY })).toEqual({ ok: true, kind: "code", code: OTHER, until: WINDOW.until });
+    expect(seen).toEqual([`${PERSON}:repair`]);
+  });
+
+  it("a re-saved code replaces the open one", () => {
+    const { door } = open();
+    door.save(CODE, undefined, KEY);
+    expect(door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toMatchObject({ ok: true, code: CODE });
+    door.save(OTHER, undefined, KEY);
+    expect(door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toMatchObject({ ok: true, code: OTHER });
+    expect(door.codeForChecks(KEY)).toBe(OTHER);
   });
 });

@@ -44,6 +44,36 @@ export interface DoorGuards {
   leaks?(text: string): boolean;
 }
 
+export interface AccessRequest {
+  /** E.164 phone of who is let in. */
+  person: string;
+  /** ISO instants. */
+  window: { from: string; until: string };
+  /** "repair" is unused until Fixer Core. */
+  purpose: "cleaning" | "repair";
+  /** The request's own key, else the server's key. */
+  key?: Buffer;
+}
+
+export type AccessRefusal = "no-code" | "no-key" | "sealed" | "window-over";
+
+export type AccessGrant = { ok: true; kind: "code"; code: string; lockLocation?: string; until: string } | { ok: false; reason: AccessRefusal };
+
+export interface SavedCode {
+  code: string;
+  lockLocation?: string;
+}
+
+/** What answers a door access request once the hub's own checks pass. A lock partner is another (#180). */
+export interface AccessProvider {
+  grant(request: AccessRequest, saved: SavedCode): AccessGrant;
+}
+
+/** The landlord's own code, for the whole window. */
+export const ownCode: AccessProvider = {
+  grant: (request, saved) => ({ ok: true, kind: "code", code: saved.code, ...(saved.lockLocation ? { lockLocation: saved.lockLocation } : {}), until: request.window.until }),
+};
+
 export type DoorUpload = { status: 200 | 400 | 404; body: { ok: boolean; error?: string } };
 
 export function doorAccessPath(root: string): string {
@@ -67,6 +97,7 @@ export class DoorAccess {
   /** The open code, only in memory. */
   private open: string | undefined;
   private env: () => NodeJS.ProcessEnv = () => ({});
+  private provider: AccessProvider = ownCode;
   /** The key of the call that made the pending upload link. Only in memory. */
   private uploadKey: Buffer | undefined;
 
@@ -109,6 +140,32 @@ export class DoorAccess {
     } catch {
       return undefined;
     }
+  }
+
+  useProvider(provider: AccessProvider): void {
+    this.provider = provider;
+  }
+
+  /**
+   * "Let this person in during this window." The hub checks only what belongs to the property: a code
+   * is saved, the key opens it (each time, as the release always has), and the window hasn't ended.
+   * Who may get in is the asking flow's call, made before it asks.
+   */
+  request(request: AccessRequest): AccessGrant {
+    const seal = this.file.pinSeal;
+    if (!seal) return { ok: false, reason: "no-code" };
+    const key = this.keyFor(request.key);
+    if (!key) return { ok: false, reason: "no-key" };
+    let code: string;
+    try {
+      code = openPin(seal, key);
+    } catch {
+      return { ok: false, reason: "sealed" };
+    }
+    if (!CODE_SHAPE.test(code)) return { ok: false, reason: "sealed" };
+    this.open = code;
+    if (this.now().getTime() >= Date.parse(request.window.until)) return { ok: false, reason: "window-over" };
+    return this.provider.grant(request, { code, ...(this.file.lockLocation ? { lockLocation: this.file.lockLocation } : {}) });
   }
 
   /**
