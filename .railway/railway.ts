@@ -11,7 +11,7 @@ import { defineRailway, github, project, service, volume } from "railway/iac";
  *
  * Set in Railway's variables, never here: CLEANER_CORE_ADMIN_PASSWORD,
  * CLEANER_CORE_TWILIO_ACCOUNT_SID, CLEANER_CORE_TWILIO_AUTH_TOKEN,
- * CLEANER_CORE_LIVE_SMS, and CLEANER_CORE_SMS_ALLOWLIST.
+ * CLEANER_CORE_LIVE_SMS, and CLEANER_CORE_SMS_ALLOWLIST (legacy host approval and touring only).
  *
  * Config-as-code railway.json is not used. New Railway services cannot opt
  * into it, and it stops being read on 2026-12-01.
