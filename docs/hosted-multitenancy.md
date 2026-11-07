@@ -73,21 +73,24 @@ bought and registered ahead of time and kept in a pool,
 `/data/number-pool.json` (saadvz/TourCore#163).
 
 - **Top up.** `/admin/pool` adds numbers that are on the Twilio account and
-  held by no account. Add only registered numbers: the page can't check
-  registration.
+  held by no account or other part of the service. Add only registered
+  numbers: the page can't check registration. Accounts made before the pool
+  are recorded as in use the first time `/admin` loads.
 - **Sign-up.** `openAccount` in `src/cleaner-core/hosted/lines.ts` creates the
   account with the ready number that has waited longest, records it, and
   points its webhook at `/webhooks/twilio/cleaner-core`. Two sign-ups never get
   the same number. With no ready number, sign-up is refused and the log says
   so. `/admin`'s "Add a host" with a blank number makes the same call. A typed
-  number is recorded in the pool too.
+  number is recorded in the pool too, unless it is resting.
 - **Webhook.** If Twilio refuses the webhook, the account is still created;
   the pool page shows "not pointed" with a button to point it again.
 - **Closing.** Deleting an account clears its webhook and returns the number to
   the pool, where it rests 30 days so the old cleaner stops texting it before
   another account gets it. A text to a resting number reaches no account. The
   delete form can release the number from Twilio instead, and the pool page
-  can release a ready or resting one. Releasing gives up its registration.
+  can release a ready or resting one; a number being released is out of the
+  pool, so no sign-up can take it. Releasing gives up its registration. If a
+  release fails, the page says so after the delete.
 - **Low alert.** At 3 or fewer ready numbers, `/admin` shows "The number pool
   is low", and the log says so after every sign-up.
 - **Own numbers.** Pooled numbers count as the service's own, so none is ever
