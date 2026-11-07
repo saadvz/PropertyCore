@@ -237,3 +237,56 @@ describe("startup with a bad property folder", () => {
     expect(existsSync(join(rootOf(good.id), "hub.json"))).toBe(true);
   });
 });
+
+describe("moving the door code into door-access.json", () => {
+  const SEAL = { iv: "aXYtaXYtaXYtaXY=", tag: "dGFnLXRhZy10YWctdGFnLQ==", data: "ZGF0YQ==" };
+  const UPLOAD = { hash: "a".repeat(64), expiresAt: "2026-11-07T15:10:00.000Z", lockLocation: "back door" };
+  const door = (root: string) => read(root, "door-access.json");
+
+  it("moves the seal byte for byte", () => {
+    const root = folder();
+    cleaner(root, { pinSeal: SEAL, lockLocation: "back door", doorCodeUpload: UPLOAD, doorCodeTo: "cleaner" });
+    open(root);
+    expect(door(root)).toEqual({ schemaVersion: 1, pinSeal: SEAL, lockLocation: "back door", upload: UPLOAD });
+    const left = read(root, "cleaner-live.json");
+    expect(left.pinSeal).toBeUndefined();
+    expect(left.lockLocation).toBeUndefined();
+    expect(left.doorCodeUpload).toBeUndefined();
+    expect(left.doorCodeTo).toBe("cleaner");
+  });
+
+  it("moves the seal even when hub.json already exists", () => {
+    const root = folder();
+    writeFileSync(join(root, "hub.json"), `${JSON.stringify({ schemaVersion: 1, property: { address: "12 Scratch Lane" }, calendars: [] })}\n`);
+    cleaner(root, { pinSeal: SEAL, lockLocation: "back door" });
+    open(root);
+    expect(door(root)).toMatchObject({ pinSeal: SEAL, lockLocation: "back door" });
+    expect(read(root, "cleaner-live.json").pinSeal).toBeUndefined();
+    expect(read(root, "hub.json").property).toEqual({ address: "12 Scratch Lane" });
+  });
+
+  it("a crash after door-access.json is written: the next open finishes", () => {
+    const root = folder();
+    writeFileSync(join(root, "door-access.json"), `${JSON.stringify({ schemaVersion: 1, pinSeal: SEAL })}\n`);
+    cleaner(root, { pinSeal: SEAL });
+    open(root);
+    expect(door(root)).toEqual({ schemaVersion: 1, pinSeal: SEAL });
+    expect(read(root, "cleaner-live.json").pinSeal).toBeUndefined();
+  });
+
+  it("door-access.json is the record", () => {
+    const root = folder();
+    const newer = { ...SEAL, data: "bmV3ZXI=" };
+    writeFileSync(join(root, "door-access.json"), `${JSON.stringify({ schemaVersion: 1, pinSeal: newer })}\n`);
+    cleaner(root, { pinSeal: SEAL, lockLocation: "old gate" });
+    open(root);
+    expect(door(root)).toEqual({ schemaVersion: 1, pinSeal: newer });
+  });
+
+  it("a folder with no door code writes no door-access.json", () => {
+    const root = folder();
+    cleaner(root, { address: "12 Scratch Lane", doorCodeTo: "group" });
+    open(root);
+    expect(existsSync(join(root, "door-access.json"))).toBe(false);
+  });
+});
