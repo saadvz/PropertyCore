@@ -39,7 +39,12 @@ export function testClock(start = FROZEN) {
 export function openDesk(phones: string[], groupChat: "0" | "1", now: () => Date = () => new Date(FROZEN)) {
   const root = mkdtempSync(join(tmpdir(), "cleaner-replies-"));
   roots.push(root);
-  const sms = fakeSms();
+  return openDeskAt(root, phones, groupChat, now);
+}
+
+/** A desk in a given folder, for an account's property folder (…/tenants/<id>/properties/<pid>). Shares the fakes it sets. */
+export function openDeskAt(root: string, phones: string[], groupChat: "0" | "1", now: () => Date = () => new Date(FROZEN), sms = fakeSms()) {
+  if (!roots.includes(root)) roots.push(root);
   const groups = fakeConversations();
   setCleanerTwilioClient(sms);
   setCleanerGroupFetch(groups.impl);

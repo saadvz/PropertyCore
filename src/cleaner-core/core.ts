@@ -483,6 +483,8 @@ export interface CleanerCore {
    * awaits YES, an offer is out, the checklist or supplies question is open, or a cleaning is under way.
    */
   waitingOn(phone: string): boolean;
+  /** This phone's consent here: the cleaner's or a contact's. Undefined for the host or a phone not on this property. */
+  consentOf(phone: string): "pending" | "in" | "out" | undefined;
   /** The person said YES on another property: pending moves to in, with no text, and the next step runs. Never out to in. */
   accountOptIn(phone: string): Promise<CleanerText[]>;
   /** The person's STOP on the account: out, with today's holds and the host note. No text to the person. */
@@ -1479,6 +1481,13 @@ class Engine implements CleanerCore {
     return this.ordered().some(
       (job) => (job.checklistAskedAt && !job.done && this.checklistWaiting(job)) || (job.done && job.supplyAskedAt && !job.supplyReport && now - Date.parse(job.supplyAskedAt) <= SUPPLY_ANSWER_MS),
     );
+  }
+
+  consentOf(raw: string): "pending" | "in" | "out" | undefined {
+    const phone = parsePhone(raw);
+    if (!phone || phone === this.owner) return undefined;
+    if (phone === this.cleanerPhone) return this.cleanerConsent;
+    return this.participantConsent.get(phone);
   }
 
   async accountOptIn(raw: string): Promise<CleanerText[]> {
