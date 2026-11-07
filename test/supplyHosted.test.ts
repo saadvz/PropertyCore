@@ -10,7 +10,7 @@ import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 
 /**
  * Supply Core on the shared service, per property: on its own behind SUPPLY_CORE=1, and beside
- * Cleaner Core at the same property. Grok only. Only 555 numbers, made-up stores and links; nothing
+ * Cleaner Core at the same property. Grok here; Muse in test/supplyMuse.test.ts. Only 555 numbers, made-up stores and links; nothing
  * reaches a store.
  */
 
@@ -74,13 +74,13 @@ describe("turning Supply Core on", () => {
     expect(m.registry.get(tenant.id)?.properties[0]?.flows).toMatchObject({ cleaning: { on: false }, supplies: { on: false } });
   });
 
-  it("refuses a chat that isn't Grok", SLOW, async () => {
+  it("refuses a plain chat (Claude, ChatGPT); Grok Bot and Muse run it", SLOW, async () => {
     const m = await start();
     const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
     const lane = m.registry.addProperty(tenant.id, "12 Scratch Lane");
     const claude = await m.joinAt(tenant.id, "claude", PATH);
     const refused = await m.toolAt(PATH, claude, "set_flows", { property: lane.id, supplies: true });
-    expect(refused).toMatchObject({ isError: true, text: "Supply Core works with Grok only for now: it shops with Grok's own shopping tools and Vault." });
+    expect(refused).toMatchObject({ isError: true, text: "Supply Core works with Grok Bot and Muse for now: they shop and check out at the store themselves. In this chat, Cleaner Core works without Supply Core." });
     expect(m.registry.get(tenant.id)?.properties[0]?.flows.supplies.on).toBe(false);
   });
 });
