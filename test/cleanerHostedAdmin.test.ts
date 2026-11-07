@@ -388,3 +388,84 @@ describe("the admin page", () => {
     expect(existsSync(tenantFolder(m.app.root, mill.id))).toBe(false);
   });
 });
+
+describe("the number pool on the admin page (saadvz/TourCore#163)", () => {
+  const POOL_A = "+15555550181";
+  const POOL_B = "+15555550182";
+
+  it("tops up the pool, shows the low alert, and creates a host from the pool when the number is blank", async () => {
+    const m = await start();
+    const calls = fakeTwilio({ [POOL_A]: "PNa", [POOL_B]: "PNb" });
+    const admin = await signIn(m);
+    const empty = (await admin.page("/admin")).html;
+    expect(empty).toContain("The number pool is low: 0 ready.");
+    expect(empty).toContain("Number pool: 0 ready, 0 resting, 0 in use.");
+    expect((await admin.post("/admin/tenants", { label: "Lane", number: "" })).html).toContain("The pool has no ready number. Add registered numbers first.");
+    const added = await admin.post("/admin/pool", { numbers: `${POOL_A}\n${POOL_B}\n+15555550199` });
+    expect(added.status).toBe(200);
+    expect(added.html).toContain("Added 2 numbers.");
+    expect(added.html).toContain("+15555550199: not on the Twilio account.");
+    const res = await admin.post("/admin/tenants", { label: "Lane", number: "" });
+    expect(res.status).toBe(200);
+    expect(res.html).toContain(`Text line: ${POOL_A}.`);
+    expect(res.html).toMatch(/data-invite="[0-9A-Z-]{14}"/);
+    const lane = m.registry.list()[0]!;
+    expect(lane.twilioNumber).toBe(POOL_A);
+    expect(calls.at(-1)).toEqual({ method: "POST", url: "https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/IncomingPhoneNumbers/PNa.json", body: new URLSearchParams({ SmsUrl: `${BASE}/webhooks/twilio/cleaner-core`, SmsMethod: "POST" }).toString() });
+    const pool = (await admin.page("/admin/pool")).html;
+    expect(pool).toContain(`<tr><td>${POOL_A}</td><td>in use</td><td><a href="/admin/tenants/${lane.id}">Lane</a></td><td>pointed</td>`);
+    expect(pool).toContain(`<tr><td>${POOL_B}</td><td>ready</td><td>—</td><td>—</td>`);
+    expect((await admin.page("/admin")).html).toContain("Number pool: 1 ready, 0 resting, 1 in use.");
+  });
+
+  it("records a typed number in the pool, and refuses a pooled number another account holds", async () => {
+    const m = await start();
+    fakeTwilio({ [LANE_LINE]: "PN1", [POOL_A]: "PNa" });
+    const admin = await signIn(m);
+    await admin.post("/admin/tenants", { label: "Lane", number: LANE_LINE });
+    const lane = m.registry.list()[0]!;
+    expect((await admin.page("/admin/pool")).html).toContain(`<tr><td>${LANE_LINE}</td><td>in use</td><td><a href="/admin/tenants/${lane.id}">Lane</a></td>`);
+    expect((await admin.post("/admin/pool", { numbers: LANE_LINE })).html).toContain(`${LANE_LINE}: a tenant already uses it.`);
+  });
+
+  it("gives a deleted host's number back to rest, or releases it when asked", async () => {
+    const m = await start();
+    const calls = fakeTwilio({ [POOL_A]: "PNa", [POOL_B]: "PNb" });
+    const admin = await signIn(m);
+    await admin.post("/admin/pool", { numbers: `${POOL_A}\n${POOL_B}` });
+    await admin.post("/admin/tenants", { label: "Lane", number: "" });
+    await admin.post("/admin/tenants", { label: "Court", number: "" });
+    const [lane, court] = m.registry.list();
+    expect((await admin.page(`/admin/tenants/${lane!.id}`)).html).toContain('name="release" value="1"');
+    await admin.post(`/admin/tenants/${lane!.id}/delete`, { confirm: "Lane" });
+    expect((await admin.page("/admin/pool")).html).toMatch(new RegExp(`<tr><td>\\${POOL_A}</td><td>resting until `));
+    await admin.post(`/admin/tenants/${court!.id}/delete`, { confirm: "Court", release: "1" });
+    expect(calls.at(-1)).toEqual({ method: "DELETE", url: "https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/IncomingPhoneNumbers/PNb.json" });
+    expect((await admin.page("/admin/pool")).html).not.toContain(POOL_B);
+    // A resting number can be released from the pool page; an unknown one can't.
+    expect((await admin.post("/admin/pool/release", { number: "+15555550199" })).html).toContain(html("That number isn't in the pool."));
+    const released = await admin.post("/admin/pool/release", { number: POOL_A });
+    expect(released.html).toContain(`Released ${POOL_A} from Twilio.`);
+    expect(released.html).toContain("No numbers yet.");
+  });
+
+  it("refuses to release a number an account uses", async () => {
+    const m = await start();
+    fakeTwilio({ [POOL_A]: "PNa" });
+    const admin = await signIn(m);
+    await admin.post("/admin/pool", { numbers: POOL_A });
+    await admin.post("/admin/tenants", { label: "Lane", number: "" });
+    const refused = await admin.post("/admin/pool/release", { number: POOL_A });
+    expect(refused.status).toBe(400);
+    expect(refused.html).toContain("An account uses that number. Delete the account to give it back.");
+    expect(m.registry.list()[0]!.twilioNumber).toBe(POOL_A);
+  });
+
+  it("refuses a top-up without the session's CSRF token", async () => {
+    const m = await start();
+    fakeTwilio({ [POOL_A]: "PNa" });
+    const admin = await signIn(m);
+    expect((await admin.post("/admin/pool", { numbers: POOL_A }, false)).status).toBe(403);
+    expect((await admin.page("/admin/pool")).html).toContain("No numbers yet.");
+  });
+});
