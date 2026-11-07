@@ -101,6 +101,8 @@ describe("Muse template", () => {
     expect(prompt).toMatch(/Never use your browser in this run except to open photo links, or to shop for what the cleaner reported low as step 11 says\./);
     expect(prompt).toMatch(/call report_low with those item ids and source "cleaner"/);
     expect(prompt).toMatch(/Never pass the cleaner's words to Supply Core\./);
+    expect(prompt).toMatch(/Put anything urgent first, in one plain line/);
+    expect(prompt).toMatch(/Never call approve_cart with a code from this run\./);
     expect(prompt).toMatch(/Never pause, edit, or cancel this recurring task/);
     expect(prompt).toMatch(/Never show a door code, an id, or a phone number\./);
   });
@@ -114,6 +116,7 @@ describe("Muse template", () => {
     expect(skill).toMatch(/Never sign in to a store with a password you know\. The host signs in\./);
     expect(skill).toMatch(/Never type a card number, an expiry, a security code, or a password\./);
     expect(skill).toMatch(/`approvedBy: "host-browser"`/);
+    expect(skill).toMatch(/Never hand over Place Order on a held cart or one you haven't\s+checked\./);
     expect(skill).not.toMatch(/Vault|POST JSON|secure card/);
   });
 
@@ -124,6 +127,8 @@ describe("Muse template", () => {
     expect(prompt).toMatch(/Never call approve_cart with a code, activate_supplies, or any save_ tool from this run\./);
     expect(prompt).toMatch(/Never type a password, a card number, an expiry, or a security code/);
     expect(prompt).toMatch(/Never pause, edit, or cancel this recurring task/);
+    expect(prompt).toMatch(/When it lists more than one property, run steps 1 to 7 once for each property whose flows have supplies on/);
+    expect(prompt).not.toMatch(/after the host's yes in this conversation and approve_cart's code/);
   });
 
   it("names only real Cleaner Core or Supply Core tools, or the account's own", async () => {
