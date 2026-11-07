@@ -2041,9 +2041,9 @@ export class LiveDesk {
     return jobs.find((item) => item.checkoutDate === wanted || dayOf(item) === wanted || item.id.toLowerCase() === wanted);
   }
 
-  /** Supply Core is offered at setup only to a Grok chat on the shared service, where the add-on lives. */
+  /** Supply Core is offered at setup only to an always-on agent (Grok Bot, Muse) on the shared service, where the add-on lives. */
   private offersSupplies(): boolean {
-    return this.assistant() === "grok" && cleanerMultiTenant(this.env());
+    return ASSISTANT_PROFILES[this.assistant()].supplies && cleanerMultiTenant(this.env());
   }
 
   /** The host answered the Supply Core question, or turned it on another way: setup doesn't ask again. */
