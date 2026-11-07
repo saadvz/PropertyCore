@@ -183,7 +183,7 @@ export interface ComponentStatus {
   requirement: Requirement;
   /** One plain sentence for the operator. */
   summary: string;
-  /** Provider role, e.g. LOCAL_DEMO or DURIN_DEMO. Never a credential. For Grok, not the operator. */
+  /** Provider role, e.g. LOCAL_DEMO or DEMO. Never a credential. For Grok, not the operator. */
   provider?: string;
   /** Technical details for Grok's own actions or troubleshooting. Never repeat them to the operator. */
   technical?: string[];
@@ -573,7 +573,7 @@ function hostNumberStatus(inst: Installation): ComponentStatus {
 }
 
 function accessStatus(): ComponentStatus {
-  return component("ACCESS", "READY", "Demo. No real doors open.", { provider: "DURIN_DEMO" });
+  return component("ACCESS", "READY", "Demo. No real doors open.", { provider: "DEMO" });
 }
 
 /**
