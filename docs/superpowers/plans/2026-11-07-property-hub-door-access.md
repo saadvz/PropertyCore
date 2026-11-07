@@ -71,9 +71,9 @@
   - `Hub.doorAccess(env: () => NodeJS.ProcessEnv): DoorAccess`. It returns the hub's one `DoorAccess` and sets its env provider.
   - `HubGuards.codeRefused?(code: string, lockLocation?: string): string | undefined`
 
-- [ ] **Step 1: Write failing tests in `test/hubDoorAccess.test.ts`.** Reuse the `folder()` and `open()` helpers from `test/hub.test.ts`. Use `KEY = randomBytes(32)`, `SERVER = randomBytes(32).toString("base64")`, and the made-up code `"4821"`.
-  - `seals the code and opens it with the same key`: `save("4821", "back door", KEY)` returns ok. `door-access.json` holds `pinSeal` and doesn't contain `"4821"`. After `resetHubs()`, `codeForChecks(KEY)` is `"4821"` and `lockLocation()` is `"back door"`.
-  - `uses the server's key when the request has none`: with env `{ CLEANER_CORE_PIN_KEY: SERVER }`, `save("4821", undefined, undefined)` returns ok, and `codeForChecks()` after a reset is `"4821"`.
+- [ ] **Step 1: Write failing tests in `test/hubDoorAccess.test.ts`.** Reuse the `folder()` and `open()` helpers from `test/hub.test.ts`. Use `KEY = randomBytes(32)`, `SERVER = randomBytes(32).toString("base64")`, and `CODE`, `OTHER`: made-up codes built by joining digits at runtime (as `test/cleanerCoreWiring.test.ts` does), so the secret scan never sees them in a file.
+  - `seals the code and opens it with the same key`: `save(CODE, "back door", KEY)` returns ok. `door-access.json` holds `pinSeal` and doesn't contain `CODE`. After `resetHubs()`, `codeForChecks(KEY)` is `CODE` and `lockLocation()` is `"back door"`.
+  - `uses the server's key when the request has none`: with env `{ CLEANER_CORE_PIN_KEY: SERVER }`, `save(CODE, undefined, undefined)` returns ok, and `codeForChecks()` after a reset is `CODE`.
   - `another key leaves the seal shut`: after saving with `KEY`, `codeForChecks(randomBytes(32))` is `undefined` and `saved()` is `true`.
   - `refuses without any key`: empty env, no key. Returns `{ ok: false, reason: "key" }`, and no file is written.
   - `refuses a code that isn't 4 to 8 digits`, for `"12"`, `"123456789"` and `"12a4"`. Reason `"code"`.
@@ -106,9 +106,9 @@
   - `issues a 43-character link under /door-code/ and keeps only its hash`: `door-access.json` doesn't contain the link code.
   - `a second link replaces the first`: the first link's code now returns 404 with `UPLOAD_GONE`.
   - `an expired link is gone`: with `now` 10 minutes later, the result is 404 and the pending upload is removed.
-  - `a refused code keeps the link`: posting `{ code: "12" }` gives 400 `DOOR_CODE_UPLOAD_REFUSED`, and then `{ code: "4821" }` gives 200.
-  - `the upload seals with the key of the call that made the link`: issue with `KEY`, upload, and `codeForChecks(KEY)` is `"4821"`.
-  - `no reply holds the code`: `JSON.stringify` of every result doesn't contain `"4821"`.
+  - `a refused code keeps the link`: posting `{ code: "12" }` gives 400 `DOOR_CODE_UPLOAD_REFUSED`, and then `{ code: CODE }` gives 200.
+  - `the upload seals with the key of the call that made the link`: issue with `KEY`, upload, and `codeForChecks(KEY)` is `CODE`.
+  - `no reply holds the code`: `JSON.stringify` of every result doesn't contain `CODE`.
   - In `test/hub.test.ts`: `hubDoorCode reads both prefixes and rejects a short code`.
 - [ ] **Step 2:** Run the tests. Expected: FAIL.
 - [ ] **Step 3:** Implement it, following today's `issueDoorCodeUpload` and `uploadDoorCode` (`liveDesk.ts:1337-1392`). A generated link that `HubGuards.leaks` flags is drawn again, up to 8 times. The key of the call that made the link stays in memory only.
@@ -135,13 +135,13 @@
   - `DoorAccess.useProvider(provider: AccessProvider): void`, for tests and #180
 
 - [ ] **Step 1: Write failing tests.** Use `PERSON = "+15555550123"` and the window `{ from: "2026-11-07T15:00:00Z", until: "2026-11-09T05:00:00Z" }`.
-  - `grants the saved code and lock location`: `{ ok: true, kind: "code", code: "4821", lockLocation: "back door", until }`.
+  - `grants the saved code and lock location`: `{ ok: true, kind: "code", code: CODE, lockLocation: "back door", until }`.
   - `refuses no-code before anything is saved`.
   - `refuses no-key with an empty env and no key`.
   - `refuses sealed when the key doesn't open the seal`.
   - `refuses window-over when now is at or past until`. Exactly `until` is over.
-  - `a fake second provider answers behind request()`: a provider returning `{ ok: true, kind: "code", code: "7392", until }` is the one used.
-  - `a re-saved code replaces the open one`: save `"4821"`, call `request`, save `"7392"`. `request` and `codeForChecks` now give `"7392"`.
+  - `a fake second provider answers behind request()`: a provider returning `{ ok: true, kind: "code", code: OTHER, until }` is the one used.
+  - `a re-saved code replaces the open one`: save `CODE`, call `request`, save `OTHER`. `request` and `codeForChecks` now give `OTHER`.
 - [ ] **Step 2:** Run the tests. Expected: FAIL.
 - [ ] **Step 3:** Implement it. Check in this order: `no-code`, `no-key`, `sealed`, `window-over`, then the provider. The hub doesn't read `person` or `purpose`. They are for the provider.
 - [ ] **Step 4:** Run the tests. Expected: PASS.
@@ -188,7 +188,7 @@
 
 - [ ] **Step 1: Write failing tests in `test/hubCleaner.test.ts`.**
   - `save_door_code seals into door-access.json, not cleaner-live.json`.
-  - `upload refuses digits in a waiting draft and keeps the link`: save a draft whose text holds `"4821"`, issue the link, and post `{ code: "4821" }`. The result is 400 with `CODE_IN_DRAFT`, and the body doesn't contain `"4821"`. Drop the draft, post again, and get 200.
+  - `upload refuses digits in a waiting draft and keeps the link`: save a draft whose text holds `CODE`, issue the link, and post `{ code: CODE }`. The result is 400 with `CODE_IN_DRAFT`, and the body doesn't contain `CODE`. Drop the draft, post again, and get 200.
   - `upload refuses digits in a saved answer`, with `CODE_IN_SAVED_ANSWER`.
   - `a link from save_door_code opens at /door-code/ and the old /cleaner-core/door-code/ path`.
 - [ ] **Step 2:** Run `npx vitest run test/hubCleaner.test.ts`. Expected: FAIL.
@@ -221,7 +221,7 @@
   - While this task is in progress, `options.pin` without `access` acts as `fixedCodePort(options.pin, options.lockLocation)`.
 
 - [ ] **Step 1: Write failing tests in `test/cleanerDoorPort.test.ts`.** Copy the engine setup from `test/cleanerGroupFirst.test.ts`.
-  - `the code text uses the grant's code and lock location`: a port whose `codeForChecks` returns `"4821"` and whose grant returns `"7392"` and `"side gate"`. After departure, the `pin` text's body holds `"7392"` and `"side gate"`.
+  - `the code text uses the grant's code and lock location`: a port whose `codeForChecks` returns `CODE` and whose grant returns `OTHER` and `"side gate"`. After departure, the `pin` text's body holds `OTHER` and `"side gate"`.
   - `a refused grant sends the cleaner nothing and notes the host once`: the port refuses with `sealed`. No `pin` text, one host note equal to `accessRefused.sealed`. A second departure for the same job adds no note.
   - `the window runs from checkout to the end of the next check-in day`: the request's `window` for a job with checkout `2026-11-07 10:00` (America/New_York) and next check-in `2026-11-10` is `{ from: "2026-11-07T15:00:00.000Z", until: "2026-11-11T05:00:00.000Z" }`.
   - `with no next booking the window ends two days after checkout`: `until` is `"2026-11-09T05:00:00.000Z"` for checkout `2026-11-07`.
