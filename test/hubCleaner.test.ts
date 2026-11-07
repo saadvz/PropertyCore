@@ -6,7 +6,8 @@ import { doorCodeUploadCode } from "../src/cleaner-core/http";
 import { CODE_IN_DRAFT, CODE_IN_SAVED_ANSWER, liveDeskFor, resetLiveDesks, setCleanerAlertFetch, setCleanerCalendarFetch, type LiveDesk, type ToolReply } from "../src/cleaner-core/liveDesk";
 import { setCleanerGroupFetch, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import { hubFor } from "../src/hub/hub";
-import { PIN_KEY as HARNESS_KEY, cleanupDesks, idOf, liveGroup } from "./cleanerDeskHarness";
+import { PIN_KEY as HARNESS_KEY, cleanupDesks, idOf, liveGroup, openDesk as openHarnessDesk, setUp, testClock } from "./cleanerDeskHarness";
+import { DOOR_WINDOW_OVER } from "../src/cleaner-core/doorPort";
 import { fakeConversations } from "./fakeConversations";
 import { approvedOnDesk } from "./hostApproval";
 import { ADDRESS, BUSINESS, CALENDAR_ICS, CALENDAR_URL, CLEANER, CLEANER_LINE, DOOR_CODE, FROZEN, HOST, TEST_PIN_KEY, fakeSms } from "./wiringProof";
@@ -300,5 +301,31 @@ describe("Cleaner Core keeps the door code in the hub", () => {
     expect(doorCodeUploadCode(`/door-code/${code}`)).toBe(code);
     expect(doorCodeUploadCode(`/cleaner-core/door-code/${code}`)).toBe(code);
     expect(await desk.uploadLinkOpen("door-code", code)).toMatchObject({ open: true });
+  });
+});
+
+describe("mark_guests_left asks the hub for door access", () => {
+  it("mark_guests_left replies with the window line when the window is over", async () => {
+    const clock = testClock();
+    const { desk, sms } = openHarnessDesk([HOST, CLEANER], "0", clock.now);
+    await setUp(desk, { groupChat: "cleaner-only" });
+    await desk.inbound({ id: "yes-1", from: CLEANER, text: "YES" });
+    await desk.inbound({ id: "yes-2", from: CLEANER, text: "YES" });
+    // The first cleaning's checkout is Oct 18 and the next guest arrives the same day: the window ends Oct 19.
+    clock.advance(Date.parse("2026-10-21T15:00:00.000Z") - clock.now().getTime());
+    const late = await desk.markGuestsLeft({ confirmed: true }, HARNESS_KEY);
+    expect(late).toEqual({ ok: false, error: DOOR_WINDOW_OVER });
+    expect(sms.sent.some((item) => item.body.includes(DOOR_CODE))).toBe(false);
+  });
+
+  it("an on-time release still sends the code once", async () => {
+    const clock = testClock();
+    const { desk, sms } = openHarnessDesk([HOST, CLEANER], "0", clock.now);
+    await setUp(desk, { groupChat: "cleaner-only" });
+    await desk.inbound({ id: "yes-1", from: CLEANER, text: "YES" });
+    await desk.inbound({ id: "yes-2", from: CLEANER, text: "YES" });
+    clock.advance(Date.parse("2026-10-18T16:00:00.000Z") - clock.now().getTime());
+    ok(await desk.markGuestsLeft({ confirmed: true }, HARNESS_KEY));
+    expect(sms.sent.filter((item) => item.to === CLEANER && item.body.includes(DOOR_CODE))).toHaveLength(1);
   });
 });

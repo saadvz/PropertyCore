@@ -1,4 +1,6 @@
 import { openPin, pinKeyFor, sealPin, type PinSeal } from "../hub/pinSeal";
+import { joinSplitDigits } from "../hub/digits";
+import { cleaningWindow, DOOR_NOT_OPENED, DOOR_WINDOW_OVER, fixedCodePort, type AccessRefusedLines, type DoorAccessPort } from "./doorPort";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -292,8 +294,15 @@ export interface CleanerCoreOptions {
   ownerPhone: string;
   /** Approved cleaner. The door code is a private text to this number, and only after opt-in and departure. */
   cleaner: { phone: string; approved: boolean };
-  /** Standing door code. Absent means this engine never texts one. */
+  /** Standing door code. Absent means this engine never texts one. Superseded by access. */
   pin?: string;
+  /**
+   * Where the door code comes from: the property hub's door access request on the live service, or a
+   * fixed made-up code (fixedCodePort). The engine asks only after its own checks pass.
+   */
+  access?: DoorAccessPort;
+  /** Host lines for a refused door access request, kept once per job. Unset reasons use DOOR_NOT_OPENED. */
+  accessRefused?: AccessRefusedLines;
   /** Where the lock is, named in the private door-code text. Never a code. */
   lockLocation?: string;
   /** Name in the cleaner opt-in text. */
@@ -550,7 +559,6 @@ const CLEANER_HURT = "If someone is hurt, call 911 now. I've let the host know."
 const CLEANER_HURT_MISSED = "If someone is hurt, call 911 now. I couldn't reach the host, so please call them too.";
 export const SAFETY = new Set<TextKind>(["stop", "start", "emergency"]);
 
-import { joinSplitDigits } from "../hub/digits";
 export { joinSplitDigits };
 
 /** Every run of 4 or more digits, even split by spaces, dots, dashes, underscores, or slashes, as [redacted]. */
@@ -798,7 +806,9 @@ class Engine implements CleanerCore {
   private readonly enabled: boolean;
   private readonly owner: string | undefined;
   private readonly cleanerPhone: string | undefined;
+  /** The code, for leak checks and "is a code saved". The text's code comes from access, at release. */
   private pin: string | undefined;
+  private readonly access: DoorAccessPort | undefined;
   private readonly hostName: string;
   private readonly groupPhones: string[];
   private cleanerConsent: "pending" | "in" | "out" = "pending";
@@ -871,7 +881,9 @@ class Engine implements CleanerCore {
     this.enabled = options.enabled;
     this.owner = parsePhone(options.ownerPhone);
     this.cleanerPhone = parsePhone(options.cleaner.phone);
-    const pin = options.pin?.trim();
+    // The port is the one way a code reaches a text; a bare pin (the older option) becomes a fixed port.
+    this.access = options.access ?? (options.pin?.trim() ? fixedCodePort(options.pin.trim(), options.lockLocation) : undefined);
+    const pin = (options.access ? options.access.codeForChecks() : options.pin)?.trim();
     this.pin = pin && /^\d{4,8}$/.test(pin) ? pin : undefined;
     this.hostName = options.hostName?.trim() || "Scratch";
     this.groupPhones = (options.groupPhones ?? []).flatMap((phone) => {
@@ -2060,6 +2072,22 @@ class Engine implements CleanerCore {
     return { handled: true, reason: "host-time", sent };
   }
 
+  /**
+   * Asks for door access for the cleaner during this cleaning's window. A refusal sends nothing, is
+   * not retried here, and gives the host one note per job and reason.
+   */
+  private async requestAccess(job: Job): Promise<{ code: string; lockLocation?: string } | undefined> {
+    const checkout = this.latestFact(job.id, "checkout");
+    if (!this.access || !this.cleanerPhone || !checkout) return undefined;
+    const window = cleaningWindow({ checkoutDate: job.checkoutDate, checkoutTime: hm(checkout.minutes), nextCheckInDate: job.nextCheckInDate, timeZone: this.options.property.timeZone });
+    const grant = await this.access.request({ person: this.cleanerPhone, window, purpose: "cleaning", jobId: job.id });
+    if (grant.ok && /^\d{4,8}$/.test(grant.code)) return { code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}) };
+    const reason = grant.ok ? "sealed" : grant.reason;
+    this.keepHostNote(`host:access-refused:${job.id}:${reason}`, this.options.accessRefused?.[reason] ?? (reason === "window-over" ? DOOR_WINDOW_OVER : DOOR_NOT_OPENED));
+    this.save();
+    return undefined;
+  }
+
   private async deliverPin(job: Job): Promise<CleanerText[]> {
     if (!this.pin || !this.cleanerPhone || this.optedOut || this.stale(job) || job.canceled || job.declined) return [];
     const key = this.pinKey(job);
@@ -2085,11 +2113,15 @@ class Engine implements CleanerCore {
     }
     if (this.problemHold || this.groupPinTerminal) return sent;
     if (this.delivery(key) !== "sent" && this.pin) {
-      const pin = this.pin;
       const route = this.groupChat ? codeRoute(this.groupSeats()) : "private";
       if (route === "held") return sent;
+      // Every check above has passed. Only now is door access asked for, for the cleaner, for this cleaning.
+      const grant = await this.requestAccess(job);
+      if (!grant) return sent;
+      const pin = grant.code;
+      const lockLocation = grant.lockLocation?.trim() || undefined;
       // The host's note rides on the door code, so the cleaner reads it as the cleaning starts.
-      const body = withHostNote(doorCodeBody(this.options.property.address, pin, this.options.lockLocation?.trim() || undefined), this.options.cleaningNote);
+      const body = withHostNote(doorCodeBody(this.options.property.address, pin, lockLocation), this.options.cleaningNote);
       const addressed = addressCleaner(this.cleanerRecord(), { kind: "pin", body });
       if (!addressed) return sent;
       let text: CleanerText | null = null;
@@ -2102,7 +2134,7 @@ class Engine implements CleanerCore {
           jobId: job.id,
           to: addressed.to,
           kind: "pin",
-          body: withHostNote(groupDoorCodeBody(this.options.property.address, pin, this.groupChat!.cleanerName, this.options.lockLocation?.trim() || undefined), this.options.cleaningNote),
+          body: withHostNote(groupDoorCodeBody(this.options.property.address, pin, this.groupChat!.cleanerName, lockLocation), this.options.cleaningNote),
           channel: "group",
           audience,
         });
