@@ -1417,10 +1417,6 @@ export class LiveDesk {
   }
 
   /**
-   * Saves the cleaning preferences. A field left out keeps what was saved, and `{}` the first time
-   * means there are none, which still moves setup on to the review.
-   */
-  /**
    * Saves whether to help pay the cleaner, the pay per cleaning, and the cleaner's Venmo username.
    * Turning it on needs the host's approval, bound to that exact username and amount. Never moves money.
    */
@@ -1458,6 +1454,10 @@ export class LiveDesk {
     return this.setupReply({ saved: `Saved. After each cleaning I'll offer a Venmo link for ${dollarsText(cents)}.` });
   }
 
+  /**
+   * Saves the cleaning preferences. A field left out keeps what was saved, and `{}` the first time
+   * means there are none, which still moves setup on to the review.
+   */
   savePreferences(input: { checklist?: string[]; photosRequired?: boolean; supplyNotes?: boolean; instructions?: string }, pinKey?: Buffer): Promise<ToolReply> {
     return this.serial(async () => this.savePreferencesNow(input, pinKey));
   }
@@ -1735,8 +1735,6 @@ export class LiveDesk {
       turns: this.turns(),
       ...(this.needsTimes(engine) ? { needsTimes: true as const } : {}),
       ...(read.unread.length > 0 ? { unread: read.unread } : {}),
-      // Kept for one release beside `unread`, for Grok setups that still read it.
-      ...(read.guestyFailed ? { guestyUnread: true as const } : {}),
       ...(read.googleUnread ? { googleUnread: true as const } : {}),
     });
   }
