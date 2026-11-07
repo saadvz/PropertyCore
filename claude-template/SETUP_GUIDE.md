@@ -22,7 +22,7 @@ You need four things before step 1. The Cleaner Core address is the same for eve
 | --- | --- | --- |
 | A Claude Pro, Max, Team or Enterprise plan | Scheduled tasks (alerts and hourly checks) need one; Free allows the connector but no task | Your Claude account |
 | An invite code from Saad | It links your Claude to your own Cleaner Core account. You type it once, when you connect | Saad |
-| Your phone and the cleaner's phone approved for texts | Activate is refused until both numbers are on the operator's list | The Cleaner Core operator |
+| Your own phone, confirmed with a code when you sign in | Nobody is texted until the host's number is that phone. The cleaner needs no approval: their YES to the first text decides | The connect page. If yours hasn't confirmed a phone yet, the Cleaner Core operator approves it |
 | On a Team or Enterprise plan: an Owner | Only Owners can add a custom connector for the org | Your Claude admin |
 
 Your invite code puts your Claude in your own Cleaner Core account. Other hosts on the same service never see your property, people, or texts.
@@ -114,7 +114,7 @@ Every row here came up during testing.
 | "That invite code isn't right", "has expired", or "was already used" | Each invite code works once, for 7 days | Ask Saad for a new invite code, then click **Connect** again |
 | "This connection isn't linked to a Cleaner Core account" | Saad disconnected this chat, or turned the account off | Ask Saad for a new invite code, then remove and add the connector again |
 | Alerts go to another chat on your account, not Claude | That chat connected its alerts first, so it is the primary | Ask Saad to make Claude the primary on the admin page |
-| Activate says the numbers aren't approved | A number isn't on the operator's list | Ask the operator to approve both, then say "run the checks" |
+| Activate says the host's phone isn't confirmed | The host number you saved isn't the phone you confirmed when you signed in | Save that phone as yours, then say "run the checks". If you haven't confirmed one yet, ask the operator to approve your phone |
 | Setup finished but no text arrived | The times aren't confirmed yet, or live texting is off on the service | Confirm the first booking's times; if Claude says nothing was sent, tell the operator |
 | The task's run says `check_now` isn't available | The task is missing the Cleaner Core connector | Edit the task: Connectors → add Cleaner Core |
 | The chat says it can't connect after an outage | A chat connects once, when it starts | Start a new chat, or reconnect with `/mcp` in Claude Code |
