@@ -28,7 +28,7 @@ import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, PAYMENTS_STEP, pe
 import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jobHoldLine, optedOutCodeLine, resumeNote } from "./cleanerTexts";
 import { isInjuryReport } from "./injury";
 import { GroupNotConfirmed } from "./groupThread";
-import { cleanerPinStatusUrl, deleteLiveGroup, isAllowlisted, liveSmsOn, sendLiveGroup, sendLiveSms } from "./liveSms";
+import { cleanerPinStatusUrl, deleteLiveGroup, landlordConfirmed, liveSmsOn, mayText, sendLiveGroup, sendLiveSms, verifiedLandlordPhone } from "./liveSms";
 import { LOCK_LOCATION_REFUSED, serverPinKey, type AccessRefusal, type DoorAccess } from "../hub/doorAccess";
 import { DOOR_WINDOW_OVER, type AccessRefusedLines, type DoorAccessPort } from "./doorPort";
 import { HUB_DOOR_CODE_PREFIX } from "../hub/paths";
@@ -177,6 +177,9 @@ export const DRAFT_NEW_SINCE = "Something new came in since this draft. Read it 
 const RECIPIENT_NEEDED = "Say who to text: the cleaner, the group, or a saved contact's name.";
 const NO_GROUP = "There's no group chat for this property.";
 const GROUP_ONLY = "Messages go to the group. Send it with to: group.";
+/** Nobody on the account is texted until the saved host is the landlord's confirmed phone (saadvz/TourCore#164). */
+const HOST_UNCONFIRMED = "I can text only after the host's phone is confirmed. Save the phone you confirmed when you signed in as the host's number.";
+const CLEANER_IS_LINE = "The cleaner's number is one of this service's own lines. Save the cleaner's own phone.";
 const DOOR_CODE_QUESTION = "You added other people to the group. Should the door code go to the whole group, or only privately to the cleaner?";
 const TOO_MANY = "That's a lot of messages this hour. Try again later.";
 /** The approval action for a property reset. It is bound to this property's group, so a changed group voids it. */
@@ -1135,6 +1138,9 @@ export class LiveDesk {
     if (!host || !cleaner || host === cleaner) {
       return this.fail("I need two different phone numbers: the host and the cleaner. An observer is optional.");
     }
+    // The host is the landlord, whose phone was confirmed with a code at sign-up.
+    const landlord = verifiedLandlordPhone(this.env());
+    if (landlord && host !== landlord) return this.fail("The host's number has to be the phone you confirmed when you signed in.");
     if (observerText && !observer) return this.fail("Send the observer as a phone number, or leave that number out.");
     if (observer && (observer === host || observer === cleaner)) {
       return this.fail("The observer has to be a different phone number from the host and the cleaner.");
@@ -1741,9 +1747,8 @@ export class LiveDesk {
 
   private async runChecksNow(input: { googleEvents?: GoogleEventList }): Promise<ToolReply> {
     if (!this.file.texting || !this.hasSources() || !this.codeSaved()) return this.fail("Set up texting first.");
-    if (!this.file.host || !this.file.cleaner || !isAllowlisted(this.env(), this.file.host) || !isAllowlisted(this.env(), this.file.cleaner)) {
-      return this.fail("I can text the host and the cleaner only after those numbers are approved for texts.");
-    }
+    if (!this.file.host || !this.file.cleaner || !this.hostConfirmed()) return this.fail(HOST_UNCONFIRMED);
+    if (!mayText(this.env(), this.file.cleaner)) return this.fail(CLEANER_IS_LINE);
     if (this.hub.google() && !input.googleEvents) return this.fail("Read Google Calendar and pass its events.");
     const before = this.engine;
     const engine = this.openEngine();
@@ -2731,10 +2736,19 @@ export class LiveDesk {
     return { key: `contact:${contact.phone}`, send: contact.phone, name: contact.name };
   }
 
-  /** The engine holds consent, STOP, and the group's members. A one-to-one text also needs the allowlist now. */
+  /** The engine holds consent, STOP, and the group's members. Nothing goes until the host's phone is confirmed. */
   private reachable(send: string, engine: CleanerCore): boolean {
+    if (!this.hostConfirmed()) return false;
     if (send === "group") return this.groupOn() && engine.canSendHostMessage("group");
-    return isAllowlisted(this.env(), send) && engine.canSendHostMessage(send);
+    return mayText(this.env(), send) && engine.canSendHostMessage(send);
+  }
+
+  /**
+   * True when the saved host is the account's landlord: the phone confirmed at sign-up, or on an
+   * account with none, a phone the old operator allowlist approves (saadvz/TourCore#164).
+   */
+  private hostConfirmed(): boolean {
+    return landlordConfirmed(this.env(), this.file.host);
   }
 
   /** Keeps a sent host message in the history. Grok sent it, so check_now doesn't return it as new. */
@@ -2921,7 +2935,7 @@ export class LiveDesk {
     const created = await this.engine.addTestTurn({ checkout, checkIn });
     if (!created.created) {
       if (created.reason === "exists") return this.reply({ next: "That test turnover is already saved.", turns: this.turns() });
-      if (created.reason === "refused") return this.fail("I can text the host and the cleaner only after those numbers are approved for texts.");
+      if (created.reason === "refused") return this.fail(HOST_UNCONFIRMED);
       return this.fail("Tell me the checkout time and the next check-in time, like 10:30 AM and 3:00 PM.");
     }
     const invited = this.engine.outbox().some((item) => item.kind === "opt-in" && item.status === "sent");
@@ -3008,7 +3022,7 @@ export class LiveDesk {
 
   private async inboundNow(input: Inbound): Promise<{ sent: CleanerText[] }> {
     const from = parsePhone(input.from);
-    if (!from || !isAllowlisted(this.env(), from)) return { sent: [] };
+    if (!from || !mayText(this.env(), from)) return { sent: [] };
     if (this.claiming.has(input.id)) return { sent: [] };
     if (this.file.seenInbound?.includes(input.id)) {
       this.resume();
@@ -3608,7 +3622,9 @@ export class LiveDesk {
       accessRefused: this.accessRefusedLines(),
       hostName: file.business,
       consented: file.texting === true,
-      allowlist: (phone: string) => isAllowlisted(env(), phone),
+      // Consent is per account: nobody is texted until the host's phone is confirmed, and then the
+      // engine's own YES and STOP decide. The service's own lines are never texted.
+      allowlist: (phone: string) => landlordConfirmed(env(), this.file.host) && mayText(env(), phone),
       holdSends: () => this.checking || (!liveSmsOn(env()) && !this.scratchCapture()),
       deferCleanerTexts: this.file.released !== true,
       ...(this.file.cleanerOut ? { cleanerConsent: "out" as const } : {}),
