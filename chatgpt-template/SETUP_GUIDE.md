@@ -22,7 +22,7 @@ how you hear from the cleaner right away (see [Day to day](#day-to-day)).
 | ChatGPT Plus or above | The Free plan has no custom connectors. Plus is tested. Pro, Business, Enterprise, and Edu should work. See [README.md](README.md#which-chatgpt-plans-work). | Your ChatGPT account |
 | A computer with a web browser | Developer Mode and custom connectors are set up on chatgpt.com only, not in the apps | — |
 | An invite code from Saad | It links your ChatGPT to your own Cleaner Core account. You type it once, when you connect | Saad |
-| Your phone and the cleaner's phone approved for texts | Activate is refused until both numbers are on the operator's list | The Cleaner Core operator |
+| Your own phone, confirmed with a code when you sign in | Nobody is texted until the host's number is that phone. The cleaner needs no approval: their YES to the first text decides | The connect page. If yours hasn't confirmed a phone yet, the Cleaner Core operator approves it |
 
 The Cleaner Core address is the same for everyone: `https://tourcore-production-8b80.up.railway.app/mcp/cleaner-core`.
 Your invite code puts your ChatGPT in your own Cleaner Core account. Other
@@ -142,7 +142,7 @@ Every row here came up while testing on ChatGPT Plus.
 | "That invite code isn't right", "has expired", or "was already used" | Each invite code works once, for 7 days | Ask Saad for a new invite code, then click **Connect** again |
 | "This connection isn't linked to a Cleaner Core account" | Saad disconnected this chat, or turned the account off | Ask Saad for a new invite code, then remove and add the connector again |
 | Alerts go to another chat on your account, not ChatGPT | That chat connected its alerts first, so it is the primary | Ask Saad to make ChatGPT the primary on the admin page |
-| Activate says the numbers aren't approved | A number isn't on the operator's list | Ask the operator to approve both, then say "run the checks" |
+| Activate says the host's phone isn't confirmed | The host number you saved isn't the phone you confirmed when you signed in | Save that phone as yours, then say "run the checks". If you haven't confirmed one yet, ask the operator to approve your phone |
 | Setup finished but no text arrived, or ChatGPT says "Nothing was sent yet" | Live texting is off, or the Twilio details are missing on the service | Tell Saad. The service's variables are in `docs/deployment.md`. |
 | The scheduled task paused itself after an error | An older task prompt, or a task made before Cleaner Core was set up | Delete it and ask ChatGPT to create the Cleaner Core task again from setup |
 | The cleaner said YES but no group started | Twilio didn't create the group text | The operator checks the deploy log for "Twilio refused … for the group text". The number must support group texts (local, MMS-capable, not toll-free). |
