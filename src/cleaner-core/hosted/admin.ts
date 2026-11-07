@@ -8,7 +8,7 @@ import { setFlows } from "../../hosted/service";
 import { findProperty, propertyFolder } from "./properties";
 import { refreshTouringAlerts as tellTouringAlerts } from "../../hosted/touringAlerts";
 import { ADMIN_HEADERS, invitePage, loginPage, messagePage, poolPage, tenantPage, tenantsPage, type PoolRow, type TenantHealth } from "./adminPages";
-import { attachTypedLine, closeLine, numberPool, openAccount, releasePooled, repointLine, topUp, type TopUpRefusal } from "./lines";
+import { attachTypedLine, closeLine, numberPool, openAccount, recordAccountLines, releasePooled, repointLine, topUp, type LineClosed, type TopUpRefusal } from "./lines";
 import { PoolError } from "./numberPool";
 import { RegistryError, tenantFolder, type Tenant } from "./registry";
 import { propertyContext, type HostedCleaner } from "./router";
@@ -37,6 +37,7 @@ const MAX_BODY = 8 * 1024;
 const COOKIE = "cc_admin";
 const EXPIRED = "That form expired. Reload the page.";
 const MAX_TOP_UP = 50;
+const WEBHOOK_FAILED = "Twilio didn't take this number's webhook, so its texts won't arrive yet. Point it again from the number pool.";
 const TOP_UP_WORDS: Record<TopUpRefusal, string> = {
   "bad-number": "that isn't a phone number.",
   "already-pooled": "already in the pool.",
@@ -48,6 +49,11 @@ const RELEASE_WORDS = {
   "in-use": "An account uses that number. Delete the account to give it back.",
   twilio: "Twilio didn't release it. Try again, or release it in the Twilio console.",
 } as const;
+/** Shown after a delete whose line didn't go as asked. */
+const CLOSE_WORDS: Partial<Record<LineClosed, string>> = {
+  "release-refused": "Deleted. Twilio didn't release the number, so it rests in the pool. Release it from the number pool.",
+  "not-found": "Deleted. Its number wasn't found on the Twilio account, or Twilio couldn't be reached. Clear its webhook in the Twilio console.",
+};
 const REGISTRY_WORDS: Record<RegistryError["reason"], string> = {
   "bad-label": "Add a label.",
   "bad-number": "That isn't a phone number.",
@@ -162,9 +168,13 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
     if (!live) return path === "/admin" ? html(200, loginPage()) : redirect("/admin");
     if (path === "/admin") {
       prune(deps);
+      recordAccountLines(h);
       return html(200, tenantsPage(h.registry.list(), live.csrf, undefined, (t) => healthOf(h, t), numberPool(h).summary()));
     }
-    if (path === "/admin/pool") return html(200, pool(h, live.csrf));
+    if (path === "/admin/pool") {
+      recordAccountLines(h);
+      return html(200, pool(h, live.csrf));
+    }
     const tenant = tenantFrom(deps, path);
     if (!tenant || path !== `/admin/tenants/${tenant.id}`) return html(404, messagePage("Not found", "That page doesn't exist."));
     return html(200, page(h, tenant, live.csrf));
@@ -185,7 +195,8 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
     if (raws.length === 0) return html(400, pool(h, live.csrf, undefined, "Add at least one number."));
     if (raws.length > MAX_TOP_UP) return html(400, pool(h, live.csrf, undefined, `Add at most ${MAX_TOP_UP} numbers at a time.`));
     const { added, refused } = await topUp(h, raws);
-    const problems = refused.map((r) => `${r.raw}: ${TOP_UP_WORDS[r.reason]}`).join(" ");
+    // By line, so the page repeats no number that isn't the service's own.
+    const problems = refused.map((r) => `Line ${raws.indexOf(r.raw) + 1}: ${TOP_UP_WORDS[r.reason]}`).join(" ");
     return html(refused.length > 0 && added.length === 0 ? 400 : 200, pool(h, live.csrf, `Added ${added.length} number${added.length === 1 ? "" : "s"}.`, problems || undefined));
   }
   if (path === "/admin/pool/release") {
@@ -248,10 +259,13 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
     case "line":
       if (!(await repointLine(h, tenant))) return html(400, pool(h, live.csrf, undefined, "Twilio didn't take the webhook. Try again, or set it in the Twilio console."));
       return redirect("/admin/pool");
-    case "delete":
+    case "delete": {
       if ((form.get("confirm") ?? "") !== tenant.label) return html(400, page(h, tenant, live.csrf, "Type the label to delete."));
-      await deleteTenant(deps, tenant, form.get("release") === "1" ? "release" : "return");
+      const closed = await deleteTenant(deps, tenant, form.get("release") === "1" ? "release" : "return");
+      const words = CLOSE_WORDS[closed];
+      if (words) return html(200, tenantsPage(h.registry.list(), live.csrf, words, (t) => healthOf(h, t), numberPool(h).summary()));
       return redirect("/admin");
+    }
     default:
       return html(404, messagePage("Not found", "That page doesn't exist."));
   }
@@ -297,29 +311,32 @@ async function createTenant(deps: AdminDeps, form: URLSearchParams, csrf: string
     // The same call sign-up makes: the ready line that has waited longest.
     const opened = await openAccount(h, { label });
     if ("refused" in opened) return refuse(opened.refused === "no-line" ? "The pool has no ready number. Add registered numbers first." : REGISTRY_WORDS["bad-label"]);
-    return html(200, invitePage(opened.tenant, opened.inviteCode, connectorUrl(h)));
+    return html(200, invitePage(opened.tenant, opened.inviteCode, connectorUrl(h), opened.webhookOk ? undefined : WEBHOOK_FAILED));
   }
   let created: { tenant: Tenant; inviteCode: string };
+  let webhookOk = true;
   try {
     const probe = h.registry.byNumber(raw);
     if (probe) throw new RegistryError("number-taken");
     const e164 = parsePhone(raw);
     if (!e164) throw new RegistryError("bad-number");
-    const pooled = numberPool(h).get(e164);
+    const numbers = numberPool(h);
+    const pooled = numbers.get(e164);
     if (pooled?.tenantId) throw new RegistryError("number-taken");
+    // A resting number waits out its rest, so the old account's cleaner doesn't reach the new one.
+    if (pooled && numbers.stateOf(pooled) === "resting") return refuse(`That number is resting in the pool until ${numbers.readyAt(pooled)}. Pick another.`);
     const number = await findIncomingNumber(h.baseEnv(), e164);
     if (!number) return refuse("That number isn't on the Twilio account.");
     created = h.registry.create({ label, twilioNumber: e164 });
-    if (!(await attachTypedLine(h, created.tenant, number.sid))) {
-      h.log(`Created ${created.tenant.id}, but Twilio didn't take the webhook. Point it again from the number pool.`);
-    }
+    webhookOk = await attachTypedLine(h, created.tenant, number.sid);
+    if (!webhookOk) h.log(`Created ${created.tenant.id}, but Twilio didn't take the webhook. Point it again from the number pool.`);
   } catch (err) {
     if (err instanceof RegistryError) return refuse(REGISTRY_WORDS[err.reason]);
     if (err instanceof PoolError) return refuse(REGISTRY_WORDS["number-taken"]);
     throw err;
   }
   h.log(`Created ${created.tenant.id}.`);
-  return html(200, invitePage(created.tenant, created.inviteCode, connectorUrl(h)));
+  return html(200, invitePage(created.tenant, created.inviteCode, connectorUrl(h), webhookOk ? undefined : WEBHOOK_FAILED));
 }
 
 /** The pool page: every number, its state, and the account holding it. */
@@ -373,14 +390,14 @@ function healthOf(h: HostedCleaner, tenant: Tenant): TenantHealth {
   return { service, process: "—", restartsLastDay: 0, queuedTexts: 0, alerts, perProperty };
 }
 
-async function deleteTenant(deps: AdminDeps, tenant: Tenant, line: "return" | "release"): Promise<void> {
+async function deleteTenant(deps: AdminDeps, tenant: Tenant, line: "return" | "release"): Promise<LineClosed> {
   const { h } = deps;
   for (const connection of tenant.connections) deps.revokeGrant(connection.grantId);
   // Off first, so no request or drain starts work on the folder while it goes, and no touring process writes to it.
   h.registry.setDisabled(tenant.id, true);
   h.touring?.supervisor.stop(tenant.id);
   // The line stops reaching this service, then rests in the pool or leaves Twilio.
-  await closeLine(h, tenant, line);
+  const closed = await closeLine(h, tenant, line);
   const folder = tenantFolder(h.dataRoot, tenant.id);
   forgetLiveDesk(folder);
   forgetPeople(folder);
@@ -388,4 +405,5 @@ async function deleteTenant(deps: AdminDeps, tenant: Tenant, line: "return" | "r
   rmSync(folder, { recursive: true, force: true });
   h.registry.remove(tenant.id);
   h.log(`Deleted ${tenant.id}.`);
+  return closed;
 }
