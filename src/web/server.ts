@@ -39,6 +39,9 @@ import type { Tenant } from "../cleaner-core/hosted/registry";
 import { TenantSecrets } from "../cleaner-core/hosted/tenantSecrets";
 import { handleAdmin } from "../cleaner-core/hosted/admin";
 import { INVITE_REFUSALS } from "../mcp/oauth/pages";
+import { phoneCodesFor } from "../hosted/phoneCodes";
+import { accountDoor, SignUpDesk } from "../hosted/signUp";
+import { openAccount } from "../cleaner-core/hosted/lines";
 import { handleCleanerUploadPage, isFormPost } from "../cleaner-core/uploadPage";
 import { ALERT_UPLOAD_MAX_BYTES, alertUploadCode, calendarUploadCode, doorCodeUploadCode, uploadPageOf, CLEANER_MCP_PATH, CLEANER_TWILIO_GROUP_PATH, CLEANER_TWILIO_PATH, CLEANER_TWILIO_STATUS_PATH, handleCleanerAlertUpload, handleCleanerCalendarUpload, handleCleanerDoorCodeUpload, handleCleanerGroupWebhook, handleCleanerMcpHttp, handleCleanerTwilioStatus, handleCleanerTwilioWebhook, textAddressedTo } from "../cleaner-core/http";
 import { drainCleanerAlerts } from "../cleaner-core/liveDesk";
@@ -491,6 +494,15 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     now: () => options.now?.() ?? new Date(),
     log,
   });
+  // Sign in and Create account on the connect page. Off until CLEANER_CORE_SIGNUP and its settings are set.
+  const signUp = new SignUpDesk({
+    registry: tenants,
+    codes: () => phoneCodesFor(installation.env()),
+    openAccount: (input) => openAccount(hostedCleanerService, input),
+    env: () => installation.env(),
+    now: () => (options.now?.() ?? new Date()).getTime(),
+    log,
+  });
   const oauth =
     authMode === "oauth"
       ? new McpOAuth({
@@ -531,6 +543,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
                   connected: (tenantId: string, grantId: string, assistant: CleanerAssistant) =>
                     tenants.connect(tenantId, { grantId, assistant, connectedAt: (options.now?.() ?? new Date()).toISOString() }),
                   refusal: (reason: InviteRefusal) => INVITE_REFUSALS[reason],
+                  accounts: accountDoor(signUp),
                 },
               }
             : {}),

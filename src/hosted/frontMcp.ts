@@ -7,6 +7,7 @@ import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { Property } from "../cleaner-core/hosted/properties";
 import { promoteRoutineOwner, propertyContext, shareRoutine, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
 import { sweepHeldTexts } from "./lineRouter";
+import { signUpFlag } from "./signUp";
 import { afterPeopleSaved, draftPeople, peopleRefusal } from "./sharedPeople";
 import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
 import { OPERATOR_TOOL_NAMES } from "../operator/tools";
@@ -31,6 +32,8 @@ const UNLINKED: Record<string, string> = {
   [CLEANER_MCP_PATH]: "This connection isn't linked to a Cleaner Core account. Reconnect with an invite code from Saad.",
   shared: "This connection isn't linked to an account on this service. Reconnect with an invite code from Saad.",
 };
+/** With sign-up open, the connect page offers Sign in, so the invite code isn't the only way back. */
+const UNLINKED_SIGN_IN = "This connection isn't linked to an account on this service. Reconnect, then sign in on the page that opens.";
 const TOURING_DOWN = "Touring isn't answering right now. Try again in a minute.";
 
 const TOURING_TOOLS = new Set(OPERATOR_TOOL_NAMES);
@@ -62,7 +65,10 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
   if (!auth) return;
   const extra = (auth.extra ?? {}) as { grantId?: string; tenantId?: string; assistant?: CleanerAssistant };
   const tenant = extra.tenantId ? h.registry.get(extra.tenantId) : undefined;
-  if (!tenant || tenant.disabled || !extra.grantId || !extra.assistant) return r.send(403, JSON_TYPE, JSON.stringify({ error: { message: UNLINKED[path] ?? UNLINKED.shared } }));
+  if (!tenant || tenant.disabled || !extra.grantId || !extra.assistant) {
+    const message = signUpFlag(h.baseEnv()) ? UNLINKED_SIGN_IN : (UNLINKED[path] ?? UNLINKED.shared);
+    return r.send(403, JSON_TYPE, JSON.stringify({ error: { message } }));
+  }
   const caller = { grantId: extra.grantId, assistant: extra.assistant };
   h.registry.touch(tenant.id);
   if (toolsFor(tenant) === "properties") return propertiesAnswer(h, r, tenant, caller, `grant:${caller.grantId}`);

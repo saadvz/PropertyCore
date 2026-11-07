@@ -45,7 +45,7 @@ ${body}
 </html>
 `;
 
-export function consentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; label?: "Tour Core" | "Cleaner Core" | "Tour Core and Cleaner Core"; assistant?: CleanerAssistant; invite?: boolean; services?: boolean; serviceChoices?: readonly ServiceChoice[] }): string {
+export function consentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; label?: "Tour Core" | "Cleaner Core" | "Tour Core and Cleaner Core"; assistant?: CleanerAssistant; invite?: boolean; account?: AccountForms; services?: boolean; serviceChoices?: readonly ServiceChoice[] }): string {
   if (p.label === "Cleaner Core") return cleanerConsentPage(p, ASSISTANT_PROFILES[p.assistant ?? "grok"].consent);
   if (p.label === "Tour Core and Cleaner Core") return cleanerConsentPage(p, ASSISTANT_PROFILES[p.assistant ?? "grok"].consent, SHARED_WORDS);
   const requestId = escape(p.requestId);
@@ -107,7 +107,7 @@ const SHARED_WORDS: ConsentWords = {
 };
 
 /** The same approval, worded for Cleaner Core, or for the shared address. */
-function cleanerConsentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; invite?: boolean; services?: boolean; serviceChoices?: readonly ServiceChoice[] }, who: ConsentWho, words: ConsentWords = CLEANER_WORDS): string {
+function cleanerConsentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; invite?: boolean; account?: AccountForms; services?: boolean; serviceChoices?: readonly ServiceChoice[] }, who: ConsentWho, words: ConsentWords = CLEANER_WORDS): string {
   // A multi-tenant Cleaner Core: the invite code says whose Cleaner Core this connection joins.
   // On the shared address the host also picks the number's service here, so the chat's first tools are that service's.
   const services = p.services
@@ -116,9 +116,8 @@ ${(p.serviceChoices ?? SERVICE_CHOICES).map((choice) => `            <p><label><
             <p class="hint">If your number is already set up, it stays as it is.</p>
           </fieldset>`
     : "";
-  const invite = p.invite
-    ? `<p><label for="oauth-invite">Invite code from Saad</label><br /><input id="oauth-invite" autocomplete="off" autocapitalize="characters" spellcheck="false" /></p>${services}`
-    : "";
+  const inviteField = `<p><label for="oauth-invite">Invite code from Saad</label><br /><input id="oauth-invite" autocomplete="off" autocapitalize="characters" spellcheck="false" /></p>`;
+  const invite = p.invite && p.account ? `${accountForms(p.account, inviteField)}${services}` : p.invite ? `${inviteField}${services}` : "";
   const decision = p.hosted
     ? `${invite}
           <p><button type="button" class="primary" id="oauth-allow" data-code="${escape(p.matchCode)}">Allow</button></p>`
@@ -145,6 +144,36 @@ ${list(words.cannot)}
         <button type="button" id="oauth-deny">Deny</button>`,
     `\n    <script type="module" src="/oauth.js"></script>`,
   );
+}
+
+/** Sign in and Create account on the multi-tenant service's connect page (saadvz/TourCore#162). */
+export interface AccountForms {
+  termsUrl: string;
+}
+
+/**
+ * Sign in, Create account, and the invite code, one at a time. /oauth.js shows the chosen one;
+ * the phone and its code are shared by Sign in and Create account.
+ */
+function accountForms(account: AccountForms, inviteField: string): string {
+  return `<fieldset id="oauth-modes"><legend>Your Property Core account</legend>
+            <p><label><input type="radio" name="oauth-mode" value="sign-in" checked /> Sign in</label></p>
+            <p><label><input type="radio" name="oauth-mode" value="sign-up" /> Create account</label></p>
+            <p><label><input type="radio" name="oauth-mode" value="invite" /> I have an invite code</label></p>
+          </fieldset>
+          <div id="oauth-phone-part">
+            <p><label for="oauth-phone">Your mobile number</label><br /><input id="oauth-phone" type="tel" autocomplete="tel" inputmode="tel" /></p>
+            <p><button type="button" id="oauth-send-code">Text me a code</button></p>
+            <p><label for="oauth-phone-code">Code from the text</label><br /><input id="oauth-phone-code" autocomplete="one-time-code" inputmode="numeric" spellcheck="false" /></p>
+          </div>
+          <div id="oauth-signup-part" hidden>
+            <p><label for="oauth-email">Email</label><br /><input id="oauth-email" type="email" autocomplete="email" spellcheck="false" /></p>
+            <p><label><input type="checkbox" id="oauth-terms" /> I accept the <a href="${escape(account.termsUrl)}" target="_blank" rel="noopener noreferrer">terms</a></label></p>
+            <p class="hint">Your account gets its own text line for your cleaner. You'll keep using your chat, not texts.</p>
+          </div>
+          <div id="oauth-invite-part" hidden>
+            ${inviteField}
+          </div>`;
 }
 
 export function problemPage(title: string, message: string): string {
