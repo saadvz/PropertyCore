@@ -171,6 +171,16 @@ describe("a desk on an account", () => {
     expect(lane[0]!.startsWith("12 Practice Lane: ")).toBe(false);
   });
 
+  it("moveSource reads the engine's saved consent even when the engine can't open", async () => {
+    const s = await account();
+    await s.a.desk.inbound({ id: "SM-yes", from: CLEANER, text: "YES" });
+    const file = join(s.rootA, "cleaner-live.json");
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), checked: false }));
+    resetLiveDesks();
+    const lane = liveDeskFor(s.rootA, () => s.a.env, s.a.now);
+    expect((await lane.moveSource()).optedIn).toEqual([CLEANER]);
+  });
+
   it("moveSource lists the desk's people and the engine's consent", async () => {
     const s = await account();
     await s.a.desk.inbound({ id: "SM-yes", from: CLEANER, text: "YES" });

@@ -14,7 +14,7 @@ import { stripFiller } from "../intent/normalize";
 import { spokenTimes } from "../core/spokenTime";
 import { formatWhen, zonedInstant } from "../hub/calendar";
 import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink, venmoProfileLink, venmoUsername, type PaymentSettings, type PayRecord } from "./payments";
-import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
+import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, storedConsent, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
 import { cleanerMultiTenant, groupChatEnabled } from "./flag";
 import { GROUP_RECIPIENT, draftStatus, earlierThan, replyStateAt, type ReplyState, type StoredDraft } from "./replies";
 import { publicBaseUrl } from "../messaging/publicUrl";
@@ -1650,7 +1650,10 @@ export class LiveDesk {
         if (!phone || phone === host || people.some((p) => p.phone === phone)) continue;
         people.push({ phone, role: contact.role as Role, ...(contact.name && contact.name !== "Observer" ? { name: contact.name } : {}) });
       }
-      const consent = (phone: string) => this.engine?.consentOf(phone);
+      // An engine that can't open now still has its saved consent in its store.
+      const stored = this.engine || !this.file.propertyId ? undefined : storedConsent(join(this.root, "cleaner-job"), this.file.propertyId);
+      const consent = (phone: string) =>
+        this.engine ? this.engine.consentOf(phone) : phone === cleaner ? stored?.cleaner : stored?.participants.find((p) => parsePhone(p.phone) === phone)?.consent;
       return {
         propertyId: this.account?.propertyId ?? "",
         ...(host ? { host } : {}),
@@ -3613,7 +3616,8 @@ export class LiveDesk {
       ...(this.file.cleanerOut ? { cleanerConsent: "out" as const } : {}),
       ...(this.people && this.account
         ? {
-            optInElsewhere: (phone: string) => this.people!.optedIn(phone) || this.people!.invitedElsewhere(phone, this.account!.propertyId),
+            // Claimed and recorded in one step, so two properties holding their invites can't both send them later.
+            optInElsewhere: (phone: string) => !this.people!.claimInvite(phone, this.account!.propertyId),
             onConsent: (phone: string, consent: "in" | "out") => this.reportConsent(phone, consent),
           }
         : {}),

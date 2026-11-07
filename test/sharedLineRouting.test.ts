@@ -110,6 +110,25 @@ describe("a shared cleaner's one-to-one text", () => {
     expect(sentSince(s, before)).toEqual([lineStopText("Scratch")]);
   });
 
+  it("once a later text went to a property by context, a bare number no longer answers the held text", SLOW, async () => {
+    const { s, lane, court } = await optedIn();
+    // Ana takes both turnovers, so neither property waits on her.
+    await s.m.text(LINE, CLEANER, "YES", "SM-take-1");
+    await s.m.text(LINE, CLEANER, "1", "SM-answer-1");
+    await s.m.text(LINE, CLEANER, "YES", "SM-take-2");
+    // Nothing waits: her question is held and asked about.
+    await s.m.text(LINE, CLEANER, "what time is checkout?", "SM-held");
+    // Lane's cleaning starts, so her next text goes there by context.
+    await s.call("mark_guests_left", { property: lane, confirmed: true });
+    await s.m.text(LINE, CLEANER, "running late", "SM-late");
+    expect(s.seen(lane)).toContain("SM-late");
+    minutes(30);
+    // A towel count half an hour later isn't her answer to the old question.
+    await s.m.text(LINE, CLEANER, "2", "SM-two");
+    expect(s.seen(court)).not.toContain("SM-held");
+    expect(s.seen(lane)).toContain("SM-two");
+  });
+
   it("answers by name too", SLOW, async () => {
     const { s, lane } = await optedIn();
     await s.m.text(LINE, CLEANER, "YES", "SM-which");

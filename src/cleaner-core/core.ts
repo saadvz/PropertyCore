@@ -4169,6 +4169,22 @@ function isSnapshot(value: unknown): value is SourceSnapshot {
   );
 }
 
+/**
+ * The consent saved in an engine's store, read without opening the engine: the cleaner's and each
+ * contact's. Undefined when there is no store, or it can't be read.
+ */
+export function storedConsent(dataDir: string, tenantId: string): { cleaner?: "pending" | "in" | "out"; participants: { phone: string; consent: "pending" | "in" | "out" }[] } | undefined {
+  const path = join(dataDir, "cleaner-core.json");
+  if (!existsSync(path)) return undefined;
+  try {
+    const slice = sliceForTenant(JSON.parse(readFileSync(path, "utf8")) as StoreFile, tenantId);
+    if (!slice) return undefined;
+    return { ...(slice.cleanerConsent ? { cleaner: slice.cleanerConsent } : {}), participants: slice.participantConsent ?? [] };
+  } catch {
+    return undefined;
+  }
+}
+
 function sliceForTenant(file: StoreFile, tenantId: string): Stored | undefined {
   if (file.tenants && typeof file.tenants === "object") {
     const slice = file.tenants[tenantId];

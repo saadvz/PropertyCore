@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -95,6 +95,39 @@ describe("People", () => {
     people.markInvited(C, A);
     people.optIn(C, A);
     expect(people.invitedElsewhere(C, B)).toBe(false);
+  });
+
+  it("claims the invite for one property at a time, so two can't both send it", () => {
+    const people = peopleFor(account(), { now });
+    people.savePropertyPeople(A, HOST, [{ phone: C, role: "cleaner" }]);
+    people.savePropertyPeople(B, HOST, [{ phone: C, role: "cleaner" }]);
+    expect(people.claimInvite(C, A)).toBe(true);
+    expect(people.claimInvite(C, B)).toBe(false);
+    expect(people.claimInvite(C, A)).toBe(true);
+    people.optIn(C, A);
+    expect(people.claimInvite(C, A)).toBe(false);
+  });
+
+  it("never moves the landlord's phone in as a person, even from an older STOP list", () => {
+    const people = peopleFor(account(), { now });
+    people.move([
+      { propertyId: A, host: HOST, people: [{ phone: C, role: "cleaner" }], stopped: [HOST], optedIn: [], optedOut: [] },
+      { propertyId: "", people: [], stopped: [HOST, D], optedIn: [], optedOut: [] },
+    ]);
+    expect(people.person(HOST)).toBeUndefined();
+    expect(people.stopped(D)).toBe(true);
+  });
+
+  it("an unreadable people.json fails closed: everyone reads as stopped, and the file is kept", () => {
+    const root = account();
+    writeFileSync(join(root, PEOPLE_FILE), "{ not json");
+    const people = peopleFor(root, { now });
+    expect(people.stopped(C)).toBe(true);
+    expect(people.optedIn(C)).toBe(false);
+    expect(people.moved()).toBe(true);
+    expect(people.claimInvite(C, A)).toBe(false);
+    people.savePropertyPeople(A, HOST, [{ phone: C, role: "cleaner" }]);
+    expect(readFileSync(join(root, PEOPLE_FILE), "utf8")).toBe("{ not json");
   });
 
   it("relays each change to the registered listener, and nothing for undefined", async () => {

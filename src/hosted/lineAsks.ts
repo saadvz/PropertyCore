@@ -18,6 +18,8 @@ export interface HeldText {
   propertyIds: string[];
   heldAt: string;
   askedAt: string;
+  /** False once a later text from the person went to a property: a bare number no longer answers this one. */
+  numbers?: false;
 }
 
 export class LineAsks {
@@ -62,6 +64,15 @@ export class LineAsks {
     doc[phone] = { ...text, heldAt: at.toISOString(), askedAt: ask ? at.toISOString() : before!.askedAt };
     this.write(doc);
     return { ask };
+  }
+
+  /** A later text went to a property by name or context: from now on only a name answers the held text. */
+  closeNumbers(phone: string): void {
+    const doc = this.read();
+    const text = doc[phone];
+    if (!text || text.numbers === false) return;
+    doc[phone] = { ...text, numbers: false };
+    this.write(doc);
   }
 
   take(phone: string): HeldText | undefined {

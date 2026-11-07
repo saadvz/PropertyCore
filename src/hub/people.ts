@@ -92,12 +92,24 @@ function emptyFile(): PeopleFile {
 export class People {
   private file: PeopleFile;
   private listener: ((change: PersonChange) => Promise<void>) | undefined;
+  /**
+   * people.json couldn't be read. The list fails closed: every phone reads as stopped, nobody reads as
+   * opted in, no invite is claimed, and the file is kept as it is for the operator, never overwritten.
+   */
+  private readonly broken: boolean;
 
   constructor(
     readonly accountRoot: string,
     private readonly deps: { now(): Date },
   ) {
-    this.file = this.read();
+    let broken = false;
+    try {
+      this.file = this.read();
+    } catch {
+      broken = true;
+      this.file = { ...emptyFile(), movedAt: deps.now().toISOString() };
+    }
+    this.broken = broken;
   }
 
   private read(): PeopleFile {
@@ -108,6 +120,7 @@ export class People {
   }
 
   private save(): void {
+    if (this.broken) return;
     mkdirSync(this.accountRoot, { recursive: true });
     writeJsonAtomic(join(this.accountRoot, PEOPLE_FILE), this.file);
   }
@@ -144,10 +157,12 @@ export class People {
   }
 
   stopped(phone: string): boolean {
+    if (this.broken) return true;
     return !!this.file.people.find((p) => p.phone === phone)?.stopped;
   }
 
   optedIn(phone: string): boolean {
+    if (this.broken) return false;
     return !!this.file.people.find((p) => p.phone === phone)?.optedIn;
   }
 
@@ -176,6 +191,24 @@ export class People {
       else person.where.push({ propertyId, role: saved.role });
     }
     this.save();
+  }
+
+  /**
+   * True when this property may send the person's invite, and records that it is the one sending it.
+   * Checked and recorded in one step, so two properties can't both send it. False once they said YES,
+   * while they're stopped, or while another property's invite to them is out.
+   */
+  claimInvite(phone: string, propertyId: string): boolean {
+    if (this.broken) return false;
+    const person = this.file.people.find((p) => p.phone === phone);
+    if (!person) return true;
+    if (person.optedIn || person.stopped) return false;
+    if (person.invitedFrom && person.invitedFrom !== propertyId && person.where.some((w) => w.propertyId === person.invitedFrom)) return false;
+    if (person.invitedFrom !== propertyId) {
+      person.invitedFrom = propertyId;
+      this.save();
+    }
+    return true;
   }
 
   markInvited(phone: string, propertyId: string): void {
@@ -227,6 +260,8 @@ export class People {
   /** Builds the list from the older files, once. A second call changes nothing. */
   move(sources: MoveSource[]): void {
     if (this.file.movedAt) return;
+    // The landlord is never a person here, even when an older STOP list holds their phone.
+    const hosts = new Set(sources.map((source) => source.host).filter((host): host is string => !!host));
     for (const source of sources) {
       if (source.host) this.file.hosts[source.propertyId] = source.host;
       for (const saved of source.people) {
@@ -236,6 +271,7 @@ export class People {
         if (!person.where.some((w) => w.propertyId === source.propertyId)) person.where.push({ propertyId: source.propertyId, role: saved.role });
       }
       for (const phone of [...source.stopped, ...source.optedOut]) {
+        if (hosts.has(phone)) continue;
         const person = this.entry(phone);
         person.stopped ??= { at: this.at() };
       }

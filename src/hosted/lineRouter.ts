@@ -145,7 +145,7 @@ async function routeShared(h: HostedCleaner, tenant: Tenant, people: People, pro
   const current = { id, text, ...(media.length > 0 ? { media } : {}) };
   // The answer is read against the list that was asked, so a property switched off since doesn't shift the numbers.
   const asked = held ? held.propertyIds.map((pid) => named.find((n) => n.id === pid) ?? { id: pid, label: "" }) : [];
-  const answer = held ? answerOf(text, asked) : undefined;
+  const answer = held ? (held.numbers === false ? namedProperty(text, asked) : answerOf(text, asked)) : undefined;
   if (held && answer && properties.some((p) => p.id === answer)) {
     asks.take(from);
     await deliver(answer, { id: held.id, text: held.text, ...(held.media ? { media: held.media } : {}) });
@@ -153,11 +153,19 @@ async function routeShared(h: HostedCleaner, tenant: Tenant, people: People, pro
     if (!bareAnswer(text, asked) || media.length > 0) await deliver(answer, current);
     return;
   }
+  // A text that goes to a property while one is held means the conversation moved on: a later bare
+  // number, such as a towel count, is no longer taken as the answer to the held text.
   const byName = namedProperty(text, named);
-  if (byName) return deliver(byName, current);
+  if (byName) {
+    if (held) asks.closeNumbers(from);
+    return deliver(byName, current);
+  }
   const waiting: string[] = [];
   for (const property of properties) if (await deskOf(h, tenant, property).desk.waitingOn(from)) waiting.push(property.id);
-  if (waiting.length === 1) return deliver(waiting[0]!, current);
+  if (waiting.length === 1) {
+    if (held) asks.closeNumbers(from);
+    return deliver(waiting[0]!, current);
+  }
   const { ask } = asks.hold(from, { ...current, propertyIds: properties.map((p) => p.id) });
   // A stopped person is never asked: their text waits quietly.
   if (ask && !people.stopped(from)) {
