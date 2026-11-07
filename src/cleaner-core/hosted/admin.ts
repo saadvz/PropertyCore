@@ -43,6 +43,7 @@ const REGISTRY_WORDS: Record<RegistryError["reason"], string> = {
   "fixer-not-yet": "Fixer Core isn't available yet.",
   "needs-migration": "The tenant list needs its migration. Restart the service.",
   "duplicate-label": "That account already has a property with that label.",
+  "owner-taken": "Another account already signed up with that phone.",
 };
 
 const sessions = new Map<string, { csrf: string; expiresAt: number }>();
