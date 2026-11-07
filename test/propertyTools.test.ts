@@ -60,7 +60,7 @@ describe("the account's tools", () => {
   it("with one property a Cleaner Core call needs no property argument", SLOW, async () => {
     const { m, account, token } = await start();
     const lane = property(m, account.id, "12 Scratch Lane", ["cleaning"]);
-    await m.toolAt(PATH, token, "get_state", { choice: "cleaners" });
+    await m.toolAt(PATH, token, "get_state", { choice: "cleaners", drafted: true });
     const saved = await m.toolAt(PATH, token, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE });
     expect(saved.isError).toBe(false);
     expect(existsSync(join(propertyFolder(m.app.root, account.id, lane), "cleaner-live.json"))).toBe(true);
@@ -91,7 +91,8 @@ describe("the account's tools", () => {
     expect((overview.structured?.properties as { id: string; next?: Record<string, string> }[]).map((p) => p.id)).toContain(lane.id);
     const own = await m.toolAt(PATH, token, "get_state", { property: lane.id, choice: "cleaners" });
     expect(own.isError).toBe(false);
-    expect(own.structured?.ask).toBeDefined();
+    // Each property's setup starts with its own draft (#166).
+    expect(own.structured?.draft).toBeDefined();
   });
 
   it("a label works in place of the id", SLOW, async () => {

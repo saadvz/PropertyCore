@@ -54,7 +54,7 @@ function openDesk(extra: NodeJS.ProcessEnv = {}) {
 }
 
 async function live(desk: LiveDesk) {
-  ok(await desk.getState("cleaners"));
+  ok(await desk.getState("cleaners", true));
   ok(await desk.saveProperty({ business: BUSINESS, nickname: "Lake House", address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
   ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
   ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" }));
@@ -105,7 +105,7 @@ describe("the live desk and Supply Core", () => {
 
 describe("the Supply Core question in Cleaner Core's setup", () => {
   async function throughPayments(desk: LiveDesk) {
-    ok(await desk.getState("cleaners"));
+    ok(await desk.getState("cleaners", true));
     ok(await desk.saveProperty({ business: BUSINESS, nickname: "Lake House", address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
     ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
     ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" }));

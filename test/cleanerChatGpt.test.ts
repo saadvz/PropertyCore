@@ -88,7 +88,7 @@ const form = (fields: Record<string, string>) => ({ type: "application/x-www-for
 
 /** Setup up to the door-code step, the way the chat drives it. */
 async function toDoorCode(wired: WiredApp): Promise<void> {
-  await call(wired, "get_state", { choice: "cleaners" });
+  await call(wired, "get_state", { choice: "cleaners", drafted: true });
   await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "10:30", checkInTime: "15:00" });
   await call(wired, "save_sources", { calendars: [{ name: "Airbnb", url: CALENDAR_URL }] });
   await call(wired, "save_sources", { done: true });
@@ -144,7 +144,7 @@ describe("Cleaner Core for ChatGPT", () => {
 
   it("says on the cleaner-only option that the cleaner's messages can take up to an hour", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "10:30", checkInTime: "15:00" });
     await call(wired, "save_sources", { calendars: [{ name: "Airbnb", url: CALENDAR_URL }] });
     await call(wired, "save_sources", { done: true });
@@ -279,7 +279,7 @@ describe("ChatGPT's hourly scheduled task", () => {
 describe("Cleaner Core for ChatGPT, live", () => {
   it("texts the host to tell ChatGPT, and never names another chat", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE });
     await call(wired, "save_people", { host: HOST, cleaner: CLEANER });
     await call(wired, "save_calendar_link", { url: CALENDAR_URL });

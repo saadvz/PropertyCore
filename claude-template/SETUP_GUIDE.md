@@ -60,7 +60,7 @@ Skip this if your org blocks uploaded skills or plugins.
 
 ## Step 3: Run setup in a chat
 
-Open a new chat, check that Cleaner Core is on under **+**, and say **Set up Cleaner Core**. Claude asks one question at a time:
+Open a new chat, check that Cleaner Core is on under **+**, and say **Set up Cleaner Core**. Claude first drafts what it already knows and shows you one summary, with what it couldn't find marked "needs you". Correct it in one reply. You always confirm the door code, who gets it, any spending, and anyone new who will be texted. Then Claude asks for what's still missing, one question at a time. Setup covers:
 
 1. What you want help with: pick scheduling cleaners.
 2. The property: business name, address, usual checkout and check-in times.

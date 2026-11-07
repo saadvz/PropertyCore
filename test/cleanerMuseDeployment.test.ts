@@ -91,7 +91,7 @@ function publicRequest(wired: WiredApp, method: string, path: string, body?: { t
 const form = (fields: Record<string, string>) => ({ type: "application/x-www-form-urlencoded", text: new URLSearchParams(fields).toString() });
 
 async function toSources(wired: WiredApp): Promise<void> {
-  await call(wired, "get_state", { choice: "cleaners" });
+  await call(wired, "get_state", { choice: "cleaners", drafted: true });
   await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "10:30", checkInTime: "15:00" });
 }
 
@@ -259,7 +259,7 @@ describe("Muse's recurring task", () => {
 describe("Cleaner Core for Muse, live", () => {
   it("texts the host to tell Muse, and never names another chat", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE });
     await call(wired, "save_people", { host: HOST, cleaner: CLEANER });
     await call(wired, "save_calendar_link", { url: CALENDAR_URL });
@@ -286,7 +286,7 @@ describe("Cleaner Core for Muse, hosted", () => {
     const token = await hosted.joinCleaning(lane.id, "muse");
     const grant = new OAuthGrantStore(hosted.app.inst.runtime).findByAccessHash(hashSecret(token));
     expect(grant?.assistant).toBe("muse");
-    await hosted.tool(token, "get_state", { choice: "cleaners" });
+    await hosted.tool(token, "get_state", { choice: "cleaners", drafted: true });
     await hosted.tool(token, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "10:30", checkInTime: "15:00" });
     const link = await hosted.tool(token, "save_sources", { uploadLink: { name: "Guesty Lite" } });
     expect(link.structured?.next).toBe(MUSE_DESK_WORDING.calendarUploadNext);
