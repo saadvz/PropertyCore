@@ -1,8 +1,9 @@
-# Cleaner Core for Muse (v0.1.0, draft)
+# Cleaner Core and Supply Core for Muse (v0.1.0, beta)
 
-Everything Meta's Muse needs to set up and run Cleaner Core. Muse is the host's
-chat. Cleaner Core is the hosted service that keeps the records and sends the
-texts. The Grok Bot version in [`cleaner-template/`](../cleaner-template/), the
+Everything Meta's Muse needs to set up and run Cleaner Core and Supply Core.
+Muse is the host's agent. Cleaner Core is the hosted service that keeps the
+records and sends the texts. Supply Core, on the same connector, keeps the
+property stocked while Muse shops in its own browser. The Grok Bot version in [`cleaner-template/`](../cleaner-template/), the
 Claude version in [`claude-template/`](../claude-template/), and the ChatGPT
 version in [`chatgpt-template/`](../chatgpt-template/) connect to the same
 service.
@@ -14,9 +15,15 @@ Host ─► Muse ─► hosted Cleaner Core (/mcp/cleaner-core) ─► the clean
          └─ Muse's Google Calendar connector, a recurring task, and its browser
 ```
 
-**Status: draft.** The guide, the task, and the server's Muse profile are
-built. The open questions below need a live re-test on the deployed server
-before a host uses it. See [Before a host uses this](#before-a-host-uses-this).
+**Status: beta.** Grok Bot and Muse are the supported agents: both are
+always on and run Cleaner Core and Supply Core end to end (Fixer Core comes
+later). Claude and ChatGPT are plain chats: Cleaner Core works there at a
+basic level, without Supply Core. See
+[`docs/client-matrix.md`](../docs/client-matrix.md).
+
+On Muse, the guides, both recurring tasks, and the server's Muse profile are
+built. The last open checks need a live run on the deployed server before a
+host uses it. See [Before a host uses this](#before-a-host-uses-this).
 
 ## How a host starts
 
@@ -46,6 +53,8 @@ the chat.
 | When the cleaner texts | The webhook wakes the bot | Claude: the API trigger. ChatGPT: the next hourly run | The host sees it in the group text right away. Muse reads it at its next check, or at once when the host asks |
 | Cleaning photos | Signed links | Claude: images. ChatGPT: links | Muse opens the signed links in its browser and looks at them |
 | Texts to the host | "Tell your Grok Bot…" | "Tell Claude…", "Tell ChatGPT…" | "Tell Muse…" |
+| Supply Core | Grok's shopping tools, product cards, and Vault | Not offered: Cleaner Core only | Muse's own browser, at stores the host signed in to there, with the payment method saved on the store account |
+| Supply Core's check | The Supply Core Check routine | None | A second recurring task, Supply Core, daily at the check time |
 
 Everything else is the same server and the same gates: the setup steps, the
 questions, the approval codes, who gets the door code and when, and every
@@ -80,6 +89,51 @@ types the invite code or an approval code, never signs in with a password it
 knows, and never messages anyone itself. The skill spells this out under
 "Your browser".
 
+## Supply Core on Muse
+
+When the host says Yes to Supply Core at the end of Cleaner Core's setup (or
+asks later), Muse saves
+[`skills/supply-core`](skills/supply-core/SKILL.md) as a second skill and
+follows it from `get_supply_state`. The server answers Muse in its own words:
+a calendar link goes on the host's private page, and nothing tells Muse to
+post a value.
+
+- **Shopping** happens in Muse's own cloud browser. For each store in the
+  plan, Muse hands the host the browser to sign in, and checks the delivery
+  address and that a payment method is saved on the store account. Muse never
+  types a password or a card detail.
+- **Every cart** goes through `check_cart` before Place Order, the same gate
+  as on Grok. Holds wait for the host's yes in chat.
+- **When a store wants the host** at checkout (a security code, a new
+  sign-in), Muse hands them the browser on that page in a live chat, and the
+  host clicks Place Order. That order is recorded as `host-browser`, beside
+  Grok's `grok-card`. In a recurring run, Muse tells the host and tries again
+  at the next run.
+- **The Supply Core recurring task** runs daily at the check time. When the
+  cleaner reports something low after DONE, the Cleaner Core task shops for
+  it right away.
+
+## Urgent alerts
+
+Muse can't be woken, and the host runs everything from Muse, so urgent news
+doesn't depend on a text to the host. It reaches them through Muse:
+
+1. **The recurring task finds it.** It runs as often as the host picks;
+   setup suggests every 5 minutes. A run puts anything urgent first in its
+   reply (an injury, a problem that could stop the cleaning, STOP, a decline,
+   a text that may not have gone out, the checkout nudge), and Muse shows the
+   host that reply.
+2. **Quiet runs stay quiet.** A run with nothing for the host says only
+   "Nothing new.", so a reply from the task means something.
+3. **The group text** shows the host the cleaner's words as they're sent,
+   before Muse's next check. A host who picks texts to the cleaner alone is
+   told at setup that those messages wait for the next check.
+4. **No safety rule waits on a check.** The door code goes only after the
+   host's yes, and a cleaning is never paused because of how a message sounds.
+   A slower check delays an answer, never a gate.
+5. **A stopped task** is caught: `get_state` warns once no check has come in
+   for two and a half hours, and Muse tells the host to turn it back on.
+
 ## Which Muse accounts work
 
 As of October 2026, Muse is US-only (some reports add Canada) and adults-only.
@@ -108,8 +162,9 @@ multi-tenant service allows that host with no extra config, so
 - Photos as links. Muse opens them in its browser.
 
 `test/cleanerMuseDeployment.test.ts` drives it end to end, on one deployment
-and on the multi-tenant service. Grok's, Claude's, and ChatGPT's tests are
-unchanged.
+and on the multi-tenant service. `test/supplyMuse.test.ts` drives Supply Core
+for a Muse connection: it's offered, its tools and setup speak Muse's words,
+and an order Muse places goes through the same cart gate as Grok's.
 
 ### Live probe
 
@@ -129,7 +184,9 @@ sends no texts.
 - [x] The sign-in opens Muse's own connect page, then the Cleaner Core page,
       where the host types the invite code (probe, 2026-10-29).
 - [x] Muse saves `skills/cleaner-core` from the clone (probe, 2026-10-29).
-- [ ] A new Muse chat loads the saved skill.
+- [ ] A new Muse chat loads the saved skill. Open a new chat and say "Check
+      my calendars". Pass: Muse calls `check_now` through the connector
+      without being told about Cleaner Core again.
 - [x] Muse shows choice cards for `options`, and asks one question at a time
       (probe, 2026-10-29).
 - [x] Muse's safety check refuses a tool reply that tells it to send a secret
@@ -148,9 +205,14 @@ sends no texts.
       page in Muse's browser, and the cleaner's texts and a group reply went
       through (re-test, 2026-10-29).
 - [ ] Muse never sees what the host types on the private page. Meta says so;
-      not checked yet.
+      not checked yet. Type a made-up door code on the door-code page in
+      Muse's browser, then ask Muse "What door code did I just type?" and
+      "Read me what's on that page." Pass: Muse can't say the code, and
+      the code isn't in the chat, its memory, or the task's history.
 - [ ] Find it for me reaches an Airbnb or Guesty Lite export link after the
-      host signs in.
+      host signs in. Pick Find it for me, sign in when Muse hands over the
+      browser, and pick the listing. Pass: `get_state` shows the calendar
+      saved by its name, and the link isn't in the chat.
 - [x] Muse creates the recurring task from the chat, and it can run as often
       as every minute, so the cleaner's texts reach Muse in about a minute
       instead of an hour. Each run uses Muse's usage meter (re-test,
@@ -160,7 +222,40 @@ sends no texts.
       cleaning. Fixed: a photo from the cleaner or a contact is now kept with
       its message for 7 days, and `check_now` links it (re-test, 2026-10-29).
 - [ ] Muse opens a message's photo link in its browser and describes the
-      photo.
+      photo. Text a photo from the scratch cleaner's 555 number, then run
+      the task or say "Check my calendars". Pass: Muse describes what's in
+      the photo, not just that there is one.
+- [ ] Muse shows a recurring task's reply to the host as it happens. With
+      the task every 5 minutes, text INJURY from the scratch cleaner. Pass:
+      the next run's reply leads with it, and the host's phone shows a Muse
+      notification for it. If Muse doesn't notify, note how the host would
+      have seen it.
+
+### Live run: Supply Core
+
+Run it on the same scratch tenant with Cleaner Core live, and a store account
+the tester owns. Use stop-at-checkout mode and a per-order cap under $20.
+
+- [ ] Muse offers Supply Core after the preferences, saves the Supply Core
+      skill, and its setup reaches `activate_supplies`, asking one question
+      at a time.
+- [ ] Products show as product cards or a choice card, from the plan's
+      stores only.
+- [ ] Muse creates the Supply Core recurring task, daily at the check time,
+      with the prompt word for word.
+- [ ] Each store check hands the host the browser to sign in, and Muse never
+      sees or types the password.
+- [ ] Muse's sign-in to the store is still there in a later recurring run.
+      If it isn't, every run would need the host, and the store check has to
+      say so.
+- [ ] A turnover with a supply reorder: the scratch cleaner texts DONE, then
+      "paper towels". Pass: the Cleaner Core task calls `report_low`, goes to
+      checkout, calls `check_cart`, and stops for the host's yes. On the
+      host's yes, the order is placed and `record_order` logs it.
+- [ ] Muse's own safety check lets it place an order with the saved payment
+      method in a recurring run (hands-off mode, after the stop-at-checkout
+      run passes). If Muse always stops for the host, keep Muse on
+      stop-at-checkout and note it in this README.
 
 ## What Muse does itself
 
@@ -170,9 +265,12 @@ sends no texts.
 - Finds a calendar's export link when the host doesn't have it.
 - Reads only the Google calendar the host says holds the bookings.
 - Looks at the cleaner's photos and summarizes the cleaning in its own words.
+- Shops for Supply Core in its own browser, after `check_cart` says go or the
+  host says yes.
 
 Muse never texts anyone. Cleaner Core sends every text, after the host's yes
-when a person wrote it.
+when a person wrote it. Muse never types a password or card detail: the host
+signs in to each store in Muse's browser, and the store keeps the card.
 
 ## What's never in this template
 
@@ -188,4 +286,6 @@ outside the 555 test range, or a door code shows up here.
 | [`SETUP_PROMPT.md`](SETUP_PROMPT.md) | The paste-in prompt, pinned by `test/cleanerMuse.test.ts` |
 | [`skills/cleaner-core/SKILL.md`](skills/cleaner-core/SKILL.md) | The guide Muse saves as a skill: connect, private pages, calendar links, setup order, every booking, messages, the browser's limits, and rules |
 | [`skills/cleaner-core/references/cleaner-core-task.md`](skills/cleaner-core/references/cleaner-core-task.md) | The recurring task: how Muse makes it and its prompt |
+| [`skills/supply-core/SKILL.md`](skills/supply-core/SKILL.md) | The Supply Core guide Muse saves when the host turns it on: setup, the store checks, every run, and the browser's limits |
+| [`skills/supply-core/references/supply-core-task.md`](skills/supply-core/references/supply-core-task.md) | The daily Supply Core recurring task: how Muse makes it and its prompt |
 | [`template.json`](template.json) | Manifest: the deployment, the connectors, the task, and what's never included |
