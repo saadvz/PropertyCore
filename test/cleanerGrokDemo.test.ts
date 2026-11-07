@@ -312,7 +312,7 @@ describe("Cleaner Core Grok demo: check_now", () => {
     ]);
     const checked = await call(wired, "check_now", { googleEvents: next });
     expect(checked.isError).toBe(false);
-    expect(checked.structured?.guestyUnread).toBe(true);
+    expect(checked.structured?.unread).toContain("Guesty Lite");
     expect(turnsOf(checked).map((turn) => turn.checkoutDate)).toContain("2026-10-24");
   });
 
@@ -1084,7 +1084,7 @@ describe("Cleaner Core Grok demo: final review fixes", () => {
     guestyCalendar(false);
     const down = await call(wired, "check_now", { googleEvents: list });
     expect(down.isError).toBe(false);
-    expect(down.structured?.guestyUnread).toBe(true);
+    expect(down.structured?.unread).toContain("Guesty Lite");
     expect(turnsOf(down).every((turn) => turn.status !== "canceled")).toBe(true);
     guestyCalendar(true);
     const up = await call(wired, "check_now", { googleEvents: list });
@@ -1333,7 +1333,6 @@ describe("Cleaner Core Grok demo: several calendar links", () => {
     expect(turnsOf(checks).map((turn) => turn.checkoutDate)).toEqual(GUESTY_JOBS);
     guestyCalendar(false);
     const down = await call(wired, "check_now", {});
-    expect(down.structured?.guestyUnread).toBe(true);
     expect(down.structured?.unread).toEqual(["Guesty Lite"]);
     expect(turnsOf(down).every((turn) => turn.status !== "canceled")).toBe(true);
   });
