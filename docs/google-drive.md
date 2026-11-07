@@ -80,7 +80,7 @@ folder stays private.
 
 Never included: Sendblue keys and webhook secrets, the Grok Routine address
 and key, MCP tokens, Google tokens, hosted owner cookies, CSRF and setup
-session secrets, Durin credentials, and Railway secrets. Those are
+session secrets, door access credentials, and Railway secrets. Those are
 reconnected after a restore.
 
 ## Restore
@@ -97,7 +97,7 @@ If this Tour Core already has property or tour records, import is refused
 unless the operator explicitly chooses replacement. Merge is not supported.
 
 After restore, property and tour history are back. Visitor texting, operator
-updates, and the Durin Access Platform need their credentials again. The backup
+updates, and door access need their credentials again. The backup
 does not contain them.
 
 A normal Railway restart does not use this flow.
