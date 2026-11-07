@@ -104,11 +104,14 @@ post a value.
   types a password or a card detail.
 - **Every cart** goes through `check_cart` before Place Order, the same gate
   as on Grok. Holds wait for the host's yes in chat.
-- **When a store wants the host** at checkout (a security code, a new
-  sign-in), Muse hands them the browser on that page in a live chat, and the
-  host clicks Place Order. That order is recorded as `host-browser`, beside
+- **When a store wants the host** (a security code, a new sign-in), Muse
+  hands them the browser on that page in a live chat. The host clicks Place
+  Order only on a cart `check_cart` said go to, or one they approved with
+  `approve_cart`'s code, and that order is recorded as `host-browser`, beside
   Grok's `grok-card`. In a recurring run, Muse tells the host and tries again
   at the next run.
+- **One Supply Core task** checks every property on the account that has
+  Supply Core on.
 - **The Supply Core recurring task** runs daily at the check time. When the
   cleaner reports something low after DONE, the Cleaner Core task shops for
   it right away.
