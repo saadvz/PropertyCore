@@ -24,7 +24,7 @@ import { calendarFetch, setCalendarFetch } from "../hub/calendarFetch";
 import { forgetHub, hubFor, resetHubs, type Hub, type HubSave, type UploadResult } from "../hub/hub";
 import type { HubProperty } from "../hub/store";
 import { LEGACY_CALENDAR, MAX_CALENDARS, maskedLink, setAsideLine, type StoredCalendar } from "../hub/calendars";
-import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, PAYMENTS_STEP, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, SUPPLIES_STEP, type SetupAsk } from "./setupAsk";
+import { allTimesAsk, askNext, DOOR_CODE_STEP, DRAFT_CONFIRM, DRAFT_FILL, DRAFT_NEXT, moreSourcesAsk, PAYMENTS_STEP, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, SUPPLIES_STEP, type SetupAsk, type SetupDraft } from "./setupAsk";
 import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jobHoldLine, optedOutCodeLine, resumeNote } from "./cleanerTexts";
 import { isInjuryReport } from "./injury";
 import { GroupNotConfirmed } from "./groupThread";
@@ -64,6 +64,13 @@ const CLEANER_PICK = "That's Cleaner Core. It schedules cleaners between guest s
 const ROUTINE_ASK =
   "Create the Cleaner Core Check and Cleaner Core Alerts routines. Only the host can see the Alerts routine's webhook address and key. Right after you create it, without waiting to be asked, send the host a link that opens the Alerts routine's Webhook URL field directly and one that opens its Webhook key field directly, with one secure card for each, the address first. Never send a link to the Routines page, and never tell the host to open Routines and pick the routine: opening the routine from there doesn't show its Webhook URL. Keep it to three short steps: open the link, copy the value, paste it in the card. Then call save_alert_routine with no arguments to get a one-time upload link, and send both values to that link from your own computer. Never put them in chat.";
 const REVIEW_ASK = "Summarize this setup for the host in your own words, then ask them to reply Activate.";
+const PICK_FIRST = "Tell me which job you want help with first.";
+
+/** "a, b, and c" */
+function listText(items: string[]): string {
+  if (items.length <= 2) return items.join(" and ");
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
 
 const DEPARTURES = new Set(["guests have left", "guests left", "they have left", "they left", "departed", "left"]);
 
@@ -173,6 +180,9 @@ export const CODE_IN_SAVED_ANSWER = (topic?: string): string =>
     ? `Those digits are in the saved answer for "${topic}". Change or forget that answer with save_answer, then save the door code again.`
     : "Those digits are in a saved answer. Change or forget it with save_answer, then save the door code again.";
 export const CODE_IN_DRAFT = "Those digits are in a reply draft waiting to be sent. Send it or drop it with save_draft, then save the door code again.";
+/** Setup saves in any order, so the cleaner's notes can be saved before the door code. */
+export const CODE_IN_PREFERENCES = "Those digits are in the saved checklist or the note for the cleaner. Change them with save_preferences, then save the door code again.";
+export const CODE_IN_SAVED_SETUP = "Those digits are in a name or a setting saved for this setup. Change it, then save the door code again.";
 export const DRAFT_NEW_SINCE = "Something new came in since this draft. Read it with check_now, then save a new draft or drop this one.";
 const RECIPIENT_NEEDED = "Say who to text: the cleaner, the group, or a saved contact's name.";
 const NO_GROUP = "There's no group chat for this property.";
@@ -397,6 +407,8 @@ interface LiveFile {
   payments?: PaymentSettings;
   /** Set once the host answered whether to set up Supply Core, or turned it on. */
   suppliesAsked?: boolean;
+  /** When the agent showed the host the setup draft and saved their changes (get_state drafted: true). */
+  drafted?: string;
   /** Each finished cleaning's pay, by job id, once it became owed. */
   pay?: Record<string, PayRecord>;
   /**
@@ -1014,6 +1026,11 @@ export class LiveDesk {
     const inAnswer = (this.file.savedAnswers ?? []).find((item) => containsCodeToken(item.topic, code) || containsCodeToken(item.answer, code));
     if (inAnswer) return CODE_IN_SAVED_ANSWER(containsCodeToken(inAnswer.topic, code) ? undefined : inAnswer.topic);
     if ((this.file.drafts ?? []).some((draft) => containsCodeToken(draft.text, code))) return CODE_IN_DRAFT;
+    // Setup saves in any order (#166), so text the cleaner gets may be saved before the code.
+    const preferences = this.file.preferences;
+    if (preferences && [...preferences.checklist, preferences.instructions ?? ""].some((text) => text && containsCodeToken(joinSplitDigits(text), code))) return CODE_IN_PREFERENCES;
+    const saved = [this.file.business, this.file.cleanerName, this.file.hostName, this.file.schedule?.escalateTo, ...contactsOf(this.file).map((contact) => contact.name), ...this.hub.calendars().map((calendar) => calendar.name)];
+    if (saved.some((text) => text && containsCodeToken(joinSplitDigits(text), code))) return CODE_IN_SAVED_SETUP;
     return undefined;
   }
 
@@ -1055,24 +1072,34 @@ export class LiveDesk {
     });
   }
 
-  getState(choice?: "tours" | "cleaners"): Promise<ToolReply> {
-    return this.serial(async () => this.getStateNow(choice));
+  /** drafted: true says the host saw the setup draft and their changes are saved, so setup asks what's still missing. */
+  getState(choice?: "tours" | "cleaners", drafted?: boolean): Promise<ToolReply> {
+    return this.serial(async () => this.getStateNow(choice, drafted));
   }
 
-  private getStateNow(choice: "tours" | "cleaners" | undefined): ToolReply {
+  private getStateNow(choice: "tours" | "cleaners" | undefined, drafted?: boolean): ToolReply {
     if (this.file.choice === "cleaners") this.resume();
     const failure = this.engine?.pullPinFailure() ? this.words().pinFailed : undefined;
     if (!this.file.choice) {
       const pick = choice === "tours" || choice === "cleaners" ? choice : undefined;
       if (!pick) return this.reply({ done: [], next: FIRST_QUESTION, ask: START_ASK });
       this.file.choice = pick;
+      this.noteDrafted(drafted);
       this.persist();
       if (pick === "tours") return this.reply({ done: [], next: TOUR_PICK });
       const first = this.cleaningState();
       return this.reply({ ...first, done: ["You chose cleaning."], next: `${CLEANER_PICK} ${String(first.next)}` });
     }
     if (this.file.choice === "tours") return this.withFailure(this.reply({ done: ["You chose touring."], next: "What's the property you want renters to tour?" }), failure);
+    if (this.noteDrafted(drafted)) this.persist();
     return this.withFailure(this.reply(this.cleaningState()), failure);
+  }
+
+  /** Records the host's look at the setup draft, once. True when it changed the file; the caller persists. */
+  private noteDrafted(drafted: boolean | undefined): boolean {
+    if (drafted !== true || this.file.choice !== "cleaners" || this.file.drafted) return false;
+    this.file.drafted = this.now().toISOString();
+    return true;
   }
 
   saveProperty(input: PropertyInput, pinKey?: Buffer): Promise<ToolReply> {
@@ -1080,7 +1107,7 @@ export class LiveDesk {
   }
 
   private savePropertyNow(input: PropertyInput, pinKey: Buffer | undefined): ToolReply {
-    if (this.file.choice !== "cleaners") return this.fail("Tell me which job you want help with first.");
+    if (this.file.choice !== "cleaners") return this.fail(PICK_FIRST);
     const address = input.address?.trim() ?? "";
     const business = input.business?.trim() ?? "";
     const timeZone = input.timeZone?.trim() ?? "";
@@ -1126,7 +1153,8 @@ export class LiveDesk {
   }
 
   private savePeopleNow(input: PeopleInput, pinKey: Buffer | undefined): ToolReply {
-    if (!this.place.address) return this.fail("Save the property first.");
+    // Setup saves in any order (#166): the people don't wait for the property.
+    if (this.file.choice !== "cleaners") return this.fail(PICK_FIRST);
     this.openSeal(pinKey);
     const host = parsePhone(input.host ?? "");
     const cleaner = parsePhone(input.cleaner ?? "");
@@ -1194,7 +1222,7 @@ export class LiveDesk {
   }
 
   private saveScheduleNow(input: ScheduleInput, pinKey: Buffer | undefined): ToolReply {
-    if (!this.file.cleaner) return this.fail("Save the host and the cleaner first.");
+    if (this.file.choice !== "cleaners") return this.fail(PICK_FIRST);
     this.openSeal(pinKey);
     const saved = this.file.schedule ?? DEFAULT_SCHEDULE;
     const firstText = input.firstText ?? saved.firstText;
@@ -1371,10 +1399,14 @@ export class LiveDesk {
     return this.reply({ next: this.doorCodeSavedLine() });
   }
 
-  /** Why the door code can't be saved yet, or undefined. */
+  /**
+   * Why the door code can't be saved yet, or undefined. Setup saves in any order (#166), so only the
+   * property comes first: the code is that property's. It still goes only to the approved cleaner,
+   * and only after the host says the guests have left.
+   */
   private doorCodeBefore(): string | undefined {
-    if (!this.file.cleaner || !this.file.propertyId) return "Save the host and the cleaner first.";
-    if (!this.hasSources() && !isScratchPropertyAddress(this.place.address)) return "Save the calendar link first.";
+    if (this.file.choice !== "cleaners") return PICK_FIRST;
+    if (!this.file.propertyId || !this.place.address) return "Save the property first.";
     return undefined;
   }
 
@@ -1463,7 +1495,8 @@ export class LiveDesk {
   }
 
   private savePreferencesNow(input: { checklist?: string[]; photosRequired?: boolean; supplyNotes?: boolean; instructions?: string }, pinKey: Buffer | undefined): ToolReply {
-    if (!this.codeSaved()) return this.fail("Save the door code first.");
+    // Setup saves in any order (#166). A door code saved later is checked against these (codeRefused).
+    if (this.file.choice !== "cleaners") return this.fail(PICK_FIRST);
     // The checklist and the instructions go to the cleaner, so the code is checked open when it can be.
     this.openSeal(pinKey);
     const saved = this.file.preferences ?? { checklist: [], photosRequired: false, supplyNotes: false };
@@ -1501,7 +1534,9 @@ export class LiveDesk {
   /** Review & Activate: saves texting, then runs the checks. Takes the same input as run_checks. */
   activate(input: { googleEvents?: GoogleEventList } = {}): Promise<ToolReply> {
     return this.serial(async () => {
-      if (!this.file.preferences) return this.fail("Save the cleaning preferences first, or save empty ones if there are none.");
+      // Setup saves in any order (#166), so Activate checks every step it needs.
+      const missing = this.activateMissing();
+      if (missing.length > 0) return this.failWith(`Before Activate, save ${listText(missing)}.`, { needsYou: missing });
       // Nothing texts before the alert routine is connected, so no reply from the cleaner goes unheard.
       if (!this.routineReady()) {
         const task = this.task();
@@ -3285,7 +3320,11 @@ export class LiveDesk {
     else if (!this.file.texting && !preferences) ask = PREFERENCES_STEP;
     else if (!this.file.texting && !this.file.payments) ask = PAYMENTS_STEP;
     else if (!this.file.texting && !this.file.suppliesAsked && this.offersSupplies()) ask = SUPPLIES_STEP;
-    if (ask) next = askNext(ask.tool);
+    // Setup starts with a draft (#166): until the host has seen it, get_state asks for the draft
+    // instead of the next step's questions. What's still missing after it is asked one at a time.
+    const draft = ask && !this.file.texting && !this.file.drafted ? this.setupDraft() : undefined;
+    if (draft) next = DRAFT_NEXT;
+    else if (ask) next = askNext(ask.tool);
     // The routines come before the review, so the cleaner's first reply already wakes Grok.
     else if (!this.file.texting && !this.routineReady()) next = this.words().routineAsk;
     else if (!this.file.texting) next = REVIEW_ASK;
@@ -3301,6 +3340,7 @@ export class LiveDesk {
       } else next = "Tell me the checkout time and the next check-in time before I text the cleaner.";
     }
     const review = next === REVIEW_ASK;
+    const drafting = next === DRAFT_NEXT;
     if (this.held) next = this.holdLine();
     const notes = this.engine ? this.visibleNotes(this.engine).map((note) => note.body) : [];
     if (!this.held && this.privateCodeWaiting()) next = this.words().pinFailed;
@@ -3314,6 +3354,7 @@ export class LiveDesk {
       done,
       next,
       ...(ask && asking ? { ask: assistant === "muse" ? museAsk(ask) : assistant === "chatgpt" ? chatGptAsk(ask) : assistant === "claude" ? claudeAsk(ask) : ask } : {}),
+      ...(draft && drafting && next === DRAFT_NEXT ? { draft } : {}),
       ...(task && (next === this.words().routineAsk || warning) ? { routine: task } : {}),
       ...(warning ? { warning } : {}),
       ...(review && next === REVIEW_ASK ? { setup: this.reviewSetup() } : {}),
@@ -3380,6 +3421,42 @@ export class LiveDesk {
     return this.hub.calendars().length > 0 || this.hub.google();
   }
 
+  /**
+   * The setup draft (#166): where to look, what the host always confirms, and the questions of every
+   * step still missing, in setup order but saved in any order. A step whose answer has a default
+   * (the schedule, the preferences) is still listed, so the summary shows what the draft picked.
+   */
+  private setupDraft(): SetupDraft {
+    const place = this.place;
+    const name = place.nickname ?? this.file.business ?? "the property";
+    const needsYou: SetupAsk[] = [];
+    if (!place.address || !place.checkoutTime || !place.checkInTime) {
+      needsYou.push(propertyAsk({ address: Boolean(place.address), checkoutTime: Boolean(place.checkoutTime), checkInTime: Boolean(place.checkInTime) }));
+    }
+    if (!this.hasSources()) needsYou.push(sourcesAsk(name));
+    else if (!this.hub.calendarsDone() && !this.file.cleaner) needsYou.push(moreSourcesAsk(this.sourceNames(), name));
+    if (!this.file.cleaner) needsYou.push(peopleAsk(this.file.business ?? "the host"));
+    if (!this.file.schedule) needsYou.push(SCHEDULE_STEP);
+    if (!this.codeSaved()) needsYou.push(DOOR_CODE_STEP);
+    if (!this.file.preferences) needsYou.push(PREFERENCES_STEP);
+    if (!this.file.payments) needsYou.push(PAYMENTS_STEP);
+    if (!this.file.suppliesAsked && this.offersSupplies()) needsYou.push(SUPPLIES_STEP);
+    const assistant = this.assistant();
+    const shown = (step: SetupAsk) => (assistant === "muse" ? museAsk(step) : assistant === "chatgpt" ? chatGptAsk(step) : assistant === "claude" ? claudeAsk(step) : step) as SetupAsk;
+    return { fill: DRAFT_FILL, confirm: DRAFT_CONFIRM, needsYou: needsYou.map(shown) };
+  }
+
+  /** What Activate still needs, in the host's words. Empty once setup can go live. */
+  private activateMissing(): string[] {
+    const missing: string[] = [];
+    if (!this.place.address) missing.push("the property");
+    if (!this.hasSources() && !isScratchPropertyAddress(this.place.address)) missing.push("a booking calendar");
+    if (!this.file.cleaner) missing.push("the host and the cleaner");
+    if (!this.codeSaved()) missing.push("the door code");
+    if (!this.file.preferences) missing.push("the cleaning preferences (empty ones if there are none)");
+    return missing;
+  }
+
   /** The next setup step with its ask, for a save tool's reply. */
   private setupReply(extra: Record<string, unknown> = {}): ToolReply {
     const state = this.cleaningState();
@@ -3439,7 +3516,16 @@ export class LiveDesk {
       ...(file.schedule ? { schedule: this.reviewSchedule(file.schedule) } : {}),
       access: this.door().lockLocation() ? { lockLocation: this.door().lockLocation() } : {},
       preferences: file.preferences,
+      payments: this.reviewPayments(),
     };
+  }
+
+  /** Payments for the review (#166): on with the pay per cleaning and the Venmo username, off, or not answered. */
+  private reviewPayments(): Record<string, unknown> {
+    const payments = this.file.payments;
+    if (!payments) return { on: false, asked: false };
+    if (!payments.on || !payments.rateCents || !payments.venmo) return { on: false };
+    return { on: true, perCleaning: dollarsText(payments.rateCents), venmo: `@${payments.venmo}` };
   }
 
   /** The saved schedule with clock times like 8:00 AM. Problems go to the host unless someone else was named. */

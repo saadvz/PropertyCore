@@ -103,6 +103,37 @@ export async function peopleRefusal(h: HostedCleaner, tenant: Tenant, property: 
   return places.length > 0 ? sharedRefusal(places) : undefined;
 }
 
+/** One person already on another of the account's properties, as a setup draft names them. Never a phone. */
+export interface DraftPerson {
+  name?: string;
+  on: { label: string; role: Role }[];
+  /** They already said YES on the account, so this property sends them no new invite. */
+  saidYes: boolean;
+}
+
+/**
+ * For a property's setup draft (#166): the cleaners and contacts already on the account's other
+ * properties. A draft that reuses one says so in its summary, and save_people takes shared: true
+ * only after the host's yes. No phone number is listed: the agent matches people by name.
+ */
+export async function draftPeople(h: HostedCleaner, tenant: Tenant, property: Property): Promise<DraftPerson[]> {
+  const others = tenant.properties.filter((p) => p.id !== property.id);
+  if (others.length === 0) return [];
+  const people = await accountPeople(h, tenant);
+  const label = (id: string) => others.find((p) => p.id === id)?.label;
+  const listed: DraftPerson[] = [];
+  for (const person of people.everyone()) {
+    if (person.where.some((w) => w.propertyId === property.id)) continue;
+    const on = person.where.flatMap((w) => {
+      const name = label(w.propertyId);
+      return name ? [{ label: name, role: w.role }] : [];
+    });
+    if (on.length === 0) continue;
+    listed.push({ ...(person.name ? { name: person.name } : {}), on, saidYes: people.optedIn(person.phone) });
+  }
+  return listed;
+}
+
 /**
  * After save_people: the account list takes this property's people and host. Anyone who already said
  * YES or STOP on the account has it applied here too. A phone on the line's older STOP list stays stopped.

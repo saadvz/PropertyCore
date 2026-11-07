@@ -64,7 +64,7 @@ const hubOf = (root: string) => hubFor(root, { now: () => new Date(FROZEN) });
 const live = (root: string) => JSON.parse(readFileSync(join(root, "cleaner-live.json"), "utf8")) as Record<string, unknown>;
 
 async function property(desk: LiveDesk): Promise<void> {
-  ok(await desk.getState("cleaners"));
+  ok(await desk.getState("cleaners", true));
   ok(await desk.saveProperty({ business: BUSINESS, nickname: "Lake House", address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
 }
 
@@ -364,11 +364,15 @@ describe("review fixes: the code after a re-save and after a reset", () => {
     expect(existsSync(join(root, "door-access.json"))).toBe(false);
     expect(await desk.uploadLinkOpen("door-code", link)).toEqual({ open: false });
     // Set up again without saving a door code: activate needs one.
-    ok(await desk.getState("cleaners"));
+    ok(await desk.getState("cleaners", true));
     ok(await desk.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: HARNESS_ZONE, checkoutTime: "10:30", checkInTime: "15:00" }));
     ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
     ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" }));
-    expect((await desk.savePreferences({})).ok).toBe(false);
+    // Setup saves in any order (#166), so the preferences save, but Activate still needs the code.
+    ok(await desk.savePreferences({}));
+    const early = await desk.activate();
+    expect(early.ok).toBe(false);
+    if (!early.ok) expect(early.error).toContain("the door code");
     clock.advance(Date.parse("2026-10-18T16:00:00.000Z") - clock.now().getTime());
     expect((await desk.markGuestsLeft({ confirmed: true }, HARNESS_KEY)).ok).toBe(false);
     expect(sms.sent.some((item) => item.body.includes(DOOR_CODE))).toBe(false);

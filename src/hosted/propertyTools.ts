@@ -56,8 +56,8 @@ const GET_STATE = {
   name: "get_state",
   title: "What's next",
   description:
-    "Call this first. Lists the account's properties, which flows each one has on, and each one's next step. With property, gives that property's own Cleaner Core state and next step (or Supply Core's, when only Supply Core is on there). With one property, it gives that property's state directly.",
-  inputSchema: { type: "object", properties: { property: PROPERTY_ARG, choice: { type: "string", maxLength: 40 } }, additionalProperties: false },
+    "Call this first. Lists the account's properties, which flows each one has on, and each one's next step. With property, gives that property's own Cleaner Core state and next step (or Supply Core's, when only Supply Core is on there). With one property, it gives that property's state directly. Setup starts with a draft for each property: pass drafted: true with the property once the host corrected its summary.",
+  inputSchema: { type: "object", properties: { property: PROPERTY_ARG, choice: { type: "string", maxLength: 40 }, drafted: { type: "boolean" } }, additionalProperties: false },
 };
 
 const ADD_PROPERTY = {

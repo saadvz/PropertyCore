@@ -95,7 +95,7 @@ async function doneLines(desk: LiveDesk): Promise<string[]> {
 
 /** Setup up to and including the preferences, with a checklist only when asked. */
 async function throughPreferences(desk: LiveDesk, checklist: string[] = []) {
-  ok(await desk.getState("cleaners"));
+  ok(await desk.getState("cleaners", true));
   ok(await desk.saveProperty({ business: BUSINESS, nickname: "Lake House", address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
   ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
   ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" }));
