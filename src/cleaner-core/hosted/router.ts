@@ -77,7 +77,6 @@ export interface TenantContext {
 }
 
 const ROUTINE = new Set<string>(ROUTINE_NAMES);
-const UNLINKED = "This connection isn't linked to a Cleaner Core account. Reconnect with an invite code from Saad.";
 const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 const TOUR_CORE_PATHS = new Set(["/mcp/ops", "/mcp/qa"]);
 const TENANT_PATH = /^\/t\/([^/]+)(\/.+)$/;
