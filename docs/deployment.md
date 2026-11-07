@@ -594,7 +594,7 @@ Tour Core service's.
 | `CLEANER_CORE_ENABLED` | `1` |
 | `CLEANER_CORE_ADMIN_PASSWORD` | Saad's admin password. Railway variables only |
 | `CLEANER_CORE_TWILIO_ACCOUNT_SID`, `CLEANER_CORE_TWILIO_AUTH_TOKEN` | The one Twilio account every tenant's number is on |
-| `CLEANER_CORE_LIVE_SMS`, `CLEANER_CORE_SMS_ALLOWLIST` | As on any Cleaner Core deployment |
+| `CLEANER_CORE_LIVE_SMS`, `CLEANER_CORE_SMS_ALLOWLIST` | As on any Cleaner Core deployment. The allowlist now only vouches for the host phone of an account with no phone confirmed at sign-up, and gates touring texts |
 | `NODE_ENV`, `RAILPACK_NODE_NPM_INSTALL`, `NPM_CONFIG_PRODUCTION`, `RAILPACK_NODE_VERSION` | As in `.railway/railway.ts` |
 
 Do not set `CLEANER_CORE_TWILIO_PHONE_NUMBER`, `CLEANER_CORE_ASSISTANT`, or
