@@ -20,7 +20,8 @@ import {
 const ADDRESS = "12 Practice Lane, Teaneck, NJ 07666";
 const BUSINESS = "Harbor";
 const DOOR = "8088";
-const STRANGER = "+15555550199";
+// Not one of the Scratch tenants' phones, so nothing but the consent rules can drop it.
+const STRANGER = "+15555550177";
 const TOUR_NUMBER = "+15555550123";
 const HOST_UNCONFIRMED = "I can text only after the host's phone is confirmed. Save the phone you confirmed when you signed in as the host's number.";
 const BLANK_LISTS: Array<string | undefined> = [undefined, "", "   ", ",", " , , "];
@@ -147,6 +148,62 @@ describe("per-account texting consent (saadvz/TourCore#164)", () => {
     }
   });
 
+  it("reads only the people the host saved: a stranger's STOP changes nothing and gets no reply", async () => {
+    const client = fakeSms();
+    setCleanerTwilioClient(client);
+    calendar();
+    const { desk, close } = await readyDesk({ ...envFor(undefined), CLEANER_CORE_LANDLORD_PHONE: HOST });
+    try {
+      // Before any engine exists, a stranger's STOP gets no reply carrying the address.
+      await desk.inbound({ id: "stranger-stop-early", from: STRANGER, text: "STOP" });
+      expect((await desk.runChecks()).ok).toBe(true);
+      expect((await desk.confirmTimes({ checkout: "10:30", checkIn: "15:00" })).ok).toBe(true);
+      await desk.inbound({ id: "stranger-stop", from: STRANGER, text: "STOP" });
+      await desk.inbound({ id: "stranger-hurt", from: STRANGER, text: "someone is hurt" });
+      expect(client.sent.filter((item) => item.to === STRANGER)).toEqual([]);
+      expect(client.sent.some((item) => /hurt|911/i.test(item.body))).toBe(false);
+      // The cleaner's own YES still schedules the turnover, and the host can still text them.
+      await desk.inbound({ id: "cleaner-yes-after-stranger", from: CLEANER, text: "YES" });
+      expect(client.sent.some((item) => item.to === CLEANER && /Turnover at/.test(item.body))).toBe(true);
+      expect((await desk.sendMessage({ to: "cleaner", text: "Running late today?" })).ok).toBe(true);
+    } finally {
+      close();
+    }
+  });
+
+  it("takes a saved cleaner's STOP even while the host's phone isn't confirmed, and holds every text meanwhile", async () => {
+    const client = fakeSms();
+    setCleanerTwilioClient(client);
+    calendar();
+    const env: NodeJS.ProcessEnv = { ...envFor(undefined), CLEANER_CORE_LANDLORD_PHONE: HOST };
+    const root = mkdtempSync(join(tmpdir(), "cleaner-allow-"));
+    try {
+      const desk = liveDeskFor(root, () => env, () => new Date(FROZEN));
+      const pinKey = Buffer.from(TEST_PIN_KEY, "base64");
+      expect((await desk.getState("cleaners")).ok).toBe(true);
+      expect((await desk.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: "America/New_York" })).ok).toBe(true);
+      expect((await desk.savePeople({ host: HOST, cleaner: CLEANER })).ok).toBe(true);
+      expect((await desk.saveCalendarLink({ url: CALENDAR_URL })).ok).toBe(true);
+      expect((await desk.saveDoorCode({ code: DOOR }, pinKey)).ok).toBe(true);
+      expect((await desk.setUpTexting()).ok).toBe(true);
+      expect((await desk.runChecks()).ok).toBe(true);
+      expect((await desk.confirmTimes({ checkout: "10:30", checkIn: "15:00" })).ok).toBe(true);
+      await desk.inbound({ id: "unconfirmed-yes", from: CLEANER, text: "YES" });
+      expect((await desk.sendMessage({ to: "cleaner", text: "Running late today?" })).ok).toBe(true);
+      // The landlord's confirmed phone changes, so the saved host no longer matches it.
+      env.CLEANER_CORE_LANDLORD_PHONE = STRANGER;
+      const sentBefore = client.sent.length;
+      expect((await desk.sendMessage({ to: "cleaner", text: "Running late today?" })).ok).toBe(false);
+      await desk.inbound({ id: "unconfirmed-stop", from: CLEANER, text: "STOP" });
+      expect(client.sent.slice(sentBefore).filter((item) => item.to !== CLEANER)).toEqual([]);
+      env.CLEANER_CORE_LANDLORD_PHONE = HOST;
+      // The STOP was kept: the cleaner can't be texted again until they opt back in.
+      expect((await desk.sendMessage({ to: "cleaner", text: "Running late today?" })).ok).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses a host other than the phone confirmed at sign-up, even when the allowlist is *", async () => {
     const root = mkdtempSync(join(tmpdir(), "cleaner-allow-"));
     try {
@@ -187,6 +244,8 @@ describe("per-account texting consent (saadvz/TourCore#164)", () => {
     expect(landlordConfirmed({}, HOST)).toBe(false);
     expect(landlordConfirmed({ CLEANER_CORE_LANDLORD_PHONE: HOST }, undefined)).toBe(false);
     expect(landlordConfirmed({ CLEANER_CORE_LANDLORD_PHONE: CLEANER_LINE, CLEANER_CORE_TWILIO_PHONE_NUMBER: CLEANER_LINE }, CLEANER_LINE)).toBe(false);
+    // A landlord record that isn't a confirmed phone fails closed, even with the allowlist at *.
+    expect(landlordConfirmed({ CLEANER_CORE_LANDLORD_PHONE: "unconfirmed", CLEANER_CORE_SMS_ALLOWLIST: "*" }, HOST)).toBe(false);
   });
 });
 
