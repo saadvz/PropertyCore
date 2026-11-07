@@ -50,7 +50,9 @@ routine runs, it wakes once, and `check_now` returns all of them.
 1. If `eventType` is `installation.test`, post:
    "Cleaner Core alerts are connected." and stop.
 2. Otherwise call `check_now` without `googleEvents`. A webhook can't read the
-   host's Google Calendar. The Cleaner Core Check routine does that.
+   host's Google Calendar. The Cleaner Core Check routine does that. With more
+   than one property, `check_now` checks every property and names each one:
+   say which property each line is about.
 3. Post each line in `alerts` in your own short words. Post nothing when
    `alerts` is empty. A new booking asks the host to confirm the usual times.
    "Have the guests left?" asks the host about the checkout. Only the host's

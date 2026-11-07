@@ -8,8 +8,9 @@ import { TouringSupervisor, type SpawnWorker, type WorkerHandle } from "../src/h
 /** The supervisor with a fake fork and a clock the test moves. No process is started. */
 
 const SECOND = 1000;
-const lane: Tenant = { id: "tnt_lane000001", label: "Lane", twilioNumber: "+15555550150", connections: [], invites: [], service: "touring", createdAt: "2026-10-01T00:00:00.000Z" };
-const court: Tenant = { ...lane, id: "tnt_court00001", label: "Court", twilioNumber: "+15555550160", service: "cleaning" };
+const lane: Tenant = { id: "tnt_lane000001", label: "Lane", twilioNumber: "+15555550150", connections: [], invites: [], service: "touring", properties: [], createdAt: "2026-10-01T00:00:00.000Z" };
+/** An account of properties: no touring process. */
+const court: Tenant = { id: "tnt_court00001", label: "Court", twilioNumber: "+15555550160", connections: [], invites: [], properties: [], createdAt: "2026-10-01T00:00:00.000Z" };
 const mill: Tenant = { ...lane, id: "tnt_mill000001", label: "Mill", twilioNumber: "+15555550170", disabled: true };
 
 interface FakeWorker extends WorkerHandle {
@@ -237,7 +238,7 @@ describe("TouringSupervisor", () => {
 
   it("starts touring tenants and stops the rest on sync", async () => {
     const h = harness();
-    await h.startReady(court.service === "cleaning" ? { ...court, service: "touring" } : court);
+    await h.startReady({ ...court, service: "touring" });
     const sync = h.supervisor.syncAll([lane, court, mill]);
     for (const worker of h.workers.slice(1)) worker.emit({ type: "ready", port: 41000 });
     await sync;

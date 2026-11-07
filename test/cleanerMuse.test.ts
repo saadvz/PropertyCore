@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { accountTools } from "../src/hosted/propertyTools";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -98,8 +99,8 @@ describe("Muse template", () => {
     expect(prompt).toMatch(/Never show a door code, an id, or a phone number\./);
   });
 
-  it("names only real Cleaner Core tools", async () => {
-    const tools = await toolNames();
+  it("names only real Cleaner Core tools, or the account's own", async () => {
+    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name))];
     for (const file of filesUnder(TEMPLATE)) {
       for (const m of read(file).matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) expect(tools, `${file}: ${m[1]}`).toContain(m[1]);
     }

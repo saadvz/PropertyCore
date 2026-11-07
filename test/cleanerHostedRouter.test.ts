@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { liveDeskFor, resetLiveDesks } from "../src/cleaner-core/liveDesk";
 import { isAllowlisted } from "../src/cleaner-core/liveSms";
-import { drainAllTenants, hostedCleaner, splitTenantPath, tenantContext } from "../src/cleaner-core/hosted/router";
+import { drainAllTenants, hostedCleaner, splitTenantPath, touringAccountContext } from "../src/cleaner-core/hosted/router";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
 import { hashSecret, OAuthGrantStore } from "../src/mcp/oauth/store";
 import { BASE, closeHostedApps } from "./cleanerOauthHarness";
@@ -51,19 +51,19 @@ describe("splitTenantPath", () => {
 describe("routing on the multi-tenant service", () => {
   it("sends an MCP call to its own tenant's folder only", async () => {
     const { m, lane, court } = await start();
-    const token = await m.join(lane.id, "grok");
+    const token = await m.joinCleaning(lane.id, "grok");
     await m.tool(token, "get_state", { choice: "cleaners" });
     const saved = await m.tool(token, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE });
     expect(saved.isError).toBe(false);
-    expect(existsSync(join(tenantFolder(m.app.root, lane.id), "cleaner-live.json"))).toBe(true);
-    expect(existsSync(join(tenantFolder(m.app.root, court.id), "cleaner-live.json"))).toBe(false);
+    expect(existsSync(join(m.cleaningRoot(lane.id), "cleaner-live.json"))).toBe(true);
+    expect(existsSync(join(tenantFolder(m.app.root, court.id), "properties"))).toBe(false);
     expect(existsSync(join(m.app.root, "cleaner-live.json"))).toBe(false);
   });
 
   it("refuses a grant whose tenant was removed or disabled", async () => {
     const { m, lane, court } = await start();
-    const laneToken = await m.join(lane.id, "grok");
-    const courtToken = await m.join(court.id, "grok");
+    const laneToken = await m.joinCleaning(lane.id, "grok");
+    const courtToken = await m.joinCleaning(court.id, "grok");
     m.registry.remove(lane.id);
     m.registry.setDisabled(court.id, true);
     for (const token of [laneToken, courtToken]) {
@@ -100,8 +100,8 @@ describe("routing on the multi-tenant service", () => {
 
   it("names the Grok primary in host texts while a Claude connection runs the setup", async () => {
     const { m, lane } = await start();
-    await m.join(lane.id, "grok");
-    const claude = await m.join(lane.id, "claude");
+    await m.joinCleaning(lane.id, "grok");
+    const claude = await m.joinCleaning(lane.id, "claude");
     const call = (name: string, args: Record<string, unknown> = {}) => m.tool(claude, name, args);
     await call("get_state", { choice: "cleaners" });
     await call("save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE });
@@ -122,8 +122,8 @@ describe("routing on the multi-tenant service", () => {
 
   it("wakes only the primary's routine, and falls back when the primary's grant is gone", async () => {
     const { m, lane } = await start();
-    const grok = await m.join(lane.id, "grok");
-    const claude = await m.join(lane.id, "claude");
+    const grok = await m.joinCleaning(lane.id, "grok");
+    const claude = await m.joinCleaning(lane.id, "claude");
     expect((await m.tool(grok, "save_alert_routine", { url: GROK_HOOK, token: "grok-routine-key-1" })).isError).toBe(false);
     expect((await m.tool(claude, "save_alert_routine", { url: CLAUDE_FIRE, token: "claude-routine-key-1" })).isError).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -137,14 +137,14 @@ describe("routing on the multi-tenant service", () => {
     expect(m.wakes.slice(seen).map((wake) => wake.url)).toEqual([CLAUDE_FIRE]);
   });
 
-  it("sends no cleaning alerts for a tenant that moved to touring", async () => {
+  it("sends no cleaning alerts for a property whose cleaning was turned off", async () => {
     const { m, court } = await start();
-    const courtToken = await m.join(court.id, "grok");
+    const courtToken = await m.joinCleaning(court.id, "grok");
     m.setWakeStatus(503);
     expect((await m.tool(courtToken, "save_alert_routine", { url: GROK_HOOK, token: "court-routine-key" })).isError).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 20));
     m.setWakeStatus(200);
-    m.registry.setService(court.id, "touring");
+    m.registry.setFlow(court.id, m.registry.get(court.id)!.properties[0]!.id, "cleaning", false);
     at += 60 * 60_000;
     const h = hostedCleaner({
       registry: m.registry,
@@ -163,14 +163,14 @@ describe("routing on the multi-tenant service", () => {
 
   it("keeps draining the other tenants when one tenant's desk throws", async () => {
     const { m, lane, court } = await start();
-    const courtToken = await m.join(court.id, "grok");
+    const courtToken = await m.joinCleaning(court.id, "grok");
     m.setWakeStatus(503);
     expect((await m.tool(courtToken, "save_alert_routine", { url: GROK_HOOK, token: "court-routine-key" })).isError).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 20));
     m.setWakeStatus(200);
-    m.registry.setService(lane.id, "cleaning");
-    mkdirSync(tenantFolder(m.app.root, lane.id), { recursive: true });
-    writeFileSync(join(tenantFolder(m.app.root, lane.id), "cleaner-live.json"), "{ not json");
+    m.registry.setFlow(lane.id, m.registry.addProperty(lane.id, "12 Scratch Lane").id, "cleaning", true);
+    mkdirSync(m.cleaningRoot(lane.id), { recursive: true });
+    writeFileSync(join(m.cleaningRoot(lane.id), "cleaner-live.json"), "{ not json");
     const logs: string[] = [];
     at += 60 * 60_000;
     const h = hostedCleaner({
@@ -191,19 +191,19 @@ describe("routing on the multi-tenant service", () => {
 
   it("a page probe on a fresh desk never changes which chat the tenant's texts and alerts follow", async () => {
     const { m, lane } = await start();
-    await m.join(lane.id, "grok");
-    await m.join(lane.id, "claude");
+    await m.joinCleaning(lane.id, "grok");
+    await m.joinCleaning(lane.id, "claude");
     resetLiveDesks();
     const probe = `/t/${lane.id}/cleaner-core/door-code/${"A".repeat(43)}`;
     expect((await m.app.http(probe)).status).toBe(404);
-    const desk = liveDeskFor(tenantFolder(m.app.root, lane.id), () => ({}), () => new Date());
+    const desk = liveDeskFor(m.cleaningRoot(lane.id), () => ({}), () => new Date());
     expect(desk.primaryAssistant()).toBe("grok");
   });
 
   it("an upload page speaks as the chat that made the link, even when the primary is another chat", async () => {
     const { m, lane } = await start();
-    await m.join(lane.id, "chatgpt");
-    const claude = await m.join(lane.id, "claude");
+    await m.joinCleaning(lane.id, "chatgpt");
+    const claude = await m.joinCleaning(lane.id, "claude");
     const link = await m.tool(claude, "save_alert_routine", {});
     const path = new URL(String(link.structured?.uploadUrl)).pathname;
     const page = await m.app.http(path);
@@ -225,7 +225,7 @@ describe("routing on the multi-tenant service", () => {
       now: clock,
       log: () => undefined,
     });
-    const ctx = tenantContext(h, lane);
+    const ctx = touringAccountContext(h, lane);
     expect(ctx.env().CLEANER_CORE_ENABLED).toBe("1");
     m.registry.remove(lane.id);
     expect(ctx.env().CLEANER_CORE_ENABLED).toBe("0");
@@ -243,7 +243,7 @@ describe("routing on the multi-tenant service", () => {
       now: clock,
       log: () => undefined,
     });
-    const env = tenantContext(h, lane).env();
+    const env = touringAccountContext(h, lane).env();
     expect(isAllowlisted(env, LANE_CLEANER)).toBe(true);
     expect(isAllowlisted(env, LANE_LINE)).toBe(false);
     expect(isAllowlisted(env, COURT_LINE)).toBe(false);
@@ -258,8 +258,8 @@ describe("routing on the multi-tenant service", () => {
 
   it("makes the chat that connects its routine the primary when the primary has none", async () => {
     const { m, lane } = await start();
-    await m.join(lane.id, "claude");
-    const grok = await m.join(lane.id, "grok");
+    await m.joinCleaning(lane.id, "claude");
+    const grok = await m.joinCleaning(lane.id, "grok");
     const grokGrant = grantOf(m, grok).id;
     expect(m.registry.get(lane.id)!.primaryGrantId).not.toBe(grokGrant);
     expect((await m.tool(grok, "save_alert_routine", { url: GROK_HOOK, token: "grok-routine-key-1" })).isError).toBe(false);
@@ -273,8 +273,8 @@ describe("routing on the multi-tenant service", () => {
 
   it("leaves a primary whose routine is connected alone", async () => {
     const { m, lane } = await start();
-    const grok = await m.join(lane.id, "grok");
-    const claude = await m.join(lane.id, "claude");
+    const grok = await m.joinCleaning(lane.id, "grok");
+    const claude = await m.joinCleaning(lane.id, "claude");
     expect((await m.tool(grok, "save_alert_routine", { url: GROK_HOOK, token: "grok-routine-key-1" })).isError).toBe(false);
     expect((await m.tool(claude, "save_alert_routine", { url: CLAUDE_FIRE, token: "claude-routine-key-1" })).isError).toBe(false);
     expect(m.registry.get(lane.id)!.primaryGrantId).toBe(grantOf(m, grok).id);
@@ -282,8 +282,8 @@ describe("routing on the multi-tenant service", () => {
 
   it("promotes on a routine saved through the upload link, too", async () => {
     const { m, lane } = await start();
-    await m.join(lane.id, "claude");
-    const grok = await m.join(lane.id, "grok");
+    await m.joinCleaning(lane.id, "claude");
+    const grok = await m.joinCleaning(lane.id, "grok");
     const link = await m.tool(grok, "save_alert_routine", {});
     const path = new URL(String(link.structured?.uploadUrl)).pathname;
     expect(m.registry.get(lane.id)!.primaryGrantId).not.toBe(grantOf(m, grok).id);

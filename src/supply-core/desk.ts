@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { join } from "node:path";
 import { interpretFeed } from "../cleaner-core/calendar";
 import { calendarUrlAllowed, readPublicCalendar } from "../cleaner-core/fetchLimits";
 import { cleanerCalendarFetch } from "../cleaner-core/liveDesk";
@@ -146,7 +147,8 @@ export class SupplyDesk {
     readonly root: string,
     readonly deps: SupplyDeps,
   ) {
-    this.approvals = new ConfirmationBook(10 * 60_000, () => deps.now().getTime());
+    // Kept in the tenant's folder, so a host's yes still counts after a restart.
+    this.approvals = new ConfirmationBook(10 * 60_000, () => deps.now().getTime(), { file: join(root, "supply-approvals.json") });
   }
 
   /** Runs calls one at a time, so two tools never write the record at once. */
@@ -980,4 +982,9 @@ export function supplyDeskFor(root: string, deps: SupplyDeps): SupplyDesk {
   const desk = new SupplyDesk(root, deps);
   desks.set(root, desk);
   return desk;
+}
+
+/** Forgets every desk, as a restart would. Tests use it. */
+export function resetSupplyDesks(): void {
+  desks.clear();
 }

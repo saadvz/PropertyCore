@@ -26,10 +26,12 @@ second.
 Install the plugin in [`plugin/`](plugin/). It carries the **property-core**
 skill, which tells Claude how to run setup.
 
-## Step 3: Pick a service
+## Step 3: Add your property
 
-In a new chat, say "Set up Property Core". Claude asks "Which do you want to
-set up: Tour Core or Cleaner Core?" Pick one.
+In a new chat, say "Set up Property Core". Claude asks for your property's
+address, adds it, and turns on Cleaner Core for it. Have more than one
+property? Add each one the same way. Tour Core is paused for new accounts:
+ask Saad to make your account a touring account first.
 
 - **Tour Core:** Claude walks you through your property, hours, the
   property facts visitors ask about (how to apply, fees, lease, and more; each

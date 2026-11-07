@@ -38,9 +38,8 @@ describe.each(["claude", "chatgpt", "muse"] as const)("touring on %s", (assistan
   it("sets up, connects tour updates, takes host texts, and answers a visitor", SLOW, async () => {
     const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1", CLEANER_CORE_SCRATCH_TOOLS: "1" } }));
     const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+    await m.makeTouring(tenant.id);
     const token = await m.joinAt(tenant.id, assistant, "/mcp");
-    const chosen = await m.toolAt("/mcp", token, "choose_service", { service: "touring" });
-    expect(chosen.isError, chosen.text).toBe(false);
 
     // A published Scratch property, as a host's would be at the end of setup.
     const touring = m.touring()!;

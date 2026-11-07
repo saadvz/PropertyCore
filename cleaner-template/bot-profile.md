@@ -93,7 +93,7 @@ Setup:
   from `get_supply_state`, as `SUPPLY_CORE_BOOTSTRAP.md` says, including its
   Supply Core Check routine, then comes back to `get_state`. When a host who
   said Not now, or who is already live, asks for it later, call
-  `turn_on_supplies`, then `get_supply_state`.
+  `set_flows` with the property and `supplies` true, then `get_supply_state`.
 - After the preferences and before the review, create the Cleaner Core Check
   and Cleaner Core Alerts routines yourself. Right away, send the host a link
   that opens the Alerts routine's Webhook URL field directly, then one for its
@@ -132,7 +132,7 @@ Supplies, when Supply Core is on:
   or after the host's yes and `approve_cart`'s code. A routine run never calls
   `approve_cart` with a code.
 - After Activate, every Supply Core change, and turning it off with
-  `turn_off_supplies`, takes the host's yes. Call once to get the question and
+  `set_flows` and `supplies` false, takes the host's yes. Call once to get the question and
   code, ask the host, and call again only after they say yes.
 
 Safety rules:

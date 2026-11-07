@@ -32,6 +32,7 @@ import { formParams } from "../messaging/twilio/signature";
 import { forkTouringWorker, TouringSupervisor } from "../hosted/touringSupervisor";
 import { assistantProfile, cleanerAssistant, type CleanerAssistant } from "../cleaner-core/assistant";
 import { TenantRegistry, type InviteRefusal } from "../cleaner-core/hosted/registry";
+import { migrateRegistry, MigrationError } from "../cleaner-core/hosted/migrate";
 import { drainAllTenants, handleHostedCleaner, hostedCleaner, splitTenantPath, type HostedCleaner } from "../cleaner-core/hosted/router";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import { TenantSecrets } from "../cleaner-core/hosted/tenantSecrets";
@@ -388,6 +389,16 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
   const multiTenant = () => cleanerMultiTenant(installation.env());
   // Hosted, Cleaner Core runs only as the multi-tenant service: a hosted desk with no tenants would be open to anyone.
   const cleanerOn = () => cleanerCoreEnabled(installation.env()) && (!hostedMode() || multiTenant());
+  // Tenants move into their properties before any desk opens, so no desk is ever cached at a tenant's old folder.
+  if (multiTenant()) {
+    try {
+      const { migrated } = migrateRegistry(installation.root, () => options.now?.() ?? new Date());
+      if (migrated > 0) log(`Moved ${migrated} tenant${migrated === 1 ? "" : "s"} into their first property.`);
+    } catch (err) {
+      if (err instanceof MigrationError) log(err.message);
+      throw err;
+    }
+  }
   const tenants = new TenantRegistry(installation.root, () => options.now?.() ?? new Date());
   const serviceOrigin = () => {
     const base = installation.publicBaseUrl();
@@ -516,17 +527,6 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
                   connected: (tenantId: string, grantId: string, assistant: CleanerAssistant) =>
                     tenants.connect(tenantId, { grantId, assistant, connectedAt: (options.now?.() ?? new Date()).toISOString() }),
                   refusal: (reason: InviteRefusal) => INVITE_REFUSALS[reason],
-                  // Supply Core is offered to Grok chats only: the others have no shopping tools or Vault.
-                  offersPick: (assistant?: CleanerAssistant) => serviceChoices({ touring: tourCoreTenants(installation.env()) && !!touringFront, supplies: supplyCoreOn(installation.env()) && assistant === "grok" }).length > 1,
-                  choices: (assistant?: CleanerAssistant) => serviceChoices({ touring: tourCoreTenants(installation.env()) && !!touringFront, supplies: supplyCoreOn(installation.env()) && assistant === "grok" }),
-                  // The host's pick on the Allow page sets a new number's service before its chat lists any tools.
-                  choose: (tenantId: string, service: ServicePick) => {
-                    const tenant = tenants.get(tenantId);
-                    if (!tenant || tenant.service) return;
-                    tenants.setService(tenantId, service);
-                    log(`${tenantId} chose ${service} on the Allow page.`);
-                    if (service === "touring") void touringFront?.start(tenants.get(tenantId)!).catch(() => undefined);
-                  },
                 },
               }
             : {}),

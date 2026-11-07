@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { CLAUDE_TASK_PROMPT, SERVICE_CHOICES, SERVICE_QUESTION } from "../src/hosted/serviceTools";
+import { CLAUDE_TASK_PROMPT } from "../src/hosted/serviceTools";
 
 /** The Property Core Grok Bot template: one bot for both services, consistent with the service and free of secrets. */
 
@@ -25,6 +25,14 @@ interface Manifest {
 }
 
 const manifest = () => json(join(TEMPLATE, "template.json")) as unknown as Manifest;
+
+/** The property instructions: get_state first, add_property, set_flows, the property id, and no service pick or switch. */
+function propertyFlow(raw: string): boolean {
+  const text = raw.replace(/\s+/g, " ");
+  const has = ["`get_state` first", "`add_property`", "`set_flows`", "its id from `get_state`"].every((part) => text.includes(part));
+  const old = ["choose_service", "switch_service", "stand_down_service", "Which do you want to set up"].some((part) => text.includes(part));
+  return has && !old;
+}
 const profile = () => read(join(TEMPLATE, manifest().profile));
 
 describe("Property Core template", () => {
@@ -52,11 +60,9 @@ describe("Property Core template", () => {
     expect(profile()).toContain("never connect to\n  `/mcp/cleaner-core`");
   });
 
-  it("asks the same question, with the same choices, as the service does", () => {
-    const text = profile().replace(/\s+/g, " ");
-    expect(text).toContain(`ask the host exactly "${SERVICE_QUESTION}"`);
-    for (const choice of SERVICE_CHOICES) expect(text).toContain(`"${choice.label}"`);
-    expect(manifest().services.map((s) => [s.service, s.choice])).toEqual(SERVICE_CHOICES.map((c) => [c.service, c.label]));
+  it("starts from get_state, adds properties, and turns flows on with set_flows, never picking a service", () => {
+    expect(propertyFlow(profile())).toBe(true);
+    expect(manifest().services.map((s) => s.service).sort()).toEqual(["cleaning", "touring"]);
   });
 
   it("carries each service's routines, the same ones its own template defines", () => {
@@ -103,11 +109,10 @@ describe.each(["claude", "chatgpt", "muse"] as const)("Property Core for %s", (p
     expect(m().integrations.filter((i) => i.type === "custom-connector").map((i) => i.url)).toEqual(["hostedPropertyCoreUrl/mcp"]);
   });
 
-  it("asks the service's question with its choices, and never connects /mcp/cleaner-core", () => {
-    const text = read(join(dir, m().instructions)).replace(/\s+/g, " ");
-    expect(text).toContain(`ask the host exactly "${SERVICE_QUESTION}"`);
-    for (const choice of SERVICE_CHOICES) expect(text).toContain(`"${choice.label}"`);
-    expect(text).toMatch(/[Nn]ever connect to `\/mcp\/cleaner-core`/);
+  it("adds properties and turns flows on with set_flows, and never connects /mcp/cleaner-core", () => {
+    const text = read(join(dir, m().instructions));
+    expect(propertyFlow(text)).toBe(true);
+    expect(text.replace(/\s+/g, " ")).toMatch(/[Nn]ever connect to `\/mcp\/cleaner-core`/);
   });
 
   it("has a touring task that reads its updates and asks about host texts", () => {

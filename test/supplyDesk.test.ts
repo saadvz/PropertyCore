@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { supplyDeskFor, type SupplyDeps } from "../src/supply-core/desk";
+import { resetSupplyDesks, supplyDeskFor, type SupplyDeps } from "../src/supply-core/desk";
 import { emptySupply, monthSpentCents, readSupply, type Order } from "../src/supply-core/store";
 
 /** Supply Core setup on a made-up property. Made-up stores and links only; nothing reaches a store. */
@@ -12,6 +12,7 @@ const PROPERTY = { name: "Scratch Lane", address: "12 Scratch Lane, Teaneck, NJ 
 
 const dirs: string[] = [];
 afterEach(() => {
+  resetSupplyDesks();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -204,6 +205,29 @@ describe("changes after Activate", () => {
     expect(readSupply(root).settings.mode).toBe("hands-off");
     await desk.saveSettings({ mode: "checkout", confirmation: (settings.structured!.confirmation as { code: string }).code });
     expect(readSupply(root).settings.mode).toBe("checkout");
+  });
+});
+
+describe("approvals across a restart", () => {
+  it("a change approved after a restart saves once; an expired code is refused", async () => {
+    const { desk, root } = await activated();
+    const id = readSupply(root).items[0]!.id;
+    const ask = await desk.saveItem({ ...towels, id, qtyPerOrder: 3 });
+    const code = (ask.structured!.confirmation as { code: string }).code;
+    resetSupplyDesks();
+    const restarted = supplyDeskFor(root, { now: () => NOW, standalone: true });
+    expect(restarted).not.toBe(desk);
+    expect((await restarted.saveItem({ ...towels, id, qtyPerOrder: 3, confirmation: code })).isError).toBe(false);
+    expect(readSupply(root).items[0]!.qtyPerOrder).toBe(3);
+    resetSupplyDesks();
+    expect((await supplyDeskFor(root, { now: () => NOW, standalone: true }).saveItem({ ...towels, id, qtyPerOrder: 3, confirmation: code })).isError).toBe(true);
+
+    const late = await supplyDeskFor(root, { now: () => NOW, standalone: true }).saveItem({ ...towels, id, qtyPerOrder: 5 });
+    resetSupplyDesks();
+    const later = new Date(NOW.getTime() + 10 * 60_000);
+    const expired = await supplyDeskFor(root, { now: () => later, standalone: true }).saveItem({ ...towels, id, qtyPerOrder: 5, confirmation: (late.structured!.confirmation as { code: string }).code });
+    expect(expired.isError).toBe(true);
+    expect(readSupply(root).items[0]!.qtyPerOrder).toBe(3);
   });
 });
 

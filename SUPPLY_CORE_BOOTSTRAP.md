@@ -18,8 +18,9 @@ In chat, call this connection Supply Core.
 
 Read `supply-template/template.json`. If `hostedSupplyCoreUrl` is an https address, that service is the product.
 
-- **On its own:** connect to `<hostedSupplyCoreUrl>/mcp` as a custom MCP server. The host types the invite code from Saad on the page and picks Supply Core. If the number has no service yet, call `get_state` and then `choose_service` with `supplies`.
-- **With Cleaner Core:** you're already connected. When the host asks for supplies to be reordered, call `turn_on_supplies`, then `get_supply_state`.
+- **On its own:** connect to `<hostedSupplyCoreUrl>/mcp` as a custom MCP server. The host types the invite code from Saad on the page and clicks Allow. Call `get_state`. With no property yet, ask for the delivery address, call `add_property` with it, then `set_flows` with that property and `supplies` true.
+- **With Cleaner Core:** you're already connected. When the host asks for supplies to be reordered at a property, call `set_flows` with the property and `supplies` true, then `get_supply_state`.
+- **Several properties:** each property has its own list, stores, and orders. Name the property in every Supply Core call with its id from `get_state`: as `property`, or as `propertyId` in `save_supply_settings`, whose own `property` field is the delivery address.
 
 The clone is only for reading these instructions. Do not run anything from it. Never ask for the invite code in chat.
 

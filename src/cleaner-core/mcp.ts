@@ -319,6 +319,11 @@ export const GROK_INSTRUCTIONS = [
   "Setup goes in this order: save_property, save_sources, save_people, save_schedule, save_door_code on your secure card, save_preferences, save_payments (the host may say Not now), then the Cleaner Core Check and Cleaner Core Alerts routines with save_alert_routine, then a review in your own words and activate after the host replies Activate. CLEANER_CORE_BOOTSTRAP.md in the repository has the full guide.",
 ].join(" ");
 
+/** The initialize instructions for each chat. */
+export function cleanerInstructions(assistant: CleanerAssistant): string {
+  return { grok: GROK_INSTRUCTIONS, claude: CLAUDE_INSTRUCTIONS, chatgpt: CHATGPT_INSTRUCTIONS, muse: MUSE_INSTRUCTIONS }[assistant];
+}
+
 export type SaveSecrets = (values: Partial<Record<SettingName, string>>) => void;
 export type DeleteSecrets = (names: SettingName[]) => void;
 
@@ -343,7 +348,7 @@ export async function handleCleanerMcpMessage(
       capabilities: { tools: { listChanged: false } },
       serverInfo: SERVER_INFO,
       // A Claude deployment has its own words. A Grok deployment's stay exactly as they were.
-      instructions: { grok: GROK_INSTRUCTIONS, claude: CLAUDE_INSTRUCTIONS, chatgpt: CHATGPT_INSTRUCTIONS, muse: MUSE_INSTRUCTIONS }[assistant],
+      instructions: cleanerInstructions(assistant),
     });
   }
   if (method === "ping") return rpcResult(id, {});

@@ -246,13 +246,16 @@ describe("send_message with a draft", () => {
     expect(sentCount(opened)).toBe(before);
   });
 
-  it("sends a draft after a restart with a new code", async () => {
+  it("sends a draft after a restart with the code from before it, once only", async () => {
     const opened = await liveGroup();
     const id = await savedDraft(opened.desk, await asked(opened.desk));
     const old = await previewCode(opened.desk, id);
     const desk = opened.reopen();
-    expect(refused(await desk.sendMessage({ draft: id, confirmation: old })).error).toBe(STALE);
-    expect(ok(await approvedOnDesk((confirmation) => desk.sendMessage({ draft: id, ...(confirmation ? { confirmation } : {}) }))).next).toBe("Sent to the group.");
+    const before = sentCount(opened);
+    expect(ok(await desk.sendMessage({ draft: id, confirmation: old })).next).toBe("Sent to the group.");
+    expect(sentCount(opened)).toBe(before + 1);
+    expect(refused(await opened.reopen().sendMessage({ draft: id, confirmation: old })).error).toBeTruthy();
+    expect(sentCount(opened)).toBe(before + 1);
   });
 
   it("refuses a draft that is gone", async () => {

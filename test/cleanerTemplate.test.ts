@@ -12,6 +12,7 @@ import { askNext } from "../src/cleaner-core/setupAsk";
 import { DOOR_CODE } from "./wiringProof";
 import { filesUnder } from "./files";
 import { SUPPLY_FRONT_NAMES } from "../src/supply-core/hosted";
+import { accountTools } from "../src/hosted/propertyTools";
 
 /** The Cleaner Core paste-in prompt, setup guide, and Grok Bot template: pinned, consistent with the tools, and free of secrets. */
 
@@ -185,7 +186,7 @@ describe("Cleaner Core template manifest", () => {
     const profile = read(join(TEMPLATE, manifest().profile));
     const instructions = profile.slice(profile.indexOf("## Standing instructions"));
     expect(profile.slice(0, profile.indexOf("## Standing instructions"))).toMatch(/Venmo[\s\S]*Supply Core/);
-    for (const tool of ["save_payments", "mark_paid", "choose_supplies", "turn_on_supplies", "get_supply_state", "report_low", "check_cart", "approve_cart", "turn_off_supplies"]) {
+    for (const tool of ["save_payments", "mark_paid", "choose_supplies", "set_flows", "get_supply_state", "report_low", "check_cart", "approve_cart"]) {
       expect(instructions, tool).toContain(`\`${tool}\``);
     }
     expect(instructions).toContain("`SUPPLY_CORE_BOOTSTRAP.md`");
@@ -354,8 +355,8 @@ describe("Cleaner Core initialize instructions", () => {
 describe("Cleaner Core template docs", () => {
   const docs = () => [BOOTSTRAP, ...filesUnder(TEMPLATE)].map((f) => ({ f, text: read(f) }));
 
-  it("name only real Cleaner Core tools, or Supply Core's when the add-on is on", async () => {
-    const tools = [...(await toolNames()), ...SUPPLY_FRONT_NAMES];
+  it("name only real Cleaner Core tools, the account's tools, or Supply Core's when it's on", async () => {
+    const tools = [...(await toolNames()), ...SUPPLY_FRONT_NAMES, ...accountTools().map((tool) => String(tool.name))];
     for (const { f, text } of docs()) {
       for (const m of text.matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) expect(tools, `${f}: ${m[1]}`).toContain(m[1]);
     }

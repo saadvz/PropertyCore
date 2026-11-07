@@ -339,3 +339,23 @@ describe("Owed cleanings and payDue", () => {
     expect(readFileSync(join(lane.root, "cleaner-live.json"), "utf8")).toContain(USERNAME);
   });
 });
+
+describe("payments approval across a restart", () => {
+  it("a code issued before a restart still saves once, and an expired one is refused", async () => {
+    const clock = testClock(FROZEN);
+    const first = openDesk(clock.now);
+    const code = codeOf(ok(await first.desk.savePayments({ rate: 80, venmo: USERNAME })));
+    resetLiveDesks();
+    const restarted = openDesk(clock.now, first.root);
+    expect(restarted.desk).not.toBe(first.desk);
+    ok(await restarted.desk.savePayments({ rate: 80, venmo: USERNAME, confirmation: code }));
+    expect(JSON.parse(readFileSync(join(first.root, "cleaner-live.json"), "utf8")).payments).toMatchObject({ on: true, rateCents: 8000, venmo: USERNAME });
+    resetLiveDesks();
+    expect(refused(await openDesk(clock.now, first.root).desk.savePayments({ rate: 80, venmo: USERNAME, confirmation: code }))).toBe(STALE);
+
+    const late = codeOf(ok(await openDesk(clock.now, first.root).desk.savePayments({ rate: 90, venmo: USERNAME })));
+    resetLiveDesks();
+    clock.set(new Date(new Date(FROZEN).getTime() + 10 * 60_000).toISOString());
+    expect(refused(await openDesk(clock.now, first.root).desk.savePayments({ rate: 90, venmo: USERNAME, confirmation: late }))).toBe(STALE);
+  });
+});

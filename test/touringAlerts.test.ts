@@ -30,8 +30,8 @@ afterEach(() => {
 
 async function touringTenant(m: MultiTenantApp, label: string, number: string) {
   const { tenant } = m.registry.create({ label, twilioNumber: number });
+  await m.makeTouring(tenant.id);
   const token = await m.joinAt(tenant.id, "grok", "/mcp");
-  await m.toolAt("/mcp", token, "choose_service", { service: "touring" });
   return { tenant, token };
 }
 
@@ -81,7 +81,7 @@ describe("touring alerts", () => {
   it("answers get_state with Grok's playbook, and counts the routine as connected once it's saved", SLOW, async () => {
     const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
     const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
-    m.registry.setService(tenant.id, "touring");
+    m.registry.setTouring(tenant.id);
     // A finished property, so the alerts step is what get_state offers next.
     const ws = new PropertyWorkspace(join(tenantFolder(m.app.root, tenant.id), "tour-core"));
     const { config } = ws.save({ ...hillsideConfig(), messagingProvider: "local" });
@@ -231,8 +231,8 @@ describe("touring alerts", () => {
 
     async function claudeLink(m: MultiTenantApp) {
       const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+      await m.makeTouring(tenant.id);
       const token = await m.joinAt(tenant.id, "claude", "/mcp");
-      await m.toolAt("/mcp", token, "choose_service", { service: "touring" });
       const reply = await m.toolAt("/mcp", token, "save_alert_routine");
       return new URL(String(reply.structured?.uploadUrl)).pathname;
     }
@@ -240,8 +240,8 @@ describe("touring alerts", () => {
     it("tells Claude to send the host the link, never to collect the values itself", SLOW, async () => {
       const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
       const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+      await m.makeTouring(tenant.id);
       const token = await m.joinAt(tenant.id, "claude", "/mcp");
-      await m.toolAt("/mcp", token, "choose_service", { service: "touring" });
       const reply = (await m.toolAt("/mcp", token, "save_alert_routine")).structured!;
       const next = String(reply.next);
       expect(next).toContain("Send the host this link");

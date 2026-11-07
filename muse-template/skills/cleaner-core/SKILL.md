@@ -97,6 +97,12 @@ value back, and never repeat it.
 
 ## Setup order
 
+One account can hold several properties on one text line. With no property
+yet, `get_state` asks for one: call `add_property` with the address, then
+`set_flows` with that property and `cleaning` true. With more than one
+property, name the property in every Cleaner Core call with its id from
+`get_state`.
+
 Call `get_state` first and follow its `next` step. Ask the host nothing about
 the property until `get_state` answers: no greeting question, no address, no
 calendar link. During setup it returns `ask`: the step, its tool, and its

@@ -19,19 +19,19 @@ the approval page opens, type your invite code, pick **Tour Core** or
 **Cleaner Core**, and click Allow. Picking there means your first chat already
 has the right tools. This one connector serves both services.
 
-## Step 2: Pick a service
+## Step 2: Add your property
 
 In a new chat with Property Core attached, say "Set up Property Core".
 
-ChatGPT's instructions for this step: as soon as you're connected, without
-waiting to be asked, ask the host exactly "Which do you want to set up: Tour
-Core or Cleaner Core?" with two choices: "Tour Core: self-guided tours for a
-rental unit" and "Cleaner Core: a cleaner for a property". Don't describe
-your tools instead. Call `choose_service` with their pick: `touring` or
-`cleaning`. Keep this one connector, and never connect to `/mcp/cleaner-core`,
-even when a service's guide names it.
+ChatGPT's instructions for this step: call `get_state` first. With no property
+yet, ask the host for the property's address and call `add_property` with it,
+then `set_flows` with the property and `cleaning` true for Cleaner Core. With
+more than one property, name the property in every property tool call with its
+id from `get_state`. Keep this one connector, and never connect to
+`/mcp/cleaner-core`, even when a service's guide names it. Touring is parked:
+only Saad makes an account a touring account.
 
-## Step 3: Run the chosen service
+## Step 3: Run each flow
 
 - **Tour Core:** ChatGPT calls `get_state` and walks you through your
   property, hours, the property facts visitors ask about (how to apply,

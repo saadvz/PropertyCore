@@ -5,6 +5,7 @@ import { parsePhone } from "../../core/phone";
 import { hashSecret } from "../../mcp/oauth/store";
 import { writeJsonAtomic } from "../../storage/atomicWrite";
 import type { CleanerAssistant } from "../assistant";
+import { newPropertyId, type FlowName, type Property } from "./properties";
 
 /**
  * The hosts a multi-tenant Cleaner Core serves. One small JSON file, read on every call so the
@@ -23,8 +24,8 @@ export interface TenantInvite {
   usedAt?: string;
 }
 
-/** Which service a tenant's number answers for. Unset until the host's chat chooses one. */
-export type TenantService = "cleaning" | "touring" | "supplies";
+/** Only touring is left as an account-wide service: Tour Core is parked, and its accounts have no properties. */
+export type TenantService = "touring";
 
 export interface Tenant {
   id: string;
@@ -35,9 +36,9 @@ export interface Tenant {
   invites: TenantInvite[];
   disabled?: boolean;
   service?: TenantService;
-  /** Supply Core as an add-on on a cleaning tenant. */
-  supplies?: boolean;
   serviceChangedAt?: string;
+  /** The account's properties, each with its own folder and flows. Empty for a touring account. */
+  properties: Property[];
   createdAt: string;
   lastActivityAt?: string;
 }
@@ -45,14 +46,16 @@ export interface Tenant {
 export type InviteRefusal = "invalid" | "expired" | "used" | "disabled";
 
 export class RegistryError extends Error {
-  constructor(readonly reason: "bad-label" | "bad-number" | "number-taken" | "unknown-tenant") {
+  constructor(
+    readonly reason: "bad-label" | "bad-number" | "number-taken" | "unknown-tenant" | "needs-migration" | "unknown-property" | "has-properties" | "fixer-not-yet" | "duplicate-label",
+  ) {
     super(reason);
     this.name = "RegistryError";
   }
 }
 
 interface Doc {
-  schemaVersion: 2;
+  schemaVersion: 3;
   tenants: Tenant[];
 }
 
@@ -105,15 +108,13 @@ export class TenantRegistry {
   }
 
   private read(): Doc {
-    if (!existsSync(this.file)) return { schemaVersion: 2, tenants: [] };
+    if (!existsSync(this.file)) return { schemaVersion: 3, tenants: [] };
     const raw = JSON.parse(readFileSync(this.file, "utf8")) as { schemaVersion?: number; tenants?: Tenant[] };
-    const doc: Doc = { schemaVersion: 2, tenants: Array.isArray(raw.tenants) ? raw.tenants : [] };
-    // Version 1 had only Cleaner Core, so every tenant in it is a cleaning tenant. Written back once.
-    if (raw.schemaVersion !== 2) {
-      for (const tenant of doc.tenants) tenant.service ??= "cleaning";
-      this.write(doc);
-    }
-    return doc;
+    // An older file is moved into properties by migrateRegistry at startup, never read as is.
+    if (raw.schemaVersion !== 3) throw new RegistryError("needs-migration");
+    const tenants = Array.isArray(raw.tenants) ? raw.tenants : [];
+    for (const tenant of tenants) tenant.properties ??= [];
+    return { schemaVersion: 3, tenants };
   }
 
   private write(doc: Doc): void {
@@ -164,7 +165,7 @@ export class TenantRegistry {
     if (doc.tenants.some((t) => t.twilioNumber === number)) throw new RegistryError("number-taken");
     let id = `tnt_${pick(ID_CHARS, 10)}`;
     while (doc.tenants.some((t) => t.id === id)) id = `tnt_${pick(ID_CHARS, 10)}`;
-    const tenant: Tenant = { id, label, twilioNumber: number, connections: [], invites: [], createdAt: this.stamp() };
+    const tenant: Tenant = { id, label, twilioNumber: number, connections: [], invites: [], properties: [], createdAt: this.stamp() };
     const inviteCode = this.newInvite(tenant);
     doc.tenants.push(tenant);
     this.write(doc);
@@ -228,16 +229,43 @@ export class TenantRegistry {
     return oldest(tenant.connections.filter((c) => isLive(c.grantId)));
   }
 
-  setService(id: string, service: TenantService): void {
+  /** Makes an account a touring account. Only /admin does this, and only for an account with no properties. */
+  setTouring(id: string): void {
     this.update(id, (tenant) => {
-      tenant.service = service;
+      if (tenant.properties.length > 0) throw new RegistryError("has-properties");
+      tenant.service = "touring";
       tenant.serviceChangedAt = this.stamp();
     });
   }
 
-  setSupplies(id: string, on: boolean): void {
-    this.update(id, (tenant) => {
-      tenant.supplies = on;
+  /** A new property with every flow off. */
+  addProperty(tenantId: string, rawLabel: string): Property {
+    const label = rawLabel.trim();
+    if (!label) throw new RegistryError("bad-label");
+    return this.update(tenantId, (tenant) => {
+      // A label names one property, so the agent can use it in place of the id.
+      if (tenant.properties.some((p) => p.label.trim().toLowerCase() === label.toLowerCase())) throw new RegistryError("duplicate-label");
+      const taken = new Set(this.read().tenants.flatMap((t) => t.properties.map((p) => p.id)));
+      for (const p of tenant.properties) taken.add(p.id);
+      const property: Property = {
+        id: newPropertyId((candidate) => taken.has(candidate)),
+        label,
+        createdAt: this.stamp(),
+        flows: { cleaning: { on: false }, supplies: { on: false }, fixer: { on: false } },
+      };
+      tenant.properties.push(property);
+      return property;
+    });
+  }
+
+  /** Switches one flow on one property. Fixer Core can't be turned on yet. */
+  setFlow(tenantId: string, propertyId: string, flow: FlowName, on: boolean): Property {
+    if (flow === "fixer" && on) throw new RegistryError("fixer-not-yet");
+    return this.update(tenantId, (tenant) => {
+      const property = tenant.properties.find((p) => p.id === propertyId);
+      if (!property) throw new RegistryError("unknown-property");
+      property.flows[flow] = { on, changedAt: this.stamp() };
+      return property;
     });
   }
 

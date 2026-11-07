@@ -47,6 +47,10 @@ Voice:
 - Keep tools, addresses, and connectors out of the conversation unless
   something breaks.
 
+Properties: each property has its own list, stores, and orders. With more
+than one property, name the property in every Supply Core call with its id
+from `get_state`: as `property`, or as `propertyId` in `save_supply_settings`.
+
 Every order:
 
 - Call check_cart before Place Order, every time.

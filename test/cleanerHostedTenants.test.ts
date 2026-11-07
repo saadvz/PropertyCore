@@ -55,7 +55,7 @@ function holdsPin(text: string, pin: string): boolean {
 
 /** Setup through the door code upload link, then the cleaner's YES and the host's go-ahead. */
 async function setUp(side: Omit<Side, "token">, assistant: CleanerAssistant): Promise<Side> {
-  const token = await m.join(side.tenant.id, assistant);
+  const token = await m.joinCleaning(side.tenant.id, assistant);
   const call = (name: string, args: Record<string, unknown> = {}) => m.tool(token, name, args);
   await call("get_state", { choice: "cleaners" });
   await call("save_property", { business: "Scratch", address: side.scratch.property.address, timeZone: ZONE });
@@ -63,7 +63,8 @@ async function setUp(side: Omit<Side, "token">, assistant: CleanerAssistant): Pr
   await call("save_calendar_link", { url: CALENDAR_URL });
   const link = await call("save_door_code", {});
   const uploadUrl = String(link.structured?.uploadUrl);
-  expect(new URL(uploadUrl).pathname.startsWith(`/t/${side.tenant.id}/cleaner-core/door-code/`)).toBe(true);
+  const property = m.registry.get(side.tenant.id)!.properties[0]!;
+  expect(new URL(uploadUrl).pathname.startsWith(`/t/${side.tenant.id}/p/${property.id}/cleaner-core/door-code/`)).toBe(true);
   const upload = await m.app.http(new URL(uploadUrl).pathname, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: side.scratch.pin }) });
   expect(upload.status).toBe(200);
   await call("set_up_texting");

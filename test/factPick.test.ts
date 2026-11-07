@@ -139,7 +139,7 @@ describe("the touring pass-through", () => {
       TOURCORE_INTENT_MODEL_REASONING_EFFORT: "none",
       TOURCORE_STORAGE_MODEL: "DIRECT_GOOGLE_DRIVE",
     };
-    const lane: Tenant = { id: "tnt_lane000001", label: "Lane", twilioNumber: "+15555550150", connections: [], invites: [], service: "touring", createdAt: "2026-10-01T00:00:00.000Z" };
+    const lane: Tenant = { id: "tnt_lane000001", label: "Lane", twilioNumber: "+15555550150", connections: [], invites: [], service: "touring", properties: [], createdAt: "2026-10-01T00:00:00.000Z" };
     const env = buildTouringEnv({ base, tenant: lane, dataRoot: "/data", origin: "https://s.up.railway.app", key: "k", scratch: false });
     expect(env.TOURCORE_INTENT_MODEL_URL).toBe(base.TOURCORE_INTENT_MODEL_URL);
     expect(env.TOURCORE_INTENT_MODEL_KEY).toBe("not-a-real-key");

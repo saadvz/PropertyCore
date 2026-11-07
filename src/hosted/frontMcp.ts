@@ -1,15 +1,18 @@
 import type { CleanerAssistant } from "../cleaner-core/assistant";
 import { handleCleanerMcpHttp } from "../cleaner-core/http";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
-import { tourCoreTenants } from "../cleaner-core/flag";
-import { CLEANER_MCP_PATH, CLEANER_TOOL_NAMES } from "../cleaner-core/mcp";
+import { CLEANER_MCP_PATH, CLEANER_TOOL_NAMES, cleanerInstructions } from "../cleaner-core/mcp";
 import type { Tenant } from "../cleaner-core/hosted/registry";
-import { promoteRoutineOwner, tenantContext, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
+import type { Property } from "../cleaner-core/hosted/properties";
+import { promoteRoutineOwner, propertyContext, shareRoutine, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
+import { afterPeopleSaved, peopleRefusal } from "./lineRouter";
 import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
 import { OPERATOR_TOOL_NAMES } from "../operator/tools";
 import { ServiceNotices } from "./crossService";
-import { choicesFor, FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsFor, UNSET_CLEANING_INSTRUCTIONS, unsetInstructions, wrongServiceLine, type FrontReply, type ToolState } from "./serviceTools";
-import { handleSupplyFront, listedSupplyFront, SUPPLY_INSTRUCTIONS, suppliesLine } from "../supply-core/hosted";
+import { FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsFor, wrongServiceLine, type FrontReply } from "./serviceTools";
+import { setFlows, type FlowInput } from "./service";
+import { accountState, accountTools, addProperty, flowOff, resolveProperty, withPropertyArg, type PropertyStates } from "./propertyTools";
+import { listedChooseSupplies, listedSupplyFront, SUPPLY_FRONT_NAMES, suppliesLine, supplyCall, supplyDesk } from "../supply-core/hosted";
 import { taskWarning } from "./touringAlerts";
 import { callWorkerMcp, forwardMcp, type WorkerTarget } from "./touringForward";
 
@@ -42,11 +45,9 @@ const initializes = new Map<string, Buffer>();
 /** `${process key}|${grant}` pairs whose initialize the process has seen. A restart's new key starts over. */
 const introduced = new Set<string>();
 
-/** A tool of the service this number doesn't run, or a front tool from another state: refused, never forwarded. */
-function refusedHere(state: Exclude<ToolState, "unset">, name: string): boolean {
-  const active = state === "touring" ? TOURING_TOOLS : CLEANING_TOOLS;
-  const other = state === "touring" ? CLEANING_TOOLS : TOURING_TOOLS;
-  return (FRONT_TOOL_NAMES.has(name) || other.has(name)) && !active.has(name);
+/** A tool of Cleaner Core or the property front on a touring account: refused, never forwarded. */
+function refusedHere(name: string): boolean {
+  return (FRONT_TOOL_NAMES.has(name) || CLEANING_TOOLS.has(name) || SUPPLY_FRONT_NAMES.has(name) || name === "add_property" || name === "set_flows") && !TOURING_TOOLS.has(name);
 }
 
 const rpcResult = (id: RpcMessage["id"], result: unknown) => JSON.stringify({ jsonrpc: "2.0", id: id ?? null, result });
@@ -58,72 +59,28 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
   const auth = await r.authenticate(path);
   if (!auth) return;
   const extra = (auth.extra ?? {}) as { grantId?: string; tenantId?: string; assistant?: CleanerAssistant };
-  let tenant = extra.tenantId ? h.registry.get(extra.tenantId) : undefined;
+  const tenant = extra.tenantId ? h.registry.get(extra.tenantId) : undefined;
   if (!tenant || tenant.disabled || !extra.grantId || !extra.assistant) return r.send(403, JSON_TYPE, JSON.stringify({ error: { message: UNLINKED[path] ?? UNLINKED.shared } }));
-  // The cleaning address names its service: a tenant that hasn't chosen yet is a cleaning tenant there.
-  if (path === CLEANER_MCP_PATH && !tenant.service) {
-    h.registry.setService(tenant.id, "cleaning");
-    tenant = h.registry.get(tenant.id)!;
-  }
   const caller = { grantId: extra.grantId, assistant: extra.assistant };
-  const sessionKey = `grant:${caller.grantId}`;
-  const state = toolsFor(tenant);
   h.registry.touch(tenant.id);
+  if (toolsFor(tenant) === "properties") return propertiesAnswer(h, r, tenant, caller, `grant:${caller.grantId}`);
+  return touringAnswer(h, r, tenant, caller, `grant:${caller.grantId}`);
+}
 
-  if (r.method === "GET" && (state === "unset" || state === "supplies")) {
-    // A chat that holds a stream hears tools/list_changed the moment it chooses.
-    if (!String(r.req.headers.accept ?? "").includes("text/event-stream")) return r.send(405, JSON_TYPE, JSON.stringify({ error: { message: "Send MCP requests with POST." } }), { Allow: "POST, GET" });
-    r.res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive" });
-    attachToolListStream(sessionKey, r.res);
-    return;
-  }
-  if (r.method !== "POST") {
-    if (state === "touring") return touringPass(h, r, tenant, caller);
-    if (state === "supplies") return r.send(405, JSON_TYPE, JSON.stringify({ error: { message: "Send MCP requests with POST." } }), { Allow: "POST, GET" });
-    return cleaningPass(h, r, tenant, caller, Buffer.alloc(0));
-  }
-
+/** A parked touring account: Tour Core's own process answers, with the touring tools the service adds. */
+async function touringAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: TouringCaller, sessionKey: string): Promise<void> {
+  if (r.method !== "POST") return touringPass(h, r, tenant, caller);
   const raw = await r.readRaw();
-  let message: RpcMessage | undefined;
-  try {
-    const parsed = JSON.parse(raw.toString("utf8") || "null") as unknown;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) message = parsed as RpcMessage;
-  } catch {
-    message = undefined;
-  }
+  const message = parseMessage(raw);
   if (message?.method === "initialize") initializes.set(caller.grantId, raw);
-
-  // While touring and Supply Core are off here, a new number can only run cleaning, so nothing offers a pick.
-  const choices = choicesFor(h, caller.assistant);
-  const cleaningOnly = choices.length < 2;
-  if (state === "supplies") return suppliesAnswer(h, r, tenant, caller, sessionKey, message);
-  if (state === "unset") {
-    if (!message) return r.send(400, JSON_TYPE, rpcError(null, -32600, "That isn't a valid request."));
-    if (message.id === undefined) return r.send(202, JSON_TYPE, "");
-    if (message.method === "initialize") {
-      const version = typeof message.params?.protocolVersion === "string" ? message.params.protocolVersion : "2025-03-26";
-      return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "tour-core-shared", title: "Tour Core and Cleaner Core", version: "0.1.0" }, instructions: cleaningOnly ? UNSET_CLEANING_INSTRUCTIONS : unsetInstructions(choices) }));
-    }
-    if (message.method === "ping") return r.send(200, JSON_TYPE, rpcResult(message.id, {}));
-    if (message.method === "tools/list") return r.send(200, JSON_TYPE, rpcResult(message.id, { tools: listedFrontTools("unset", false, choices) }));
-    if (message.method !== "tools/call") return r.send(200, JSON_TYPE, rpcError(message.id, -32601, "I don't support that."));
-  }
-
   if (message?.method === "tools/call" && message.id !== undefined) {
     const name = typeof message.params?.name === "string" ? message.params.name : "";
     const reply = await handleFrontTool({ h, tenant, caller, noteToolsChanged: () => noteInitialized(sessionKey) }, name, message.params?.arguments);
     if (reply) return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult(reply)));
-    if (state === "cleaning") {
-      const supply = await handleSupplyFront({ h, tenant, caller, noteToolsChanged: () => noteInitialized(sessionKey) }, name, message.params?.arguments);
-      if (supply) return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult(supply)));
-    }
-    if (state === "unset") return r.send(200, JSON_TYPE, rpcError(message.id, -32602, "Ask the host which service to set up first. Call get_state."));
-    if (refusedHere(state, name)) return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult({ text: wrongServiceLine(state), isError: true })));
+    if (refusedHere(name)) return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult({ text: wrongServiceLine("touring"), isError: true })));
   }
-  if (state === "unset") return;
-
   if (message?.method === "tools/list" && message.id !== undefined) {
-    const answer = state === "touring" ? await touringCall(h, tenant.id, caller, raw, r) : await cleaningCall(h, tenant, caller, raw, r);
+    const answer = await touringCall(h, tenant.id, caller, raw, r);
     if (!answer) return r.send(503, JSON_TYPE, JSON.stringify({ error: { message: TOURING_DOWN } }));
     let listed: { result?: { tools?: unknown[] } } | undefined;
     try {
@@ -132,59 +89,176 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
       listed = undefined;
     }
     if (!listed?.result || !Array.isArray(listed.result.tools)) return r.send(answer.status, JSON_TYPE, answer.body);
-    listed.result.tools = [...listed.result.tools, ...listedFrontTools(state, scratchFor(h, tenant)), ...(state === "cleaning" ? listedSupplyFront(tenant, caller.assistant) : [])];
+    listed.result.tools = [...listed.result.tools, ...listedFrontTools("touring", scratchFor(h, tenant))];
     return r.send(200, JSON_TYPE, JSON.stringify(listed));
   }
-
   // Touring's get_state also carries the shared service's notes for the host, once each.
-  if (state === "touring" && message?.method === "tools/call" && message.id !== undefined && message.params?.name === "get_state") {
+  if (message?.method === "tools/call" && message.id !== undefined && message.params?.name === "get_state") {
     const answer = await touringCall(h, tenant.id, caller, raw, r);
     if (!answer) return r.send(503, JSON_TYPE, JSON.stringify({ error: { message: TOURING_DOWN } }));
     const warn = (state: Record<string, unknown>) => taskWarning(h, tenant, isPublished(state));
     return r.send(answer.status, JSON_TYPE, withNotices(answer.body, new ServiceNotices(h.dataRoot).take(tenant.id), warn));
   }
-  if (state === "touring") return touringPass(h, r, tenant, caller, raw, message?.method === "initialize");
-  // Cleaner Core's get_state carries one Supply Core line while the add-on is on.
-  const line = state === "cleaning" && message?.method === "tools/call" && message.id !== undefined && message.params?.name === "get_state" ? suppliesLine(h, tenant) : undefined;
-  if (line) {
-    const answer = await cleaningCall(h, tenant, caller, raw, r);
-    if (!answer) return;
-    return r.send(answer.status, JSON_TYPE, withFields(answer.body, { supplies: line }), answer.headers);
-  }
-  return cleaningPass(h, r, tenant, caller, raw);
+  return touringPass(h, r, tenant, caller, raw, message?.method === "initialize");
 }
 
-/** A supplies tenant: Supply Core answers every message in this process. Nothing is forwarded. */
-async function suppliesAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: { grantId: string; assistant: CleanerAssistant }, sessionKey: string, message: RpcMessage | undefined): Promise<void> {
+function parseMessage(raw: Buffer): RpcMessage | undefined {
+  try {
+    const parsed = JSON.parse(raw.toString("utf8") || "null") as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as RpcMessage) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+type Caller = { grantId: string; assistant: CleanerAssistant };
+
+/**
+ * An account of properties. The service answers every message itself: the account's tools, and each
+ * Cleaner Core or Supply Core call handed to the desk of the property it names.
+ */
+async function propertiesAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller, sessionKey: string): Promise<void> {
+  if (r.method === "GET") {
+    // A chat that holds a stream hears tools/list_changed the moment a flow is turned on or off.
+    if (!String(r.req.headers.accept ?? "").includes("text/event-stream")) return r.send(405, JSON_TYPE, JSON.stringify({ error: { message: "Send MCP requests with POST." } }), { Allow: "POST, GET" });
+    r.res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive" });
+    attachToolListStream(sessionKey, r.res);
+    return;
+  }
+  if (r.method !== "POST") return r.send(405, JSON_TYPE, JSON.stringify({ error: { message: "Send MCP requests with POST." } }), { Allow: "POST, GET" });
+  const message = parseMessage(await r.readRaw());
   if (!message) return r.send(400, JSON_TYPE, rpcError(null, -32600, "That isn't a valid request."));
   if (message.id === undefined) return r.send(202, JSON_TYPE, "");
   if (message.method === "initialize") {
     const version = typeof message.params?.protocolVersion === "string" ? message.params.protocolVersion : "2025-03-26";
-    return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "supply-core", title: "Supply Core", version: "0.1.0" }, instructions: SUPPLY_INSTRUCTIONS }));
+    return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "property-core", title: "Property Core", version: "0.1.0" }, instructions: `${PROPERTY_INSTRUCTIONS} ${cleanerInstructions(caller.assistant)}` }));
   }
   if (message.method === "ping") return r.send(200, JSON_TYPE, rpcResult(message.id, {}));
-  if (message.method === "tools/list") return r.send(200, JSON_TYPE, rpcResult(message.id, { tools: [...listedSupplyFront(tenant, caller.assistant), ...listedFrontTools("supplies")] }));
+  if (message.method === "tools/list") return r.send(200, JSON_TYPE, rpcResult(message.id, { tools: await propertyToolList(h, r, tenant, caller) }));
   if (message.method !== "tools/call") return r.send(200, JSON_TYPE, rpcError(message.id, -32601, "I don't support that."));
   const name = typeof message.params?.name === "string" ? message.params.name : "";
-  const ctx = { h, tenant, caller, noteToolsChanged: () => noteInitialized(sessionKey) };
-  const reply = (await handleFrontTool(ctx, name, message.params?.arguments)) ?? (await handleSupplyFront(ctx, name, message.params?.arguments));
-  if (reply) return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult(reply)));
-  return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult({ text: wrongServiceLine("supplies"), isError: true })));
+  const reply = await propertyToolCall(h, r, tenant, caller, sessionKey, name, message.params?.arguments);
+  return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult(reply)));
 }
 
-/** Adds fields to a tools/call reply's structured content and its JSON text. Unchanged when it has none. */
-function withFields(body: string, fields: Record<string, unknown>): string {
-  try {
-    const reply = JSON.parse(body) as { result?: { structuredContent?: Record<string, unknown>; content?: { type: string; text?: string }[] } };
-    const result = reply.result;
-    if (!result?.structuredContent) return body;
-    result.structuredContent = { ...result.structuredContent, ...fields };
-    const first = result.content?.[0];
-    if (first?.type === "text") first.text = JSON.stringify(result.structuredContent);
-    return JSON.stringify(reply);
-  } catch {
-    return body;
+/** Said on initialize before Cleaner Core's own instructions. */
+export const PROPERTY_INSTRUCTIONS =
+  "This connection runs Property Core for the host's properties: Cleaner Core for turnover cleanings and Supply Core for supplies. Call get_state first. When the account has more than one property, name the property in every property tool call with its id from get_state. Use set_flows to turn Cleaner Core or Supply Core on or off for a property. The host runs everything from this chat.";
+
+async function propertyToolList(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller): Promise<Record<string, unknown>[]> {
+  const required = tenant.properties.length > 1;
+  const tools: Record<string, unknown>[] = [...accountTools(), ...listedFrontTools("properties")];
+  const cleaning = tenant.properties.find((p) => p.flows.cleaning.on);
+  if (cleaning) {
+    const listed = deskJson(await cleaningCall(h, tenant, cleaning, caller, rpcBody("tools/list", {}), r));
+    const own = ((listed?.result as { tools?: Record<string, unknown>[] } | undefined)?.tools ?? []).filter((tool) => tool.name !== "get_state");
+    tools.push(...own.map((tool) => withPropertyArg(tool, required)));
+    tools.push(...listedChooseSupplies(caller.assistant).map((tool) => withPropertyArg(tool, required)));
   }
+  if (tenant.properties.some((p) => p.flows.supplies.on)) tools.push(...listedSupplyFront(caller.assistant).map((tool) => withPropertyArg(tool, required)));
+  return tools;
+}
+
+async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller, sessionKey: string, name: string, args: unknown): Promise<FrontReply> {
+  const noteToolsChanged = () => noteInitialized(sessionKey);
+  if (name === "get_state") return accountState(tenant, args, propertyStates(h, r, tenant, caller), caller.assistant);
+  if (name === "add_property") {
+    const reply = addProperty(h, tenant, args);
+    if (!reply.isError) noteToolsChanged();
+    return reply;
+  }
+  if (name === "set_flows") {
+    const reply = await setFlows({ h, tenant, actor: "host", assistant: caller.assistant, noteToolsChanged }, (args ?? {}) as FlowInput);
+    // A property that turns cleaning on starts with the account's routine connected.
+    if (!reply.isError) await shareRoutine(h, tenant.id);
+    return reply;
+  }
+  const front = await handleFrontTool({ h, tenant, caller, noteToolsChanged }, name, args);
+  if (front) return front;
+  const supply = SUPPLY_FRONT_NAMES.has(name);
+  if (!supply && !CLEANING_TOOLS.has(name)) return { text: `There's no tool named ${name || "that"} here. Call get_state.`, isError: true };
+  // A scheduled run checks every property at once: check_now with no property, on an account of two
+  // or more, runs each property with Cleaner Core on and names it in the result.
+  // Google events come from one property's calendar, so they always name their property.
+  const googleEvents = args && typeof args === "object" && "googleEvents" in (args as Record<string, unknown>);
+  if (name === "check_now" && !namesProperty(args) && !googleEvents && tenant.properties.length > 1) return checkEveryProperty(h, r, tenant, caller, args);
+  const resolved = resolveProperty(tenant, args);
+  if ("refusal" in resolved) return { text: resolved.refusal, isError: true };
+  const { property } = resolved;
+  if (supply) {
+    // The setup question about Supply Core is Cleaner Core's, asked while cleaning is on.
+    const flow = name === "choose_supplies" ? "cleaning" : "supplies";
+    if (!property.flows[flow].on) return { text: flowOff(flow, property.label), isError: true };
+    const reply = await supplyCall(h, tenant, property, caller.assistant, name, resolved.args);
+    if (name === "choose_supplies" && reply && !reply.isError) noteToolsChanged();
+    return reply ?? { text: "Supply Core couldn't answer that.", isError: true };
+  }
+  if (!property.flows.cleaning.on) return { text: flowOff("cleaning", property.label), isError: true };
+  if (name === "save_people") {
+    const refusal = await peopleRefusal(h, tenant, property, resolved.args);
+    if (refusal) return { text: refusal, isError: true };
+  }
+  const reply = await cleaningTool(h, r, tenant, property, caller, name, resolved.args);
+  if (name === "save_people" && !reply.isError) await afterPeopleSaved(h, tenant, property);
+  return reply;
+}
+
+function namesProperty(args: unknown): boolean {
+  const all = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+  return typeof all.property === "string" || typeof all.propertyId === "string";
+}
+
+async function checkEveryProperty(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller, args: unknown): Promise<FrontReply> {
+  const own = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+  const properties: Record<string, unknown>[] = [];
+  for (const property of tenant.properties.filter((p) => p.flows.cleaning.on)) {
+    const reply = await cleaningTool(h, r, tenant, property, caller, "check_now", own);
+    properties.push({ id: property.id, label: property.label, ...(reply.isError ? { error: reply.text } : (reply.structured ?? { text: reply.text })) });
+  }
+  const structured = { properties, next: "Each result names its property. Tell the host about each one by its label." };
+  return { text: JSON.stringify(structured), structured, isError: false };
+}
+
+let rpcIds = 0;
+const rpcBody = (method: string, params: Record<string, unknown>) => Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: ++rpcIds, method, params }));
+
+function deskJson(answer: { status: number; body: string } | undefined): Record<string, unknown> | undefined {
+  if (!answer) return undefined;
+  try {
+    return JSON.parse(answer.body) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+/** One Cleaner Core tool on one property's desk, as a front reply. */
+async function cleaningTool(h: HostedCleaner, r: HostedRequest, tenant: Tenant, property: Property, caller: Caller, name: string, args: Record<string, unknown>): Promise<FrontReply> {
+  const reply = deskJson(await cleaningCall(h, tenant, property, caller, rpcBody("tools/call", { name, arguments: args }), r));
+  const result = reply?.result as { isError?: boolean; structuredContent?: Record<string, unknown>; content?: { type: string; text?: string }[] } | undefined;
+  const error = reply?.error as { message?: string } | undefined;
+  if (!result) return { text: error?.message ?? "Cleaner Core couldn't answer that.", isError: true };
+  return { text: result.content?.find((c) => c.type === "text")?.text ?? "", ...(result.structuredContent ? { structured: result.structuredContent } : {}), isError: result.isError === true };
+}
+
+function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller): PropertyStates {
+  const cleaning = async (property: Property, args: Record<string, unknown>): Promise<FrontReply> => {
+    const reply = await cleaningTool(h, r, tenant, property, caller, "get_state", args);
+    // Cleaner Core's get_state carries one Supply Core line while Supply Core is on for the property.
+    const line = !reply.isError && reply.structured ? suppliesLine(h, tenant, property) : undefined;
+    if (!line || !reply.structured) return reply;
+    const structured = { ...reply.structured, supplies: line };
+    return { ...reply, text: JSON.stringify(structured), structured };
+  };
+  const supplies = async (property: Property): Promise<FrontReply> => supplyDesk(h, tenant, property).state();
+  return {
+    cleaning,
+    supplies,
+    next: async (property) => {
+      const reply = property.flows.cleaning.on ? await cleaning(property, {}) : property.flows.supplies.on && caller.assistant === "grok" ? await supplies(property) : undefined;
+      const ask = reply?.structured?.ask as { step?: unknown } | undefined;
+      return typeof ask?.step === "string" ? ask.step : undefined;
+    },
+  };
 }
 
 /** True when touring's get_state says the publish milestone is done. */
@@ -259,8 +333,8 @@ async function touringCall(h: HostedCleaner, tenantId: string, caller: TouringCa
 }
 
 /** Cleaner Core's desk for this tenant, exactly as the cleaning address always answered. */
-async function cleaningCall(h: HostedCleaner, tenant: Tenant, caller: { grantId: string; assistant: CleanerAssistant }, raw: Buffer, r: HostedRequest): Promise<{ status: number; body: string; headers?: Record<string, string> } | undefined> {
-  const ctx = tenantContext(h, tenant);
+async function cleaningCall(h: HostedCleaner, tenant: Tenant, property: Property, caller: Caller, raw: Buffer, r: HostedRequest): Promise<{ status: number; body: string; headers?: Record<string, string> } | undefined> {
+  const ctx = propertyContext(h, tenant, property);
   // The tenant's service is cleaning, so Cleaner Core's own setup doesn't ask touring or cleaning again.
   await liveDeskFor(ctx.root, ctx.env, () => h.now()).chooseCleaning();
   const result = await handleCleanerMcpHttp({
@@ -279,10 +353,4 @@ async function cleaningCall(h: HostedCleaner, tenant: Tenant, caller: { grantId:
   });
   promoteRoutineOwner(h, tenant.id);
   return "answered" in result ? undefined : result;
-}
-
-async function cleaningPass(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: { grantId: string; assistant: CleanerAssistant }, raw: Buffer): Promise<void> {
-  const result = await cleaningCall(h, tenant, caller, raw, r);
-  if (!result) return;
-  r.send(result.status, JSON_TYPE, result.body, result.headers);
 }

@@ -29,8 +29,8 @@ afterEach(() => {
 async function touring(assistant: CleanerAssistant) {
   const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
   const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+  await m.makeTouring(tenant.id);
   const token = await m.joinAt(tenant.id, assistant, "/mcp");
-  await m.toolAt("/mcp", token, "choose_service", { service: "touring" });
   return { m, tenant: m.registry.get(tenant.id)!, token };
 }
 
@@ -115,7 +115,7 @@ describe("a task that stops checking in", () => {
     let clock = Date.parse("2026-11-01T15:00:00.000Z");
     const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" }, now: () => new Date(clock) }));
     const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
-    m.registry.setService(tenant.id, "touring");
+    m.registry.setTouring(tenant.id);
     const ws = new PropertyWorkspace(join(tenantFolder(m.app.root, tenant.id), "tour-core"));
     const { config } = ws.save({ ...hillsideConfig(), messagingProvider: "local" });
     ws.recordReadiness(config.property.id, await runReadinessCheck(config, { now: new Date(), installed: { provider: "local" } }));
