@@ -649,6 +649,21 @@ describe("Cleaner Core live wiring", () => {
     }
   });
 
+  it("the secret scan catches a code sealed in door-access.json", () => {
+    const code = ["8", "3", "0", "6", "1", "9"].join("");
+    const dir = mkdtempSync(join(tmpdir(), "cleaner-secret-door-"));
+    try {
+      writeFileSync(join(dir, "door-access.json"), `${JSON.stringify({ schemaVersion: 1, pinSeal: sealPin(code, Buffer.from("cleaner-core-scanner-test-key!!!")) })}\n`);
+      writeFileSync(join(dir, "leak.txt"), `the code is ${code}\n`);
+      const leaked = spawnSync(process.execPath, ["scripts/scan-cleaner-secrets.mjs", dir], { encoding: "utf8" });
+      expect(leaked.status).not.toBe(0);
+      expect(leaked.stderr).toMatch(/secret scan found a saved door code/);
+      expect(leaked.stderr).not.toContain(code);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("ignores a door code that only shows up inside Node's (node:<pid>) prefix", () => {
     const code = ["7", "3", "9", "1"].join("");
     const dir = mkdtempSync(join(tmpdir(), "cleaner-secret-pid-"));

@@ -767,8 +767,6 @@ interface StoreFile {
   blocks?: FeedBlock[];
   cleanerConsent?: "pending" | "in" | "out";
   clearances?: Clearance[];
-  /** An older store's sealed code. Never read; dropped on the next save. */
-  pinSeal?: unknown;
   pin?: unknown;
   onboarding?: OnboardingSession;
   origin?: "onboarding";
@@ -3576,10 +3574,10 @@ class Engine implements CleanerCore {
     if (parsed.schemaVersion !== 1) throw new Error("Cleaner Core store is not version 1.");
     const mine = sliceForTenant(parsed, this.tenantId);
     if (!mine) return;
-    // An older store's plaintext pin or sealed code is never read: the code comes only from access.
-    const record = JSON.parse(JSON.stringify(mine)) as Stored & { pin?: unknown; pinSeal?: unknown };
+    // An older store's plaintext pin or sealed code is never read, and the next save leaves it out:
+    // the code comes only from access.
+    const record = JSON.parse(JSON.stringify(mine)) as Stored & { pin?: unknown };
     delete record.pin;
-    delete record.pinSeal;
     this.jobsState = record.jobs.map((job) => {
       const { checkInDate, ...rest } = job;
       return { ...rest, ...(typeof checkInDate === "string" ? { checkInDate } : {}), started: job.started === true, done: job.done === true };

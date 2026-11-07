@@ -5,7 +5,7 @@ import { cleanerAssistant } from "./assistant";
 import { cleanerCoreEnabled } from "./flag";
 import { ALERT_UPLOAD_PREFIX, CALENDAR_UPLOAD_PREFIX, DOOR_CODE_UPLOAD_PREFIX, liveDeskFor } from "./liveDesk";
 import { CLEANER_MCP_PATH, handleCleanerMcpMessage, type DeleteSecrets, type SaveSecrets } from "./mcp";
-import { pinKeyFromHeader, serverPinKey } from "../hub/pinSeal";
+import { pinKeyFromHeader, serverPinKey } from "../hub/doorAccess";
 import { scratchToolsOn } from "./scratchQa";
 import type { UploadPageKind } from "./uploadPage";
 import { CLEANER_TWILIO_GROUP_PATH, CLEANER_TWILIO_PATH, CLEANER_TWILIO_STATUS_PATH, handleCleanerGroupWebhook, handleCleanerTwilioStatus, handleCleanerTwilioWebhook, textAddressedTo } from "./twilioHook";

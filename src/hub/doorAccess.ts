@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { writeFileAtomic } from "../storage/atomicWrite";
 import { holdsCodeToken, joinSplitDigits } from "./digits";
 import { openPin, sealPin, serverPinKey, type PinSeal } from "./pinSeal";
+
+/** A flow reads a request's door-code key, and the server's, through here: never the seal itself. */
+export { pinKeyFromHeader, serverPinKey } from "./pinSeal";
 import { HUB_DOOR_CODE_PREFIX } from "./paths";
 import type { HubCaller } from "./store";
 import { sameHash, UPLOAD_GONE, UPLOAD_MINUTES, uploadHash } from "./uploadCode";
