@@ -1,7 +1,7 @@
 {
   "name": "tour-core",
-  "owner": { "name": "Tour Core" },
-  "metadata": { "description": "Claude plugins for Tour Core's hosted services." },
+  "owner": { "name": "Property Core" },
+  "metadata": { "description": "Claude plugins for Property Core's hosted services." },
   "plugins": [
     {
       "name": "cleaner-core",
