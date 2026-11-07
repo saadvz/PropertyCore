@@ -35,4 +35,8 @@ describe("module boundaries", () => {
     expect(existsSync(join(SRC, "hub", "calendar.ts"))).toBe(true);
     expect(offenders(join(SRC, "hub"), ["cleaner-core", "supply-core"])).toEqual([]);
   });
+
+  it("src/supply-core imports nothing from src/cleaner-core", () => {
+    expect(offenders(join(SRC, "supply-core"), ["cleaner-core"])).toEqual([]);
+  });
 });

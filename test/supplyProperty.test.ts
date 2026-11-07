@@ -1,8 +1,9 @@
+import { hubFor } from "../src/hub/hub";
 import { afterEach, describe, expect, it } from "vitest";
 import { hostedCleaner, propertyContext, type HostedCleaner } from "../src/cleaner-core/hosted/router";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
 import { liveDeskFor } from "../src/cleaner-core/liveDesk";
-import { chooseSupplies, supplyDesk, turnOffSupplies, turnOnSupplies } from "../src/supply-core/hosted";
+import { chooseSupplies, supplyDesk, turnOffSupplies, turnOnSupplies } from "../src/hosted/supplies";
 import { readSupply } from "../src/supply-core/store";
 import { BASE, closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
@@ -44,16 +45,16 @@ describe("Supply Core per property", () => {
     expect((await cleaning.saveProperty({ business: "Scratch Lane", address: "12 Scratch Lane, Teaneck, NJ 07666", timeZone: ZONE })).ok).toBe(true);
     const desk = supplyDesk(h, fresh(), lane());
     expect(desk.root).toBe(ctx.root);
-    expect(desk.deps.standalone).toBe(false);
-    expect(desk.deps.cleaning?.property()).toEqual({ name: "Scratch Lane", address: "12 Scratch Lane, Teaneck, NJ 07666", timeZone: ZONE });
-    expect(await desk.deps.cleaning?.turnovers()).toEqual([]);
+    expect(desk.deps.cleaningOn?.()).toBe(true);
+    // Cleaner Core's property is the hub's, so Supply Core reads the same one.
+    expect(hubFor(ctx.root, { now: () => new Date() }).property()).toMatchObject({ address: "12 Scratch Lane, Teaneck, NJ 07666", timeZone: ZONE });
+    expect(((await desk.state()).structured?.ask as { step?: string } | undefined)?.step).not.toBe("property");
   });
 
-  it("a property with only supplies on uses its own calendars", async () => {
+  it("a property with only supplies on knows Cleaner Core is off there", async () => {
     const { h, fresh, court } = await start();
     const desk = supplyDesk(h, fresh(), court());
-    expect(desk.deps.standalone).toBe(true);
-    expect(desk.deps.cleaning).toBeUndefined();
+    expect(desk.deps.cleaningOn?.()).toBe(false);
     expect(desk.deps.uploadBase?.()).toBe(`${BASE}/t/${fresh().id}/p/${court().id}`);
   });
 
@@ -61,8 +62,8 @@ describe("Supply Core per property", () => {
     const { h, fresh, lane, court } = await start();
     const courtDesk = supplyDesk(h, fresh(), court());
     expect((await courtDesk.saveSettings({ property: COURT })).isError).toBe(false);
-    expect(readSupply(courtDesk.root).settings.property).toEqual(COURT);
-    expect(readSupply(supplyDesk(h, fresh(), lane()).root).settings.property).toBeUndefined();
+    expect(hubFor(courtDesk.root, { now: () => new Date() }).property()).toEqual({ nickname: COURT.name, address: COURT.address, timeZone: COURT.timeZone });
+    expect(hubFor(supplyDesk(h, fresh(), lane()).root, { now: () => new Date() }).property()).toEqual({});
   });
 
   it("choose_supplies on turns the property's flow on; off only stops the setup question", async () => {
@@ -85,6 +86,6 @@ describe("Supply Core per property", () => {
     expect(readSupply(supplyDesk(h, fresh(), court()).root).offAt).toBeDefined();
     await turnOnSupplies(h, fresh(), court());
     expect(court().flows.supplies.on).toBe(true);
-    expect(readSupply(supplyDesk(h, fresh(), court()).root).settings.property).toEqual(COURT);
+    expect(hubFor(supplyDesk(h, fresh(), court()).root, { now: () => new Date() }).property()).toEqual({ nickname: COURT.name, address: COURT.address, timeZone: COURT.timeZone });
   });
 });

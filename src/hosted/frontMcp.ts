@@ -12,7 +12,7 @@ import { ServiceNotices } from "./crossService";
 import { FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsFor, wrongServiceLine, type FrontReply } from "./serviceTools";
 import { setFlows, type FlowInput } from "./service";
 import { accountState, accountTools, addProperty, flowOff, resolveProperty, withPropertyArg, type PropertyStates } from "./propertyTools";
-import { listedChooseSupplies, listedSupplyFront, SUPPLY_FRONT_NAMES, suppliesLine, supplyCall, supplyDesk } from "../supply-core/hosted";
+import { listedChooseSupplies, listedSupplyFront, SUPPLY_FRONT_NAMES, suppliesLine, supplyCall, supplyDesk } from "./supplies";
 import { taskWarning } from "./touringAlerts";
 import { callWorkerMcp, forwardMcp, type WorkerTarget } from "./touringForward";
 

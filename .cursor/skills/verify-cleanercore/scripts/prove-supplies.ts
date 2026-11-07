@@ -52,7 +52,7 @@ try {
   };
   const now = () => new Date(FROZEN);
   const desk = liveDeskFor(root, () => env, now);
-  const supplies = supplyDeskFor(root, { now, standalone: false, cleaning: { property: () => desk.propertyForSupplies(), turnovers: () => desk.turnoverDates() } });
+  const supplies = supplyDeskFor(root, { now, cleaningOn: () => true });
 
   ok(await desk.getState("cleaners"));
   ok(await desk.saveProperty({ business: BUSINESS, nickname: "Lake House", address: ADDRESS, timeZone: "America/New_York", checkoutTime: "11:00", checkInTime: "16:00" }));

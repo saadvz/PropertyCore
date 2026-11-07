@@ -24,7 +24,7 @@ import {
   uploadPageOf,
 } from "../http";
 import { drainCleanerAlerts, liveDeskFor } from "../liveDesk";
-import { supplyDesk } from "../../supply-core/hosted";
+import { supplyDesk } from "../../hosted/supplies";
 import type { DeleteSecrets, SaveSecrets } from "../mcp";
 import { CLEANER_PHOTO_PREFIX, photoKey, servePhoto } from "../photos";
 import { handleCleanerUploadPage, isFormPost } from "../uploadPage";

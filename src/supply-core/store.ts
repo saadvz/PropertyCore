@@ -97,7 +97,6 @@ export interface SupplySettings {
   priceJumpPct: number;
   bufferDays: number;
   checkTime?: string;
-  property?: { name: string; address: string; timeZone: string };
   stores?: StorePlan;
   /** One schedule for every item, when the host chose the same for everything. */
   sharedSchedule?: Schedule;
@@ -106,32 +105,22 @@ export interface SupplySettings {
   activatedAt?: string;
 }
 
-export interface BookingCalendar {
-  name: string;
-  kind: "ical" | "google-calendar";
-  url?: string;
-}
-
+/** Supply Core's own record for one property. Its details and booking calendars are in the property hub. */
 export interface SupplyFile {
   settings: SupplySettings;
   /** Setup steps the host finished that leave no other trace. */
-  setup: { itemsDone?: boolean; sourcesDone?: boolean; capsDone?: boolean; routineCreated?: boolean; scheduleAsked?: boolean };
+  setup: { itemsDone?: boolean; capsDone?: boolean; routineCreated?: boolean; scheduleAsked?: boolean };
   items: Item[];
   /** Item names from the host's list that don't have products picked yet, in their order. */
   draft: string[];
   orders: Order[];
   carts: Cart[];
   lowReports: LowReport[];
-  sources: BookingCalendar[];
-  /** The pending one-time calendar upload: only the code's sha256 is kept. */
-  calendarUpload?: { hash: string; name: string; expiresAt: string };
-  /** Checkout dates from the last good read of the standalone calendars. */
-  checkouts?: { dates: string[]; at?: string; failedAt?: string };
   offAt?: string;
 }
 
 export function emptySupply(): SupplyFile {
-  return { settings: { priceJumpPct: 20, bufferDays: 3 }, setup: {}, items: [], draft: [], orders: [], carts: [], lowReports: [], sources: [] };
+  return { settings: { priceJumpPct: 20, bufferDays: 3 }, setup: {}, items: [], draft: [], orders: [], carts: [], lowReports: [] };
 }
 
 export function readSupply(root: string): SupplyFile {
@@ -149,7 +138,6 @@ export function readSupply(root: string): SupplyFile {
     orders: raw.orders ?? [],
     carts: raw.carts ?? [],
     lowReports: raw.lowReports ?? [],
-    sources: raw.sources ?? [],
   };
 }
 

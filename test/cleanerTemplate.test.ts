@@ -11,7 +11,7 @@ import { REPLY_INSTRUCTIONS, ROUTINE_REPLY_SENTENCE } from "../src/cleaner-core/
 import { askNext } from "../src/cleaner-core/setupAsk";
 import { DOOR_CODE } from "./wiringProof";
 import { filesUnder } from "./files";
-import { SUPPLY_FRONT_NAMES } from "../src/supply-core/hosted";
+import { SUPPLY_FRONT_NAMES } from "../src/hosted/supplies";
 import { accountTools } from "../src/hosted/propertyTools";
 
 /** The Cleaner Core paste-in prompt, setup guide, and Grok Bot template: pinned, consistent with the tools, and free of secrets. */

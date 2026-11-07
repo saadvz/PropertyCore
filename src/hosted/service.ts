@@ -6,7 +6,7 @@ import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { ConfirmationBook } from "../operator/confirmations";
-import { GROK_ONLY, supplyDesk, turnOffSupplies, turnOnSupplies } from "../supply-core/hosted";
+import { GROK_ONLY, supplyDesk, turnOffSupplies, turnOnSupplies } from "./supplies";
 import { supplyCoreOn } from "../cleaner-core/flag";
 import type { CleanerAssistant } from "../cleaner-core/assistant";
 import { FIXER_NOT_YET, resolveProperty } from "./propertyTools";

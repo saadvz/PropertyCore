@@ -30,8 +30,17 @@ function cleaner(root: string, fields: Record<string, unknown>): void {
   writeFileSync(join(root, "cleaner-live.json"), `${JSON.stringify({ choice: "cleaners", business: "Scratch Stays", host: "+15555550100", ...fields })}\n`);
 }
 
-function supply(root: string, change: (file: SupplyFile) => void): void {
-  const file = emptySupply();
+/** supply.json as Supply Core wrote it before the hub: its own property, calendars and checkouts. */
+type OldSupply = Omit<SupplyFile, "settings" | "setup"> & {
+  settings: SupplyFile["settings"] & { property?: { name: string; address: string; timeZone: string } };
+  setup: SupplyFile["setup"] & { sourcesDone?: boolean };
+  sources?: { name: string; kind: "ical" | "google-calendar"; url?: string }[];
+  calendarUpload?: { hash: string; name: string; expiresAt: string };
+  checkouts?: { dates: string[]; at?: string; failedAt?: string };
+};
+
+function supply(root: string, change: (file: OldSupply) => void): void {
+  const file: OldSupply = emptySupply();
   change(file);
   writeFileSync(join(root, "supply.json"), `${JSON.stringify(file)}\n`);
 }

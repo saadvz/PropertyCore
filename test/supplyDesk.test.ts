@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { hubFor, resetHubs } from "../src/hub/hub";
 import { resetSupplyDesks, supplyDeskFor, type SupplyDeps } from "../src/supply-core/desk";
 import { emptySupply, monthSpentCents, readSupply, type Order } from "../src/supply-core/store";
 
@@ -13,6 +14,7 @@ const PROPERTY = { name: "Scratch Lane", address: "12 Scratch Lane, Teaneck, NJ 
 const dirs: string[] = [];
 afterEach(() => {
   resetSupplyDesks();
+  resetHubs();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -23,12 +25,16 @@ function folder(): string {
 }
 
 function standalone(root = folder()) {
-  const deps: SupplyDeps = { now: () => NOW, standalone: true };
+  const deps: SupplyDeps = { now: () => NOW };
   return { root, desk: supplyDeskFor(root, deps) };
 }
 
+/** A property Cleaner Core runs on: its setup already saved the details and a calendar in the hub. */
 function cleaning(root = folder()) {
-  const deps: SupplyDeps = { now: () => NOW, standalone: false, cleaning: { property: () => PROPERTY, turnovers: async () => [] } };
+  const hub = hubFor(root, { now: () => NOW });
+  hub.saveProperty({ nickname: PROPERTY.name, address: PROPERTY.address, timeZone: PROPERTY.timeZone });
+  hub.setCalendars({ calendars: [{ name: "Airbnb", url: "https://calendar.example/lane.ics" }], done: true });
+  const deps: SupplyDeps = { now: () => NOW, cleaningOn: () => true };
   return { root, desk: supplyDeskFor(root, deps) };
 }
 
@@ -103,7 +109,7 @@ describe("setup", () => {
     expect((await desk.state()).structured?.line).toBe("Supplies: on, 1 item. November: $0.00.");
   });
 
-  it("asks the bookings source only when an item is by bookings and Cleaner Core is off", async () => {
+  it("asks the bookings source only when an item is by bookings and the property has no calendars yet", async () => {
     const one = standalone();
     await one.desk.saveSettings({ property: PROPERTY });
     await one.desk.saveItem({ ...towels, schedule: { kind: "bookings", stays: 4 } });
@@ -215,17 +221,17 @@ describe("approvals across a restart", () => {
     const ask = await desk.saveItem({ ...towels, id, qtyPerOrder: 3 });
     const code = (ask.structured!.confirmation as { code: string }).code;
     resetSupplyDesks();
-    const restarted = supplyDeskFor(root, { now: () => NOW, standalone: true });
+    const restarted = supplyDeskFor(root, { now: () => NOW });
     expect(restarted).not.toBe(desk);
     expect((await restarted.saveItem({ ...towels, id, qtyPerOrder: 3, confirmation: code })).isError).toBe(false);
     expect(readSupply(root).items[0]!.qtyPerOrder).toBe(3);
     resetSupplyDesks();
-    expect((await supplyDeskFor(root, { now: () => NOW, standalone: true }).saveItem({ ...towels, id, qtyPerOrder: 3, confirmation: code })).isError).toBe(true);
+    expect((await supplyDeskFor(root, { now: () => NOW }).saveItem({ ...towels, id, qtyPerOrder: 3, confirmation: code })).isError).toBe(true);
 
-    const late = await supplyDeskFor(root, { now: () => NOW, standalone: true }).saveItem({ ...towels, id, qtyPerOrder: 5 });
+    const late = await supplyDeskFor(root, { now: () => NOW }).saveItem({ ...towels, id, qtyPerOrder: 5 });
     resetSupplyDesks();
     const later = new Date(NOW.getTime() + 10 * 60_000);
-    const expired = await supplyDeskFor(root, { now: () => later, standalone: true }).saveItem({ ...towels, id, qtyPerOrder: 5, confirmation: (late.structured!.confirmation as { code: string }).code });
+    const expired = await supplyDeskFor(root, { now: () => later }).saveItem({ ...towels, id, qtyPerOrder: 5, confirmation: (late.structured!.confirmation as { code: string }).code });
     expect(expired.isError).toBe(true);
     expect(readSupply(root).items[0]!.qtyPerOrder).toBe(3);
   });
@@ -259,7 +265,9 @@ describe("address first, the whole list, then where to buy", () => {
     expect(ask.questions.map((q) => q.field)).toEqual(["property.address", "property.timeZone", "property.name"]);
     expect(ask.questions.find((q) => q.field === "property.name")?.required).toBe(false);
     expect((await desk.saveSettings({ property: { address: PROPERTY.address, timeZone: PROPERTY.timeZone } })).isError).toBe(false);
-    expect(readSupply(root).settings.property).toEqual({ name: "12 Scratch Lane", address: PROPERTY.address, timeZone: PROPERTY.timeZone });
+    // The property is the hub's; without a name it reads as the street address.
+    expect(hubFor(root, { now: () => NOW }).property()).toEqual({ address: PROPERTY.address, timeZone: PROPERTY.timeZone });
+    expect((await desk.state()).text).not.toContain("delivery address");
   });
 
   it("asks for the whole list at once, up to 30, and saves them as a draft", async () => {

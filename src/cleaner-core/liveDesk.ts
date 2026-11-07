@@ -1879,20 +1879,6 @@ export class LiveDesk {
     return jobs.find((item) => item.checkoutDate === wanted || dayOf(item) === wanted || item.id.toLowerCase() === wanted);
   }
 
-  /** Supply Core's view of this property, from the saved details. Undefined until they're saved. */
-  propertyForSupplies(): { name: string; address: string; timeZone: string } | undefined {
-    if (!this.place.address || !this.place.timeZone) return undefined;
-    return { name: this.place.nickname ?? this.file.business ?? this.place.address, address: this.place.address, timeZone: this.place.timeZone };
-  }
-
-  /** The checkout dates of every turnover that isn't called off, for Supply Core's by-bookings items. */
-  turnoverDates(): Promise<{ checkoutYmd: string }[]> {
-    return this.serial(async () => {
-      this.resume();
-      return (this.engine?.jobs() ?? []).filter((job) => job.status !== "canceled").map((job) => ({ checkoutYmd: job.checkoutDate }));
-    });
-  }
-
   /** Supply Core is offered at setup only to a Grok chat on the shared service, where the add-on lives. */
   private offersSupplies(): boolean {
     return this.assistant() === "grok" && cleanerMultiTenant(this.env());

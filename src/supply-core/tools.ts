@@ -39,7 +39,7 @@ export const SUPPLY_TOOLS: SupplyTool[] = [
   {
     name: "save_supply_settings",
     title: "Save supply settings",
-    description: `Saves any of: property (standalone only: the delivery address, the time zone you work out from it, and an optional name that defaults to the street address), mode (hands-off or checkout), perOrderCapCents and perMonthCapCents (null clears one), priceJumpPct, bufferDays, checkTime (24-hour HH:MM), routineCreated, sharedSchedule (one schedule for every item; null for each its own), and storesReady (the plan's stores you checked you can check out with: signed in, delivering to the property, a payment method ready). After Activate, call without confirmation to get the question and a code, ask the host, and call again with the code only after their yes. ${NO_CARDS}`,
+    description: `Saves any of: property (the delivery address, the time zone you work out from it, and an optional name that defaults to the street address; it's the property's, shared with Cleaner Core), mode (hands-off or checkout), perOrderCapCents and perMonthCapCents (null clears one), priceJumpPct, bufferDays, checkTime (24-hour HH:MM), routineCreated, sharedSchedule (one schedule for every item; null for each its own), and storesReady (the plan's stores you checked you can check out with: signed in, delivering to the property, a payment method ready). After Activate, call without confirmation to get the question and a code, ask the host, and call again with the code only after their yes. ${NO_CARDS}`,
     input: z
       .object({
         property: z.object({ address: z.string().max(200), timeZone: z.string().max(80), name: z.string().max(80).optional() }).strict().optional(),
@@ -192,9 +192,6 @@ export const SUPPLY_TOOLS: SupplyTool[] = [
 ];
 
 export const SUPPLY_TOOL_NAMES: ReadonlySet<string> = new Set(SUPPLY_TOOLS.map((tool) => tool.name));
-
-/** Only on a standalone supplies tenant: booking dates come from Cleaner Core on a cleaning one. */
-export const STANDALONE_ONLY: ReadonlySet<string> = new Set(["save_supply_sources"]);
 
 export const CARD_REFUSAL = "That looks like a card number. Supply Core never takes card details: keep them in your Vault.";
 

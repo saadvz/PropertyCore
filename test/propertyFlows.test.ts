@@ -7,7 +7,7 @@ import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
 import { withCaller } from "../src/cleaner-core/callerContext";
 import { liveDeskFor, resetLiveDesks } from "../src/cleaner-core/liveDesk";
 import { readSupply } from "../src/supply-core/store";
-import { supplyDesk } from "../src/supply-core/hosted";
+import { supplyDesk } from "../src/hosted/supplies";
 import { BASE, closeHostedApps } from "./cleanerOauthHarness";
 import { ROUTINE, setUp } from "./cleanerDeskHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
