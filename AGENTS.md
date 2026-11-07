@@ -2,7 +2,7 @@
 
 Cloud agents load this file at the start of a run.
 
-Tour Core setup and the operator skills stay in [GROK_BOOTSTRAP.md](GROK_BOOTSTRAP.md) and [.grok/skills/](.grok/skills/). Read those for property setup, a tour, or a landlord question.
+This repository is Property Core: start at [README.md](README.md). For property setup or a host's question, read [CLEANER_CORE_BOOTSTRAP.md](CLEANER_CORE_BOOTSTRAP.md) and [SUPPLY_CORE_BOOTSTRAP.md](SUPPLY_CORE_BOOTSTRAP.md). Tour Core is parked: its guide is [docs/tour-core/README.md](docs/tour-core/README.md), and its setup and operator skills stay in [GROK_BOOTSTRAP.md](GROK_BOOTSTRAP.md) and [.grok/skills/](.grok/skills/). Read those only for a tour.
 
 ## Safety rules
 
