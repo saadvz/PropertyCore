@@ -1,3 +1,4 @@
+import { parsePhone } from "../../core/phone";
 import { propertyBasePath, type Property } from "./properties";
 import type { Tenant, TenantConnection } from "./registry";
 import type { TenantSecrets } from "./tenantSecrets";
@@ -22,6 +23,7 @@ export const PER_TENANT_NAMES = [
   "CLEANER_CORE_PROPERTY_ID",
   "CLEANER_CORE_PROPERTY_LABEL",
   "CLEANER_CORE_PROPERTY_COUNT",
+  "CLEANER_CORE_LANDLORD_PHONE",
 ] as const;
 
 /** Saved per connection: each connected chat has its own alert routine. */
@@ -51,6 +53,10 @@ export function buildTenantEnv(input: {
   Object.assign(env, own);
   env.CLEANER_CORE_TWILIO_PHONE_NUMBER = input.tenant.twilioNumber;
   if (input.serviceLines?.length) env.CLEANER_CORE_SERVICE_LINES = input.serviceLines.join(",");
+  // Only the phone the landlord confirmed with a code counts, never a saved secret: the account's texts start from it.
+  delete env.CLEANER_CORE_LANDLORD_PHONE;
+  const owner = parsePhone(input.tenant.owner?.phoneVerifiedAt ? input.tenant.owner.phone : "");
+  if (owner) env.CLEANER_CORE_LANDLORD_PHONE = owner;
   const base = input.property ? propertyBasePath(input.tenant.id, input.property) : `/t/${input.tenant.id}`;
   env.PUBLIC_BASE_URL = `${input.origin.replace(/\/+$/, "")}${base}`;
   if (input.property) {
