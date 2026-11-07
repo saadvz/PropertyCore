@@ -5,7 +5,7 @@ import { parsePhone } from "../core/phone";
 import type { CleanerAssistant } from "../cleaner-core/assistant";
 import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import { touringAccountContext, type HostedCleaner } from "../cleaner-core/hosted/router";
-import { sendLiveSms } from "../cleaner-core/liveSms";
+import { isAllowlisted, sendLiveSms } from "../cleaner-core/liveSms";
 import { isScratchTestNumber } from "../cleaner-core/scratch";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { TenantOptOuts } from "./crossService";
@@ -111,6 +111,8 @@ export async function textHost(h: HostedCleaner, tenant: Tenant, to: string, bod
     return;
   }
   const env = touringAccountContext(h, tenant).env();
+  // Tour Core is parked, so its touring texts still go by the operator allowlist.
+  if (!isAllowlisted(env, to)) return;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       await sendLiveSms(env, { to, body });

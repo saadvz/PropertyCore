@@ -688,15 +688,15 @@ describe("live group send", () => {
     setCleanerGroupFetch(undefined);
   });
 
-  it("texts nobody when the allowlist is empty", async () => {
+  it("texts nobody when live texts are off", async () => {
     const calls: string[] = [];
     setCleanerGroupFetch(async (url) => {
       calls.push(String(url));
       return { ok: true, status: 200, json: async () => ({ sid: "CH1" }) } as Response;
     });
     const env = {
-      CLEANER_CORE_LIVE_SMS: "1",
-      CLEANER_CORE_SMS_ALLOWLIST: "",
+      CLEANER_CORE_LIVE_SMS: "0",
+      CLEANER_CORE_SMS_ALLOWLIST: "*",
       CLEANER_CORE_TWILIO_ACCOUNT_SID: "ACfake",
       CLEANER_CORE_TWILIO_AUTH_TOKEN: "token",
       CLEANER_CORE_TWILIO_PHONE_NUMBER: CLEANER_LINE,
@@ -1833,8 +1833,10 @@ describe("live group membership", () => {
     await desk.inbound({ id: "texting-seat-yes", from: LIVE_CLEANER, text: "YES" });
     const sid = fetchBox.posts[0]?.conversationSid;
     expect(sms.sent.filter((text) => text.to === LIVE_HOST)).toEqual([]);
+    // The observer the host saved gets the same invite (saadvz/TourCore#164), and stays out of the group until their YES.
     expect(sms.sent.filter((text) => text.body === invite)).toEqual([
       expect.objectContaining({ to: LIVE_CLEANER, body: invite }),
+      expect.objectContaining({ to: OBSERVER, body: invite }),
     ]);
     expect(offerPosts(fetchBox.posts)).toEqual([{ conversationSid: sid, to: [LIVE_HOST, LIVE_CLEANER], body: PRACTICE_GROUP_OFFER }]);
     // The intro starts the group, before the offer.

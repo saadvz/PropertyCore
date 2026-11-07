@@ -180,9 +180,12 @@ describe("group texting: how the group is made", () => {
     expect(sms.sent.map((item) => item.body)).toEqual(["Just you", "Just you again"]);
   });
 
-  it("refuses the group when someone in it is off the allowlist, so the offer can fall back", async () => {
+  it("refuses the group when one of its phones is this service's own line, so the offer can fall back", async () => {
     const fake = useFake();
-    await expect(sendLiveGroup(ENV, { audience: [HOST, "+15555550199"], body: "Hello" })).rejects.toBeInstanceOf(GroupNotConfirmed);
+    await expect(sendLiveGroup(ENV, { audience: [HOST, ENV.CLEANER_CORE_TWILIO_PHONE_NUMBER!], body: "Hello" })).rejects.toBeInstanceOf(GroupNotConfirmed);
+    await expect(sendLiveGroup({ ...ENV, CLEANER_CORE_SERVICE_LINES: "+15555550199" }, { audience: [HOST, "+15555550199"], body: "Hello" })).rejects.toBeInstanceOf(
+      GroupNotConfirmed,
+    );
     expect(fake.calls()).toBe(0);
   });
 

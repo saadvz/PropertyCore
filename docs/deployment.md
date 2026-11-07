@@ -594,7 +594,7 @@ Tour Core service's.
 | `CLEANER_CORE_ENABLED` | `1` |
 | `CLEANER_CORE_ADMIN_PASSWORD` | Saad's admin password. Railway variables only |
 | `CLEANER_CORE_TWILIO_ACCOUNT_SID`, `CLEANER_CORE_TWILIO_AUTH_TOKEN` | The one Twilio account every tenant's number, and every pooled number, is on |
-| `CLEANER_CORE_LIVE_SMS`, `CLEANER_CORE_SMS_ALLOWLIST` | As on any Cleaner Core deployment |
+| `CLEANER_CORE_LIVE_SMS`, `CLEANER_CORE_SMS_ALLOWLIST` | As on any Cleaner Core deployment. The allowlist now only vouches for the host phone of an account with no phone confirmed at sign-up, and gates touring texts |
 | `CLEANER_CORE_SIGNUP` | `1` to offer Sign in and Create account on the connect page. Needs live texts on and the three below. Codes go only to phones the allowlist allows. Create account needs ready numbers in the pool, or it says no line is free |
 | `CLEANER_CORE_TWILIO_VERIFY_SERVICE_SID` | The Twilio Verify service (`VA…`) that texts the sign-in code, on the same Twilio account. In Twilio, limit the service's Geo Permissions to the United States and Canada |
 | `CLEANER_CORE_TERMS_URL`, `CLEANER_CORE_TERMS_VERSION` | Saad's terms page (`https://`) and the version a new account records |

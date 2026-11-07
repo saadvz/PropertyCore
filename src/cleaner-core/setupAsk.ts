@@ -339,7 +339,7 @@ export const DRAFT_FILL: DraftFill[] = [
   },
   {
     fill: "the cleaner's name and phone number, the host's name and phone number, and anyone else in the cleaning texts",
-    from: "the host's contacts and past texts with the cleaner",
+    from: "the host's contacts and past texts with the cleaner. The host's own phone is the one they confirmed when they signed in",
     tool: "save_people",
   },
   { fill: "the schedule", from: "the defaults, unless past texts show the host does it another way", tool: "save_schedule" },

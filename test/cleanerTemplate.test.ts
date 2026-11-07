@@ -252,13 +252,14 @@ describe("CLEANER_CORE_BOOTSTRAP.md", () => {
     }
   });
 
-  it("stops at unapproved numbers, then runs the checks", () => {
+  it("stops until the host's phone is confirmed, then runs the checks", () => {
     const text = read(BOOTSTRAP);
-    expect(text).toMatch(/If `activate` says the numbers aren't approved for texts/);
-    expect(text).toMatch(/Cleaner Core operator has to approve/);
+    expect(text).toMatch(/If `activate` says the host's phone isn't confirmed/);
+    expect(text).toMatch(/the phone they confirmed with a code when they signed in/);
     expect(text).toMatch(/stop there/);
     expect(text).toMatch(/call `run_checks`, with `googleEvents`/);
-    expect(read(join(ROOT, "src", "cleaner-core", "liveDesk.ts"))).toContain("only after those numbers are approved for texts.");
+    expect(text).toMatch(/Nobody approves the cleaner's number/);
+    expect(read(join(ROOT, "src", "cleaner-core", "liveDesk.ts"))).toContain("I can text only after the host's phone is confirmed.");
   });
 
   it("names who send_message can reach, and that YES comes twice in every mode", () => {

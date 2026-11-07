@@ -51,6 +51,18 @@ describe("buildTenantEnv", () => {
     expect(Object.values(env).join("\n")).not.toContain("key-g1");
   });
 
+  it("passes the landlord's phone only once its code checked out at sign-up (saadvz/TourCore#164)", () => {
+    const owner = { phone: "+15555550160", email: "host@example.com", phoneVerifiedAt: NOW, terms: { version: "1", acceptedAt: NOW } };
+    const base = { CLEANER_CORE_LANDLORD_PHONE: "+15555550199" };
+    secrets.set(t.id, { CLEANER_CORE_LANDLORD_PHONE: "+15555550198" });
+    expect(buildTenantEnv({ base, tenant: t, secrets, primary: undefined, origin: ORIGIN }).CLEANER_CORE_LANDLORD_PHONE).toBeUndefined();
+    const { phoneVerifiedAt: _unverified, ...pending } = owner;
+    const unconfirmed = { ...t, owner: pending as typeof owner };
+    // An owner whose code hasn't checked out is still a landlord record, so it fails closed instead of falling back to the allowlist.
+    expect(buildTenantEnv({ base, tenant: unconfirmed, secrets, primary: undefined, origin: ORIGIN }).CLEANER_CORE_LANDLORD_PHONE).toBe("unconfirmed");
+    expect(buildTenantEnv({ base, tenant: { ...t, owner }, secrets, primary: undefined, origin: ORIGIN }).CLEANER_CORE_LANDLORD_PHONE).toBe("+15555550160");
+  });
+
   it("never lets a tenant-level value stand in for the primary's routine", () => {
     secrets.set(t.id, { CLEANER_CORE_ROUTINE_URL: "https://stale.example/hook", CLEANER_CORE_ROUTINE_KEY: "stale-key" });
     const env = buildTenantEnv({ base: {}, tenant: t, secrets, primary: { grantId: "g1", assistant: "grok", connectedAt: NOW }, origin: ORIGIN });

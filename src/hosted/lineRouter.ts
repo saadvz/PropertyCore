@@ -102,6 +102,12 @@ const deskOf = (h: HostedCleaner, tenant: Tenant, property: Property) => {
   return { ctx, desk: liveDeskFor(ctx.root, ctx.env, () => h.now()) };
 };
 
+/** True when every listed property's saved host is the account's confirmed landlord (#164). */
+async function allConfirmed(h: HostedCleaner, tenant: Tenant, properties: Property[]): Promise<boolean> {
+  const each = await Promise.all(properties.map((property) => deskOf(h, tenant, property).desk.textsAllowed().catch(() => false)));
+  return each.length > 0 && each.every(Boolean);
+}
+
 /** The person's properties by the names they could use: label, nickname and address. */
 function namedOf(h: HostedCleaner, tenant: Tenant, properties: Property[]): Named[] {
   return properties.map((property) => {
@@ -168,7 +174,8 @@ async function routeShared(h: HostedCleaner, tenant: Tenant, people: People, pro
   }
   const { ask } = asks.hold(from, { ...current, propertyIds: properties.map((p) => p.id) });
   // A stopped person is never asked: their text waits quietly.
-  if (ask && !people.stopped(from)) {
+  // The ask lists every property's address, so it waits until each one's host is confirmed (#164).
+  if (ask && !people.stopped(from) && (await allConfirmed(h, tenant, properties))) {
     await sendLiveSms(deskOf(h, tenant, properties[0]!).ctx.env(), { to: from, body: whichPropertyText(named) }).catch(() => undefined);
   }
 }
@@ -180,6 +187,8 @@ async function personAll(h: HostedCleaner, tenant: Tenant, people: People, prope
   if (!change) return;
   // The line's reply goes whether or not every property applied it: a property that missed it catches up when it opens.
   await people.relay(change).catch(() => h.log(`A property on ${tenant.id} couldn't apply a shared person's ${stop ? "STOP" : "START"} yet.`));
+  // The opt-out is kept above. The reply waits until every property's host is confirmed (#164).
+  if (!(await allConfirmed(h, tenant, properties))) return;
   const names = await Promise.all(properties.map((property) => deskOf(h, tenant, property).desk.businessName().catch(() => undefined)));
   const business = businessFor(names);
   await sendLiveSms(deskOf(h, tenant, properties[0]!).ctx.env(), { to: from, body: stop ? lineStopText(business) : lineStartText(business) }).catch(() => undefined);
@@ -230,8 +239,9 @@ export async function handleLineText(h: HostedCleaner, r: HostedRequest, tenant:
   }
   if (route.kind === "host-unused") {
     const ctx = propertyContext(h, tenant, route.property);
-    await liveDeskFor(ctx.root, ctx.env, () => h.now()).noteUnusedHostText(text);
-    if (replyDue(h, tenant.id, from)) await sendLiveSms(ctx.env(), { to: from, body: LANDLORD_USE_AGENT }).catch(() => undefined);
+    const desk = liveDeskFor(ctx.root, ctx.env, () => h.now());
+    await desk.noteUnusedHostText(text);
+    if ((await desk.textsAllowed()) && replyDue(h, tenant.id, from)) await sendLiveSms(ctx.env(), { to: from, body: LANDLORD_USE_AGENT }).catch(() => undefined);
     h.log(`The host texted ${tenant.id}'s line one-to-one. It wasn't used: the account has several properties.`);
     return r.send(200, "text/xml", EMPTY_TWIML);
   }

@@ -179,8 +179,11 @@ working for accounts made on `/admin`.
 
 ## Not yet
 
-Buying numbers from `/admin`, copying backups off Railway, a per-tenant SMS
-allowlist, and claiming an admin-made account by phone.
+Buying numbers from `/admin`, copying backups off Railway, and claiming an
+admin-made account by phone. Texting consent is already per account: a tenant's
+desk texts nobody until its host is the landlord's phone confirmed at sign-up
+(`tenant.owner`, passed as `CLEANER_CORE_LANDLORD_PHONE`), and then each
+person's own YES and STOP decide.
 
 Touring on every chat:
 

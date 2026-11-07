@@ -178,10 +178,12 @@ with `choice: "cleaners"`, which picks scheduling cleaners.
 
 If `save_sources` refuses with `wouldCancel`, ask the host. Save again with
 `dropJobs: true` only after they say yes.
-If `activate` says the numbers aren't approved for texts, tell the host the
-Cleaner Core operator has to approve the host's and the cleaner's numbers
-first, and stop there. Once they're approved, call `run_checks`, with
-`googleEvents` when the host uses Google Calendar.
+If `activate` says the host's phone isn't confirmed, tell the host to save,
+as their own number, the phone they confirmed with a code when they signed
+in, and stop there. If they haven't confirmed one yet, the Cleaner Core
+operator has to approve the host's phone. Once it's saved, call `run_checks`,
+with `googleEvents` when the host uses Google Calendar. Nobody approves the
+cleaner's number: the cleaner's own YES to the first text decides.
 
 ## Calendar links
 

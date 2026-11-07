@@ -9,6 +9,10 @@ export function liveSmsOn(env: NodeJS.ProcessEnv): boolean {
   return raw === "1" || raw === "true";
 }
 
+/**
+ * The old operator allowlist. Cleaner Core reads it only to vouch for a landlord's phone that wasn't
+ * confirmed at sign-up (an account made in /admin). Tour Core's touring texts still go by it.
+ */
 export function smsAllowlist(env: NodeJS.ProcessEnv): string[] {
   const raw = env.CLEANER_CORE_SMS_ALLOWLIST ?? "";
   const phones: string[] = [];
@@ -24,7 +28,7 @@ export function smsAllowsAny(env: NodeJS.ProcessEnv): boolean {
   return (env.CLEANER_CORE_SMS_ALLOWLIST ?? "").split(",").some((part) => part.trim() === "*");
 }
 
-/** This service's own numbers. They are never texted, even when any number is allowed. */
+/** This service's own numbers. They are never texted. */
 const OWN_LINES = ["CLEANER_CORE_TWILIO_PHONE_NUMBER", "TOURCORE_TWILIO_PHONE_NUMBER", "TOURCORE_PHOTON_PHONE_NUMBER"] as const;
 
 function ownLine(env: NodeJS.ProcessEnv, phone: string): boolean {
@@ -33,11 +37,40 @@ function ownLine(env: NodeJS.ProcessEnv, phone: string): boolean {
   return (env.CLEANER_CORE_SERVICE_LINES ?? "").split(",").some((line) => parsePhone(line.trim()) === phone);
 }
 
+/** True when the old operator allowlist holds this number. Tour Core's touring texts still go by it. */
 export function isAllowlisted(env: NodeJS.ProcessEnv, phone: string): boolean {
   const parsed = parsePhone(phone);
   if (!parsed) return false;
   if (smsAllowsAny(env)) return !ownLine(env, parsed);
   return smsAllowlist(env).includes(parsed);
+}
+
+/**
+ * The deny list: any real phone number except this service's own lines. Who of those may be texted
+ * is consent, held per account: the landlord's phone confirmed at sign-up, and each person's YES
+ * and STOP (saadvz/TourCore#164). The desk and the engine check that before a text reaches here.
+ */
+export function mayText(env: NodeJS.ProcessEnv, phone: string): boolean {
+  const parsed = parsePhone(phone);
+  return Boolean(parsed) && !ownLine(env, parsed!);
+}
+
+/** The landlord's phone, confirmed with a code when they signed up (saadvz/TourCore#162). Each tenant's desk gets its own. */
+export function verifiedLandlordPhone(env: NodeJS.ProcessEnv): string | undefined {
+  return parsePhone(env.CLEANER_CORE_LANDLORD_PHONE?.trim() ?? "");
+}
+
+/**
+ * True when `host` is the account's landlord: the phone confirmed at sign-up, or, for an account
+ * with no landlord record at all (made in /admin), a phone the old operator allowlist approves.
+ * Nobody on the account is texted until this holds. A landlord record that isn't a confirmed phone
+ * (an owner whose code hasn't checked out, or a value that isn't a phone) fails closed.
+ */
+export function landlordConfirmed(env: NodeJS.ProcessEnv, host: string | undefined): boolean {
+  const phone = parsePhone(host ?? "");
+  if (!phone || ownLine(env, phone)) return false;
+  if (env.CLEANER_CORE_LANDLORD_PHONE?.trim()) return phone === verifiedLandlordPhone(env);
+  return isAllowlisted(env, phone);
 }
 
 let clientOverride: TwilioClient | undefined;
@@ -63,9 +96,12 @@ export function cleanerPinStatusUrl(env: NodeJS.ProcessEnv): string | undefined 
   return `${base}${CLEANER_PIN_STATUS_PATH}`;
 }
 
-/** Sends one text when live texts are on and the number is allowed. A failed Twilio status throws. */
+/**
+ * Sends one text when live texts are on and the number isn't one of this service's own lines.
+ * Consent is the caller's check. A failed Twilio status throws.
+ */
 export async function sendLiveSms(env: NodeJS.ProcessEnv, text: { to: string; body: string; statusCallback?: string }): Promise<string | undefined> {
-  if (!liveSmsOn(env) || !isAllowlisted(env, text.to)) return undefined;
+  if (!liveSmsOn(env) || !mayText(env, text.to)) return undefined;
   const from = parsePhone(env.CLEANER_CORE_TWILIO_PHONE_NUMBER ?? "");
   if (!from) throw new Error("not sent");
   const result = await cleanerTwilioClient(env).sendSms({
@@ -143,11 +179,10 @@ export async function sendLiveGroup(
   input: { audience: string[]; body: string; conversationSid?: string },
 ): Promise<{ sid?: string; conversationSid?: string } | undefined> {
   if (!liveSmsOn(env)) return undefined;
-  if (!smsAllowsAny(env) && smsAllowlist(env).length === 0) return undefined;
   const audience = [...new Set(input.audience.map((phone) => parsePhone(phone)).filter((phone): phone is string => Boolean(phone)))];
   if (audience.length === 0) return undefined;
-  // A phone left off the allowlist means the group can't be the one the engine asked for.
-  if (audience.some((phone) => !isAllowlisted(env, phone))) throw new GroupNotConfirmed(input.conversationSid);
+  // One of this service's own lines means the group can't be the one the engine asked for.
+  if (audience.some((phone) => !mayText(env, phone))) throw new GroupNotConfirmed(input.conversationSid);
   const [only] = audience;
   if (audience.length === 1 && only) {
     // The old group is emptied first, so it can't keep capturing this person's own texts.

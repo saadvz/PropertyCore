@@ -95,10 +95,10 @@ const again = await desk.markGuestsLeft({ confirmed: true }, pinKey);
 const fetchesAfterFailure = calls.length;
 
 setCleanerGroupFetch(async () => {
-  throw new Error("empty allowlist fetched");
+  throw new Error("group fetched with live texts off");
 });
-const empty = await sendLiveGroup(
-  { ...env, CLEANER_CORE_SMS_ALLOWLIST: "" },
+const off = await sendLiveGroup(
+  { ...env, CLEANER_CORE_LIVE_SMS: "0" },
   { audience: [HOST, CLEANER], body: "Hello the group" },
 );
 
@@ -110,7 +110,7 @@ const record = {
   again: nextOf(again),
   fetchesAfterPin: fetchesAfterFailure,
   groupSawCode: groupBodies.some((body) => /door code/i.test(body) || body.includes(DOOR_CODE)),
-  emptyAllowlist: empty === undefined ? "no-fetch" : "fetched",
+  liveOff: off === undefined ? "no-fetch" : "fetched",
 };
 const json = JSON.stringify(record, null, 2);
 if (json.includes(DOOR_CODE)) throw new Error("desk proof included the door code");
