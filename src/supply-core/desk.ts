@@ -1,11 +1,11 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
-import { interpretFeed } from "../cleaner-core/calendar";
-import { calendarUrlAllowed, readPublicCalendar } from "../cleaner-core/fetchLimits";
-import { cleanerCalendarFetch } from "../cleaner-core/liveDesk";
-import { googleCalendarSource, type GoogleEventList } from "../cleaner-core/sources";
+import { interpretFeed } from "../hub/calendar";
+import { calendarUrlAllowed, readPublicCalendar } from "../hub/fetchLimits";
+import { calendarFetch } from "../hub/calendarFetch";
+import { googleCalendarSource, type GoogleEventList } from "../hub/sources";
 import { isValidTimeZone, localDateOf } from "../core/timezone";
-import { askNext } from "../cleaner-core/setupAsk";
+import { askNext } from "../hub/ask";
 import { ConfirmationBook } from "../operator/confirmations";
 import { refuseCards } from "./cards";
 import { cartFingerprint, checkCart, type CartInput, type GateContext, type Hold, type Mode } from "./gate";
@@ -455,7 +455,7 @@ export class SupplyDesk {
         for (const turn of read.turnovers) dates.add(turn.checkoutDate);
         continue;
       }
-      const read = await readPublicCalendar(source.url ?? "", cleanerCalendarFetch());
+      const read = await readPublicCalendar(source.url ?? "", calendarFetch());
       if (!read.ok) {
         failed = true;
         continue;

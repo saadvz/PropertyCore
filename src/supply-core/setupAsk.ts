@@ -1,4 +1,4 @@
-import type { AskQuestion } from "../cleaner-core/setupAsk";
+import type { AskQuestion } from "../hub/ask";
 import type { SupplyFile } from "./store";
 
 /**

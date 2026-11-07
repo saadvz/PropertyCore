@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { supplyDeskFor, type SupplyDeps, type SupplyDesk } from "../src/supply-core/desk";
 import { readSupply } from "../src/supply-core/store";
-import { interpretFeed } from "../src/cleaner-core/calendar";
+import { interpretFeed } from "../src/hub/calendar";
 import { setCleanerCalendarFetch } from "../src/cleaner-core/liveDesk";
 
 /** Supply Core's ordering tools on a made-up property. Made-up stores, links, and order numbers only. */

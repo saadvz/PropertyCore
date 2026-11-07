@@ -15,7 +15,7 @@ import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
 import { REPLY_INSTRUCTIONS } from "../src/cleaner-core/replyWording";
 import { photoKey, servePhoto, setCleanerPhotoFetch } from "../src/cleaner-core/photos";
 import { containsCodeToken } from "../src/cleaner-core/redact";
-import type { GoogleEventList } from "../src/cleaner-core/sources";
+import type { GoogleEventList } from "../src/hub/sources";
 import { SCRATCH_TENANTS } from "../src/cleaner-core/tenants";
 import { CLEANER_SCOPE } from "../src/mcp/oauth/provider";
 import { twilioSignature } from "../src/messaging/twilio/signature";

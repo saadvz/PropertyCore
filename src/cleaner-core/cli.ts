@@ -5,9 +5,9 @@ import { HaltError, openCleanerCore, type CleanerText, type HealthReport, type J
 import type { SourceRecord } from "./freshness";
 import type { AuditEvent, ReviewItem, ReviewKind } from "./review";
 import { isReviewKind } from "./review";
-import type { FeedBlock } from "./calendar";
+import type { FeedBlock } from "../hub/calendar";
 import { isScratchTestNumber } from "./scratch";
-import { googleCalendarFixtureSource, notionFixtureSource } from "./sources";
+import { googleCalendarFixtureSource, notionFixtureSource } from "../hub/sources";
 import { scratchTenant, SCRATCH_TENANTS } from "./tenants";
 import type { MessagingView, SetupView } from "./core";
 

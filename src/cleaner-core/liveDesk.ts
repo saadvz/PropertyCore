@@ -12,14 +12,15 @@ import { supplyAskOn } from "../supply-core/store";
 import { messagingKeyword, normalize } from "../intent";
 import { stripFiller } from "../intent/normalize";
 import { spokenTimes } from "../core/spokenTime";
-import { formatWhen, zonedInstant } from "./calendar";
+import { formatWhen, zonedInstant } from "../hub/calendar";
 import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink, venmoProfileLink, venmoUsername, type PaymentSettings, type PayRecord } from "./payments";
 import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
 import { cleanerMultiTenant, groupChatEnabled } from "./flag";
 import { GROUP_RECIPIENT, draftStatus, earlierThan, replyStateAt, type ReplyState, type StoredDraft } from "./replies";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
-import { calendarUrlAllowed, readPublicCalendar, type CalendarFetch } from "./fetchLimits";
+import { calendarUrlAllowed, readPublicCalendar, type CalendarFetch } from "../hub/fetchLimits";
+import { calendarFetch, setCalendarFetch } from "../hub/calendarFetch";
 import { allTimesAsk, askNext, DOOR_CODE_STEP, moreSourcesAsk, PAYMENTS_STEP, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, SUPPLIES_STEP, type SetupAsk } from "./setupAsk";
 import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jobHoldLine, optedOutCodeLine, resumeNote } from "./cleanerTexts";
 import { isInjuryReport } from "./injury";
@@ -28,7 +29,7 @@ import { cleanerPinStatusUrl, deleteLiveGroup, isAllowlisted, liveSmsOn, sendLiv
 import { openPin, sealPin, serverPinKey, type PinSeal } from "./pinSeal";
 import { containsCodeToken, redactPhone } from "./redact";
 import { isScratchTestNumber } from "./scratch";
-import { googleCalendarSource, guestyLiteSource, icalSource, type BookingSource, type GoogleEventList, type SourceSnapshot } from "./sources";
+import { googleCalendarSource, guestyLiteSource, icalSource, type BookingSource, type GoogleEventList, type SourceSnapshot } from "../hub/sources";
 import {
   SCRATCH_NUMBER_REFUSAL,
   SCRATCH_PROPERTY_REFUSAL,
@@ -484,16 +485,14 @@ interface OutboxRow {
   body: string;
 }
 
-let calendarFetch: CalendarFetch | undefined;
-
 /** Tests stub the calendar read. Unset uses the platform fetch. */
 export function setCleanerCalendarFetch(fetchImpl: CalendarFetch | undefined): void {
-  calendarFetch = fetchImpl;
+  setCalendarFetch(fetchImpl);
 }
 
-/** The calendar read Cleaner Core uses, so Supply Core's booking calendars read the same way. */
+/** The calendar read every flow uses. */
 export function cleanerCalendarFetch(): CalendarFetch {
-  return calendarFetch ?? fetch;
+  return calendarFetch();
 }
 
 type AlertFetch = NonNullable<NonNullable<ConstructorParameters<typeof GrokRoutineWebhookSink>[1]>["fetch"]>;
@@ -1723,7 +1722,7 @@ export class LiveDesk {
       }
     }
     if (file.google && !google && !held.has("google-calendar")) return { guestyFailed: false, googleUnread, unread: [] };
-    const reads = await Promise.all(calendars.map(async (calendar) => ({ calendar, read: await readPublicCalendar(calendar.url, calendarFetch ?? fetch) })));
+    const reads = await Promise.all(calendars.map(async (calendar) => ({ calendar, read: await readPublicCalendar(calendar.url, calendarFetch()) })));
     const failed = reads.flatMap(({ calendar, read }) => (read.ok ? [] : [{ calendar, reason: read.reason }]));
     const result: CalendarRead = {
       guestyFailed: failed.some((item) => item.calendar.sourceId === "guesty-lite"),

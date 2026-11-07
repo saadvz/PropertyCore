@@ -5,14 +5,14 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NoopOperatorNotificationSink } from "../src/alerts/operatorEvents";
 import { OperatorEventOutbox } from "../src/alerts/outbox";
-import { zonedInstant } from "../src/cleaner-core/calendar";
+import { zonedInstant } from "../src/hub/calendar";
 import { privateCodeLine } from "../src/cleaner-core/cleanerTexts";
 import type { CleanerCore } from "../src/cleaner-core/core";
 import { drainCleanerAlerts, liveDeskFor, resetLiveDesks, setCleanerAlertFetch, setCleanerCalendarFetch, type LiveDesk, type ToolReply } from "../src/cleaner-core/liveDesk";
 import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
 import { setCleanerGroupFetch, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import { fakeConversations } from "./fakeConversations";
-import type { GoogleEventList } from "../src/cleaner-core/sources";
+import type { GoogleEventList } from "../src/hub/sources";
 import { SCRATCH_TENANTS } from "../src/cleaner-core/tenants";
 import { FileRuntimeStore } from "../src/storage/runtimeStore";
 import {
