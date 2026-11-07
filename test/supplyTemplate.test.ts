@@ -64,6 +64,12 @@ describe("Supply Core template", () => {
     expect(bootstrap).not.toContain("Until the hands-off probe passes");
   });
 
+  it("the routine passes Google events whenever the property has Google Calendar saved, by either flow", () => {
+    const routine = read(join(TEMPLATE, "routines/supply-core-check.md"));
+    expect(routine).toContain("If Google Calendar is saved for the property, by Supply Core or by Cleaner Core");
+    expect(routine).toContain("If its `next` asks for Google events, read them and call `check_supplies` again.");
+  });
+
   it("the routine covers the fallback, unconfirmed, and late steps", () => {
     const routine = read(join(TEMPLATE, "routines/supply-core-check.md"));
     expect(routine).toContain("unconfirmed");

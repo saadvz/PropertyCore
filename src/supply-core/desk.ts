@@ -41,6 +41,8 @@ function sameHash(a: string, b: string): boolean {
 }
 
 export const MAX_ITEMS = 30;
+/** check_supplies' next step when the property's bookings are in Google Calendar and no events came with the call. */
+export const GOOGLE_EVENTS_NEEDED = "Google Calendar is saved for this property: read its events and call check_supplies again with them as googleEvents. Until then, by-bookings items wait.";
 const ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
 const CARD_REFUSAL = "That looks like a card number. Supply Core never takes card details: keep them in your Vault.";
 const APPROVAL_STALE = "That approval has expired or doesn't match this change. Ask the host again.";
@@ -607,11 +609,13 @@ export class SupplyDesk {
       if (!file.settings.activatedAt || file.offAt) return fail("Supply Core isn't active yet. Call get_supply_state.");
       this.sweep(file);
       let sourcesFailed = false;
+      let googleMissing = false;
       const hub = this.hub();
       if (hub.calendars().length > 0 || hub.google()) {
         // The hub keeps the dates only when every calendar read; a failed read keeps the last good
         // ones. An under-read would never order early, but it could skip a due item.
         const read = await hub.readCalendars({ ...(input.googleEvents ? { googleEvents: input.googleEvents } : {}), tenantId: "supply" });
+        googleMissing = hub.google() && !input.googleEvents;
         sourcesFailed = read.links.some((link) => !link.read.ok) || (hub.google() && read.google === undefined);
       }
       const now = this.deps.now();
@@ -640,7 +644,7 @@ export class SupplyDesk {
       return ok({
         due,
         ...(file.settings.stores ? { stores: file.settings.stores } : {}),
-        ...(sourcesFailed ? { sourcesFailed: true, next: "Tell the host a booking calendar couldn't be read, so by-bookings items wait for the next check." } : {}),
+        ...(sourcesFailed ? { sourcesFailed: true, next: googleMissing ? GOOGLE_EVENTS_NEEDED : "Tell the host a booking calendar couldn't be read, so by-bookings items wait for the next check." } : {}),
         unconfirmed: file.orders.filter((order) => order.status === "unconfirmed"),
         held: file.carts.filter((cart) => cart.status === "held").map((cart) => ({ cartToken: cart.token, store: cart.cart.store, totalCents: cart.cart.totalCents, holds: cart.holds })),
         late: late.map((order) => ({ orderId: order.id, store: order.store, deadline: order.deadline, ...(order.expectedBy ? { expectedBy: order.expectedBy } : {}) })),

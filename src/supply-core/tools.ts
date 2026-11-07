@@ -109,7 +109,7 @@ export const SUPPLY_TOOLS: SupplyTool[] = [
     name: "save_supply_sources",
     title: "Save booking calendars",
     description:
-      "Standalone only, for by-bookings items. uploadLink { name } gives a one-time link: from your own cloud computer, POST JSON {\"url\": \"<calendar link>\"} to it. Never put the link in chat or in a tool argument. google: true when the bookings are in Google Calendar. done: true when that's all.",
+      "For by-bookings items: saves to the property's booking calendars, shared with Cleaner Core, whether Cleaner Core is on or off. Skip it when the property already has its calendars. uploadLink { name } gives a one-time link: from your own cloud computer, POST JSON {\"url\": \"<calendar link>\"} to it. Never put the link in chat or in a tool argument. google: true when the bookings are in Google Calendar; then pass that calendar's events as googleEvents to every check_supplies. done: true when that's all.",
     input: z.object({ uploadLink: z.object({ name: z.string().max(40) }).strict().optional(), google: z.literal(true).optional(), done: z.literal(true).optional() }).strict(),
   },
   {

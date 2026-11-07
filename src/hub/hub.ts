@@ -108,6 +108,8 @@ export function resetHubs(): void {
 export class Hub {
   protected file: HubFile;
   private guards: () => HubGuards | undefined = () => undefined;
+  /** Counts saves of the property's details in this process, so a flow can tell they changed under it. */
+  private propertySaves = 0;
 
   constructor(
     readonly root: string,
@@ -138,7 +140,13 @@ export class Hub {
     for (const key of clear) delete next[key];
     this.file = { ...this.file, property: next };
     this.save();
+    this.propertySaves += 1;
     return { ok: true };
+  }
+
+  /** Changes each time the property's details are saved, by either flow. */
+  propertyRevision(): number {
+    return this.propertySaves;
   }
 
   stored(): StoredCalendar[] {

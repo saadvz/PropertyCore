@@ -183,4 +183,69 @@ describe("Cleaner Core on the property hub", () => {
     expect(hubOf(root).property().address).toBe(ADDRESS);
     expect(hubOf(root).stored()).toEqual([{ name: "Airbnb", url: CALENDAR_URL }]);
   });
+
+  it("a desk with real cleanings and a legacy Guesty Lite link moves into hub.json and its checks call off nothing and add nothing", async () => {
+    const root = folder();
+    const first = openDesk(root);
+    await property(first.desk);
+    ok(await first.desk.saveCalendarLink({ url: CALENDAR_URL }));
+    ok(await first.desk.saveSources({ done: true }));
+    ok(await first.desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" }));
+    ok(await first.desk.saveDoorCode({ code: DOOR_CODE, lockLocation: "back door" }, PIN_KEY));
+    ok(await first.desk.setUpTexting());
+    const before = ok(await first.desk.runChecks()).turns as { checkoutDate: string; status: string }[];
+    expect(before.length).toBeGreaterThan(0);
+    expect(before.some((turn) => turn.status === "canceled")).toBe(false);
+
+    // Put the folder back the way code before the hub kept it: the details and the single link in cleaner-live.json.
+    const hub = JSON.parse(readFileSync(join(root, "hub.json"), "utf8")) as { property: Record<string, string>; calendars: { url: string; legacy?: true }[] };
+    expect(hub.calendars).toEqual([{ name: "Guesty Lite", url: CALENDAR_URL, legacy: true }]);
+    writeFileSync(join(root, "cleaner-live.json"), JSON.stringify({ ...live(root), ...hub.property, calendarLink: CALENDAR_URL, sourcesDone: true }));
+    rmSync(join(root, "hub.json"));
+    resetLiveDesks();
+
+    const { desk } = openDesk(root);
+    expect(hubOf(root).calendars().map((c) => c.sourceId)).toEqual(["guesty-lite"]);
+    const after = ok(await desk.checkNow()).turns as { checkoutDate: string; status: string }[];
+    expect(after.map((turn) => [turn.checkoutDate, turn.status])).toEqual(before.map((turn) => [turn.checkoutDate, turn.status]));
+    expect(live(root)).not.toHaveProperty("calendarLink");
+  });
+
+  it("an address Supply Core changes in the hub reaches Cleaner Core's engine on its next step", async () => {
+    const { root, desk } = openDesk();
+    await withJobs(desk);
+    const moved = "8 Scratch Court, Teaneck, NJ 07666";
+    // Supply Core saves the shared property through the same hub.
+    expect(hubOf(root).saveProperty({ address: moved })).toEqual({ ok: true });
+    const { sent } = await desk.inbound({ id: "stop-after-move", from: CLEANER, text: "STOP" });
+    const bodies = sent.map((text) => text.body).join("\n");
+    expect(bodies).toContain(moved);
+    expect(bodies).not.toContain(ADDRESS);
+  });
+
+  it("while calendars are set aside, a calendar list that would call off cleanings is held for the host", async () => {
+    const root = folder();
+    const first = openDesk(root);
+    await withJobs(first.desk);
+    const before = ok(await first.desk.checkNow()).turns as { checkoutDate: string; status: string }[];
+    expect(before.length).toBeGreaterThan(0);
+    // The state a move leaves when cleaning was off and Supply Core's list won: Cleaner Core's calendar set aside.
+    const hub = JSON.parse(readFileSync(join(root, "hub.json"), "utf8")) as Record<string, unknown>;
+    writeFileSync(join(root, "hub.json"), JSON.stringify({ ...hub, calendars: [{ name: "Vrbo", url: OTHER_URL }], calendarsSetAside: [{ name: "Airbnb", url: CALENDAR_URL }] }));
+    resetLiveDesks();
+    const { desk } = openDesk(root);
+    // Supply Core's calendar reads cleanly and lists none of the stays Cleaner Core's cleanings came from.
+    setCleanerCalendarFetch(async (url) => ({ status: 200, url, async text() { return url === CALENDAR_URL ? CALENDAR_ICS : "BEGIN:VCALENDAR\r\nEND:VCALENDAR"; } }));
+
+    const checked = ok(await desk.checkNow());
+    expect((checked.turns as { status: string }[]).map((turn) => turn.status)).toEqual(before.map((turn) => turn.status));
+    expect(checked.calendarsHeld).toBe(
+      "Calendars are set aside for this property, and its saved calendar list would call off 2 upcoming cleanings. Ask the host: to add a set-aside calendar, send its link again with save_sources uploadLink; to keep the list as it is, call save_sources with done: true and dropJobs: true.",
+    );
+    const refused = await desk.runChecks();
+    expect(refused.ok).toBe(false);
+
+    ok(await desk.saveSources({ done: true, dropJobs: true }));
+    expect(hubOf(root).setAside()).toEqual([]);
+  });
 });

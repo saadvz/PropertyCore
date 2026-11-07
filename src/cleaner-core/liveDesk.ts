@@ -453,6 +453,8 @@ interface CalendarRead {
   googleUnread: boolean;
   /** Names of the calendar links that were not applied. Never a URL. */
   unread: string[];
+  /** Set when nothing was applied because calendars are set aside and the saved list would call off this many cleanings. */
+  held?: number;
 }
 
 interface OutboxRow {
@@ -549,6 +551,12 @@ function sameHash(a: string, b: string): boolean {
   return left.length === 32 && right.length === 32 && timingSafeEqual(left, right);
 }
 
+/** What check_now and run_checks say while set-aside calendars hold the saved list back. */
+function calendarsHeld(count: number): string {
+  const cleanings = `${count} upcoming ${count === 1 ? "cleaning" : "cleanings"}`;
+  return `Calendars are set aside for this property, and its saved calendar list would call off ${cleanings}. Ask the host: to add a set-aside calendar, send its link again with save_sources uploadLink; to keep the list as it is, call save_sources with done: true and dropJobs: true.`;
+}
+
 /** Stamps a read with the hash of the link it came from. */
 function fromLink(source: BookingSource, origin: string): BookingSource {
   return { kind: source.kind, read: async () => ({ ...(await source.read()), origin }) };
@@ -606,6 +614,8 @@ function timesTarget(engine: CleanerCore): JobView | undefined {
 export class LiveDesk {
   private file: LiveFile = {};
   private readonly hub: Hub;
+  /** The hub's property revision the engine was opened with. */
+  private engineRevision = 0;
   /** The door-code key from the call that made the calendar upload link, so the upload can check the link. */
   private calendarUploadKey: Buffer | undefined;
   /** The door-code key from the call that made the door code upload link, so the upload seals with it. */
@@ -1033,6 +1043,9 @@ export class LiveDesk {
       [...(nickname ? [] : ["nickname" as const]), ...(propertyType ? [] : ["propertyType" as const])],
     );
     if (!saved.ok) return this.fail(saved.error);
+    // This desk's own save takes effect at the next run_checks, as before; only another flow's save
+    // reopens the engine on the next step.
+    this.engineRevision = this.hub.propertyRevision();
     this.file.business = business;
     this.file.propertyId = propertyIdFor(business);
     this.persist();
@@ -1571,6 +1584,7 @@ export class LiveDesk {
     return this.reply({
       alerts: [...fresh.map((note) => note.body), ...(wake ? [wake] : [])],
       messages: this.messagesOut(newMessages, save),
+      ...(read.held ? { calendarsHeld: calendarsHeld(read.held) } : {}),
       ...this.setAsideReply(),
       ...(drafts.length > 0 ? { drafts } : {}),
       ...(savedAnswers.length > 0 ? { savedAnswers } : {}),
@@ -1605,6 +1619,7 @@ export class LiveDesk {
     } finally {
       this.checking = false;
     }
+    if (read.held) return this.fail(calendarsHeld(read.held));
     if (read.reason) {
       this.engine = before;
       if (read.guestyFailed) return this.fail(read.reason);
@@ -1647,6 +1662,12 @@ export class LiveDesk {
     const engine = this.engine;
     const tenantId = this.file.propertyId;
     if (!engine || !tenantId) throw new Error("Setup is incomplete.");
+    // Calendars set aside when the data moved are waiting for the host. Until they decide, a saved
+    // list that would call off cleanings (the set-aside ones listed them) changes nothing.
+    if (this.hub.setAside().length > 0) {
+      const lost = engine.wouldCancel(this.hub.claims());
+      if (lost.length > 0) return { guestyFailed: false, googleUnread: false, unread: [], held: lost.length };
+    }
     const held = new Set(engine.keepSources(this.hub.claims()));
     // A saved Google source with no events now and no held snapshot would make the others look like
     // they removed its stays, so nothing is read or applied.
@@ -3357,6 +3378,9 @@ export class LiveDesk {
 
   private resume(): void {
     this.openSeal();
+    // Supply Core saved the shared property (address, time zone, usual times) since the engine
+    // opened: reopen it from its files, so the next text uses the saved details.
+    if (this.engine && this.engineRevision !== this.hub.propertyRevision()) this.engine = undefined;
     if (this.engine || !this.file.checked) return;
     if (!this.codeSaved()) return;
     this.engine = this.openEngine();
@@ -3376,6 +3400,7 @@ export class LiveDesk {
   }
 
   private openEngine(): CleanerCore {
+    this.engineRevision = this.hub.propertyRevision();
     const file = this.file;
     const place = this.place;
     if (!file.host || !file.cleaner || !place.address || !place.timeZone || !file.propertyId || !file.business) {

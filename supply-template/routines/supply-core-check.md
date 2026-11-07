@@ -11,8 +11,9 @@ another). A daytime run means an approval card isn't left waiting overnight.
 
 ## Instructions for the routine
 
-1. Call `check_supplies`. If the bookings are in Google Calendar, read only the
-   calendar the host named and pass its events as `googleEvents`. If it says
+1. Call `check_supplies`. If Google Calendar is saved for the property, by Supply Core or by Cleaner Core,
+   read only the calendar the host named and pass its events as `googleEvents`.
+   If its `next` asks for Google events, read them and call `check_supplies` again. If it says
    Supply Core isn't active, post nothing and stop.
 2. For each `unconfirmed` order, look in your own order history for that store
    first. Found: `record_order` with its `orderId`, order number,
