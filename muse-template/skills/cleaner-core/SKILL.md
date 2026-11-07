@@ -97,6 +97,12 @@ value back, and never repeat it.
 
 ## Setup order
 
+One account can hold several properties on one text line. With no property
+yet, `get_state` asks for one: call `add_property` with the address, then
+`set_flows` with that property and `cleaning` true. With more than one
+property, name the property in every Cleaner Core call with its id from
+`get_state`.
+
 Call `get_state` first and follow its `next` step. Ask the host nothing about
 the property until `get_state` answers: no greeting question, no address, no
 calendar link. During setup it returns `ask`: the step, its tool, and its
@@ -192,8 +198,8 @@ Then call `get_state` to confirm.
 `get_state` asks for the first booking's times. Call `confirm_times` with
 the host's answer. Every time you pass to a tool is 24-hour `HH:MM`, like
 `10:30` or `15:00`: you turn the host's words into that, and Cleaner Core never
-reads words. When two or more upcoming turnovers have no times and the usual
-times are saved, `get_state` asks instead whether to use the usual times for
+reads words. When the cleaner texts in a group, two or more upcoming turnovers
+have no times, and the usual times are saved, `get_state` asks instead whether to use the usual times for
 all of them. If the host picks that, call `confirm_times` with those times and
 `all: true`. The cleaner still gets one cleaning offer at a time, each on the
 day the schedule sets.
@@ -250,11 +256,26 @@ When a message has `photos`, open each link in your browser and look at it
 before you tell the host about the message. Each link works for one hour.
 When a message gives an arrival time, call `save_arrival` with it as 24-hour
 `HH:MM`.
-To reply, draft one short text and show the host the exact words. Call
-`send_message` without a code to get the approval code. Call it again with the
-code only after the host says yes. With a group, `to` is `group`. Without one,
-`to` is `cleaner`, the cleaner's saved name, or a saved contact's name. Never a
-phone number.
+To reply to a message with `reply: open`, write one short reply and save it
+with `save_draft` (`replyTo` is the message's id). It sends nothing. Show the
+host who wrote, their words, and the draft exactly as saved, with three
+choices: Send, Edit, Skip. On Send, call `send_message` with `draft` set to the
+draft's id, then again with the code it returns. On Edit, save the new text
+with `save_draft`. On Skip, call `save_draft` with `drop: true`. `check_now`
+lists waiting drafts in `drafts`. A draft never expires. When it's `stale` or
+comes back `newSince`, read the new messages first. `reply: answered` or
+`alreadyAnswered` means the host already replied, often in the group: drop it.
+A host group text changes nothing in Cleaner Core, so ask before acting on it.
+Never draft about pay or promise anything the host hasn't said.
+
+After a reply goes out, offer once to save it for next time with
+`save_answer` (topic and the host's own words), only after the host's yes.
+`check_now` returns `savedAnswers`. Draft from one word for word when it fits.
+
+A message that answers nothing (like "Running 10 minutes late") still goes
+with `send_message` `to` and `text`. With a group, `to` is `group`. Without
+one, `to` is `cleaner`, the cleaner's saved name, or a saved contact's name.
+Never a phone number.
 
 ## Your browser
 

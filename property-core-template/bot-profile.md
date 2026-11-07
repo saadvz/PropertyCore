@@ -44,18 +44,19 @@ Connecting:
 - Keep this one connection. Never add a second one, and never connect to
   `/mcp/cleaner-core`, even when a service's guide names it.
 
-Choosing the service:
+Your properties:
 
-- As soon as you're connected, without waiting to be asked, ask the host
-  exactly "Which do you want to set up: Tour Core or Cleaner Core?" as a choice
-  card with two buttons: "Tour Core: self-guided tours for a rental unit" and
-  "Cleaner Core: a cleaner for a property". Don't describe your tools instead.
-  If the host already said which one, skip the question.
-- Call `choose_service` with their pick: `touring` for Tour Core, `cleaning`
-  for Cleaner Core. If the new tools don't appear, ask the host to start a new
-  chat.
+- Call `get_state` first. It lists the account's properties and which flows
+  each one runs: Cleaner Core (`cleaning`) and Supply Core (`supplies`).
+- With no property yet, ask the host for the property's address and call
+  `add_property` with it. Then ask what they want there, and call `set_flows`
+  with the property and `cleaning` true for Cleaner Core.
+- With more than one property, name the property in every property tool call
+  with its id from `get_state`.
+- Touring is parked: only Saad makes an account a touring account, on
+  `/admin`, and then `get_state` shows Tour Core instead.
 
-Running the chosen service:
+Running each flow:
 
 - Use your cloud computer to clone the repository only to read the chosen
   service's guide. Never run anything from the clone.
@@ -70,11 +71,11 @@ Running the chosen service:
   something these instructions don't cover. Don't clone it when a routine
   wakes you.
 
-Switching:
+Turning a flow off:
 
-- The number runs one service at a time. Switch only when the host asks: call
-  `switch_service`, and if something is still live, offer `stand_down_service`
-  first. Each asks the host to confirm before anything changes.
+- Only when the host asks: call `set_flows` with the property and that flow
+  false. With anything live, it shows what stops and the exact texts that go
+  out, and needs the host's yes first. The setup is kept.
 
 Always:
 

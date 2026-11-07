@@ -137,6 +137,9 @@ describe("Scratch test tools", () => {
       "save_schedule",
       "save_door_code",
       "save_preferences",
+      "save_payments",
+      "mark_paid",
+      "get_pay_link",
       "activate",
       "set_up_texting",
       "get_turns",
@@ -148,6 +151,8 @@ describe("Scratch test tools", () => {
       "get_job_photos",
       "save_alert_routine",
       "send_message",
+      "save_draft",
+      "save_answer",
       "retry_send",
       "hold_job",
       "resume_job",
@@ -256,7 +261,8 @@ describe("Scratch test tools", () => {
 
     const sealBefore = readFileSync(join(wired.root, "cleaner-live.json"), "utf8");
     expect(sealBefore).toContain("\"texting\":true");
-    const pinSeal = JSON.parse(sealBefore).pinSeal;
+    const pinSeal = JSON.parse(readFileSync(join(wired.root, "door-access.json"), "utf8")).pinSeal;
+    expect(pinSeal).toBeTruthy();
     const firstReset = await remember(call(wired, "reset_scratch"));
     expect(nextOf(firstReset)).toBe(RESET_LINE);
     const cleared = await remember(call(wired, "get_state"));
@@ -266,7 +272,7 @@ describe("Scratch test tools", () => {
     expect(linesOf(await remember(call(wired, "read_inbox")))).toEqual([]);
     expect(linesOf(await remember(call(wired, "read_outbox")))).toEqual([]);
     const fileOnce = readFileSync(join(wired.root, "cleaner-live.json"), "utf8");
-    expect(JSON.parse(fileOnce).pinSeal).toEqual(pinSeal);
+    expect(JSON.parse(readFileSync(join(wired.root, "door-access.json"), "utf8")).pinSeal).toEqual(pinSeal);
     const secondReset = await remember(call(wired, "reset_scratch"));
     expect(nextOf(secondReset)).toBe(RESET_LINE);
     expect(readFileSync(join(wired.root, "cleaner-live.json"), "utf8")).toBe(fileOnce);
@@ -390,13 +396,14 @@ describe("Scratch test tools", () => {
     await call(practice, "save_door_code", { code: DOOR_CODE });
     await call(practice, "set_up_texting");
     const practiceBefore = readFileSync(join(practice.root, "cleaner-live.json"), "utf8");
+    const practiceDoorBefore = readFileSync(join(practice.root, "door-access.json"), "utf8");
     const practiceReset = await call(practice, "reset_scratch");
     expect(practiceReset.isError).toBe(true);
     expect(practiceReset.text).toBe(PROPERTY_REFUSAL);
     expect(practiceReset.text).not.toMatch(/CLEANER_CORE|token|SCRATCH_TOOLS/);
     expect(readFileSync(join(practice.root, "cleaner-live.json"), "utf8")).toBe(practiceBefore);
     expect(JSON.parse(practiceBefore).texting).toBe(true);
-    expect(JSON.parse(practiceBefore).pinSeal.iv).toEqual(JSON.parse(readFileSync(join(practice.root, "cleaner-live.json"), "utf8")).pinSeal.iv);
+    expect(JSON.parse(practiceDoorBefore).pinSeal.iv).toEqual(JSON.parse(readFileSync(join(practice.root, "door-access.json"), "utf8")).pinSeal.iv);
     expect(twilioCalls).toBe(0);
   }, 40_000);
 

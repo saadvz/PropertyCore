@@ -5,14 +5,14 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NoopOperatorNotificationSink } from "../src/alerts/operatorEvents";
 import { OperatorEventOutbox } from "../src/alerts/outbox";
-import { zonedInstant } from "../src/cleaner-core/calendar";
+import { zonedInstant } from "../src/hub/calendar";
 import { privateCodeLine } from "../src/cleaner-core/cleanerTexts";
 import type { CleanerCore } from "../src/cleaner-core/core";
 import { drainCleanerAlerts, liveDeskFor, resetLiveDesks, setCleanerAlertFetch, setCleanerCalendarFetch, type LiveDesk, type ToolReply } from "../src/cleaner-core/liveDesk";
 import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
 import { setCleanerGroupFetch, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import { fakeConversations } from "./fakeConversations";
-import type { GoogleEventList } from "../src/cleaner-core/sources";
+import type { GoogleEventList } from "../src/hub/sources";
 import { SCRATCH_TENANTS } from "../src/cleaner-core/tenants";
 import { FileRuntimeStore } from "../src/storage/runtimeStore";
 import {
@@ -39,6 +39,8 @@ import { filesUnder } from "./files";
 
 const PATH = "/mcp/cleaner-core";
 const open: WiredApp[] = [];
+
+const UPDATE_HELD = "Times saved. I'll send the cleaner the new time in about a minute. If the time changes again before then, they get only the last one.";
 
 afterEach(async () => {
   setCleanerTwilioClient(undefined);
@@ -235,7 +237,8 @@ describe("Cleaner Core Grok demo: check_now", () => {
   });
 
   it("moved stay updates the job", async () => {
-    const wired = await app();
+    let now = new Date(FROZEN);
+    const wired = await app({ now: () => now });
     await confirmedJob(wired, { id: "g1", start: "2026-10-10", end: "2026-10-15" });
     const before = wired.cleanerSent.length;
     const moved = await call(wired, "check_now", { googleEvents: withNext({ id: "g1", start: "2026-10-10", end: "2026-10-16" }) });
@@ -245,7 +248,13 @@ describe("Cleaner Core Grok demo: check_now", () => {
     // and tells the cleaner nothing until the host confirms the new day.
     expect(alertsOf(moved).some((line) => line.startsWith(HOST_CHECKOUT) && line.includes("Oct 16"))).toBe(true);
     expect(kindsSince(wired, before)).toEqual([]);
-    expect((await call(wired, "confirm_times", { checkout: "10:30", checkIn: "15:00" })).isError).toBe(false);
+    // The update waits a minute, so a quick second change would replace it.
+    const timed = await call(wired, "confirm_times", { checkout: "10:30", checkIn: "15:00" });
+    expect(timed.isError).toBe(false);
+    expect(timed.structured?.next).toBe(UPDATE_HELD);
+    expect(kindsSince(wired, before)).toEqual([]);
+    now = new Date(now.getTime() + 60_000);
+    expect((await call(wired, "check_now", { googleEvents: withNext({ id: "g1", start: "2026-10-10", end: "2026-10-16" }) })).isError).toBe(false);
     const got = wired.cleanerSent.slice(before);
     expect(got.map(textKind)).toEqual(["corrected"]);
     expect(got[0]?.body).toContain("Friday, Oct 16 at 10:30 AM");
@@ -303,7 +312,7 @@ describe("Cleaner Core Grok demo: check_now", () => {
     ]);
     const checked = await call(wired, "check_now", { googleEvents: next });
     expect(checked.isError).toBe(false);
-    expect(checked.structured?.guestyUnread).toBe(true);
+    expect(checked.structured?.unread).toContain("Guesty Lite");
     expect(turnsOf(checked).map((turn) => turn.checkoutDate)).toContain("2026-10-24");
   });
 
@@ -506,7 +515,8 @@ describe("Cleaner Core Grok demo: check_now follow-ups", () => {
   it("with group chat on, a moved stay waits for the host and then sends one corrected text", async () => {
     const stub = groupStub();
     setCleanerGroupFetch(stub.impl);
-    const wired = await app({ groupChat: true });
+    let now = new Date(FROZEN);
+    const wired = await app({ groupChat: true, now: () => now });
     await confirmedJob(wired, { id: "g1", start: "2026-10-10", end: "2026-10-15" });
     const sms = wired.cleanerSent.length;
     const posts = stub.posts.length;
@@ -516,7 +526,10 @@ describe("Cleaner Core Grok demo: check_now follow-ups", () => {
     expect((moved.structured?.turns as { checkoutTime: string | null }[])[0]?.checkoutTime).toBeNull();
     expect(wired.cleanerSent).toHaveLength(sms);
     expect(stub.posts).toHaveLength(posts);
-    expect((await call(wired, "confirm_times", { checkout: "10:30", checkIn: "15:00" })).isError).toBe(false);
+    expect((await call(wired, "confirm_times", { checkout: "10:30", checkIn: "15:00" })).structured?.next).toBe(UPDATE_HELD);
+    expect(stub.posts).toHaveLength(posts);
+    now = new Date(now.getTime() + 60_000);
+    expect((await call(wired, "check_now", { googleEvents: withNext({ id: "g1", start: "2026-10-10", end: "2026-10-16" }) })).isError).toBe(false);
     // The corrected text goes once into the group, naming the cleaner, and nothing goes one-to-one.
     expect(wired.cleanerSent).toHaveLength(sms);
     const got = stub.posts.slice(posts);
@@ -569,6 +582,12 @@ function drain(wired: WiredApp, now: () => Date = () => new Date(FROZEN)): Promi
 function cleaningUpdates(wired: WiredApp) {
   const outbox = new OperatorEventOutbox(new FileRuntimeStore(join(wired.root, "cleaner-alerts")), () => new NoopOperatorNotificationSink());
   return outbox.records().filter((record) => record.event.eventType === "cleaning.update");
+}
+
+/** The calendars saved in the property's hub.json. */
+function hubCalendars(wired: WiredApp): { name: string; url: string; legacy?: true }[] {
+  const path = join(wired.root, "hub.json");
+  return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as { calendars: { name: string; url: string; legacy?: true }[] }).calendars : [];
 }
 
 function liveFile(wired: WiredApp): string {
@@ -1065,7 +1084,7 @@ describe("Cleaner Core Grok demo: final review fixes", () => {
     guestyCalendar(false);
     const down = await call(wired, "check_now", { googleEvents: list });
     expect(down.isError).toBe(false);
-    expect(down.structured?.guestyUnread).toBe(true);
+    expect(down.structured?.unread).toContain("Guesty Lite");
     expect(turnsOf(down).every((turn) => turn.status !== "canceled")).toBe(true);
     guestyCalendar(true);
     const up = await call(wired, "check_now", { googleEvents: list });
@@ -1305,7 +1324,8 @@ describe("Cleaner Core Grok demo: several calendar links", () => {
     await setUpTo(wired);
     expect((await call(wired, "save_calendar_link", { url: CALENDAR_URL })).isError).toBe(false);
     expect(await done(wired)).toContain("Calendar link saved.");
-    expect(JSON.parse(liveFile(wired)).calendarLink).toBe(CALENDAR_URL);
+    // The calendars are the property's, in its hub: the Guesty Lite link is the legacy entry there.
+    expect(hubCalendars(wired).find((calendar) => calendar.legacy)?.url).toBe(CALENDAR_URL);
     expect((await call(wired, "save_door_code", { code: DOOR_CODE })).isError).toBe(false);
     expect((await call(wired, "set_up_texting")).isError).toBe(false);
     const checks = await call(wired, "run_checks");
@@ -1313,7 +1333,6 @@ describe("Cleaner Core Grok demo: several calendar links", () => {
     expect(turnsOf(checks).map((turn) => turn.checkoutDate)).toEqual(GUESTY_JOBS);
     guestyCalendar(false);
     const down = await call(wired, "check_now", {});
-    expect(down.structured?.guestyUnread).toBe(true);
     expect(down.structured?.unread).toEqual(["Guesty Lite"]);
     expect(turnsOf(down).every((turn) => turn.status !== "canceled")).toBe(true);
   });
@@ -1372,9 +1391,9 @@ describe("Cleaner Core Grok demo: editing calendars never silently cancels a cle
     expect((await call(wired, "save_sources", { calendars: [AIRBNB, VRBO] })).isError).toBe(false);
     expect((await call(wired, "save_calendar_link", { url: CALENDAR_URL })).isError).toBe(false);
     expect(await done(wired)).toContain("3 calendar links saved.");
-    const file = JSON.parse(liveFile(wired)) as { calendarLink?: string; calendars?: unknown[] };
-    expect(file.calendarLink).toBe(CALENDAR_URL);
-    expect(file.calendars).toEqual([AIRBNB, VRBO]);
+    const calendars = hubCalendars(wired);
+    expect(calendars.find((calendar) => calendar.legacy)?.url).toBe(CALENDAR_URL);
+    expect(calendars.filter((calendar) => !calendar.legacy)).toEqual([AIRBNB, VRBO]);
     expect((await call(wired, "save_door_code", { code: DOOR_CODE })).isError).toBe(false);
     expect((await call(wired, "set_up_texting")).isError).toBe(false);
     const checks = await call(wired, "run_checks");
@@ -1576,8 +1595,9 @@ describe("Cleaner Core Grok demo: Scratch rehearsal", () => {
     // The second YES takes the offer.
     await fromCleaner("YES");
     // The offer goes once, into the group, and asks the cleaner by name. There is no one-to-one copy.
+    // It is the group's first text, so the intro leads it in the same post.
     const offers = await labelled("Cleaning offer to the group");
-    expect(offers.map((item) => item.body.startsWith(`Turnover at ${address} on Wednesday, Oct 14. Checkout 10:00 AM`))).toEqual([true]);
+    expect(offers.map((item) => item.body.startsWith("Hi ") && item.body.includes(`\n\nTurnover at ${address} on Wednesday, Oct 14. Checkout 10:00 AM`))).toEqual([true]);
     await fromCleaner("YES");
     expect(await labelled("Confirmation to the group")).toHaveLength(1);
     const heard = alertsOf(await say("check_now", { googleEvents: googleList([today]) }));
@@ -1648,7 +1668,11 @@ describe("Cleaner Core Grok demo: Scratch rehearsal", () => {
     const movedCheck = await say("check_now", { googleEvents: googleList([today, moved]) });
     expect(movedCheck.structured?.needsTimes).toBe(true);
     expect(await labelled("Time correction to the group")).toEqual([]);
-    await say("confirm_times", { checkout: "11:00", checkIn: "16:00" });
+    expect((await say("confirm_times", { checkout: "11:00", checkIn: "16:00" })).structured?.next).toBe(UPDATE_HELD);
+    expect(await labelled("Time correction to the group")).toEqual([]);
+    // A minute later the next check sends the one update.
+    now = new Date(now.getTime() + 60_000);
+    await say("check_now", { googleEvents: googleList([today, moved]) });
     const corrected = await labelled("Time correction to the group");
     expect(corrected).toHaveLength(1);
     expect(corrected[0]?.body).toContain("Oct 25 at 11:00 AM");

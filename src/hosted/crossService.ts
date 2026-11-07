@@ -3,8 +3,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleaningUpdateEvent } from "../alerts/operatorEvents";
 import { parsePhone } from "../core/phone";
-import { tenantFolder, type Tenant, type TenantService } from "../cleaner-core/hosted/registry";
-import { tenantContext, type HostedCleaner } from "../cleaner-core/hosted/router";
+import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
+
+/** The two services a parked touring account has run: touring now, and cleaning before the move to properties. */
+type ServiceName = "touring" | "cleaning";
+import { touringAccountContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { isMedicalEmergency, isPlainLanguageStop, keywordOf } from "../intent/ruleBased";
 import { isInjuryReport } from "../cleaner-core/injury";
@@ -73,7 +76,7 @@ export class TenantOptOuts {
 
 /** The host, cleaner, observer, and contacts the tenant's cleaning setup saved. */
 function knownToCleaning(h: HostedCleaner, tenant: Tenant, phone: string): Promise<boolean> {
-  const ctx = tenantContext(h, tenant);
+  const ctx = touringAccountContext(h, tenant);
   if (!existsSync(ctx.root)) return Promise.resolve(false);
   return liveDeskFor(ctx.root, ctx.env, () => h.now()).knownPhones().then((phones) => phones.includes(phone));
 }
@@ -90,7 +93,7 @@ function knownToTouring(h: HostedCleaner, tenant: Tenant, phone: string): boolea
   }
 }
 
-const NOTICE = (inactive: TenantService, active: TenantService) => `Someone from your ${inactive} setup texted this number, which is set up for ${active} now. They didn't get a reply.`;
+const NOTICE = (inactive: ServiceName, active: ServiceName) => `Someone from your ${inactive} setup texted this number, which is set up for ${active} now. They didn't get a reply.`;
 
 /** Notes for a touring tenant's host that the shared service keeps and adds to touring's get_state. */
 export class ServiceNotices {
@@ -161,7 +164,7 @@ export async function screenText(h: HostedCleaner, tenant: Tenant, fields: Recor
     h.log(`A text reached ${tenant.id} from a phone that opted out. Nothing was sent.`);
     return "drop";
   }
-  const inactive: TenantService = active === "touring" ? "cleaning" : "touring";
+  const inactive: ServiceName = "cleaning";
   const known = inactive === "cleaning" ? await knownToCleaning(h, tenant, from) : knownToTouring(h, tenant, from);
   if (!known) return "route";
   h.log(`A text reached ${tenant.id} from someone in its ${inactive} setup. Nothing was sent.`);
@@ -180,15 +183,9 @@ async function replyToHost(h: HostedCleaner, tenant: Tenant, phone: string): Pro
 }
 
 /** One note per phone for each time the number's service was set. */
-async function tellHost(h: HostedCleaner, tenant: Tenant, inactive: TenantService, active: TenantService, phone: string): Promise<void> {
+async function tellHost(h: HostedCleaner, tenant: Tenant, inactive: ServiceName, active: ServiceName, phone: string): Promise<void> {
   const key = createHash("sha256").update(`${tenant.serviceChangedAt ?? ""}|${phone}`).digest("hex").slice(0, 24);
   const notice = NOTICE(inactive, active);
-  if (active === "cleaning") {
-    const ctx = tenantContext(h, tenant);
-    if (!new ServiceNotices(h.dataRoot).tellOnce(tenant.id, key)) return;
-    await liveDeskFor(ctx.root, ctx.env, () => h.now()).noteForHost(`service:${key}`, notice);
-    return;
-  }
   if (!new ServiceNotices(h.dataRoot).tellOnce(tenant.id, key, notice)) return;
   // The wake carries no words; the host's chat reads the note from get_state.
   await touringSinkFor(h, tenant)

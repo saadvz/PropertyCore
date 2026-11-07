@@ -23,8 +23,8 @@ afterEach(() => {
 async function touring(number = LANE, env: NodeJS.ProcessEnv = { TOUR_CORE_TENANTS: "1", CLEANER_CORE_SCRATCH_TOOLS: "1" }) {
   const m = (open = await multiTenantApp({ env }));
   const { tenant } = m.registry.create({ label: "Lane", twilioNumber: number });
+  await m.makeTouring(tenant.id);
   const token = await m.joinAt(tenant.id, "grok", "/mcp");
-  await m.toolAt("/mcp", token, "choose_service", { service: "touring" });
   return { m, tenant, token };
 }
 
@@ -43,7 +43,7 @@ describe("Scratch tools for touring", () => {
   it("answers a test visitor on a published property, with the reply in the outbox", SLOW, async () => {
     const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1", CLEANER_CORE_SCRATCH_TOOLS: "1" } }));
     const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
-    m.registry.setService(tenant.id, "touring");
+    m.registry.setTouring(tenant.id);
     // The property is set up and published before the touring process starts, as a host's would be.
     const ws = new PropertyWorkspace(join(tenantFolder(m.app.root, tenant.id), "tour-core"));
     // A Scratch host's property texts through the local test outbox, so its checks pass without Twilio.

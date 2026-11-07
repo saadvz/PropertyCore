@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { accountTools } from "../src/hosted/propertyTools";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -91,15 +92,15 @@ describe("Muse template", () => {
   it("runs the recurring task with no host's yes and no browser beyond the photos", () => {
     const prompt = taskPrompt();
     expect(prompt).toMatch(/this prompt is never their yes/);
-    expect(prompt).toMatch(/Call confirm_times, mark_guests_left, retry_send, send_message, hold_job, or resume_job only after the host replies yes in this conversation\./);
+    expect(prompt).toMatch(/Call confirm_times, mark_guests_left, mark_paid, retry_send, send_message, hold_job, or resume_job only after the host replies yes in this conversation\./);
     expect(prompt).toMatch(/Never call activate, run_checks, reset_property, or any save_ tool other than save_arrival from this run\./);
     expect(prompt).toMatch(/Never use your browser in this run except to open photo links\./);
     expect(prompt).toMatch(/Never pause, edit, or cancel this recurring task/);
     expect(prompt).toMatch(/Never show a door code, an id, or a phone number\./);
   });
 
-  it("names only real Cleaner Core tools", async () => {
-    const tools = await toolNames();
+  it("names only real Cleaner Core tools, or the account's own", async () => {
+    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name))];
     for (const file of filesUnder(TEMPLATE)) {
       for (const m of read(file).matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) expect(tools, `${file}: ${m[1]}`).toContain(m[1]);
     }

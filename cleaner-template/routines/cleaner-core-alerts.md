@@ -2,7 +2,7 @@
 
 Wakes the cleaning Grok Bot the moment something happens on a turnover, for
 example the cleaner texts YES, a question, or DONE, so the host hears about it
-without asking. This is the cleaning bot's routine, not Tour Core's.
+without asking. This is the cleaning bot's routine. Its alerts come from Cleaner Core, so call it Cleaner Core.
 
 ## Trigger
 
@@ -50,7 +50,9 @@ routine runs, it wakes once, and `check_now` returns all of them.
 1. If `eventType` is `installation.test`, post:
    "Cleaner Core alerts are connected." and stop.
 2. Otherwise call `check_now` without `googleEvents`. A webhook can't read the
-   host's Google Calendar. The Cleaner Core Check routine does that.
+   host's Google Calendar. The Cleaner Core Check routine does that. With more
+   than one property, `check_now` checks every property and names each one:
+   say which property each line is about.
 3. Post each line in `alerts` in your own short words. Post nothing when
    `alerts` is empty. A new booking asks the host to confirm the usual times.
    "Have the guests left?" asks the host about the checkout. Only the host's
@@ -67,18 +69,40 @@ routine runs, it wakes once, and `check_now` returns all of them.
    it, with `hold_job`.
 5. When a message gives an arrival time, call `save_arrival` with it as 24-hour
    HH:MM, like 11:30.
-6. If a message needs a reply, draft one and offer it to the host. Don't send
-   it from the routine. It goes out with `send_message` only after the host's
-   yes in chat.
+6. When a message has reply open and needs an answer, save one short reply
+   with save_draft and show the host the message, the draft exactly as saved,
+   and Send, Edit, Skip. When a draft is stale, read the new messages, then
+   save a new draft or drop it. When a message has reply answered, the host
+   already replied: say nothing more about it, and if the reply answers
+   something likely to be asked again, ask once whether to save it for next
+   time. Don't send it from the routine. It goes out with `send_message` only
+   after the host taps Send in chat.
 7. If the reply has `completed`, call `get_job_photos`, look at the photos, and
    compare them with the checklist. Summarize the cleaning in your own words.
-8. If the reply has `needsTimes`, ask the host for the checkout time and the
+   If the reply has `payDue`, add one line per item after the summary: ask
+   the host to pay the cleaner that amount for that cleaning, with `link`
+   exactly as returned, and to tell you when they've paid. With `payInVenmo`
+   there is no link: ask them to pay in Venmo themselves. A `reminder` above 0
+   says it still shows unpaid. Only the host's own "paid" in chat marks it
+   paid, with `mark_paid`. Never build or change a Venmo link, and never send
+   a pay link to the cleaner.
+   A message handled `checklist-asked` means the cleaner said DONE and was
+   asked to confirm the checklist: tell the host the cleaning isn't marked
+   done until the cleaner replies YES. With `checklist-not-done`, tell the
+   host the cleaner said the checklist isn't finished.
+8. A message handled `supply-report` is the cleaner's answer to `Anything
+   running low?` after DONE. When Supply Core is on, match their words to the
+   list yourself and call `report_low` with those item ids and
+   `source: "cleaner"`, then follow the Supply Core Check steps in
+   `supply-template/routines/supply-core-check.md`. Ask the host about
+   anything not on the list. Never pass the cleaner's words to Supply Core.
+9. If the reply has `needsTimes`, ask the host for the checkout time and the
    next check-in time, then call `confirm_times` with each as 24-hour HH:MM.
-9. Never show a door code, an id, or the webhook payload.
+10. Never show a door code, an id, or the webhook payload.
 
 ## Connecting it
 
-After the preferences and before the review, `get_state` asks for the two
+After the preferences and the Payments step, and before the review, `get_state` asks for the two
 routines. Then:
 
 1. Grok creates this routine with an authenticated webhook trigger and the
@@ -92,12 +116,18 @@ routines. Then:
    wrong, and the link still works. A 404 means ask for a new link.
 4. Call `get_state` to confirm. Cleaner Core sends one `installation.test`.
    Grok posts "Cleaner Core alerts are connected." and `get_state` moves on to
-   the review.
+   the review. Activate waits until that test gets through. If the routine
+   refuses it, Activate texts nobody and says why; save the address and a new
+   key again.
 
 If a value was pasted in chat anyway, Grok doesn't repeat it and asks the host
 to rotate the key.
 
 ## Allowed tools
 
-`check_now`, `confirm_times`, `get_state`, `save_arrival`, and
-`get_job_photos`.
+`check_now`, `confirm_times`, `get_state`, `save_arrival`, `get_job_photos`,
+and `save_draft`.
+
+When Supply Core is on, also `get_supply_state`, `report_low`,
+`check_supplies`, `check_cart`, `approve_cart`, `record_order`,
+`record_problem`, and `mark_delivered`.

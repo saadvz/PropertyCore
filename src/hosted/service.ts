@@ -1,150 +1,149 @@
-import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { tourCoreTenants } from "../cleaner-core/flag";
-import { tenantFolder, type Tenant, type TenantService } from "../cleaner-core/hosted/registry";
-import { tenantContext, type HostedCleaner } from "../cleaner-core/hosted/router";
+import { createHash } from "node:crypto";
+import { propertyFolder, type FlowName, type Property } from "../cleaner-core/hosted/properties";
+import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
+import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { ConfirmationBook } from "../operator/confirmations";
-import { CHOSEN_LINE, type FrontReply } from "./serviceTools";
-import { TOURING_LIVE_PATH, TOURING_STAND_DOWN_PATH, type TouringLive } from "./touringLive";
-import { workerJson } from "./touringForward";
+import { GROK_ONLY, supplyDesk, turnOffSupplies, turnOnSupplies } from "./supplies";
+import { supplyCoreOn } from "../cleaner-core/flag";
+import type { CleanerAssistant } from "../cleaner-core/assistant";
+import { FIXER_NOT_YET, resolveProperty } from "./propertyTools";
+import type { FrontReply } from "./serviceTools";
 
 /**
- * Switching a number between touring and cleaning, and standing a service down first. A switch
- * happens only when nothing on the current service is live (Saad's force on /admin aside), only after
- * the host's yes, and sends no texts. Stand-down stops what's live, with the texts it previews.
+ * Turning a property's flows on or off. On starts that flow's setup and texts nobody. Off stands the
+ * flow down first, after the host's yes when anything is live: no new offers, no door code, open carts
+ * closed. The setup is kept, so turning the flow on again picks it up. /admin can force a flow off,
+ * which sends nothing.
  */
 
-export type LiveReport = TouringLive;
-
-export interface SwitchContext {
+export interface FlowContext {
   h: HostedCleaner;
   tenant: Tenant;
   actor: "host" | "admin";
+  /** The chat asking. Supply Core turns on only for Grok, which shops with its own tools. */
+  assistant?: CleanerAssistant;
   noteToolsChanged(): void;
 }
 
-export const TOURING_DOWN = "Touring isn't answering right now. Try again in a minute.";
-const TOURING_UNDER_WAY = "Someone is on a tour right now. Stand down after it ends.";
-const NOTHING_LIVE_TOURING = "Nothing is live on touring, so there's nothing to stand down. You can switch now.";
-const TOURING_STOOD_DOWN = "Touring is stood down. Nothing is live, so you can switch now.";
-const STALE = "That approval has expired or doesn't match. Ask the host again.";
-/** How long a choice waits for a touring process before answering anyway. */
-const START_WAIT_MS = 30_000;
-
-/** Codes for a switch or a touring stand-down. Ten minutes, in memory; a restart means asking again. */
-const approvals = new ConfirmationBook();
-
-const capital = (service: TenantService) => `${service[0]!.toUpperCase()}${service.slice(1)}`;
-const fail = (text: string): FrontReply => ({ text, isError: true });
-
-/** What's live on the tenant's current service. Unreachable when its touring process can't answer. */
-export async function liveOf(h: HostedCleaner, tenant: Tenant): Promise<LiveReport | "unreachable"> {
-  if (tenant.service === "touring") {
-    const target = h.touring?.supervisor.target(tenant.id);
-    const answer = target ? await workerJson<LiveReport>(target, "GET", TOURING_LIVE_PATH) : undefined;
-    return answer && answer.status === 200 && answer.json ? answer.json : "unreachable";
-  }
-  if (tenant.service === "cleaning") {
-    const ctx = tenantContext(h, tenant);
-    const work = await liveDeskFor(ctx.root, ctx.env, () => h.now()).liveWork();
-    return { ...work, texts: [] };
-  }
-  return { live: [], inProgress: false, texts: [] };
+export interface FlowInput {
+  property?: unknown;
+  cleaning?: unknown;
+  supplies?: unknown;
+  fixer?: unknown;
+  confirmation?: unknown;
+  force?: boolean;
 }
 
-/** One line per switch in the tenant's folder: who, from, to, and whether it was forced. */
-function recordSwitch(h: HostedCleaner, tenantId: string, entry: { actor: "host" | "admin"; from: TenantService; to: TenantService; forced: boolean }): void {
+const STALE = "That approval has expired or doesn't match. Ask the host again.";
+const NAMES: Record<FlowName, string> = { cleaning: "Cleaner Core", supplies: "Supply Core", fixer: "Fixer Core" };
+
+const fail = (text: string): FrontReply => ({ text, isError: true });
+
+/** The property's approvals for turning Supply Core off, kept in its folder across restarts. */
+function flowApprovals(h: HostedCleaner, tenant: Tenant, property: Property): ConfirmationBook {
+  return new ConfirmationBook(10 * 60_000, () => h.now().getTime(), { file: join(propertyFolder(h.dataRoot, tenant.id, property), "flow-approvals.json") });
+}
+
+/** One line per change in the account's folder: who, which property and flow, on or off, and whether it was forced. */
+function recordFlow(h: HostedCleaner, tenantId: string, entry: { actor: "host" | "admin"; property: string; flow: FlowName; on: boolean; forced: boolean }): void {
   const file = join(tenantFolder(h.dataRoot, tenantId), "service-audit.jsonl");
   mkdirSync(dirname(file), { recursive: true });
   appendFileSync(file, `${JSON.stringify({ at: h.now().toISOString(), ...entry })}\n`, { mode: 0o600 });
 }
 
-export async function switchService(
-  ctx: SwitchContext,
-  input: { to: TenantService; confirmation?: string; force?: boolean },
-  deps: { live?: (h: HostedCleaner, tenant: Tenant) => Promise<LiveReport | "unreachable"> } = {},
-): Promise<FrontReply> {
+export async function setFlows(ctx: FlowContext, input: FlowInput): Promise<FrontReply> {
   const { h, tenant } = ctx;
-  const from = tenant.service;
-  const to = input.to;
-  if (!from) return fail("Choose a service first. Call get_state.");
-  if (to === from) return fail(`This number is already set up for ${to}.`);
-  if (to === "touring" && !(tourCoreTenants(h.baseEnv()) && h.touring)) return fail("Touring isn't available on this service yet.");
-  const forced = input.force === true;
-  if (!forced) {
-    const live = await (deps.live ?? liveOf)(h, tenant);
-    if (live === "unreachable") return fail(TOURING_DOWN);
-    if (live.live.length > 0) {
-      return fail(`${capital(from)} is still live, so the number can't switch yet:\n${live.live.map((line) => `- ${line}`).join("\n")}\nCall stand_down_service to stop it first. Its setup is kept.`);
+  const resolved = resolveProperty(tenant, { property: input.property });
+  if ("refusal" in resolved) return fail(resolved.refusal);
+  const { property } = resolved;
+  const wanted = (["cleaning", "supplies", "fixer"] as const).filter((flow) => typeof input[flow] === "boolean");
+  if (wanted.length === 0) return fail("Say which flow to turn on or off: cleaning, supplies, or fixer, each true or false.");
+  if (input.fixer === true) return fail(FIXER_NOT_YET);
+  if (wanted.length > 1 && typeof input.confirmation === "string") return fail("Turn one flow off at a time when you pass a confirmation.");
+  const forced = ctx.actor === "admin" && input.force === true;
+  const confirmation = typeof input.confirmation === "string" ? input.confirmation.trim() : "";
+  // Every flow turning on is checked before any changes, so a refusal never leaves a half-made change.
+  for (const flow of wanted) {
+    if (input[flow] !== true) continue;
+    const current = (h.registry.get(tenant.id) ?? tenant).properties.find((p) => p.id === property.id) ?? property;
+    const refusal = turnOnRefusal(ctx, current, flow, wanted.includes("cleaning") && input.cleaning === true);
+    if (refusal) return fail(refusal);
+  }
+  const done: string[] = [];
+  for (const flow of wanted) {
+    const on = input[flow] as boolean;
+    const current = (h.registry.get(tenant.id) ?? tenant).properties.find((p) => p.id === property.id) ?? property;
+    if (current.flows[flow].on === on) {
+      done.push(`${NAMES[flow]} was already ${on ? "on" : "off"} for ${current.label}.`);
+      continue;
     }
-    if (ctx.actor === "host") {
-      const fingerprint = `${from}>${to}`;
-      const code = input.confirmation?.trim() ?? "";
-      if (!code) {
-        const question = `Switch this number from ${from} to ${to}? ${capital(from)} stops answering texts. Its setup is kept, so you can switch back later. Reply yes to switch.`;
-        const confirmation = approvals.issue("switch-service", tenant.id, fingerprint, question);
-        return { text: question, structured: { confirmation }, isError: false };
-      }
-      try {
-        approvals.redeem(code, "switch-service", tenant.id, fingerprint);
-      } catch {
-        return fail(STALE);
-      }
-    }
+    const reply = on ? await turnOn(ctx, current, flow) : await turnOff(ctx, current, flow, confirmation, forced);
+    if (reply) return reply;
+    recordFlow(h, tenant.id, { actor: ctx.actor, property: current.id, flow, on, forced });
+    h.log(`${tenant.id}/${current.id} turned ${flow} ${on ? "on" : "off"}${forced ? " (forced by the admin)" : ""}.`);
+    done.push(`${NAMES[flow]} is ${on ? "on" : "off"} for ${current.label}.${on ? "" : " Its setup is kept."}`);
   }
-  h.registry.setService(tenant.id, to);
-  if (from === "touring") {
-    h.touring?.supervisor.stop(tenant.id);
-    // Texts that waited for touring are not replayed into a later touring setup.
-    const dropped = h.touring?.inbox.clear(tenant.id) ?? 0;
-    if (dropped) h.log(`${dropped} text${dropped === 1 ? "" : "s"} waiting for ${tenant.id}'s touring ${dropped === 1 ? "was" : "were"} dropped by the switch.`);
-  }
-  if (to === "touring" && h.touring) {
-    const current = h.registry.get(tenant.id)!;
-    await Promise.race([h.touring.start(current), new Promise((resolve) => setTimeout(resolve, START_WAIT_MS).unref())]);
-  }
-  recordSwitch(h, tenant.id, { actor: ctx.actor, from, to, forced });
-  h.log(`${tenant.id} switched from ${from} to ${to}${forced ? " (forced by the admin)" : ""}.`);
   ctx.noteToolsChanged();
-  return { text: CHOSEN_LINE(to), structured: { service: to }, isError: false };
+  const after = (h.registry.get(tenant.id) ?? tenant).properties.find((p) => p.id === property.id) ?? property;
+  const structured = { property: after.id, flows: { cleaning: after.flows.cleaning.on, supplies: after.flows.supplies.on, fixer: after.flows.fixer.on } };
+  return { text: `${done.join(" ")} Call get_state with property ${after.id} for the next step. If the tools don't change, start a new chat.`, structured, isError: false };
 }
 
-export async function standDownService(ctx: SwitchContext, input: { confirmation?: string }): Promise<FrontReply> {
+/** Why a flow can't turn on, or undefined. `cleaningComing` is true when the same call turns cleaning on. */
+function turnOnRefusal(ctx: FlowContext, property: Property, flow: FlowName, cleaningComing: boolean): string | undefined {
+  if (flow !== "supplies") return undefined;
+  if (ctx.assistant !== "grok") return GROK_ONLY;
+  // Supply Core on its own, without Cleaner Core at the property, only while SUPPLY_CORE is on.
+  if (!property.flows.cleaning.on && !cleaningComing && !supplyCoreOn(ctx.h.baseEnv())) return "Supply Core on its own isn't available on this service yet. Turn on Cleaner Core for this property first.";
+  return undefined;
+}
+
+async function turnOn(ctx: FlowContext, property: Property, flow: FlowName): Promise<FrontReply | undefined> {
+  if (flow === "supplies") {
+    await turnOnSupplies(ctx.h, ctx.tenant, property);
+    return undefined;
+  }
+  ctx.h.registry.setFlow(ctx.tenant.id, property.id, flow, true);
+  return undefined;
+}
+
+/** Stands the flow down and turns it off. A reply means it stopped there: a question with a code, or a refusal. */
+async function turnOff(ctx: FlowContext, property: Property, flow: FlowName, confirmation: string, forced: boolean): Promise<FrontReply | undefined> {
   const { h, tenant } = ctx;
-  if (tenant.service === "cleaning") {
-    const desk = (() => {
-      const c = tenantContext(h, tenant);
-      return liveDeskFor(c.root, c.env, () => h.now());
-    })();
-    const reply = await desk.standDown(input);
-    if (!reply.ok) return fail(reply.error);
-    const result = reply.result ?? {};
-    return { text: typeof result.next === "string" ? result.next : JSON.stringify(result), structured: result, isError: false };
+  if (flow === "fixer") {
+    h.registry.setFlow(tenant.id, property.id, "fixer", false);
+    return undefined;
   }
-  if (tenant.service !== "touring") return fail("Choose a service first. Call get_state.");
-  const target = h.touring?.supervisor.target(tenant.id);
-  const live = await liveOf(h, tenant);
-  if (!target || live === "unreachable") return fail(TOURING_DOWN);
-  if (live.inProgress) return fail(TOURING_UNDER_WAY);
-  if (live.live.length === 0) return { text: NOTHING_LIVE_TOURING, isError: false };
-  const fingerprint = createHash("sha256").update(JSON.stringify(live)).digest("hex");
-  const code = input.confirmation?.trim() ?? "";
-  if (!code) {
-    const goes = live.texts.length ? `These texts go out:\n${live.texts.map((t) => `- To ${t.to}: "${t.body}"`).join("\n")}` : "No texts go out.";
-    const question = `Stand down touring? This stops:\n${live.live.map((line) => `- ${line}`).join("\n")}\n${goes}\nThe setup is kept. Reply yes to stand down.`;
-    const confirmation = approvals.issue("stand-down-touring", tenant.id, fingerprint, question);
-    return { text: question, structured: { confirmation, texts: live.texts }, isError: false };
+  if (flow === "cleaning") {
+    // Forced from /admin: the flow goes off and its desk sends nothing more. What was live stays frozen.
+    if (!forced) {
+      const c = propertyContext(h, tenant, property);
+      const reply = await liveDeskFor(c.root, c.env, () => h.now()).standDown(confirmation ? { confirmation } : {});
+      if (!reply.ok) return fail(reply.error);
+      // A question with a code: nothing changes until the host's yes comes back with it.
+      if (reply.result.confirmation) return { text: String(reply.result.next ?? ""), structured: reply.result, isError: false };
+    }
+    h.registry.setFlow(tenant.id, property.id, "cleaning", false);
+    return undefined;
   }
-  try {
-    approvals.redeem(code, "stand-down-touring", tenant.id, fingerprint);
-  } catch {
-    return fail(STALE);
+  // Supply Core sends no texts, but closes open carts: the host says yes first.
+  if (!forced) {
+    const fingerprint = createHash("sha256").update(`supplies-off|${property.id}`).digest("hex");
+    const book = flowApprovals(h, tenant, property);
+    if (!confirmation) {
+      const question = `Turn off Supply Core for ${property.label}? No new orders, open carts close, and the cleaner isn't asked about supplies. The list is kept. Reply yes to turn it off.`;
+      return { text: question, structured: { question, confirmation: book.issue("supplies-off", property.id, fingerprint, question) }, isError: false };
+    }
+    try {
+      book.redeem(confirmation, "supplies-off", property.id, fingerprint);
+    } catch {
+      return fail(STALE);
+    }
   }
-  const done = await workerJson<{ paused: number; cancelled: number }>(target, "POST", TOURING_STAND_DOWN_PATH, {});
-  if (!done) return fail(TOURING_DOWN);
-  if (done.status === 409) return fail(TOURING_UNDER_WAY);
-  h.log(`${tenant.id} stood touring down.`);
-  return { text: TOURING_STOOD_DOWN, structured: { ...done.json, texts: live.texts }, isError: false };
+  await supplyDesk(h, tenant, property).clearCarts();
+  await turnOffSupplies(h, tenant, property);
+  return undefined;
 }

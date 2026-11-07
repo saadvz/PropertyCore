@@ -1,9 +1,12 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { tenantFolder } from "../src/cleaner-core/hosted/registry";
+import { hubFor } from "../src/hub/hub";
 import { liveDeskFor, resetLiveDesks } from "../src/cleaner-core/liveDesk";
-import { drainAllTenants, hostedCleaner, splitTenantPath, tenantContext } from "../src/cleaner-core/hosted/router";
+import { isAllowlisted } from "../src/cleaner-core/liveSms";
+import { drainAllTenants, hostedCleaner, splitTenantPath, touringAccountContext } from "../src/cleaner-core/hosted/router";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
 import { hashSecret, OAuthGrantStore } from "../src/mcp/oauth/store";
 import { BASE, closeHostedApps } from "./cleanerOauthHarness";
@@ -50,19 +53,19 @@ describe("splitTenantPath", () => {
 describe("routing on the multi-tenant service", () => {
   it("sends an MCP call to its own tenant's folder only", async () => {
     const { m, lane, court } = await start();
-    const token = await m.join(lane.id, "grok");
+    const token = await m.joinCleaning(lane.id, "grok");
     await m.tool(token, "get_state", { choice: "cleaners" });
     const saved = await m.tool(token, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE });
     expect(saved.isError).toBe(false);
-    expect(existsSync(join(tenantFolder(m.app.root, lane.id), "cleaner-live.json"))).toBe(true);
-    expect(existsSync(join(tenantFolder(m.app.root, court.id), "cleaner-live.json"))).toBe(false);
+    expect(existsSync(join(m.cleaningRoot(lane.id), "cleaner-live.json"))).toBe(true);
+    expect(existsSync(join(tenantFolder(m.app.root, court.id), "properties"))).toBe(false);
     expect(existsSync(join(m.app.root, "cleaner-live.json"))).toBe(false);
   });
 
   it("refuses a grant whose tenant was removed or disabled", async () => {
     const { m, lane, court } = await start();
-    const laneToken = await m.join(lane.id, "grok");
-    const courtToken = await m.join(court.id, "grok");
+    const laneToken = await m.joinCleaning(lane.id, "grok");
+    const courtToken = await m.joinCleaning(court.id, "grok");
     m.registry.remove(lane.id);
     m.registry.setDisabled(court.id, true);
     for (const token of [laneToken, courtToken]) {
@@ -99,8 +102,8 @@ describe("routing on the multi-tenant service", () => {
 
   it("names the Grok primary in host texts while a Claude connection runs the setup", async () => {
     const { m, lane } = await start();
-    await m.join(lane.id, "grok");
-    const claude = await m.join(lane.id, "claude");
+    await m.joinCleaning(lane.id, "grok");
+    const claude = await m.joinCleaning(lane.id, "claude");
     const call = (name: string, args: Record<string, unknown> = {}) => m.tool(claude, name, args);
     await call("get_state", { choice: "cleaners" });
     await call("save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE });
@@ -121,8 +124,8 @@ describe("routing on the multi-tenant service", () => {
 
   it("wakes only the primary's routine, and falls back when the primary's grant is gone", async () => {
     const { m, lane } = await start();
-    const grok = await m.join(lane.id, "grok");
-    const claude = await m.join(lane.id, "claude");
+    const grok = await m.joinCleaning(lane.id, "grok");
+    const claude = await m.joinCleaning(lane.id, "claude");
     expect((await m.tool(grok, "save_alert_routine", { url: GROK_HOOK, token: "grok-routine-key-1" })).isError).toBe(false);
     expect((await m.tool(claude, "save_alert_routine", { url: CLAUDE_FIRE, token: "claude-routine-key-1" })).isError).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -136,14 +139,14 @@ describe("routing on the multi-tenant service", () => {
     expect(m.wakes.slice(seen).map((wake) => wake.url)).toEqual([CLAUDE_FIRE]);
   });
 
-  it("sends no cleaning alerts for a tenant that moved to touring", async () => {
+  it("sends no cleaning alerts for a property whose cleaning was turned off", async () => {
     const { m, court } = await start();
-    const courtToken = await m.join(court.id, "grok");
+    const courtToken = await m.joinCleaning(court.id, "grok");
     m.setWakeStatus(503);
     expect((await m.tool(courtToken, "save_alert_routine", { url: GROK_HOOK, token: "court-routine-key" })).isError).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 20));
     m.setWakeStatus(200);
-    m.registry.setService(court.id, "touring");
+    m.registry.setFlow(court.id, m.registry.get(court.id)!.properties[0]!.id, "cleaning", false);
     at += 60 * 60_000;
     const h = hostedCleaner({
       registry: m.registry,
@@ -162,14 +165,14 @@ describe("routing on the multi-tenant service", () => {
 
   it("keeps draining the other tenants when one tenant's desk throws", async () => {
     const { m, lane, court } = await start();
-    const courtToken = await m.join(court.id, "grok");
+    const courtToken = await m.joinCleaning(court.id, "grok");
     m.setWakeStatus(503);
     expect((await m.tool(courtToken, "save_alert_routine", { url: GROK_HOOK, token: "court-routine-key" })).isError).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 20));
     m.setWakeStatus(200);
-    m.registry.setService(lane.id, "cleaning");
-    mkdirSync(tenantFolder(m.app.root, lane.id), { recursive: true });
-    writeFileSync(join(tenantFolder(m.app.root, lane.id), "cleaner-live.json"), "{ not json");
+    m.registry.setFlow(lane.id, m.registry.addProperty(lane.id, "12 Scratch Lane").id, "cleaning", true);
+    mkdirSync(m.cleaningRoot(lane.id), { recursive: true });
+    writeFileSync(join(m.cleaningRoot(lane.id), "cleaner-live.json"), "{ not json");
     const logs: string[] = [];
     at += 60 * 60_000;
     const h = hostedCleaner({
@@ -190,19 +193,19 @@ describe("routing on the multi-tenant service", () => {
 
   it("a page probe on a fresh desk never changes which chat the tenant's texts and alerts follow", async () => {
     const { m, lane } = await start();
-    await m.join(lane.id, "grok");
-    await m.join(lane.id, "claude");
+    await m.joinCleaning(lane.id, "grok");
+    await m.joinCleaning(lane.id, "claude");
     resetLiveDesks();
     const probe = `/t/${lane.id}/cleaner-core/door-code/${"A".repeat(43)}`;
     expect((await m.app.http(probe)).status).toBe(404);
-    const desk = liveDeskFor(tenantFolder(m.app.root, lane.id), () => ({}), () => new Date());
+    const desk = liveDeskFor(m.cleaningRoot(lane.id), () => ({}), () => new Date());
     expect(desk.primaryAssistant()).toBe("grok");
   });
 
   it("an upload page speaks as the chat that made the link, even when the primary is another chat", async () => {
     const { m, lane } = await start();
-    await m.join(lane.id, "chatgpt");
-    const claude = await m.join(lane.id, "claude");
+    await m.joinCleaning(lane.id, "chatgpt");
+    const claude = await m.joinCleaning(lane.id, "claude");
     const link = await m.tool(claude, "save_alert_routine", {});
     const path = new URL(String(link.structured?.uploadUrl)).pathname;
     const page = await m.app.http(path);
@@ -224,10 +227,28 @@ describe("routing on the multi-tenant service", () => {
       now: clock,
       log: () => undefined,
     });
-    const ctx = tenantContext(h, lane);
+    const ctx = touringAccountContext(h, lane);
     expect(ctx.env().CLEANER_CORE_ENABLED).toBe("1");
     m.registry.remove(lane.id);
     expect(ctx.env().CLEANER_CORE_ENABLED).toBe("0");
+  });
+
+  it("with any number allowed, a tenant still never texts another tenant's line", async () => {
+    const { m, lane } = await start();
+    const h = hostedCleaner({
+      registry: m.registry,
+      secrets: new TenantSecrets(m.app.root),
+      dataRoot: m.app.root,
+      origin: () => BASE,
+      baseEnv: () => ({ ...m.app.inst.env(), CLEANER_CORE_SMS_ALLOWLIST: "*" }),
+      grantLive: () => true,
+      now: clock,
+      log: () => undefined,
+    });
+    const env = touringAccountContext(h, lane).env();
+    expect(isAllowlisted(env, LANE_CLEANER)).toBe(true);
+    expect(isAllowlisted(env, LANE_LINE)).toBe(false);
+    expect(isAllowlisted(env, COURT_LINE)).toBe(false);
   });
 
   it("asks an unsigned caller to sign in from its own chat, not from Grok", async () => {
@@ -239,8 +260,8 @@ describe("routing on the multi-tenant service", () => {
 
   it("makes the chat that connects its routine the primary when the primary has none", async () => {
     const { m, lane } = await start();
-    await m.join(lane.id, "claude");
-    const grok = await m.join(lane.id, "grok");
+    await m.joinCleaning(lane.id, "claude");
+    const grok = await m.joinCleaning(lane.id, "grok");
     const grokGrant = grantOf(m, grok).id;
     expect(m.registry.get(lane.id)!.primaryGrantId).not.toBe(grokGrant);
     expect((await m.tool(grok, "save_alert_routine", { url: GROK_HOOK, token: "grok-routine-key-1" })).isError).toBe(false);
@@ -254,8 +275,8 @@ describe("routing on the multi-tenant service", () => {
 
   it("leaves a primary whose routine is connected alone", async () => {
     const { m, lane } = await start();
-    const grok = await m.join(lane.id, "grok");
-    const claude = await m.join(lane.id, "claude");
+    const grok = await m.joinCleaning(lane.id, "grok");
+    const claude = await m.joinCleaning(lane.id, "claude");
     expect((await m.tool(grok, "save_alert_routine", { url: GROK_HOOK, token: "grok-routine-key-1" })).isError).toBe(false);
     expect((await m.tool(claude, "save_alert_routine", { url: CLAUDE_FIRE, token: "claude-routine-key-1" })).isError).toBe(false);
     expect(m.registry.get(lane.id)!.primaryGrantId).toBe(grantOf(m, grok).id);
@@ -263,13 +284,94 @@ describe("routing on the multi-tenant service", () => {
 
   it("promotes on a routine saved through the upload link, too", async () => {
     const { m, lane } = await start();
-    await m.join(lane.id, "claude");
-    const grok = await m.join(lane.id, "grok");
+    await m.joinCleaning(lane.id, "claude");
+    const grok = await m.joinCleaning(lane.id, "grok");
     const link = await m.tool(grok, "save_alert_routine", {});
     const path = new URL(String(link.structured?.uploadUrl)).pathname;
     expect(m.registry.get(lane.id)!.primaryGrantId).not.toBe(grantOf(m, grok).id);
     const res = await m.app.http(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: GROK_HOOK, token: "grok-routine-key-1" }) });
     expect(res.status).toBe(200);
     expect(m.registry.get(lane.id)!.primaryGrantId).toBe(grantOf(m, grok).id);
+  });
+});
+
+describe("calendar links on the shared service go to the property's hub", () => {
+  const LINK = "https://calendar.example/lane.ics";
+  const base = (tenantId: string, propertyId: string) => `/t/${tenantId}/p/${propertyId}`;
+  const postJson = (m: MultiTenantApp, path: string, url: string) =>
+    m.app.http(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url }) });
+
+  /** An account whose one property runs only Supply Core: its env has CLEANER_CORE_ENABLED=0. */
+  function suppliesOnly(m: MultiTenantApp, tenantId: string) {
+    const property = m.registry.addProperty(tenantId, "12 Scratch Lane");
+    m.registry.setFlow(tenantId, property.id, "supplies", true);
+    const root = propertyFolder(m.app.root, tenantId, property);
+    return { property, root, hub: hubFor(root, { now: clock }) };
+  }
+
+  const issue = (hub: ReturnType<typeof hubFor>, prefix: string, assistant = "claude") => {
+    const made = hub.issueCalendarUpload({ name: "Airbnb", base: prefix, by: { assistant } });
+    if ("error" in made) throw new Error(made.error);
+    return made.uploadUrl;
+  };
+
+  it("new /calendar-link/ path saves to the hub", async () => {
+    const { m, lane } = await start();
+    const { property, hub } = suppliesOnly(m, lane.id);
+    const link = issue(hub, base(lane.id, property.id));
+    expect(link).toContain("/calendar-link/");
+    expect((await postJson(m, link, LINK)).status).toBe(200);
+    expect(hub.stored()).toEqual([{ name: "Airbnb", url: LINK }]);
+  });
+
+  it("old /cleaner-core/calendar-link/ and /supply/calendar/ paths still save", async () => {
+    const { m, lane } = await start();
+    const { property, hub } = suppliesOnly(m, lane.id);
+    for (const older of ["/cleaner-core/calendar-link/", "/supply/calendar/"]) {
+      const code = issue(hub, base(lane.id, property.id)).split("/calendar-link/")[1]!;
+      expect((await postJson(m, `${base(lane.id, property.id)}${older}${code}`, LINK)).status).toBe(200);
+    }
+    expect(hub.stored()).toEqual([{ name: "Airbnb", url: LINK }]);
+  });
+
+  it("supply-only property: the calendar page opens and saves", async () => {
+    const { m, lane } = await start();
+    const { property, hub } = suppliesOnly(m, lane.id);
+    const link = issue(hub, base(lane.id, property.id));
+    const page = await m.app.http(link);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("<form");
+    const saved = await m.app.http(link, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `url=${encodeURIComponent(LINK)}` });
+    expect(saved.status).toBe(200);
+    expect(await saved.text()).not.toContain(LINK);
+    expect(hub.stored()).toEqual([{ name: "Airbnb", url: LINK }]);
+  });
+
+  it("a property with no flow on: 404", async () => {
+    const { m, lane } = await start();
+    const property = m.registry.addProperty(lane.id, "12 Scratch Lane");
+    const hub = hubFor(propertyFolder(m.app.root, lane.id, property), { now: clock });
+    const link = issue(hub, base(lane.id, property.id));
+    expect((await postJson(m, link, LINK)).status).toBe(404);
+    expect((await m.app.http(link)).status).toBe(404);
+    expect(hub.stored()).toEqual([]);
+  });
+
+  it("after a restart, a cleaning property's upload still goes through Cleaner Core's door-code check", async () => {
+    const { m, lane } = await start();
+    const claude = await m.joinCleaning(lane.id, "claude");
+    const call = (name: string, args: Record<string, unknown> = {}) => m.tool(claude, name, args);
+    await call("get_state", { choice: "cleaners" });
+    await call("save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE });
+    await call("save_people", { host: LANE_HOST, cleaner: LANE_CLEANER });
+    await call("save_calendar_link", { url: CALENDAR_URL });
+    expect((await call("save_door_code", { code: DOOR_CODE })).isError).toBe(false);
+    const issued = await call("save_sources", { uploadLink: { name: "Vrbo" } });
+    const link = String(issued.structured?.uploadUrl);
+    // A restart: no desk and no hub in memory, so nothing has connected Cleaner Core's guards yet.
+    resetLiveDesks();
+    const refused = await postJson(m, link.slice(link.indexOf("/t/")), `https://calendar.example/${DOOR_CODE}.ics`);
+    expect(refused.status).toBe(400);
+    expect(await refused.text()).not.toContain(DOOR_CODE);
   });
 });

@@ -240,9 +240,12 @@ export class LLMIntentInterpreter implements IntentInterpreter {
  */
 export class OpenAICompatibleModel implements LanguageModel {
   readonly name: string;
+  /** Sent as reasoning_effort only when set: thinking models (e.g. Gemini Flash) count thinking against max_tokens. */
+  readonly reasoningEffort?: string;
 
-  constructor(private readonly cfg: { baseUrl: string; apiKey: string; model: string; fetch?: typeof fetch }) {
+  constructor(private readonly cfg: { baseUrl: string; apiKey: string; model: string; reasoningEffort?: string; fetch?: typeof fetch }) {
     this.name = cfg.model;
+    this.reasoningEffort = cfg.reasoningEffort;
   }
 
   async complete({ system, user, signal }: { system: string; user: string; signal?: AbortSignal }): Promise<string> {
@@ -253,6 +256,7 @@ export class OpenAICompatibleModel implements LanguageModel {
         model: this.cfg.model,
         temperature: 0,
         max_tokens: 150,
+        ...(this.cfg.reasoningEffort ? { reasoning_effort: this.cfg.reasoningEffort } : {}),
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -261,7 +265,9 @@ export class OpenAICompatibleModel implements LanguageModel {
       signal,
     });
     if (!res.ok) throw new Error(`Language model request failed (${res.status})`);
-    const body = (await res.json()) as { choices?: { message?: { content?: unknown } }[] };
+    const body = (await res.json()) as { choices?: { message?: { content?: unknown }; finish_reason?: unknown }[] };
+    // A reply that hit max_tokens is partial JSON; say so rather than let it read as UNKNOWN.
+    if (body.choices?.[0]?.finish_reason === "length") throw new Error("Language model reply was cut off (max_tokens)");
     const content = body.choices?.[0]?.message?.content;
     return typeof content === "string" ? content : "";
   }

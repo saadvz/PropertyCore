@@ -7,7 +7,7 @@ import { CLEANER_TWILIO_PATH } from "../cleaner-core/twilioHook";
 const SHARED_CLEANER_NAMES = new Set(["CLEANER_CORE_LIVE_SMS", "CLEANER_CORE_SMS_ALLOWLIST", "CLEANER_CORE_SCRATCH_TOOLS"]);
 
 /** The optional visitor-text model settings: the same for every touring process. The key lives only in the service's environment. */
-const MODEL_SETTINGS = new Set(["TOURCORE_INTENT_MODEL_URL", "TOURCORE_INTENT_MODEL_KEY", "TOURCORE_INTENT_MODEL", "TOURCORE_INTENT_MODEL_TIMEOUT_MS"]);
+const MODEL_SETTINGS = new Set(["TOURCORE_INTENT_MODEL_URL", "TOURCORE_INTENT_MODEL_KEY", "TOURCORE_INTENT_MODEL", "TOURCORE_INTENT_MODEL_TIMEOUT_MS", "TOURCORE_INTENT_MODEL_REASONING_EFFORT"]);
 
 /**
  * A touring process's environment: the service's environment with every Tour Core setting, every

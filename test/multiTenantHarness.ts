@@ -1,6 +1,7 @@
 import { setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import { resetLiveDesks, setCleanerAlertFetch, setCleanerCalendarFetch } from "../src/cleaner-core/liveDesk";
 import type { CleanerAssistant } from "../src/cleaner-core/assistant";
+import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { TenantRegistry } from "../src/cleaner-core/hosted/registry";
 import { setTouringAlertFetch } from "../src/hosted/touringAlerts";
 import { CLEANER_SCOPE, OPERATOR_SCOPE } from "../src/mcp/oauth/provider";
@@ -138,9 +139,27 @@ export async function multiTenantApp(options: { now?: () => Date; env?: NodeJS.P
   };
 
   const touring = () => app.server.tourCore.touring;
+  /**
+   * An existing cleaning host: the account gets one property with Cleaner Core on, if it has none,
+   * then the chat connects at /mcp/cleaner-core. Returns its access token.
+   */
+  const joinCleaning = async (tenantId: string, assistant: CleanerAssistant = "grok") => {
+    const account = registry.get(tenantId)!;
+    if (account.properties.length === 0) registry.setFlow(tenantId, registry.addProperty(tenantId, `${account.label} property`).id, "cleaning", true);
+    return join(tenantId, assistant);
+  };
+
+  /** The folder of the account's first property: its Cleaner Core desk's root. */
+  const cleaningRoot = (tenantId: string) => propertyFolder(app.root, tenantId, registry.get(tenantId)!.properties[0]!);
+
+  /** Makes an account a parked touring account, as /admin does, and starts its touring process. */
+  const makeTouring = async (tenantId: string) => {
+    registry.setTouring(tenantId);
+    await app.server.tourCore.touring?.start(registry.get(tenantId)!);
+  };
   const hosted = () => app.server.tourCore.hosted!;
 
-  return { app, registry, sms, wakes, setWakeStatus: (status: number) => void (wakeStatus = status), join, joinAt, tool, toolAt, rpcAt, toolNames, twilio, text, touring, hosted, close };
+  return { app, registry, sms, wakes, makeTouring, joinCleaning, cleaningRoot, setWakeStatus: (status: number) => void (wakeStatus = status), join, joinAt, tool, toolAt, rpcAt, toolNames, twilio, text, touring, hosted, close };
 }
 
 export type MultiTenantApp = Awaited<ReturnType<typeof multiTenantApp>>;

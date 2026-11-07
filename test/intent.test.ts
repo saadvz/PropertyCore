@@ -375,12 +375,33 @@ describe("semantic interpretation", () => {
     await expect(failing.complete({ system: "s", user: "u" })).rejects.toThrow(/^Language model request failed \(401\)$/);
   });
 
+  it("sends reasoning_effort only when set, and treats a cut-off reply as a failure", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const reply = (content: string | undefined, finish: string) =>
+      (async (_url: string, init: RequestInit) => {
+        bodies.push(JSON.parse(String(init.body)));
+        return new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason: finish }] }), { status: 200 });
+      }) as unknown as typeof fetch;
+    await new OpenAICompatibleModel({ baseUrl: "https://x", apiKey: "k", model: "m", fetch: reply("{}", "stop") }).complete({ system: "s", user: "u" });
+    expect(bodies[0]).not.toHaveProperty("reasoning_effort");
+    await new OpenAICompatibleModel({ baseUrl: "https://x", apiKey: "k", model: "m", reasoningEffort: "none", fetch: reply("{}", "stop") }).complete({ system: "s", user: "u" });
+    expect(bodies[1]).toMatchObject({ reasoning_effort: "none" });
+
+    const cut = new OpenAICompatibleModel({ baseUrl: "https://x", apiKey: "k", model: "m", fetch: reply('{"intent": "RES', "length") });
+    await expect(cut.complete({ system: "s", user: "u" })).rejects.toThrow(/cut off/);
+    const log: string[] = [];
+    const layered = new LayeredIntentInterpreter(new RuleBasedIntentInterpreter(), new LLMIntentInterpreter(cut), (l) => log.push(l));
+    await layered.interpret(ctx("ready", "I'm around back"));
+    expect(log[0]).toContain("cut off");
+  });
+
   it("is off unless fully configured, and requires https off this computer", () => {
     expect(intentModelFromEnv({})).toBeUndefined();
     expect(intentModelFromEnv({ TOURCORE_INTENT_MODEL_URL: "https://api.x.ai/v1", TOURCORE_INTENT_MODEL_KEY: "k" })).toBeUndefined();
     expect(intentModelFromEnv({ TOURCORE_INTENT_MODEL_URL: "http://api.example.com/v1", TOURCORE_INTENT_MODEL_KEY: "k", TOURCORE_INTENT_MODEL: "m" })).toBeUndefined();
     expect(intentModelFromEnv({ TOURCORE_INTENT_MODEL_URL: "https://api.x.ai/v1", TOURCORE_INTENT_MODEL_KEY: "k", TOURCORE_INTENT_MODEL: "grok-4" })?.name).toBe("grok-4");
     expect(intentModelFromEnv({ TOURCORE_INTENT_MODEL_URL: "http://localhost:11434/v1", TOURCORE_INTENT_MODEL_KEY: "k", TOURCORE_INTENT_MODEL: "llama" })?.name).toBe("llama");
+    expect(intentModelFromEnv({ TOURCORE_INTENT_MODEL_URL: "https://x/v1", TOURCORE_INTENT_MODEL_KEY: "k", TOURCORE_INTENT_MODEL: "m", TOURCORE_INTENT_MODEL_REASONING_EFFORT: "none" })).toMatchObject({ reasoningEffort: "none" });
     expect(createIntentInterpreter({ env: {} }).description).toBe("rules");
   });
 });

@@ -1,13 +1,14 @@
 import { readFileSync } from "node:fs";
+import { fixedCodePort } from "./doorPort";
 import { pathToFileURL } from "node:url";
 import { cleanerCoreEnabled } from "./flag";
 import { HaltError, openCleanerCore, type CleanerText, type HealthReport, type JobView, type OutboxView, type SyncState } from "./core";
 import type { SourceRecord } from "./freshness";
 import type { AuditEvent, ReviewItem, ReviewKind } from "./review";
 import { isReviewKind } from "./review";
-import type { FeedBlock } from "./calendar";
+import type { FeedBlock } from "../hub/calendar";
 import { isScratchTestNumber } from "./scratch";
-import { googleCalendarFixtureSource, notionFixtureSource } from "./sources";
+import { googleCalendarFixtureSource, notionFixtureSource } from "../hub/sources";
 import { scratchTenant, SCRATCH_TENANTS } from "./tenants";
 import type { MessagingView, SetupView } from "./core";
 
@@ -164,7 +165,7 @@ export async function runSmoke(
     property: tenant.property,
     ownerPhone: tenant.ownerPhone,
     cleaner: { phone: tenant.cleanerPhone, approved: extra?.approved !== false },
-    ...(extra?.withPin ? { pin: tenant.pin, hostName: tenant.hostName } : {}),
+    ...(extra?.withPin ? { access: fixedCodePort(tenant.pin), hostName: tenant.hostName } : {}),
     ...(extra?.groupPhones?.length ? { groupPhones: extra.groupPhones } : {}),
     ...(extra?.messaging ? { messaging: extra.messaging } : {}),
     consented: true,

@@ -1,3 +1,4 @@
+import { fixedCodePort } from "../src/cleaner-core/doorPort";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -86,7 +87,7 @@ function open(sent: { send(text: CleanerText): void | Promise<void> }, extra = f
     property: { id: "prop_12_scratch_lane", address: ADDRESS, timeZone: "America/New_York" },
     ownerPhone: OWNER,
     cleaner: { phone: CLEANER, approved: true },
-    pin: PIN,
+    access: fixedCodePort(PIN),
     hostName: "Scratch",
     consented: true,
     sink: sent,
@@ -313,7 +314,7 @@ describe("group thread", () => {
       property: { id: "prop_12_scratch_lane", address: ADDRESS, timeZone: "America/New_York" },
       ownerPhone: OWNER,
       cleaner: { phone: CLEANER, approved: true },
-      pin: PIN,
+      access: fixedCodePort(PIN),
       hostName: "Scratch",
       consented: true,
       sink: {
@@ -356,7 +357,7 @@ describe("group thread", () => {
       property: { id: "prop_12_scratch_lane", address: ADDRESS, timeZone: "America/New_York" },
       ownerPhone: "",
       cleaner: { phone: CLEANER, approved: true },
-      pin: PIN,
+      access: fixedCodePort(PIN),
       hostName: "Scratch",
       consented: true,
       sink: { async send(text) { sent.push(text); } },
@@ -582,7 +583,7 @@ describe("group thread on the desk", () => {
     const pinKey = Buffer.from(TEST_PIN_KEY, "base64");
     expect((await desk.getState("cleaners")).ok).toBe(true);
     expect((await desk.saveProperty({ business: "Harbor", address: "12 Practice Lane, Teaneck, NJ 07666", timeZone: "America/New_York" })).ok).toBe(true);
-    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
+    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, cleanerName: "Maria", observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
     expect((await desk.saveCalendarLink({ url: CALENDAR_URL })).ok).toBe(true);
     expect((await desk.saveDoorCode({ code: DOOR_CODE }, pinKey)).ok).toBe(true);
     expect((await desk.setUpTexting()).ok).toBe(true);
@@ -598,9 +599,9 @@ describe("group thread on the desk", () => {
     // The group was made, but the offer's post failed. It may still have reached the group, so it
     // goes to review and is not sent again one-to-one, and the group is not tried again.
     const posts = calls.filter((url) => url.endsWith("/Messages"));
-    // One post for the intro, one for the offer, and one for the confirmation after Mike's YES. None is tried again,
+    // One post for the intro with the offer, and one for the confirmation after Mike's YES. None is tried again,
     // and none goes one-to-one.
-    expect(posts).toHaveLength(3);
+    expect(posts).toHaveLength(2);
     expect(sms.sent.filter((text) => text.body.startsWith("Turnover at"))).toEqual([]);
     const state = await desk.getState();
     expect(state.ok && (state.result.turns as { status: string }[])[0]?.status).toBe("host_confirmed");
@@ -642,7 +643,7 @@ describe("group thread on the desk", () => {
     const pinKey = Buffer.from(TEST_PIN_KEY, "base64");
     expect((await desk.getState("cleaners")).ok).toBe(true);
     expect((await desk.saveProperty({ business: "Harbor", address: PRACTICE, timeZone: "America/New_York" })).ok).toBe(true);
-    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
+    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, cleanerName: "Maria", observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
     expect((await desk.saveCalendarLink({ url: CALENDAR_URL })).ok).toBe(true);
     expect((await desk.saveDoorCode({ code: DOOR_CODE }, pinKey)).ok).toBe(true);
     expect((await desk.setUpTexting()).ok).toBe(true);
@@ -708,8 +709,14 @@ describe("live group send", () => {
 
 /** The Conversations fake for group texting, with the posts each phone received. */
 /** The group posts without the intro, so a test can look at the offer and the texts after it. */
+/** The group's job texts. An intro alone is left out, and an intro posted ahead of a job text is cut off it. */
 function offerPosts<T extends { body: string }>(posts: T[]): T[] {
-  return posts.filter((post) => !(post.body.startsWith("Hi ") && post.body.includes("This is the cleaning group for")));
+  const intro = (body: string) => body.startsWith("Hi ") && body.includes("This is the cleaning group for");
+  return posts.flatMap((post) => {
+    if (!intro(post.body)) return [post];
+    const at = post.body.indexOf("\n\n");
+    return at < 0 ? [] : [{ ...post, body: post.body.slice(at + 2) }];
+  });
 }
 
 function groupFetch(options?: { failMessages?: boolean }) {
@@ -756,7 +763,7 @@ describe("live group membership", () => {
       property: { id: "prop_12_scratch_lane", address: ADDRESS, timeZone: "America/New_York" },
       ownerPhone: OWNER,
       cleaner: { phone: CLEANER, approved: true },
-      pin: PIN,
+      access: fixedCodePort(PIN),
       hostName: "Scratch",
       consented: true,
       allowlist: allow,
@@ -878,7 +885,7 @@ describe("live group membership", () => {
     const desk = boot();
     expect((await desk.getState("cleaners")).ok).toBe(true);
     expect((await desk.saveProperty({ business: "Harbor", address: PRACTICE, timeZone: "America/New_York" })).ok).toBe(true);
-    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
+    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, cleanerName: "Maria", observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
     expect((await desk.saveCalendarLink({ url: CALENDAR_URL })).ok).toBe(true);
     expect((await desk.saveDoorCode({ code: DOOR_CODE }, pinKey)).ok).toBe(true);
     expect((await desk.setUpTexting()).ok).toBe(true);
@@ -951,7 +958,7 @@ describe("live group membership", () => {
     const desk = boot();
     expect((await desk.getState("cleaners")).ok).toBe(true);
     expect((await desk.saveProperty({ business: "Harbor", address: PRACTICE, timeZone: "America/New_York" })).ok).toBe(true);
-    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
+    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, cleanerName: "Maria", observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
     expect((await desk.saveCalendarLink({ url: CALENDAR_URL })).ok).toBe(true);
     expect((await desk.saveDoorCode({ code: DOOR_CODE }, pinKey)).ok).toBe(true);
     expect((await desk.setUpTexting()).ok).toBe(true);
@@ -1005,7 +1012,7 @@ describe("live group membership", () => {
     const held = liveDeskFor(heldRoot, () => env, () => new Date(FROZEN));
     expect((await held.getState("cleaners")).ok).toBe(true);
     expect((await held.saveProperty({ business: "Harbor", address: PRACTICE, timeZone: "America/New_York" })).ok).toBe(true);
-    expect((await held.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
+    expect((await held.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, cleanerName: "Maria", observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
     expect((await held.saveCalendarLink({ url: CALENDAR_URL })).ok).toBe(true);
     expect((await held.saveDoorCode({ code: DOOR_CODE }, pinKey)).ok).toBe(true);
     expect((await held.setUpTexting()).ok).toBe(true);
@@ -1057,7 +1064,7 @@ describe("live group membership", () => {
     const desk = liveDeskFor(root, () => env, () => new Date(FROZEN));
     expect((await desk.getState("cleaners")).ok).toBe(true);
     expect((await desk.saveProperty({ business: "Harbor", address: PRACTICE, timeZone: "America/New_York" })).ok).toBe(true);
-    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
+    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, cleanerName: "Maria", observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
     expect((await desk.saveCalendarLink({ url: CALENDAR_URL })).ok).toBe(true);
     expect((await desk.saveDoorCode({ code: DOOR_CODE }, pinKey)).ok).toBe(true);
     expect((await desk.setUpTexting()).ok).toBe(true);
@@ -1111,7 +1118,7 @@ describe("live group membership", () => {
     const desk = liveDeskFor(root, () => env, () => new Date(FROZEN));
     expect((await desk.getState("cleaners")).ok).toBe(true);
     expect((await desk.saveProperty({ business: "Harbor", address: PRACTICE, timeZone: "America/New_York" })).ok).toBe(true);
-    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
+    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, cleanerName: "Maria", observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
     expect((await desk.saveCalendarLink({ url: CALENDAR_URL })).ok).toBe(true);
     expect((await desk.saveDoorCode({ code: DOOR_CODE }, pinKey)).ok).toBe(true);
     expect((await desk.setUpTexting()).ok).toBe(true);
@@ -1167,7 +1174,7 @@ describe("live group membership", () => {
     const desk = liveDeskFor(root, () => env, () => new Date(FROZEN));
     expect((await desk.getState("cleaners")).ok).toBe(true);
     expect((await desk.saveProperty({ business: "Harbor", address: PRACTICE, timeZone: "America/New_York" })).ok).toBe(true);
-    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
+    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, cleanerName: "Maria", observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
     expect((await desk.saveCalendarLink({ url: CALENDAR_URL })).ok).toBe(true);
     expect((await desk.saveDoorCode({ code: DOOR_CODE }, pinKey)).ok).toBe(true);
     expect((await desk.setUpTexting()).ok).toBe(true);
@@ -1317,7 +1324,7 @@ describe("live group membership", () => {
     const desk = liveDeskFor(root, () => env, () => new Date(FROZEN));
     expect((await desk.getState("cleaners")).ok).toBe(true);
     expect((await desk.saveProperty({ business: "Harbor", address: PRACTICE, timeZone: "America/New_York" })).ok).toBe(true);
-    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
+    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, cleanerName: "Maria", observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
     expect((await desk.saveCalendarLink({ url: CALENDAR_URL })).ok).toBe(true);
     expect((await desk.saveDoorCode({ code: DOOR_CODE }, pinKey)).ok).toBe(true);
     expect((await desk.setUpTexting()).ok).toBe(true);
@@ -1813,7 +1820,7 @@ describe("live group membership", () => {
     const desk = liveDeskFor(root, () => env, () => new Date(FROZEN));
     expect((await desk.getState("cleaners")).ok).toBe(true);
     expect((await desk.saveProperty({ business: "Harbor", address: PRACTICE, timeZone: "America/New_York" })).ok).toBe(true);
-    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
+    expect((await desk.savePeople({ host: LIVE_HOST, cleaner: LIVE_CLEANER, cleanerName: "Maria", observer: OBSERVER, doorCodeTo: "cleaner" })).ok).toBe(true);
     expect((await desk.saveCalendarLink({ url: CALENDAR_URL })).ok).toBe(true);
     expect((await desk.saveDoorCode({ code: DOOR_CODE }, pinKey)).ok).toBe(true);
     expect(await desk.runChecks()).toEqual({ ok: false, error: "Set up texting first." });

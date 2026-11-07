@@ -2,12 +2,13 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { rmSync } from "node:fs";
 import { parsePhone } from "../../core/phone";
-import { forgetLiveDesk } from "../liveDesk";
-import { switchService } from "../../hosted/service";
+import { forgetLiveDesk, liveDeskFor } from "../liveDesk";
+import { setFlows } from "../../hosted/service";
+import { findProperty, propertyFolder } from "./properties";
 import { refreshTouringAlerts as tellTouringAlerts } from "../../hosted/touringAlerts";
 import { ADMIN_HEADERS, invitePage, loginPage, messagePage, tenantPage, tenantsPage, type TenantHealth } from "./adminPages";
-import { RegistryError, tenantFolder, type Tenant, type TenantService } from "./registry";
-import type { HostedCleaner } from "./router";
+import { RegistryError, tenantFolder, type Tenant } from "./registry";
+import { propertyContext, type HostedCleaner } from "./router";
 import { findIncomingNumber, pointSmsWebhook } from "./twilioNumbers";
 
 /**
@@ -36,6 +37,11 @@ const REGISTRY_WORDS: Record<RegistryError["reason"], string> = {
   "bad-number": "That isn't a phone number.",
   "number-taken": "Another tenant already uses that number.",
   "unknown-tenant": "That tenant doesn't exist.",
+  "unknown-property": "That property doesn't exist.",
+  "has-properties": "This account has properties, so it can't run touring.",
+  "fixer-not-yet": "Fixer Core isn't available yet.",
+  "needs-migration": "The tenant list needs its migration. Restart the service.",
+  "duplicate-label": "That account already has a property with that label.",
 };
 
 const sessions = new Map<string, { csrf: string; expiresAt: number }>();
@@ -144,7 +150,7 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
     }
     const tenant = tenantFrom(deps, path);
     if (!tenant || path !== `/admin/tenants/${tenant.id}`) return html(404, messagePage("Not found", "That page doesn't exist."));
-    return html(200, tenantPage(tenant, live.csrf, undefined, healthOf(h, tenant)));
+    return html(200, page(h, tenant, live.csrf));
   }
 
   if (method !== "POST") return html(405, messagePage("Not allowed", "That isn't something this page does."));
@@ -167,12 +173,12 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
     case "invite":
       return html(200, invitePage(tenant, h.registry.invite(tenant.id), connectorUrl(h)));
     case "primary":
-      if (!tenant.connections.some((c) => c.grantId === grantId)) return html(400, tenantPage(tenant, live.csrf, "That connection isn't on this tenant.", healthOf(h, tenant)));
+      if (!tenant.connections.some((c) => c.grantId === grantId)) return html(400, page(h, tenant, live.csrf, "That connection isn't on this tenant."));
       h.registry.setPrimary(tenant.id, grantId);
       refreshTouringAlerts(h, tenant.id);
       return redirect(back);
     case "disconnect":
-      if (!tenant.connections.some((c) => c.grantId === grantId)) return html(400, tenantPage(tenant, live.csrf, "That connection isn't on this tenant.", healthOf(h, tenant)));
+      if (!tenant.connections.some((c) => c.grantId === grantId)) return html(400, page(h, tenant, live.csrf, "That connection isn't on this tenant."));
       deps.revokeGrant(grantId);
       h.secrets.deleteConnection(tenant.id, grantId);
       h.registry.disconnect(tenant.id, grantId);
@@ -187,15 +193,30 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
       else if (tenant.service === "touring" && h.touring?.enabled()) await h.touring.start(h.registry.get(tenant.id)!);
       h.log(`Turned ${tenant.id} ${verb === "disable" ? "off" : "on"}.`);
       return redirect(back);
-    case "service": {
-      const to = form.get("to");
-      if (to !== "touring" && to !== "cleaning") return html(400, tenantPage(tenant, live.csrf, "Pick touring or cleaning.", healthOf(h, tenant)));
-      const reply = await setService(h, tenant, to, form.get("force") === "1");
-      if (reply) return html(400, tenantPage(h.registry.get(tenant.id) ?? tenant, live.csrf, reply, healthOf(h, tenant)));
+    case "flows": {
+      const flow = form.get("flow");
+      if (flow !== "cleaning" && flow !== "supplies") return html(400, page(h, tenant, live.csrf, "Pick cleaning or supplies."));
+      // The form names its property every time; one that names none, or another's, changes nothing.
+      const property = findProperty(tenant, form.get("property") ?? "");
+      if (!property || property.id !== (form.get("property") ?? "").trim()) return html(400, page(h, tenant, live.csrf, REGISTRY_WORDS["unknown-property"]));
+      const reply = await setFlows({ h, tenant, actor: "admin", noteToolsChanged: () => {} }, { property: property.id, [flow]: false, force: true });
+      if (reply.isError) return html(400, page(h, h.registry.get(tenant.id) ?? tenant, live.csrf, reply.text));
+      return redirect(back);
+    }
+    case "touring": {
+      if (!touringOffered(h)) return html(400, page(h, tenant, live.csrf, "Touring isn't on for this service."));
+      try {
+        h.registry.setTouring(tenant.id);
+      } catch (err) {
+        if (err instanceof RegistryError) return html(400, page(h, tenant, live.csrf, "This account has properties, so it can't run touring."));
+        throw err;
+      }
+      await h.touring?.start(h.registry.get(tenant.id)!);
+      h.log(`Made ${tenant.id} a touring account.`);
       return redirect(back);
     }
     case "delete":
-      if ((form.get("confirm") ?? "") !== tenant.label) return html(400, tenantPage(tenant, live.csrf, "Type the label to delete.", healthOf(h, tenant)));
+      if ((form.get("confirm") ?? "") !== tenant.label) return html(400, page(h, tenant, live.csrf, "Type the label to delete."));
       await deleteTenant(deps, tenant);
       return redirect("/admin");
     default:
@@ -260,24 +281,36 @@ async function createTenant(deps: AdminDeps, form: URLSearchParams, csrf: string
   return html(200, invitePage(created.tenant, created.inviteCode, connectorUrl(h)));
 }
 
-/** The service column, the touring process, its restarts, and the texts waiting for it. Nothing secret. */
-function healthOf(h: HostedCleaner, tenant: Tenant): TenantHealth {
-  const service = tenant.service ?? "not chosen";
-  if (tenant.service !== "touring" || !h.touring) return { service, process: "—", restartsLastDay: 0, queuedTexts: 0 };
-  const health = h.touring.supervisor.health(tenant.id);
-  return { service, process: health.up ? "up" : "down", restartsLastDay: health.restartsLastDay, queuedTexts: h.touring.inbox.pending(tenant.id).length };
+function touringOffered(h: HostedCleaner): boolean {
+  return Boolean(h.touring?.enabled());
+}
+
+function page(h: HostedCleaner, tenant: Tenant, csrf: string, error?: string): string {
+  return tenantPage(tenant, csrf, error, healthOf(h, tenant), touringOffered(h));
 }
 
 /**
- * Saad's switch. A tenant with no service just gets one. Otherwise the same rules as the host's,
- * without the host's yes (this form is the yes); force skips the live check and sends nothing.
- * Returns the refusal, or undefined when it switched.
+ * The properties column, the touring process, its restarts, the texts waiting for it, and whether
+ * each property's wake-ups reach the alert routine. Nothing secret.
  */
-async function setService(h: HostedCleaner, tenant: Tenant, to: TenantService, force: boolean): Promise<string | undefined> {
-  // The host's chat chooses the first service. The admin only switches one that's already chosen.
-  if (!tenant.service) return "The host hasn't chosen a service yet. Their chat picks it when it connects.";
-  const reply = await switchService({ h, tenant, actor: "admin", noteToolsChanged: () => {} }, { to, force });
-  return reply.isError ? reply.text : undefined;
+function healthOf(h: HostedCleaner, tenant: Tenant): TenantHealth {
+  if (tenant.service === "touring") {
+    if (!h.touring) return { service: "touring", process: "—", restartsLastDay: 0, queuedTexts: 0, alerts: "—" };
+    const health = h.touring.supervisor.health(tenant.id);
+    return { service: "touring", process: health.up ? "up" : "down", restartsLastDay: health.restartsLastDay, queuedTexts: h.touring.inbox.pending(tenant.id).length, alerts: "—" };
+  }
+  const count = tenant.properties.length;
+  const service = count === 0 ? "no properties" : `${count} ${count === 1 ? "property" : "properties"}`;
+  const perProperty: Record<string, string> = {};
+  for (const property of tenant.properties) {
+    if (!property.flows.cleaning.on) continue;
+    const ctx = propertyContext(h, tenant, property);
+    perProperty[property.id] = liveDeskFor(ctx.root, ctx.env, () => h.now()).wakeHealth();
+  }
+  // The account's line: the first failing property, else working when one is, else —.
+  const values = Object.values(perProperty);
+  const alerts = values.find((v) => v.startsWith("failing")) ?? values.find((v) => v === "working") ?? "—";
+  return { service, process: "—", restartsLastDay: 0, queuedTexts: 0, alerts, perProperty };
 }
 
 async function deleteTenant(deps: AdminDeps, tenant: Tenant): Promise<void> {
@@ -291,6 +324,7 @@ async function deleteTenant(deps: AdminDeps, tenant: Tenant): Promise<void> {
   if (number) await pointSmsWebhook(env, number.sid, "");
   const folder = tenantFolder(h.dataRoot, tenant.id);
   forgetLiveDesk(folder);
+  for (const property of tenant.properties) forgetLiveDesk(propertyFolder(h.dataRoot, tenant.id, property));
   rmSync(folder, { recursive: true, force: true });
   h.registry.remove(tenant.id);
   h.log(`Deleted ${tenant.id}.`);

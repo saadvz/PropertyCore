@@ -109,6 +109,7 @@ async function toRoutine(wired: WiredApp): Promise<void> {
   await toDoorCode(wired);
   await call(wired, "save_door_code", { code: DOOR_CODE, lockLocation: "front door keypad" });
   await call(wired, "save_preferences", {});
+  await call(wired, "save_payments", { on: false });
 }
 
 describe("Cleaner Core for Muse", () => {
@@ -282,7 +283,7 @@ describe("Cleaner Core for Muse, hosted", () => {
   it("connects Muse from agent.meta.ai with no extra config, and its private page speaks as Muse", async () => {
     hosted = await multiTenantApp();
     const lane = hosted.registry.create({ label: "Lane", twilioNumber: "+15555550150" }).tenant;
-    const token = await hosted.join(lane.id, "muse");
+    const token = await hosted.joinCleaning(lane.id, "muse");
     const grant = new OAuthGrantStore(hosted.app.inst.runtime).findByAccessHash(hashSecret(token));
     expect(grant?.assistant).toBe("muse");
     await hosted.tool(token, "get_state", { choice: "cleaners" });

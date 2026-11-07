@@ -9,6 +9,7 @@ const tmp = existsSync("/dev/shm") ? (mkdirSync(RAM_TMP, { recursive: true }), R
 // vi.mock replaces a module for the whole worker, so these files get their own.
 const OWN_MODULES = ["test/cleanerResetProperty.test.ts"];
 
+// test/noPaidApis.ts runs first in both projects: no test reaches a paid API or sends a text.
 export default defineConfig({
   test: {
     // Live-app tests make many webhook round trips. The 5s default killed
@@ -21,9 +22,9 @@ export default defineConfig({
       {
         extends: true,
         // Reusing one module graph across files saves about a second of imports per file.
-        test: { name: "shared", isolate: false, setupFiles: ["test/resetGlobals.ts"], exclude: [...configDefaults.exclude, "test/eval/**", "**/.cursor/**", ...OWN_MODULES] },
+        test: { name: "shared", isolate: false, setupFiles: ["test/noPaidApis.ts", "test/resetGlobals.ts"], exclude: [...configDefaults.exclude, "test/eval/**", "**/.cursor/**", ...OWN_MODULES] },
       },
-      { extends: true, test: { name: "isolated", include: OWN_MODULES } },
+      { extends: true, test: { name: "isolated", include: OWN_MODULES, setupFiles: ["test/noPaidApis.ts"] } },
     ],
   },
 });

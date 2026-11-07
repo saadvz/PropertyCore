@@ -5,10 +5,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { liveDeskFor, resetLiveDesks, type LiveDesk } from "../src/cleaner-core/liveDesk";
-import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
+import { GROK_INSTRUCTIONS, handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
+import { CHATGPT_INSTRUCTIONS, CHATGPT_TASK_PROMPT, CLAUDE_INSTRUCTIONS, CLAUDE_TASK_PROMPT, MUSE_INSTRUCTIONS, MUSE_TASK_PROMPT } from "../src/cleaner-core/assistant";
+import { REPLY_INSTRUCTIONS, ROUTINE_REPLY_SENTENCE } from "../src/cleaner-core/replyWording";
 import { askNext } from "../src/cleaner-core/setupAsk";
 import { DOOR_CODE } from "./wiringProof";
 import { filesUnder } from "./files";
+import { SUPPLY_FRONT_NAMES } from "../src/hosted/supplies";
+import { accountTools } from "../src/hosted/propertyTools";
 
 /** The Cleaner Core paste-in prompt, setup guide, and Grok Bot template: pinned, consistent with the tools, and free of secrets. */
 
@@ -21,7 +25,7 @@ const ROUTINES = ["Cleaner Core Check", "Cleaner Core Alerts"];
 /** The setup order get_state asks for: the diagram's 8 steps, the checks once numbers are approved, then the routines and the first times. */
 const SETUP_TOOLS = ["get_state", "save_property", "save_sources", "save_people", "save_schedule", "save_door_code", "save_preferences", "save_alert_routine", "activate", "run_checks", "confirm_times"];
 /** Tools that need the host's yes in chat. A routine runs unattended, so it never holds them. */
-const NEEDS_HOST_YES = ["send_message", "mark_guests_left", "save_door_code", "save_sources", "activate", "retry_send", "hold_job", "resume_job", "reset_property"];
+const NEEDS_HOST_YES = ["send_message", "save_answer", "mark_guests_left", "save_door_code", "save_sources", "activate", "retry_send", "hold_job", "resume_job", "reset_property"];
 
 /** LF bytes, so the pin matches on a Windows (CRLF) checkout and on CI. */
 const read = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
@@ -115,6 +119,21 @@ describe("Cleaner Core template manifest", () => {
     }
   });
 
+  it("allows, in each routine doc, every tool the manifest gives it and every tool its steps call", () => {
+    const routines = (JSON.parse(read(join(TEMPLATE, "template.json"))) as { routines: { doc: string; allowedTools: string[]; supplyTools?: string[] }[] }).routines;
+    const ticked = (text: string) => new Set([...text.matchAll(/`([a-z_]+)`/g)].map((match) => match[1]!));
+    for (const routine of routines) {
+      const doc = read(join(TEMPLATE, routine.doc));
+      const at = doc.indexOf("## Allowed tools");
+      expect(at, routine.doc).toBeGreaterThan(-1);
+      const allowed = ticked(doc.slice(at));
+      const called = ticked(doc.slice(0, at));
+      const known = [...routine.allowedTools, ...(routine.supplyTools ?? [])];
+      for (const tool of routine.allowedTools) expect([...allowed], `${routine.doc} allows ${tool}`).toContain(tool);
+      for (const tool of known.filter((name) => called.has(name))) expect([...allowed], `${routine.doc} calls ${tool}`).toContain(tool);
+    }
+  });
+
   it("lets a bot from the team template start setup with no paste-in prompt", () => {
     const m = manifest();
     const profile = read(join(TEMPLATE, m.profile));
@@ -161,6 +180,22 @@ describe("Cleaner Core template manifest", () => {
     expect(profile).toMatch(/use\s+your\s+secure\s+card\s+for\s+the\s+door\s+code/i);
     expect(profile).toMatch(/only\s+to\s+the\s+one-time\s+upload\s+link,\s+from\s+your\s+own\s+computer/);
     expect(profile).not.toMatch(/webhook\s+addresses, or door codes\. Use your secure card\./);
+  });
+
+  it("knows the Venmo payments step and the Supply Core add-on", () => {
+    const profile = read(join(TEMPLATE, manifest().profile));
+    const instructions = profile.slice(profile.indexOf("## Standing instructions"));
+    expect(profile.slice(0, profile.indexOf("## Standing instructions"))).toMatch(/Venmo[\s\S]*Supply Core/);
+    for (const tool of ["save_payments", "mark_paid", "choose_supplies", "set_flows", "get_supply_state", "report_low", "check_cart", "approve_cart"]) {
+      expect(instructions, tool).toContain(`\`${tool}\``);
+    }
+    expect(instructions).toContain("`SUPPLY_CORE_BOOTSTRAP.md`");
+    expect(instructions).toContain("`supply-template/routines/`");
+    const flat = instructions.replace(/\s+/g, " ");
+    expect(flat).toMatch(/Call `check_cart` before Place Order, every time/);
+    expect(flat).toMatch(/Never type, paste, or pass a card number, expiry, or security code to Supply Core/);
+    expect(flat).toMatch(/A cleaner's words only mark list items low/);
+    expect(flat).toMatch(/A routine run never calls `approve_cart` with a code/);
   });
 
   it("leaves the Tour Core template alone", () => {
@@ -320,8 +355,8 @@ describe("Cleaner Core initialize instructions", () => {
 describe("Cleaner Core template docs", () => {
   const docs = () => [BOOTSTRAP, ...filesUnder(TEMPLATE)].map((f) => ({ f, text: read(f) }));
 
-  it("name only real Cleaner Core tools", async () => {
-    const tools = await toolNames();
+  it("name only real Cleaner Core tools, the account's tools, or Supply Core's when it's on", async () => {
+    const tools = [...(await toolNames()), ...SUPPLY_FRONT_NAMES, ...accountTools().map((tool) => String(tool.name))];
     for (const { f, text } of docs()) {
       for (const m of text.matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) expect(tools, `${f}: ${m[1]}`).toContain(m[1]);
     }
@@ -348,5 +383,36 @@ describe("Cleaner Core template docs", () => {
       expect(text.includes(DOOR_CODE), f).toBe(false);
       for (const v of envValues) expect(text.includes(v), `${f} contains a value from .env`).toBe(false);
     }
+  });
+});
+
+describe("Cleaner Core reply drafts wording", () => {
+  const flat = (text: string) => text.replace(/\s+/g, " ");
+  const whole = (value: string | readonly string[]) => (typeof value === "string" ? value : value.join("\n"));
+
+  const manifestRoutines = () => (JSON.parse(read(join(TEMPLATE, "template.json"))) as { routines: { allowedTools: string[] }[] }).routines;
+
+  it("lets routines draft but never send or save an answer", () => {
+    for (const routine of manifestRoutines()) {
+      expect(routine.allowedTools).toContain("save_draft");
+      expect(routine.allowedTools).not.toContain("send_message");
+      expect(routine.allowedTools).not.toContain("save_answer");
+    }
+  });
+
+  it("carries the reply wording in every assistant's instructions and routine prompt", () => {
+    for (const lines of [GROK_INSTRUCTIONS, CLAUDE_INSTRUCTIONS, CHATGPT_INSTRUCTIONS, MUSE_INSTRUCTIONS]) for (const line of REPLY_INSTRUCTIONS) expect(whole(lines)).toContain(line);
+    for (const prompt of [CLAUDE_TASK_PROMPT, CHATGPT_TASK_PROMPT, MUSE_TASK_PROMPT]) expect(whole(prompt)).toContain(ROUTINE_REPLY_SENTENCE);
+  });
+
+  it("carries the reply wording in the template docs", () => {
+    for (const doc of ["cleaner-template/routines/cleaner-core-alerts.md", "cleaner-template/routines/cleaner-core-check.md", "claude-template/routines/cleaner-core-task.md", "chatgpt-template/routines/cleaner-core-task.md"])
+      expect(flat(read(join(ROOT, doc))), doc).toContain(ROUTINE_REPLY_SENTENCE);
+    for (const line of REPLY_INSTRUCTIONS) expect(flat(read(join(TEMPLATE, "bot-profile.md")))).toContain(line);
+  });
+
+  it("drops the old one-line draft rule", () => {
+    const old = "When a message needs a reply Cleaner Core doesn't send itself, draft one short reply and offer it to the host.";
+    for (const lines of [GROK_INSTRUCTIONS, CLAUDE_INSTRUCTIONS, CHATGPT_INSTRUCTIONS, MUSE_INSTRUCTIONS]) expect(whole(lines)).not.toContain(old);
   });
 });
