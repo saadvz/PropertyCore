@@ -1,6 +1,6 @@
 /**
- * The two Twilio REST calls the admin page makes for a tenant's number: is it on the account, and
- * point (or clear) its SMS webhook. Credentials are the shared Cleaner Core Twilio account's.
+ * The Twilio REST calls for an account's text line: is the number on the Twilio account, point (or
+ * clear) its SMS webhook, and release it. Credentials are the shared Cleaner Core Twilio account's.
  */
 
 const API = "https://api.twilio.com/2010-04-01";
@@ -46,6 +46,24 @@ export async function pointSmsWebhook(env: NodeJS.ProcessEnv, numberSid: string,
       method: "POST",
       headers: { Authorization: acct.auth, "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ SmsUrl: smsUrl, SmsMethod: "POST" }).toString(),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Gives the number back to Twilio. It leaves the account, and its business-texting registration with
+ * it, for good. True when Twilio released it.
+ */
+export async function releaseNumber(env: NodeJS.ProcessEnv, numberSid: string): Promise<boolean> {
+  const acct = account(env);
+  if (!acct) return false;
+  try {
+    const res = await (fetchImpl ?? fetch)(`${API}/Accounts/${acct.sid}/IncomingPhoneNumbers/${encodeURIComponent(numberSid)}.json`, {
+      method: "DELETE",
+      headers: { Authorization: acct.auth },
     });
     return res.ok;
   } catch {

@@ -1,9 +1,10 @@
+import { POOL_LOW_AT, type PoolState, type PoolSummary } from "./numberPool";
 import type { Tenant } from "./registry";
 
 /**
  * Saad's admin pages. Server-rendered, no script, everything escaped. They never show a door code,
- * a calendar link, a routine address or key, a secret, or any phone number but a tenant's own
- * Twilio number.
+ * a calendar link, a routine address or key, a secret, or any phone number but the service's own
+ * Twilio numbers: each tenant's line and the pool's.
  */
 
 export const ADMIN_HEADERS: Record<string, string> = {
@@ -76,7 +77,13 @@ export interface TenantHealth {
 
 const NO_HEALTH: TenantHealth = { service: "no properties", process: "—", restartsLastDay: 0, queuedTexts: 0, alerts: "—" };
 
-export function tenantsPage(tenants: Tenant[], csrf: string, error?: string, healthOf: (t: Tenant) => TenantHealth = () => NO_HEALTH): string {
+/** The pool's counts, and the low alert once ready numbers are at or below POOL_LOW_AT. */
+function poolLines(pool: PoolSummary, link = true): string {
+  const alert = pool.low ? `<p class="error" data-pool-low>The number pool is low: ${pool.ready} ready. Add registered numbers before sign-ups run out.</p>\n      ` : "";
+  return `${alert}<p>Number pool: ${pool.ready} ready, ${pool.resting} resting, ${pool.inUse} in use.${link ? ' <a href="/admin/pool">Manage the pool</a>' : ""}</p>`;
+}
+
+export function tenantsPage(tenants: Tenant[], csrf: string, error?: string, healthOf: (t: Tenant) => TenantHealth = () => NO_HEALTH, pool?: PoolSummary): string {
   const rows = tenants
     .map((t) => {
       const primary = t.connections.find((c) => c.grantId === t.primaryGrantId);
@@ -88,6 +95,7 @@ export function tenantsPage(tenants: Tenant[], csrf: string, error?: string, hea
     "Cleaner Core tenants",
     `      <h1>Cleaner Core tenants</h1>
       ${errorLine(error)}
+      ${pool ? poolLines(pool) : ""}
       <table>
         <tr><th>Host</th><th>Number</th><th>Properties</th><th>Touring process</th><th>Alerts</th><th>Primary</th><th>Connections</th><th>Last activity</th><th>Status</th></tr>
         ${rows || '<tr><td colspan="9">No tenants yet.</td></tr>'}
@@ -96,7 +104,7 @@ export function tenantsPage(tenants: Tenant[], csrf: string, error?: string, hea
       <form method="post" action="/admin/tenants">
         ${csrfField(csrf)}
         <p><label for="label">Label</label><br /><input id="label" name="label" autocomplete="off" /></p>
-        <p><label for="number">Twilio number</label><br /><input id="number" name="number" autocomplete="off" /></p>
+        <p><label for="number">Twilio number. Leave it blank to take one from the pool</label><br /><input id="number" name="number" autocomplete="off" /></p>
         <p><button type="submit">Create tenant</button></p>
       </form>
       ${action("/admin/logout", csrf, "Sign out")}`,
@@ -160,6 +168,8 @@ export function tenantPage(t: Tenant, csrf: string, error?: string, health: Tena
       <form method="post" action="${escape(`${base}/delete`)}">
         ${csrfField(csrf)}
         <p><label for="confirm">Type the label to delete this tenant, its connections and its data</label><br /><input id="confirm" name="confirm" autocomplete="off" /></p>
+        <p>Its number goes back to the pool and rests 30 days before another account gets it.</p>
+        <p><label><input type="checkbox" name="release" value="1" /> Release the number from Twilio instead. Its texting registration goes with it.</label></p>
         <p><button type="submit">Delete</button></p>
       </form>
       <p><a href="/admin">Back to tenants</a></p>`,
@@ -167,14 +177,68 @@ export function tenantPage(t: Tenant, csrf: string, error?: string, health: Tena
 }
 
 /** The invite code and the connector URL, shown once. */
-export function invitePage(t: Tenant, code: string, connectorUrl: string): string {
+export function invitePage(t: Tenant, code: string, connectorUrl: string, warning?: string): string {
   return shell(
     `Invite for ${t.label}`,
     `      <h1>Invite for ${escape(t.label)}</h1>
+      ${errorLine(warning)}
+      <p>Text line: ${escape(t.twilioNumber)}.</p>
       <p>Send the host this invite code. They type it on the Cleaner Core page that opens when they connect.</p>
       <p class="code" data-invite="${escape(code)}">${escape(code)}</p>
       <p>Connector URL: <span class="code">${escape(connectorUrl)}</span></p>
       <p><strong>This code is shown once.</strong> It works for 7 days.</p>
       <p><a href="/admin/tenants/${escape(t.id)}">Back to ${escape(t.label)}</a></p>`,
+  );
+}
+
+/** One pooled number as the pool page shows it. */
+export interface PoolRow {
+  number: string;
+  state: PoolState;
+  /** When a resting number is handed out again. */
+  readyAt?: string;
+  tenant?: { id: string; label: string };
+  webhookOk?: boolean;
+  addedAt: string;
+}
+
+/**
+ * The pool of registered numbers: what's ready, resting and in use, a top-up form, and a release.
+ * Add only numbers already registered for business texting.
+ */
+export function poolPage(rows: PoolRow[], summary: PoolSummary, csrf: string, notice?: string, error?: string): string {
+  const stateOf = (row: PoolRow) => (row.state === "resting" ? `resting until ${row.readyAt ?? ""}` : row.state === "in-use" ? "in use" : "ready");
+  const body = rows
+    .map((row) => {
+      const account = row.tenant ? `<a href="/admin/tenants/${escape(row.tenant.id)}">${escape(row.tenant.label)}</a>` : "—";
+      const webhook =
+        row.state !== "in-use" ? "—" : row.webhookOk === false ? `not pointed${row.tenant ? ` ${action(`/admin/tenants/${row.tenant.id}/line`, csrf, "Point again")}` : ""}` : row.webhookOk ? "pointed" : "—";
+      return `<tr><td>${escape(row.number)}</td><td>${escape(stateOf(row))}</td><td>${account}</td><td>${webhook}</td><td>${escape(row.addedAt)}</td></tr>`;
+    })
+    .join("\n");
+  return shell(
+    "Number pool",
+    `      <h1>Number pool</h1>
+      ${errorLine(error)}
+      ${notice ? `<p>${escape(notice)}</p>` : ""}
+      ${poolLines(summary, false)}
+      <p>Each new account takes the ready number that has waited longest. A closed account's number rests 30 days, so its old cleaner stops texting it, before anyone else gets it. The alert shows at ${POOL_LOW_AT} or fewer ready.</p>
+      <table>
+        <tr><th>Number</th><th>State</th><th>Account</th><th>Webhook</th><th>Added</th></tr>
+        ${body || '<tr><td colspan="5">No numbers yet.</td></tr>'}
+      </table>
+      <h2>Add numbers</h2>
+      <form method="post" action="/admin/pool">
+        ${csrfField(csrf)}
+        <p><label for="numbers">Numbers already on the Twilio account and registered for business texting (10DLC or verified toll-free), one per line</label><br /><textarea id="numbers" name="numbers" rows="5" cols="30"></textarea></p>
+        <p><button type="submit">Add to the pool</button></p>
+      </form>
+      <h2>Release a number</h2>
+      <form method="post" action="/admin/pool/release">
+        ${csrfField(csrf)}
+        <p><label for="release">Type a ready or resting number to release it from Twilio. This can't be undone, and its registration goes with it</label><br /><input id="release" name="number" autocomplete="off" /></p>
+        <p><button type="submit">Release</button></p>
+      </form>
+      <p><a href="/admin">Back to tenants</a></p>`,
   );
 }
