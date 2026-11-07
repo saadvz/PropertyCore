@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -6,7 +6,7 @@ import { doorCodeUploadCode } from "../src/cleaner-core/http";
 import { CODE_IN_DRAFT, CODE_IN_SAVED_ANSWER, liveDeskFor, resetLiveDesks, setCleanerAlertFetch, setCleanerCalendarFetch, type LiveDesk, type ToolReply } from "../src/cleaner-core/liveDesk";
 import { setCleanerGroupFetch, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import { hubFor } from "../src/hub/hub";
-import { PIN_KEY as HARNESS_KEY, cleanupDesks, idOf, liveGroup, openDesk as openHarnessDesk, setUp, testClock } from "./cleanerDeskHarness";
+import { LOCK, PIN_KEY as HARNESS_KEY, ZONE as HARNESS_ZONE, cleanupDesks, idOf, liveGroup, openDesk as openHarnessDesk, setUp, testClock } from "./cleanerDeskHarness";
 import { DOOR_WINDOW_OVER } from "../src/cleaner-core/doorPort";
 import { fakeConversations } from "./fakeConversations";
 import { approvedOnDesk } from "./hostApproval";
@@ -327,5 +327,50 @@ describe("mark_guests_left asks the hub for door access", () => {
     clock.advance(Date.parse("2026-10-18T16:00:00.000Z") - clock.now().getTime());
     ok(await desk.markGuestsLeft({ confirmed: true }, HARNESS_KEY));
     expect(sms.sent.filter((item) => item.to === CLEANER && item.body.includes(DOOR_CODE))).toHaveLength(1);
+  });
+});
+
+describe("review fixes: the code after a re-save and after a reset", () => {
+  const NEW_CODE = ["4", "7", "1", "9"].join("");
+
+  function filesHolding(dir: string, text: string): string[] {
+    return readdirSync(dir, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => join(entry.parentPath, entry.name))
+      .filter((path) => readFileSync(path).includes(Buffer.from(text)));
+  }
+
+  it("a code saved again with the same lock location never lands in plaintext in a file", async () => {
+    const clock = testClock();
+    const { root, desk, sms } = openHarnessDesk([HOST, CLEANER], "0", clock.now);
+    await setUp(desk, { groupChat: "cleaner-only" });
+    await desk.inbound({ id: "yes-1", from: CLEANER, text: "YES" });
+    await desk.inbound({ id: "yes-2", from: CLEANER, text: "YES" });
+    ok(await desk.saveDoorCode({ code: NEW_CODE, lockLocation: LOCK }, HARNESS_KEY));
+    clock.advance(Date.parse("2026-10-18T16:00:00.000Z") - clock.now().getTime());
+    ok(await desk.markGuestsLeft({ confirmed: true }, HARNESS_KEY));
+    expect(sms.sent.filter((item) => item.to === CLEANER && item.body.includes(NEW_CODE))).toHaveLength(1);
+    expect(sms.sent.some((item) => item.body.includes(DOOR_CODE))).toBe(false);
+    expect(filesHolding(root, NEW_CODE)).toEqual([]);
+  });
+
+  it("reset_property deletes the door code, and nothing is released until it is saved again", async () => {
+    const clock = testClock();
+    const { root, desk, sms } = openHarnessDesk([HOST, CLEANER], "0", clock.now);
+    await setUp(desk, { groupChat: "cleaner-only" });
+    const link = codeOf(ok(await desk.saveDoorCode({}, HARNESS_KEY)));
+    const preview = ok(await desk.resetProperty({}, () => undefined));
+    ok(await desk.resetProperty({ confirmation: String((preview.confirmation as { code?: string })?.code ?? preview.confirmation) }, () => undefined));
+    expect(existsSync(join(root, "door-access.json"))).toBe(false);
+    expect(await desk.uploadLinkOpen("door-code", link)).toEqual({ open: false });
+    // Set up again without saving a door code: activate needs one.
+    ok(await desk.getState("cleaners"));
+    ok(await desk.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: HARNESS_ZONE, checkoutTime: "10:30", checkInTime: "15:00" }));
+    ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
+    ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" }));
+    expect((await desk.savePreferences({})).ok).toBe(false);
+    clock.advance(Date.parse("2026-10-18T16:00:00.000Z") - clock.now().getTime());
+    expect((await desk.markGuestsLeft({ confirmed: true }, HARNESS_KEY)).ok).toBe(false);
+    expect(sms.sent.some((item) => item.body.includes(DOOR_CODE))).toBe(false);
   });
 });

@@ -1329,12 +1329,14 @@ export class LiveDesk {
     if (!/^\d{4,8}$/.test(code)) return this.fail(/\d/.test(code) || code.length > 12 ? "Send the door code as 4 to 8 digits." : this.words().maskedCode);
     this.openSeal(pinKey);
     const previousLock = this.door().lockLocation();
+    const previousCode = this.pin;
     // The hub seals it in door-access.json, after this desk's checks (codeRefused) and its own.
     const saved = this.door().save(code, input.lockLocation, pinKey);
     if (!saved.ok) return this.fail(saved.error);
     this.pin = code;
-    // The engine names the lock in the door code text, so it reopens with the new location.
-    if (this.door().lockLocation() !== previousLock) this.stale = true;
+    // The engine names the lock in the door code text and guards its texts and files with the code,
+    // so it reopens with a new location or a new code.
+    if (this.door().lockLocation() !== previousLock || code !== previousCode) this.stale = true;
     return this.reply({ next: this.doorCodeSavedLine() });
   }
 
@@ -1374,10 +1376,11 @@ export class LiveDesk {
       if (before) return { status: 400, body: { ok: false, error: before } };
       this.openSeal();
       const previousLock = door.lockLocation();
+      const previousCode = this.pin;
       const result = door.upload(code, body);
       if (result.status !== 200) return result;
       this.pin = door.codeForChecks();
-      if (door.lockLocation() !== previousLock) this.stale = true;
+      if (door.lockLocation() !== previousLock || this.pin !== previousCode) this.stale = true;
       return { status: 200, body: { ok: true, message: this.doorCodeSavedLine() } };
     });
   }
@@ -2621,8 +2624,14 @@ export class LiveDesk {
     } catch {
       wiped = false;
     } finally {
-      // The secrets are already gone, so the desk forgets what it held either way. The property's
-      // details and calendars go too, unless Supply Core keeps a record here and reads them.
+      // The secrets are already gone, so the desk forgets what it held either way. The door code goes
+      // always: no other flow reads it. The property's details and calendars go too, unless Supply
+      // Core keeps a record here and reads them.
+      try {
+        this.door().clear();
+      } catch {
+        wiped = false;
+      }
       if (!this.suppliesShareHub()) {
         try {
           this.hub.clear();
@@ -2632,6 +2641,8 @@ export class LiveDesk {
       }
       this.file = {};
       this.pin = undefined;
+      this.openedWith = undefined;
+      this.accessRefusal = undefined;
       this.uploadKey = undefined;
       this.engine = undefined;
       this.stale = false;

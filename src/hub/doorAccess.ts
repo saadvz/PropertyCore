@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "../storage/atomicWrite";
 import { holdsCodeToken, joinSplitDigits } from "./digits";
@@ -143,6 +143,14 @@ export class DoorAccess {
     } catch {
       return undefined;
     }
+  }
+
+  /** Deletes the door code, the lock location and any upload link: door-access.json and what's in memory. */
+  clear(): void {
+    rmSync(doorAccessPath(this.root), { force: true });
+    this.file = { schemaVersion: 1 };
+    this.open = undefined;
+    this.uploadKey = undefined;
   }
 
   useProvider(provider: AccessProvider): void {

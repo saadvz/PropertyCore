@@ -2110,6 +2110,9 @@ class Engine implements CleanerCore {
       const grant = await this.requestAccess(job);
       if (!grant) return sent;
       const pin = grant.code;
+      // The granted code is the one the leak checks guard from here on: a code saved again since this
+      // engine opened would otherwise reach the transcript and outbox unredacted.
+      this.pin = pin;
       const lockLocation = grant.lockLocation?.trim() || undefined;
       // The host's note rides on the door code, so the cleaner reads it as the cleaning starts.
       const body = withHostNote(doorCodeBody(this.options.property.address, pin, lockLocation), this.options.cleaningNote);
