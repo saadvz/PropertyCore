@@ -144,6 +144,19 @@ export interface InviteBook {
   choices?(assistant?: CleanerAssistant): readonly ServiceChoice[];
   /** The words for each refusal. */
   refusal(reason: InviteRefusal): string;
+  /** Sign in and Create account with a phone code. Unset or closed: the page takes only an invite code. */
+  accounts?: AccountDoor;
+}
+
+export type AccountAnswer = { ok: true; tenantId: string } | { ok: false; message: string };
+
+/** The connect page's Sign in and Create account (saadvz/TourCore#162). Each answer is the page's own words. */
+export interface AccountDoor {
+  /** The terms page a new account accepts, when sign-up is open. */
+  open(): { termsUrl: string } | undefined;
+  sendCode(requestId: string, phone: unknown): Promise<{ ok: true } | { ok: false; message: string }>;
+  signIn(requestId: string, body: Record<string, unknown>): Promise<AccountAnswer>;
+  signUp(requestId: string, body: Record<string, unknown>): Promise<AccountAnswer>;
 }
 
 export interface ProviderOptions {
@@ -175,6 +188,12 @@ export interface ProviderOptions {
   /** Set on a multi-tenant Cleaner Core. Cleaner Core approvals then need an invite code. */
   invites?: InviteBook;
   log?: (line: string) => void;
+}
+
+/** The connect page's Sign in and Create account, when sign-up is open. */
+function accountPage(invites: InviteBook): { account?: { termsUrl: string } } {
+  const open = invites.accounts?.open();
+  return open ? { account: { termsUrl: open.termsUrl } } : {};
 }
 
 function codesMatch(given: string, expected: string): boolean {
@@ -359,7 +378,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
       label: ep.label,
       // On the multi-tenant service every address takes an invite code.
       ...(this.options.invites
-        ? { assistant: assistantForRedirect(request.redirectUri), invite: true, services: ep.label === "Tour Core and Cleaner Core" && (this.options.invites.offersPick?.(assistantForRedirect(request.redirectUri)) ?? false), ...(this.options.invites.choices ? { serviceChoices: this.options.invites.choices(assistantForRedirect(request.redirectUri)) } : {}) }
+        ? { assistant: assistantForRedirect(request.redirectUri), invite: true, ...accountPage(this.options.invites), services: ep.label === "Tour Core and Cleaner Core" && (this.options.invites.offersPick?.(assistantForRedirect(request.redirectUri)) ?? false), ...(this.options.invites.choices ? { serviceChoices: this.options.invites.choices(assistantForRedirect(request.redirectUri)) } : {}) }
         : ep.label === "Cleaner Core" && this.options.cleanerAssistant
           ? { assistant: this.options.cleanerAssistant() }
           : {}),
@@ -398,13 +417,58 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
       this.log(`Refused a Cleaner Core approval: the invite code was ${claim.refused}.`);
       return { ok: false, message: invites.refusal(claim.refused) };
     }
-    request.tenantId = claim.tenantId;
-    if (!this.decide(id, "approved")) return refused;
+    if (!this.bind(request, invites, claim.tenantId, service)) return refused;
+    this.log(`A Cleaner Core approval used an invite for ${claim.tenantId}.`);
+    return { ok: true };
+  }
+
+  /** The request's tenant is known: approve it, and set the service the host picked on the shared address. */
+  private bind(request: ApprovalRequest, invites: InviteBook, tenantId: string, service: unknown): boolean {
+    request.tenantId = tenantId;
+    if (!this.decide(request.id, "approved")) return false;
     // Only the shared address offers the pick, and only while both services run.
     const pick = servicePick(service, invites.choices?.(assistantForRedirect(request.redirectUri)));
     const shared = this.options.endpoints()?.find((ep) => ep.path === request.resourcePath)?.label === "Tour Core and Cleaner Core";
-    if (pick && shared && invites.offersPick?.(assistantForRedirect(request.redirectUri))) invites.choose?.(claim.tenantId, pick);
-    this.log(`A Cleaner Core approval used an invite for ${claim.tenantId}.`);
+    if (pick && shared && invites.offersPick?.(assistantForRedirect(request.redirectUri))) invites.choose?.(tenantId, pick);
+    return true;
+  }
+
+  /** The open account door and the pending request the page's match code names. */
+  private accountRequest(id: string, matchCodeGiven: string): { door: AccountDoor; invites: InviteBook; request: ApprovalRequest } | undefined {
+    const invites = this.options.invites;
+    const door = invites?.accounts;
+    if (!invites || !door?.open()) return undefined;
+    this.prune();
+    const request = this.requests.get(id);
+    if (!request || request.status !== "pending") return undefined;
+    if (!codesMatch(matchCodeGiven, request.matchCode)) return undefined;
+    return { door, invites, request };
+  }
+
+  /** Texts the landlord a code from the connect page. */
+  async sendPhoneCode(id: string, matchCodeGiven: string, phone: unknown): Promise<{ ok: true } | { ok: false; message: string }> {
+    const found = this.accountRequest(id, matchCodeGiven);
+    if (!found) return { ok: false, message: "That connection can't be approved from here." };
+    return found.door.sendCode(found.request.id, phone);
+  }
+
+  /**
+   * Allow after Sign in or Create account. The phone code is checked first; the grant then binds to
+   * the account that phone owns, or to the new one.
+   */
+  async approveWithAccount(id: string, matchCodeGiven: string, mode: "sign-in" | "sign-up", body: Record<string, unknown>, service?: unknown): Promise<{ ok: true } | { ok: false; message: string }> {
+    const refused = { ok: false as const, message: "That connection can't be approved from here." };
+    const found = this.accountRequest(id, matchCodeGiven);
+    if (!found) return refused;
+    const answer = mode === "sign-in" ? await found.door.signIn(found.request.id, body) : await found.door.signUp(found.request.id, body);
+    if (!answer.ok) {
+      this.log(`Refused a connect-page ${mode}.`);
+      return answer;
+    }
+    // The page may have been denied or expired while the code was checked.
+    if (found.request.status !== "pending" || found.request.expiresAt <= this.now()) return refused;
+    if (!this.bind(found.request, found.invites, answer.tenantId, service)) return refused;
+    this.log(`A connect-page ${mode} approved a connection for ${answer.tenantId}.`);
     return { ok: true };
   }
 
