@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import type { CleanerAssistant } from "../cleaner-core/assistant";
+import { runsSupplies, type CleanerAssistant } from "../cleaner-core/assistant";
 import { findProperty, propertyFolder, type FlowName, type Property } from "../cleaner-core/hosted/properties";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
@@ -123,7 +123,7 @@ export async function accountState(tenant: Tenant, args: unknown, states: Proper
     const { property } = resolved;
     const reply = property.flows.cleaning.on
       ? await states.cleaning(property, resolved.args)
-      : property.flows.supplies.on && assistant === "grok"
+      : property.flows.supplies.on && runsSupplies(assistant)
         ? await states.supplies(property)
         : done({ next: TURN_A_FLOW_ON });
     if (reply.isError || !reply.structured) return reply;
