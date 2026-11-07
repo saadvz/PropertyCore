@@ -54,9 +54,11 @@ export function buildTenantEnv(input: {
   env.CLEANER_CORE_TWILIO_PHONE_NUMBER = input.tenant.twilioNumber;
   if (input.serviceLines?.length) env.CLEANER_CORE_SERVICE_LINES = input.serviceLines.join(",");
   // Only the phone the landlord confirmed with a code counts, never a saved secret: the account's texts start from it.
+  // An owner whose phone isn't confirmed yet is still a landlord record, so the old allowlist can't
+  // stand in for it: "unconfirmed" is no phone, and nobody on the account is texted.
   delete env.CLEANER_CORE_LANDLORD_PHONE;
-  const owner = parsePhone(input.tenant.owner?.phoneVerifiedAt ? input.tenant.owner.phone : "");
-  if (owner) env.CLEANER_CORE_LANDLORD_PHONE = owner;
+  const owner = input.tenant.owner;
+  if (owner) env.CLEANER_CORE_LANDLORD_PHONE = (owner.phoneVerifiedAt ? parsePhone(owner.phone) : undefined) ?? "unconfirmed";
   const base = input.property ? propertyBasePath(input.tenant.id, input.property) : `/t/${input.tenant.id}`;
   env.PUBLIC_BASE_URL = `${input.origin.replace(/\/+$/, "")}${base}`;
   if (input.property) {
