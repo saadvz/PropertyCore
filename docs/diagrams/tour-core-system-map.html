@@ -129,7 +129,7 @@ function overviewSVG(){
   s+=ARROW(930,192,930,260,"texts");
   // outside
   s+=LAB(20,596,"OUTSIDE");
-  s+=BOX(150,566,190,64,"Durin","door access · demo only",{dashed:true});
+  s+=BOX(150,566,190,64,"Door access","demo only",{dashed:true});
   s+=BOX(360,566,190,64,"Google","Calendar · Drive");
   s+=BOX(570,566,190,64,"Booking calendars","Guesty Lite · iCal");
   s+=BOX(780,566,230,64,"Railway","backups stay on Railway",{dashed:true});
@@ -252,8 +252,8 @@ const PAGES=[
     {who:"Prospect",t:"Fills the ID form",note:"self-declared only",dashed:true},
     {who:"Tour Core",t:"Sends directions and a reminder"},
     {who:"Prospect",t:"Texts \"I'm here\""},
-    {who:"Tour Core",t:"Checks the access rules",check:true,note:"no → refused, Durin never asked"},
-    {who:"Durin",t:"Unlocks doors on the route",dashed:true,note:"demo only, no real door opens"},
+    {who:"Tour Core",t:"Checks the access rules",check:true,note:"no → refused, door system never asked"},
+    {who:"Door access",t:"Unlocks doors on the route",dashed:true,note:"demo only, no real door opens"},
     {who:"Tour Core",t:"Offers extra time, then checks in"},
     {who:"Prospect",t:"Texts \"Done\""},
     {who:"Tour Core",t:"Follows up, alerts landlord, saves audit"}
