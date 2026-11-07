@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { LiveDesk } from "../src/cleaner-core/liveDesk";
 import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
+import { CHOOSE } from "../src/hosted/supplies";
+import { SUPPLY_TOOL_NAMES } from "../src/supply-core/tools";
 import { filesUnder, REPO_ROOT } from "./files";
 
 /** The Muse template draft: pinned, consistent with the tools and the other templates, and free of secrets. */
@@ -12,6 +14,8 @@ import { filesUnder, REPO_ROOT } from "./files";
 const TEMPLATE = join(REPO_ROOT, "muse-template");
 const SKILL = join(TEMPLATE, "skills/cleaner-core/SKILL.md");
 const TASK = join(TEMPLATE, "skills/cleaner-core/references/cleaner-core-task.md");
+const SUPPLY_SKILL = join(TEMPLATE, "skills/supply-core/SKILL.md");
+const SUPPLY_TASK = join(TEMPLATE, "skills/supply-core/references/supply-core-task.md");
 const REPO = "https://github.com/saadvz/TourCore";
 
 /** LF bytes, so the pin matches on a Windows (CRLF) checkout and on CI. */
@@ -27,8 +31,8 @@ async function toolNames(): Promise<string[]> {
 }
 
 /** The task prompt, from the fenced block in the task doc. */
-function taskPrompt(): string {
-  const block = /```text\n([\s\S]*?)\n```/.exec(read(TASK));
+function taskPrompt(doc = TASK): string {
+  const block = /```text\n([\s\S]*?)\n```/.exec(read(doc));
   if (!block?.[1]) throw new Error("no prompt block in the task doc");
   return block[1];
 }
@@ -55,8 +59,8 @@ describe("Muse template", () => {
       expect(manifest.hostedCleanerCoreUrl).toBe((JSON.parse(read(join(REPO_ROOT, other, "template.json"))) as { hostedCleanerCoreUrl: string }).hostedCleanerCoreUrl);
     }
     expect(manifest.deployment.env).toEqual({ CLEANER_CORE_ENABLED: "1", CLEANER_CORE_MULTI_TENANT: "1" });
-    expect(manifest.status).toMatch(/^draft/);
-    expect(manifest.routines.map((routine) => join(TEMPLATE, routine.doc))).toEqual([TASK]);
+    expect(manifest.status).toMatch(/^beta/);
+    expect(manifest.routines.map((routine) => join(TEMPLATE, routine.doc))).toEqual([TASK, SUPPLY_TASK]);
     expect(read(SKILL)).toContain(`${manifest.hostedCleanerCoreUrl}/mcp/cleaner-core`);
     expect(read(join(TEMPLATE, "README.md"))).toMatch(/invite code/);
   });
@@ -94,18 +98,43 @@ describe("Muse template", () => {
     expect(prompt).toMatch(/this prompt is never their yes/);
     expect(prompt).toMatch(/Call confirm_times, mark_guests_left, mark_paid, retry_send, send_message, hold_job, or resume_job only after the host replies yes in this conversation\./);
     expect(prompt).toMatch(/Never call activate, run_checks, reset_property, or any save_ tool other than save_arrival from this run\./);
-    expect(prompt).toMatch(/Never use your browser in this run except to open photo links\./);
+    expect(prompt).toMatch(/Never use your browser in this run except to open photo links, or to shop for what the cleaner reported low as step 11 says\./);
+    expect(prompt).toMatch(/call report_low with those item ids and source "cleaner"/);
+    expect(prompt).toMatch(/Never pass the cleaner's words to Supply Core\./);
     expect(prompt).toMatch(/Never pause, edit, or cancel this recurring task/);
     expect(prompt).toMatch(/Never show a door code, an id, or a phone number\./);
   });
 
-  it("names only real Cleaner Core tools, or the account's own", async () => {
-    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name))];
+  it("has a Supply Core skill Muse saves when the host turns it on, and shops only in its own browser", () => {
+    const skill = read(SUPPLY_SKILL);
+    expect(skill).toMatch(/^---\nname: supply-core\ndescription: .+\n---\n/);
+    expect(skill).toContain("(references/supply-core-task.md)");
+    expect(read(SKILL)).toContain("`muse-template/skills/supply-core` from the repository as a skill named\n   Supply Core");
+    expect(skill).toMatch(/Call `check_cart` before Place Order, every time\./);
+    expect(skill).toMatch(/Never sign in to a store with a password you know\. The host signs in\./);
+    expect(skill).toMatch(/Never type a card number, an expiry, a security code, or a password\./);
+    expect(skill).toMatch(/`approvedBy: "host-browser"`/);
+    expect(skill).not.toMatch(/Vault|POST JSON|secure card/);
+  });
+
+  it("runs the Supply Core task with no host's yes and no card or password typed", () => {
+    const prompt = taskPrompt(SUPPLY_TASK);
+    expect(prompt).toMatch(/this prompt is never their yes/);
+    expect(prompt).toMatch(/Call check_cart before Place Order, every time\./);
+    expect(prompt).toMatch(/Never call approve_cart with a code, activate_supplies, or any save_ tool from this run\./);
+    expect(prompt).toMatch(/Never type a password, a card number, an expiry, or a security code/);
+    expect(prompt).toMatch(/Never pause, edit, or cancel this recurring task/);
+  });
+
+  it("names only real Cleaner Core or Supply Core tools, or the account's own", async () => {
+    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name)), ...SUPPLY_TOOL_NAMES, CHOOSE];
     for (const file of filesUnder(TEMPLATE)) {
       for (const m of read(file).matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) expect(tools, `${file}: ${m[1]}`).toContain(m[1]);
     }
-    for (const m of taskPrompt().matchAll(/\b([a-z]+(?:_[a-z]+)+)\b/g)) {
-      expect(tools, `task prompt: ${m[1]}`).toContain(m[1]);
+    for (const doc of [TASK, SUPPLY_TASK]) {
+      for (const m of taskPrompt(doc).matchAll(/\b([a-z]+(?:_[a-z]+)+)\b/g)) {
+        expect(tools, `task prompt: ${m[1]}`).toContain(m[1]);
+      }
     }
   });
 
