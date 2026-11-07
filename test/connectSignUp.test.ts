@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { NumberPool } from "../src/cleaner-core/hosted/numberPool";
 import { TenantRegistry } from "../src/cleaner-core/hosted/registry";
 import { phoneCodesFor, setPhoneCodes, type CodeChecked, type CodeSent, type PhoneCodes } from "../src/hosted/phoneCodes";
 import { RESEND_MS, SENDS_PER_PHONE_HOUR, SENDS_PER_REQUEST, SENDS_PER_SERVICE_HOUR, SIGNUP_WORDS, signUpEmail, signUpPhone, SignUpDesk, WRONG_CODES_BEFORE_LOCK, type OpenAccount } from "../src/hosted/signUp";
@@ -14,6 +15,7 @@ import { BASE, CLEANER_RESOURCE, closeHostedApps, hostedApp, pkce, REDIRECT } fr
 const HOST = "+15555550161";
 const OTHER = "+15555550162";
 const LINE = "+15555550170";
+const POOLED = "+15555550175";
 const GOOD_CODE = "424242";
 const SIGNUP_ENV = {
   CLEANER_CORE_MULTI_TENANT: "1",
@@ -294,6 +296,32 @@ describe("Create account", () => {
     await sendCode(id, code, HOST);
     expect(await message(await post(id, "approve", { matchCode: code, signUp: { phone: HOST, code: GOOD_CODE, email: "new@example.com", terms: true } }))).toBe(SIGNUP_WORDS["has-account"]);
     expect(registry.list()).toHaveLength(1);
+  });
+
+  it("opens an account with a line from the pool, records its landlord, and binds the grant", async () => {
+    const { app, page, sendCode, post, finish, registry, tick } = await signUpApp();
+    new NumberPool(app.root, () => new Date()).add(POOLED, "PN-pooled-test");
+    const { id, code, verifier } = await page();
+    await sendCode(id, code, HOST);
+    // A new landlord who keeps the default Sign in is told to choose Create account, and goes on with the same code.
+    const first = await post(id, "approve", { matchCode: code, signIn: { phone: HOST, code: GOOD_CODE } });
+    expect(((await first.json()) as { error?: { message?: string } }).error?.message).toBe(SIGNUP_WORDS["no-account"]);
+    const res = await post(id, "approve", { matchCode: code, signUp: { phone: "(555) 555-0161", code: GOOD_CODE, email: "Lane@Example.com", terms: true } });
+    expect(res.status).toBe(200);
+    expect(codes.checks).toHaveLength(1);
+    const grant = await finish(id, verifier);
+    const [tenant] = registry.list();
+    expect(tenant).toMatchObject({ label: "lane@example.com", twilioNumber: POOLED, owner: { phone: HOST, email: "lane@example.com", terms: { version: "2026-11-07" } } });
+    expect(tenant!.owner!.phoneVerifiedAt).toBe(tenant!.owner!.terms.acceptedAt);
+    expect(grant).toMatchObject({ tenantId: tenant!.id });
+    expect(tenant!.invites).toHaveLength(1);
+    expect(new NumberPool(app.root, () => new Date()).get(POOLED)).toMatchObject({ tenantId: tenant!.id });
+    // The same phone signs in to that account next time.
+    tick(RESEND_MS);
+    const again = await page();
+    expect((await sendCode(again.id, again.code, HOST)).status).toBe(200);
+    expect((await post(again.id, "approve", { matchCode: again.code, signIn: { phone: HOST, code: GOOD_CODE } })).status).toBe(200);
+    expect((await finish(again.id, again.verifier)).tenantId).toBe(tenant!.id);
   });
 
   it("refuses when no text line is free, and creates nothing", async () => {
