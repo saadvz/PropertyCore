@@ -2,7 +2,7 @@
   "name": "tour-core",
   "version": "0.1.0",
   "private": true,
-  "description": "Open-source self-touring tool. Requests scoped access through Durin; never controls locks directly.",
+  "description": "Open-source self-touring tool. Requests scoped door access after its own policy check; never controls locks directly.",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
