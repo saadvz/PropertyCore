@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { rmSync } from "node:fs";
 import { parsePhone } from "../../core/phone";
 import { forgetLiveDesk, liveDeskFor } from "../liveDesk";
+import { forgetPeople } from "../../hub/people";
 import { setFlows } from "../../hosted/service";
 import { findProperty, propertyFolder } from "./properties";
 import { refreshTouringAlerts as tellTouringAlerts } from "../../hosted/touringAlerts";
@@ -324,6 +325,7 @@ async function deleteTenant(deps: AdminDeps, tenant: Tenant): Promise<void> {
   if (number) await pointSmsWebhook(env, number.sid, "");
   const folder = tenantFolder(h.dataRoot, tenant.id);
   forgetLiveDesk(folder);
+  forgetPeople(folder);
   for (const property of tenant.properties) forgetLiveDesk(propertyFolder(h.dataRoot, tenant.id, property));
   rmSync(folder, { recursive: true, force: true });
   h.registry.remove(tenant.id);

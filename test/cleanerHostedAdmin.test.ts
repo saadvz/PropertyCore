@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resetAdminSessions } from "../src/cleaner-core/hosted/admin";
 import { liveDeskFor } from "../src/cleaner-core/liveDesk";
+import { peopleFor } from "../src/hub/people";
 import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
@@ -215,6 +216,7 @@ describe("the admin page", () => {
     await m.tool(token, "get_state", { choice: "cleaners" });
     expect(existsSync(propertyFolder(m.app.root, lane.id, property))).toBe(true);
     const cached = liveDeskFor(propertyFolder(m.app.root, lane.id, property), () => ({}), () => new Date());
+    const cachedPeople = peopleFor(tenantFolder(m.app.root, lane.id), { now: () => new Date() });
     const refused = await admin.post(`/admin/tenants/${lane.id}/delete`, { confirm: "lane" });
     expect(refused.html).toContain("Type the label to delete.");
     expect(m.registry.get(lane.id)).toBeDefined();
@@ -227,6 +229,8 @@ describe("the admin page", () => {
     // Nothing recreates the deleted folder on the next drain, and no desk for its property stays cached.
     expect(existsSync(tenantFolder(m.app.root, lane.id))).toBe(false);
     expect(liveDeskFor(propertyFolder(m.app.root, lane.id, property), () => ({}), () => new Date())).not.toBe(cached);
+    // Nor does the account's people list (saadvz/TourCore#190).
+    expect(peopleFor(tenantFolder(m.app.root, lane.id), { now: () => new Date() })).not.toBe(cachedPeople);
   });
 
   it("never renders a routine key, a cleaner phone, or a door-code key", async () => {

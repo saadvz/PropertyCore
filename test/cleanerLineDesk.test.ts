@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { withCaller } from "../src/cleaner-core/callerContext";
-import { cleanupDesks, liveGroup, ok, openDesk, setUp } from "./cleanerDeskHarness";
-import { CLEANER, DOOR_CODE, HOST, OBSERVER } from "./wiringProof";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { peopleFor } from "../src/hub/people";
+import { cleanupDesks, liveGroup, ok, openDesk, openDeskAt, setUp } from "./cleanerDeskHarness";
+import { CLEANER, DOOR_CODE, FROZEN, HOST, OBSERVER } from "./wiringProof";
 
 /** What a property's desk needs on a line shared by several properties. Only 555 numbers. */
 
@@ -16,6 +20,13 @@ function asOneOfTwo(env: NodeJS.ProcessEnv): void {
   env.CLEANER_CORE_PROPERTY_COUNT = "2";
 }
 
+/** A desk in an account's property folder, with the account's people list. */
+function accountDesk() {
+  const accountRoot = join(mkdtempSync(join(tmpdir(), "line-desk-")), "tenants", "tnt_lane000001");
+  const opened = openDeskAt(join(accountRoot, "properties", "prp_lane000001"), [HOST, CLEANER], "0");
+  return { ...opened, people: peopleFor(accountRoot, { now: () => new Date(FROZEN) }) };
+}
+
 const to = (sms: { sent: { to: string; body: string }[] }, phone: string) => sms.sent.filter((s) => s.to === phone).map((s) => s.body);
 
 describe("LiveDesk on a shared line", () => {
@@ -25,20 +36,20 @@ describe("LiveDesk on a shared line", () => {
     expect(await desk.phonesOnProperty()).toEqual({ host: HOST, people: [CLEANER, OBSERVER] });
   });
 
-  it("markOptedOut keeps every text from the phone, sends nothing itself, and START brings it back", async () => {
-    const { desk, sms } = openDesk([HOST, CLEANER], "0");
-    await desk.markOptedOut(CLEANER);
-    expect(sms.sent).toEqual([]);
+  it("an account STOP keeps every text from the phone, and START brings it back", async () => {
+    const { desk, sms, people } = accountDesk();
+    people.stop(CLEANER);
     await setUp(desk, { groupChat: "cleaner-only" });
     expect(to(sms, CLEANER)).toEqual([]);
     await desk.inbound({ id: "start-cleaner", from: CLEANER, text: "START" });
+    expect(people.stopped(CLEANER)).toBe(false);
     await desk.inbound({ id: "yes-cleaner", from: CLEANER, text: "YES" });
     expect(to(sms, CLEANER).length).toBeGreaterThan(0);
   });
 
-  it("markOptedOut holds across a restart", async () => {
-    const opened = openDesk([HOST, CLEANER], "0");
-    await opened.desk.markOptedOut(CLEANER);
+  it("an account STOP holds across a restart", async () => {
+    const opened = accountDesk();
+    opened.people.stop(CLEANER);
     const again = opened.reopen();
     await setUp(again, { groupChat: "cleaner-only" });
     expect(to(opened.sms, CLEANER)).toEqual([]);

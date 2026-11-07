@@ -68,6 +68,11 @@ export class TenantOptOuts {
     if (phones.includes(phone)) writeJsonAtomic(this.file(tenantId), { phones: phones.filter((p) => p !== phone) });
   }
 
+  /** Every phone on the account's older STOP list, for the move to people.json. */
+  phones(tenantId: string): string[] {
+    return this.read(tenantId);
+  }
+
   stopped(tenantId: string, raw: string): boolean {
     const phone = parsePhone(raw);
     return !!phone && this.read(tenantId).includes(phone);

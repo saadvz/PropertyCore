@@ -8,6 +8,8 @@ import { hostedCleaner, propertyContext } from "../src/cleaner-core/hosted/route
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
 import { liveDeskFor } from "../src/cleaner-core/liveDesk";
 import { LANDLORD_USE_AGENT, routeLineText } from "../src/hosted/lineRouter";
+import { sharedRefusal } from "../src/hosted/sharedRoute";
+import type { PeopleFile } from "../src/hub/people";
 import { BASE, closeHostedApps } from "./cleanerOauthHarness";
 import { ROUTINE, setUp } from "./cleanerDeskHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
@@ -37,44 +39,65 @@ const account = (properties: Property[]): Tenant => ({ id: "tnt_lane000001", lab
 describe("routeLineText", () => {
   const lane = property("prp_lane000001", "12 Scratch Lane");
   const court = property("prp_court00001", "8 Scratch Court");
-  const phones = (p: Property) => (p.id === lane.id ? { host: HOST, people: [CLEANER] } : { host: HOST, people: [COURT_CLEANER] });
+  /** The account's people: Ana on Lane, Bea on Court, the landlord the host on both. */
+  const people = (on: Record<string, string[]> = { [CLEANER]: [lane.id], [COURT_CLEANER]: [court.id] }) => ({
+    propertiesOf: (phone: string) => on[phone] ?? [],
+    hostOf: () => HOST,
+  });
 
   it("one property takes every sender", () => {
     const one = account([lane]);
-    for (const from of [HOST, CLEANER, STRANGER]) expect(routeLineText(one, from, "hello", phones)).toEqual({ kind: "property", property: lane });
+    for (const from of [HOST, CLEANER, STRANGER]) expect(routeLineText(one, from, "hello", people())).toEqual({ kind: "property", property: lane });
   });
 
   it("a person on one property goes to that property", () => {
     const two = account([lane, court]);
-    expect(routeLineText(two, CLEANER, "YES", phones)).toEqual({ kind: "property", property: lane });
-    expect(routeLineText(two, COURT_CLEANER, "STOP", phones)).toEqual({ kind: "property", property: court });
+    expect(routeLineText(two, CLEANER, "YES", people())).toEqual({ kind: "property", property: lane });
+    expect(routeLineText(two, COURT_CLEANER, "STOP", people())).toEqual({ kind: "property", property: court });
   });
 
   it("the landlord's STOP and START go to every property where they're the host", () => {
     const two = account([lane, court]);
-    expect(routeLineText(two, HOST, "STOP", phones)).toEqual({ kind: "host-all", properties: [lane, court] });
-    expect(routeLineText(two, HOST, "start", phones)).toEqual({ kind: "host-all", properties: [lane, court] });
+    expect(routeLineText(two, HOST, "STOP", people())).toEqual({ kind: "host-all", properties: [lane, court] });
+    expect(routeLineText(two, HOST, "start", people())).toEqual({ kind: "host-all", properties: [lane, court] });
   });
 
   it("the landlord's bare YES is not a START: it changes nothing on any property", () => {
     const two = account([lane, court]);
-    expect(routeLineText(two, HOST, "YES", phones)).toEqual({ kind: "host-unused", property: lane });
-    expect(routeLineText(two, HOST, "yes", phones)).toEqual({ kind: "host-unused", property: lane });
+    expect(routeLineText(two, HOST, "YES", people())).toEqual({ kind: "host-unused", property: lane });
+    expect(routeLineText(two, HOST, "yes", people())).toEqual({ kind: "host-unused", property: lane });
   });
 
   it("the landlord's HELP gets nothing; anything else is unused, for the oldest property", () => {
     const two = account([lane, court]);
-    expect(routeLineText(two, HOST, "HELP", phones)).toEqual({ kind: "host-help" });
-    expect(routeLineText(two, HOST, "guests left", phones)).toEqual({ kind: "host-unused", property: lane });
+    expect(routeLineText(two, HOST, "HELP", people())).toEqual({ kind: "host-help" });
+    expect(routeLineText(two, HOST, "guests left", people())).toEqual({ kind: "host-unused", property: lane });
   });
 
   it("anyone else is unknown", () => {
-    expect(routeLineText(account([lane, court]), STRANGER, "STOP", phones)).toEqual({ kind: "unknown" });
+    expect(routeLineText(account([lane, court]), STRANGER, "STOP", people())).toEqual({ kind: "unknown" });
   });
 
   it("a property with cleaning off doesn't count", () => {
     const off = { ...court, flows: { ...court.flows, cleaning: { on: false } } };
-    expect(routeLineText(account([lane, off]), STRANGER, "hi", phones)).toEqual({ kind: "property", property: lane });
+    expect(routeLineText(account([lane, off]), STRANGER, "hi", people())).toEqual({ kind: "property", property: lane });
+  });
+
+  it("a person on both: STOP and START to both, HELP to none, anything else to be worked out (saadvz/TourCore#190)", () => {
+    const two = account([lane, court]);
+    const both = people({ [CLEANER]: [lane.id, court.id] });
+    expect(routeLineText(two, CLEANER, "STOP", both)).toEqual({ kind: "person-all", properties: [lane, court] });
+    expect(routeLineText(two, CLEANER, "start", both)).toEqual({ kind: "person-all", properties: [lane, court] });
+    expect(routeLineText(two, CLEANER, "HELP", both)).toEqual({ kind: "person-help" });
+    expect(routeLineText(two, CLEANER, "YES", both)).toEqual({ kind: "shared", properties: [lane, court] });
+  });
+
+  it("a person on both whose other property has cleaning off goes straight to the one left", () => {
+    const off = { ...court, flows: { ...court.flows, cleaning: { on: false } } };
+    const both = people({ [CLEANER]: [lane.id, court.id] });
+    expect(routeLineText(account([lane, off]), CLEANER, "YES", both)).toEqual({ kind: "property", property: lane });
+    const third = property("prp_annex00001", "9 Scratch Annex");
+    expect(routeLineText(account([lane, off, third]), CLEANER, "YES", both)).toEqual({ kind: "property", property: lane });
   });
 });
 
@@ -220,9 +243,10 @@ describe("texts on the shared line", () => {
     await m.toolAt(PATH, token, "save_property", { property: court.id, business: "Court", address: "8 Scratch Court, Teaneck, NJ 07666", timeZone: "America/New_York" });
     const savedCy = await m.toolAt(PATH, token, "save_people", { property: court.id, host: HOST, cleaner: STRANGER, cleanerName: "Cy" });
     expect(savedCy.isError, savedCy.text).toBe(false);
-    const h = hostedCleaner({ registry: m.registry, secrets: new TenantSecrets(m.app.root), dataRoot: m.app.root, origin: () => BASE, baseEnv: () => m.app.inst.env(), grantLive: () => true, now: clock, log: () => undefined });
-    const root = propertyContext(h, m.registry.get(made.id)!, m.registry.get(made.id)!.properties.find((p) => p.id === court.id)!).root;
-    expect((JSON.parse(readFileSync(join(root, "cleaner-live.json"), "utf8")) as { lineOptOuts?: string[] }).lineOptOuts).toContain(STRANGER);
+    // The account's people list keeps the STOP, for every property that saves the phone (saadvz/TourCore#190).
+    const people = JSON.parse(readFileSync(join(m.app.root, "tenants", made.id, "people.json"), "utf8")) as PeopleFile;
+    expect(people.people.find((p) => p.phone === STRANGER)?.stopped).toBeDefined();
+    expect(people.people.find((p) => p.phone === STRANGER)?.where).toEqual([{ propertyId: court.id, role: "cleaner" }]);
   });
 
   it("a forged text changes nothing", SLOW, async () => {
@@ -234,7 +258,8 @@ describe("texts on the shared line", () => {
 
   it("saving one property's cleaner on the other is refused, however the phone is typed", SLOW, async () => {
     const s = await twoProperties();
-    const taken = "That number is already on 12 Scratch Lane. For now one person can be on only one property.";
+    // Without the host's shared: true (saadvz/TourCore#190).
+    const taken = sharedRefusal([{ label: "12 Scratch Lane", role: "cleaner" }]);
     for (const cleaner of [CLEANER, "(555) 555-0131"]) {
       const refused = await s.m.toolAt(PATH, s.token, "save_people", { property: s.court.id, host: HOST, cleaner, cleanerName: "Ana" });
       expect(refused).toMatchObject({ isError: true, text: taken });

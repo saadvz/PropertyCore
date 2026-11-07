@@ -364,6 +364,16 @@ export interface CleanerCoreOptions {
   noteHostOnStop?: boolean;
   /** Used only when this tenant has no saved consent yet. A stored choice wins. */
   cleanerConsent?: "pending" | "in" | "out";
+  /**
+   * True when this phone's invite is already out from another property of the account
+   * (saadvz/TourCore#190): this engine sends none of its own until the person answers there.
+   */
+  optInElsewhere?: (phone: string) => boolean;
+  /**
+   * Called after a text from the person moves them (the cleaner or a contact) to "in" by their YES, or
+   * to "out" by their STOP. Never called for the account* methods, so an account change can't loop.
+   */
+  onConsent?: (phone: string, consent: "in" | "out") => void;
   /** Host already texted STOP before this store existed. A saved choice wins. */
   ownerOptedOut?: boolean;
   /** Host sentence after the private text is accepted. Unset keeps the fixture sentence. */
@@ -468,6 +478,19 @@ export interface CleanerCore {
   resumeJob(): Promise<CleanerText | null>;
   groupPinSettled(): boolean;
   jobOnHold(): boolean;
+  /**
+   * True when this property is waiting on a reply from this phone: the cleaner's invite or a contact's
+   * awaits YES, an offer is out, the checklist or supplies question is open, or a cleaning is under way.
+   */
+  waitingOn(phone: string): boolean;
+  /** This phone's consent here: the cleaner's or a contact's. Undefined for the host or a phone not on this property. */
+  consentOf(phone: string): "pending" | "in" | "out" | undefined;
+  /** The person said YES on another property: pending moves to in, with no text, and the next step runs. Never out to in. */
+  accountOptIn(phone: string): Promise<CleanerText[]>;
+  /** The person's STOP on the account: out, with today's holds and the host note. No text to the person. */
+  accountStop(phone: string): Promise<void>;
+  /** The person's START on the account: what START does in this engine today, with no text to the person. */
+  accountStart(phone: string): Promise<void>;
   runReminders(): Promise<ReminderResult>;
   jobs(): JobView[];
   outbox(): OutboxView[];
@@ -1444,6 +1467,79 @@ class Engine implements CleanerCore {
     return this.problemHold;
   }
 
+  waitingOn(raw: string): boolean {
+    const phone = parsePhone(raw);
+    if (!phone || phone === this.owner) return false;
+    if (phone !== this.cleanerPhone) {
+      return this.participantConsent.get(phone) === "pending" && this.delivery(`opt-in:${phone}`) === "sent";
+    }
+    if (this.awaitingOptIn()) return true;
+    if (this.cleanerConsent !== "in") return false;
+    if (this.ordered().some((job) => this.derive(job) === "offered")) return true;
+    if (this.progressJob()) return true;
+    const now = this.now().getTime();
+    return this.ordered().some(
+      (job) => (job.checklistAskedAt && !job.done && this.checklistWaiting(job)) || (job.done && job.supplyAskedAt && !job.supplyReport && now - Date.parse(job.supplyAskedAt) <= SUPPLY_ANSWER_MS),
+    );
+  }
+
+  consentOf(raw: string): "pending" | "in" | "out" | undefined {
+    const phone = parsePhone(raw);
+    if (!phone || phone === this.owner) return undefined;
+    if (phone === this.cleanerPhone) return this.cleanerConsent;
+    return this.participantConsent.get(phone);
+  }
+
+  async accountOptIn(raw: string): Promise<CleanerText[]> {
+    const phone = parsePhone(raw);
+    if (!phone || phone === this.owner) return [];
+    if (phone === this.cleanerPhone) {
+      if (this.cleanerConsent !== "pending") return [];
+      this.cleanerConsent = "in";
+    } else {
+      if (this.participantConsent.get(phone) !== "pending") return [];
+      this.participantConsent.set(phone, "in");
+    }
+    const sent = await this.drainOne();
+    this.save();
+    return sent;
+  }
+
+  async accountStop(raw: string): Promise<void> {
+    const phone = parsePhone(raw);
+    if (!phone || phone === this.owner) return;
+    if (phone !== this.cleanerPhone) {
+      if (this.participantConsent.get(phone) === "out" || !this.participantConsent.has(phone)) return;
+      this.participantConsent.set(phone, "out");
+      this.save();
+      return;
+    }
+    if (this.cleanerConsent === "out") return;
+    this.cleanerConsent = "out";
+    if (this.groupChat) this.participantConsent.set(phone, "out");
+    if (this.pin) {
+      this.problemHold = true;
+      this.holdCause = "cleaner";
+    }
+    if (this.owner && (this.groupChat || this.options.noteHostOnStop)) {
+      await this.emit({
+        id: `stop-host:account:${this.outboxState.length}`,
+        to: this.owner,
+        kind: "held",
+        body: cleanerOptOutHold(this.options.property.address, this.helper()),
+      });
+    }
+    this.save();
+  }
+
+  async accountStart(raw: string): Promise<void> {
+    const phone = parsePhone(raw);
+    // Only a one-to-one cleaner comes back in. A contact's START, and a group cleaner's, change nothing today.
+    if (!phone || phone !== this.cleanerPhone || this.groupChat || this.cleanerConsent !== "out") return;
+    this.cleanerConsent = "in";
+    this.save();
+  }
+
   private setupViewOrThrow(): SetupView {
     const session = this.session;
     if (!session) throw new Error("Onboarding has not started.");
@@ -1517,6 +1613,7 @@ class Engine implements CleanerCore {
       const phone = parsePhone(person.phone);
       if (!phone || phone === this.owner || phone === this.cleanerPhone || person.approved === false) continue;
       if (this.groupPhones.includes(phone) || this.participantConsent.get(phone) !== "pending") continue;
+      if (this.options.optInElsewhere?.(phone)) continue;
       const text = await this.emit({
         id: `opt-in:${phone}`,
         to: phone,
@@ -1534,6 +1631,7 @@ class Engine implements CleanerCore {
     for (const extra of this.groupChat.extra ?? []) {
       const phone = parsePhone(extra.phone);
       if (!phone || this.participantConsent.get(phone) !== "pending") continue;
+      if (this.options.optInElsewhere?.(phone)) continue;
       const text = await this.emit({
         id: `opt-in:${phone}`,
         to: phone,
@@ -1547,6 +1645,7 @@ class Engine implements CleanerCore {
 
   private async optInParticipant(from: string, id: string): Promise<ReceiveResult> {
     this.participantConsent.set(from, "in");
+    this.options.onConsent?.(from, "in");
     this.inboundIds.push(id);
     const sent = await this.drainOne();
     this.save();
@@ -1785,6 +1884,7 @@ class Engine implements CleanerCore {
   private async sendOptIn(): Promise<CleanerText | null> {
     if (this.deferCleaner) return null;
     if (!this.pin || !this.options.cleaner.approved || !this.cleanerPhone || this.cleanerConsent !== "pending") return null;
+    if (this.options.optInElsewhere?.(this.cleanerPhone)) return null;
     const id = `opt-in:${this.cleanerPhone}`;
     if (this.delivery(id) === "sent") return null;
     return this.emit({
@@ -1830,6 +1930,7 @@ class Engine implements CleanerCore {
       return this.markIgnored(id);
     }
     this.cleanerConsent = "in";
+    this.options.onConsent?.(this.cleanerPhone, "in");
     this.inboundIds.push(id);
     const sent = await this.drainOne();
     this.save();
@@ -2913,6 +3014,7 @@ class Engine implements CleanerCore {
       this.holdCause = "cleaner";
     }
     this.participantConsent.set(from, "out");
+    if (from !== this.owner) this.options.onConsent?.(from, "out");
     const replyBody = from === this.owner ? hostStopReply(this.options.property.address, this.problemHold) : ack;
     const result = await this.reply(from, replyBody, "stop", "stop", inboundId);
     const note: CleanerText[] = [];
@@ -3043,6 +3145,7 @@ class Engine implements CleanerCore {
     if (this.isExtraParticipant(from)) {
       if (this.participantConsent.get(from) === "out") return { handled: true, reason: "stop", sent: [], seen: true };
       this.participantConsent.set(from, "out");
+      this.options.onConsent?.(from, "out");
       const result = await this.reply(from, ack, "stop", "stop", inboundId);
       return { ...result, seen: this.replySeen("stop", inboundId, result.sent.length) };
     }
@@ -3056,6 +3159,7 @@ class Engine implements CleanerCore {
       this.cleanerConsent = "out";
       this.problemHold = true;
       this.holdCause = "cleaner";
+      this.options.onConsent?.(from, "out");
       const result = await this.reply(from, ack, "stop", "stop", inboundId);
       const note = await this.hostStopNote(from, inboundId);
       return { handled: true, reason: "stop", sent: [...result.sent, ...note], seen: this.replySeen("stop", inboundId, result.sent.length) };
@@ -4063,6 +4167,22 @@ function isSnapshot(value: unknown): value is SourceSnapshot {
     Array.isArray(snapshot.turnovers) &&
     Array.isArray(snapshot.blocks)
   );
+}
+
+/**
+ * The consent saved in an engine's store, read without opening the engine: the cleaner's and each
+ * contact's. Undefined when there is no store, or it can't be read.
+ */
+export function storedConsent(dataDir: string, tenantId: string): { cleaner?: "pending" | "in" | "out"; participants: { phone: string; consent: "pending" | "in" | "out" }[] } | undefined {
+  const path = join(dataDir, "cleaner-core.json");
+  if (!existsSync(path)) return undefined;
+  try {
+    const slice = sliceForTenant(JSON.parse(readFileSync(path, "utf8")) as StoreFile, tenantId);
+    if (!slice) return undefined;
+    return { ...(slice.cleanerConsent ? { cleaner: slice.cleanerConsent } : {}), participants: slice.participantConsent ?? [] };
+  } catch {
+    return undefined;
+  }
 }
 
 function sliceForTenant(file: StoreFile, tenantId: string): Stored | undefined {

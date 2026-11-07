@@ -86,7 +86,13 @@ their alert routines.
   field), required once the account has two or more properties.
 - **Links.** A new property's links are under `/t/<id>/p/<pid>/`.
 - **Texts.** Group texts and callbacks arrive on the property's own path.
-  One-to-one texts go by sender: a person is on one property only, for now.
+  One-to-one texts go by sender. A person (the cleaner or a contact) can be on
+  several properties after the host's `shared: true`
+  (`docs/superpowers/specs/2026-11-07-shared-people-design.md`). The account
+  keeps them in `/data/tenants/<id>/people.json`, with their one YES and their
+  own STOP for every property. A shared person's text goes to the property it
+  names, or to the one property waiting on them, or they're asked "which
+  property?"; the held text waits in `line-asks.json` for 2 hours.
   With two or more properties, the landlord's own texts change nothing but STOP
   and START, which reach every property where they're the host; anything else
   gets one reply, "Please tell me in your agent chat so I know which property.",

@@ -14,7 +14,7 @@ import { stripFiller } from "../intent/normalize";
 import { spokenTimes } from "../core/spokenTime";
 import { formatWhen, zonedInstant } from "../hub/calendar";
 import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink, venmoProfileLink, venmoUsername, type PaymentSettings, type PayRecord } from "./payments";
-import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
+import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, storedConsent, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
 import { cleanerMultiTenant, groupChatEnabled } from "./flag";
 import { GROUP_RECIPIENT, draftStatus, earlierThan, replyStateAt, type ReplyState, type StoredDraft } from "./replies";
 import { publicBaseUrl } from "../messaging/publicUrl";
@@ -32,6 +32,7 @@ import { cleanerPinStatusUrl, deleteLiveGroup, isAllowlisted, liveSmsOn, sendLiv
 import { LOCK_LOCATION_REFUSED, serverPinKey, type AccessRefusal, type DoorAccess } from "../hub/doorAccess";
 import { DOOR_WINDOW_OVER, type AccessRefusedLines, type DoorAccessPort } from "./doorPort";
 import { HUB_DOOR_CODE_PREFIX } from "../hub/paths";
+import { accountOf, peopleFor, resetPeople, streetOf, type MoveSource, type People, type PersonChange, type Role } from "../hub/people";
 import { containsCodeToken, redactPhone } from "./redact";
 import { isScratchTestNumber } from "./scratch";
 import { guestyLiteSource, icalSource, type BookingSource, type GoogleEventList } from "../hub/sources";
@@ -328,6 +329,8 @@ interface PeopleInput {
   groupChat?: string;
   /** Who gets the door code once others are in the group. */
   doorCodeTo?: string;
+  /** The host confirmed a person already on another property (saadvz/TourCore#190). The hosted layer reads it; the desk ignores it. */
+  shared?: boolean;
 }
 
 interface SourcesInput {
@@ -514,9 +517,30 @@ export async function drainCleanerAlerts(root: string, env: () => NodeJS.Process
   await liveDeskFor(root, env, now).drainAlerts();
 }
 
+/**
+ * Tells every other open desk on the account about a person's YES, STOP or START. A desk that isn't open
+ * applies the account's state when its engine next opens.
+ */
+async function relayToOpenDesks(accountRoot: string, change: PersonChange): Promise<void> {
+  for (const propertyId of change.properties) {
+    if (propertyId === change.from) continue;
+    const desk = desks.get(join(accountRoot, "properties", propertyId));
+    if (!desk) continue;
+    // One desk that can't apply it doesn't stop the others. It applies the account's state when its engine next opens.
+    try {
+      if (change.kind === "opted-in") await desk.accountOptIn(change.phone);
+      else if (change.kind === "stopped") await desk.accountStop(change.phone);
+      else await desk.accountStart(change.phone);
+    } catch {
+      continue;
+    }
+  }
+}
+
 export function resetLiveDesks(): void {
   desks.clear();
   resetHubs();
+  resetPeople();
 }
 
 /** Drops one state folder's desk, so nothing keeps working on a folder that is being removed. */
@@ -619,6 +643,12 @@ export class LiveDesk {
   /** Why the hub refused door access during this call, for mark_guests_left's reply. */
   private accessRefusal: AccessRefusal | undefined;
   private engine: CleanerCore | undefined;
+  /** The account this property belongs to, when its folder is an account's property folder (saadvz/TourCore#190). */
+  private readonly account: { accountRoot: string; propertyId: string } | undefined;
+  /** The account's people: their one YES and their own STOP, for every property they're on. */
+  private readonly people: People | undefined;
+  /** The engine the account's opt-in and STOP were last applied to. */
+  private appliedTo: CleanerCore | undefined;
   /** A setup save changed what the engine reads when it opens. The next serial step reopens it. */
   private stale = false;
   private checking = false;
@@ -643,6 +673,10 @@ export class LiveDesk {
     // The hub moves any old fields out of cleaner-live.json before this desk reads it, so the desk
     // never holds them in memory to write back.
     this.hub = hubFor(root, { now });
+    this.account = accountOf(root);
+    this.people = this.account ? peopleFor(this.account.accountRoot, { now }) : undefined;
+    const accountRoot = this.account?.accountRoot;
+    if (accountRoot) this.people?.onChange((change) => relayToOpenDesks(accountRoot, change));
     this.approvals = new ConfirmationBook(10 * 60_000, () => this.now().getTime(), { file: join(root, "cleaner-approvals.json") });
     this.draftApprovals = new ConfirmationBook(Number.POSITIVE_INFINITY, () => this.now().getTime(), { file: join(root, "cleaner-draft-approvals.json") });
     this.load();
@@ -1495,7 +1529,7 @@ export class LiveDesk {
     const now = (): Promise<T> => {
       try {
         this.beginStep();
-        return work();
+        return this.thenApplyAccount(work());
       } catch (err) {
         return Promise.reject(err);
       }
@@ -1512,6 +1546,123 @@ export class LiveDesk {
       },
     );
     return run;
+  }
+
+  /**
+   * After a step that opened a new engine, the account's opt-in and STOP are applied to it before the
+   * step ends, so a property that was closed when the person said YES or STOP elsewhere still follows.
+   */
+  private thenApplyAccount<T>(run: Promise<T>): Promise<T> {
+    if (!this.people) return run;
+    return run.then(async (value) => {
+      await this.applyAccount();
+      return value;
+    });
+  }
+
+  private async applyAccount(): Promise<void> {
+    const engine = this.engine;
+    const people = this.people;
+    if (!engine || !people || engine === this.appliedTo) return;
+    this.appliedTo = engine;
+    for (const phone of this.personPhones()) {
+      try {
+        if (people.stopped(phone)) await engine.accountStop(phone);
+        else {
+          // A START this desk didn't hear while it was closed: only a STOP leaves a phone "out".
+          if (engine.consentOf(phone) === "out") await engine.accountStart(phone);
+          if (people.optedIn(phone)) await engine.accountOptIn(phone);
+        }
+      } catch {
+        // A send that fails here is the engine's to retry; the step's own result stands.
+      }
+    }
+  }
+
+  /** The cleaner and contacts saved here, as E.164. Never the host. */
+  private personPhones(): string[] {
+    const host = this.file.host ? parsePhone(this.file.host) : undefined;
+    const raw = [this.file.cleaner, ...contactsOf(this.file).map((contact) => contact.phone)];
+    return [...new Set(raw.map((phone) => (phone ? parsePhone(phone) : undefined)).filter((phone): phone is string => !!phone && phone !== host))];
+  }
+
+  /** Tells the account about this engine's YES or STOP, and the account tells every other property. */
+  private reportConsent(phone: string, consent: "in" | "out"): void {
+    const people = this.people;
+    const id = this.account?.propertyId;
+    if (!people || !id) return;
+    const change = consent === "in" ? people.optIn(phone, id) : people.stop(phone);
+    void people.relay(change ? { ...change, from: id } : undefined).catch(() => undefined);
+  }
+
+  /** True when this property is waiting on a reply from this phone. It may open the engine, as any step does. */
+  waitingOn(phone: string): Promise<boolean> {
+    return this.serial(async () => {
+      this.resume();
+      return this.engine?.waitingOn(phone) ?? false;
+    });
+  }
+
+  /** The person said YES on another property of the account. */
+  accountOptIn(phone: string): Promise<void> {
+    return this.serial(async () => {
+      this.resume();
+      if (this.engine) await this.engine.accountOptIn(phone);
+    });
+  }
+
+  /** The person's STOP on the account. Before an engine exists, the cleaner's STOP holds the setup, as a text STOP does. */
+  accountStop(phone: string): Promise<void> {
+    return this.serial(async () => {
+      this.resume();
+      if (this.engine) return this.engine.accountStop(phone);
+      if (parsePhone(this.file.cleaner ?? "") === parsePhone(phone)) {
+        this.held = true;
+        this.file.cleanerOut = true;
+        this.persist();
+      }
+    });
+  }
+
+  /** The person's START on the account. */
+  accountStart(phone: string): Promise<void> {
+    return this.serial(async () => {
+      this.resume();
+      if (this.engine) return this.engine.accountStart(phone);
+      if (parsePhone(this.file.cleaner ?? "") === parsePhone(phone) && this.file.cleanerOut) {
+        this.held = false;
+        this.file.cleanerOut = false;
+        this.persist();
+      }
+    });
+  }
+
+  /** This desk's people and consent from the older files, for the account's one-time move. */
+  moveSource(): Promise<MoveSource> {
+    return this.serial(async () => {
+      this.resume();
+      const host = this.file.host ? parsePhone(this.file.host) : undefined;
+      const people: MoveSource["people"] = [];
+      const cleaner = this.file.cleaner ? parsePhone(this.file.cleaner) : undefined;
+      if (cleaner && cleaner !== host) people.push({ phone: cleaner, role: "cleaner", ...(this.file.cleanerName ? { name: this.file.cleanerName } : {}) });
+      for (const contact of contactsOf(this.file)) {
+        const phone = parsePhone(contact.phone);
+        if (!phone || phone === host || people.some((p) => p.phone === phone)) continue;
+        people.push({ phone, role: contact.role as Role, ...(contact.name && contact.name !== "Observer" ? { name: contact.name } : {}) });
+      }
+      // An engine that can't open now still has its saved consent in its store.
+      const stored = this.engine || !this.file.propertyId ? undefined : storedConsent(join(this.root, "cleaner-job"), this.file.propertyId);
+      const consent = (phone: string) =>
+        this.engine ? this.engine.consentOf(phone) : phone === cleaner ? stored?.cleaner : stored?.participants.find((p) => parsePhone(p.phone) === phone)?.consent;
+      return {
+        propertyId: this.account?.propertyId ?? "",
+        ...(host ? { host } : {}),
+        people,
+        stopped: [...(this.file.lineOptOuts ?? [])],
+        optedIn: people.filter((p) => consent(p.phone) === "in").map((p) => p.phone),
+        optedOut: people.filter((p) => consent(p.phone) === "out" || (p.role === "cleaner" && this.file.cleanerOut)).map((p) => p.phone),
+      };
+    });
   }
 
   /**
@@ -2146,11 +2297,21 @@ export class LiveDesk {
     });
   }
 
+  /** The business name saved for this property. */
+  businessName(): Promise<string | undefined> {
+    return this.serial(async () => this.file.business);
+  }
+
+  /** A note for the host's agent chat from the shared line, such as a held text that was dropped. One wake-up. */
+  noteDroppedText(note: string): Promise<boolean> {
+    return this.noteForHost(`line-note:${randomUUID()}`, note);
+  }
+
   /**
-   * Records that this phone opted out of the shared line before it was saved here. Nothing is sent to
-   * it, and nothing is sent by this call, until it texts START or YES.
+   * Records that the landlord's phone opted out of the shared line before this property saved it.
+   * Nothing is sent to it, and nothing is sent by this call, until it texts START or YES.
    */
-  markOptedOut(phone: string): Promise<void> {
+  markHostOptedOut(phone: string): Promise<void> {
     return this.serial(async () => {
       const e164 = parsePhone(phone);
       if (!e164) return;
@@ -2184,6 +2345,11 @@ export class LiveDesk {
 
   /** On a line shared by two or more properties, a text to the host, or in the group, names the property first. */
   private labeled(to: string, body: string, group: boolean): string {
+    // A person on two or more of the account's properties: a one-to-one text names the property it's about, by its street.
+    const street = this.place.address ? streetOf(this.place.address) : undefined;
+    if (!group && street && to !== this.file.host && (this.people?.propertiesOf(to).length ?? 0) >= 2) {
+      return body.startsWith(`${street}: `) ? body : `${street}: ${body}`;
+    }
     const env = this.env();
     const label = env.CLEANER_CORE_PROPERTY_LABEL?.trim();
     if (!label || Number(env.CLEANER_CORE_PROPERTY_COUNT ?? "1") < 2) return body;
@@ -2193,6 +2359,11 @@ export class LiveDesk {
 
   /** True while the phone opted out of the shared line before it was saved here. */
   private lineOptedOut(phone: string): boolean {
+    // On an account, a person's own STOP lives in the account's people list, for every property. The
+    // landlord is never a person there: their line STOP stays in this desk's list. Until the account's
+    // one-time move has run, the desk's list still counts for everyone.
+    if (this.people?.stopped(phone)) return true;
+    if (this.people?.moved() && phone !== parsePhone(this.file.host ?? "")) return false;
     return (this.file.lineOptOuts ?? []).includes(phone);
   }
 
@@ -2850,8 +3021,14 @@ export class LiveDesk {
     }
     // START or YES from a phone that opted out of the shared line before it was saved brings it back.
     if (this.lineOptedOut(from) && (messagingKeyword(input.text) === "start" || normalize(input.text) === "yes")) {
-      this.file.lineOptOuts = (this.file.lineOptOuts ?? []).filter((phone) => phone !== from);
-      this.persist();
+      if (this.people && this.account) {
+        const change = this.people.start(from);
+        void this.people.relay(change ? { ...change, from: this.account.propertyId } : undefined).catch(() => undefined);
+      }
+      if (this.file.lineOptOuts?.includes(from)) {
+        this.file.lineOptOuts = this.file.lineOptOuts.filter((phone) => phone !== from);
+        this.persist();
+      }
     }
     this.claiming.add(input.id);
     try {
@@ -3435,6 +3612,13 @@ export class LiveDesk {
       holdSends: () => this.checking || (!liveSmsOn(env()) && !this.scratchCapture()),
       deferCleanerTexts: this.file.released !== true,
       ...(this.file.cleanerOut ? { cleanerConsent: "out" as const } : {}),
+      ...(this.people && this.account
+        ? {
+            // Claimed and recorded in one step, so two properties holding their invites can't both send them later.
+            optInElsewhere: (phone: string) => !this.people!.claimInvite(phone, this.account!.propertyId),
+            onConsent: (phone: string, consent: "in" | "out") => this.reportConsent(phone, consent),
+          }
+        : {}),
       ...(this.file.hostOut ? { ownerOptedOut: true } : {}),
       optInBody: `Hi, this is ${file.business} at ${place.address}. You're getting this because you clean between guest stays. Reply YES to get cleaning texts, or STOP to opt out.`,
       stopReply: `You're opted out of cleaning texts for ${place.address}. You won't get cleaning offers or the door code. Reply START to opt back in. Reply HELP for help.`,
@@ -3458,10 +3642,12 @@ export class LiveDesk {
         send: async (text) => {
           // A phone that opted out of the shared line gets nothing, group or not, until it texts START or YES.
           const audience = text.channel === "group" && text.audience ? text.audience : [text.to];
-          if (audience.some((phone) => this.lineOptedOut(phone))) {
+          // The reply to the person's own STOP still goes: the carrier's rules call for it.
+          if (text.kind !== "stop" && audience.some((phone) => this.lineOptedOut(phone))) {
             if (text.kind === "pin") throw new Error("opted out of the line");
             return;
           }
+          if (text.kind === "opt-in" && this.people && this.account && text.to !== file.host) this.people.markInvited(text.to, this.account.propertyId);
           const hostLine = text.to === file.host && text.channel !== "group";
           if (hostLine && text.kind !== "pin-notice" && text.kind !== "pin-failed") {
             this.engine?.keepHostNote(`host:${text.kind}:${text.body}`, text.body);

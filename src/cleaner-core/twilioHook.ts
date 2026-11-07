@@ -17,7 +17,7 @@ export const TWIML_CONTENT_TYPE = "text/xml; charset=utf-8";
 const MAX_MEDIA = 10;
 
 /** An MMS's attachments: NumMedia (0 to 10), then MediaUrl{i} and MediaContentType{i}. Never logged. */
-function mediaOf(params: Record<string, string>): InboundMedia[] {
+export function mediaOf(params: Record<string, string>): InboundMedia[] {
   const count = Math.min(MAX_MEDIA, Math.max(0, Number.parseInt(params.NumMedia ?? "0", 10) || 0));
   return Array.from({ length: count }, (_, index) => ({ url: params[`MediaUrl${index}`]?.trim() ?? "", contentType: params[`MediaContentType${index}`]?.trim() ?? "" })).filter(
     (item) => item.url.length > 0,
