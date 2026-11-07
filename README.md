@@ -4,11 +4,10 @@ Tour Core is an open-source self-touring tool. A prospect books a tour by text, 
 basic identity form, and then tours a unit on their own. Tour Core opens only the doors on their reserved
 route, and only during their reserved window. Afterward it sends a follow-up and keeps a full audit trail.
 
-**Tour Core is built on the Durin Access Platform.** It does not control locks. It requests authorized
-access through Durin, and only after its own policy check allows the request. If policy says no, Durin is
-never asked.
+**Tour Core does not control locks.** It asks a door access provider for scoped, time-boxed access, and
+only after its own policy check allows the request. If policy says no, the door system is never asked.
 
-This is a P0 demo: door access runs in Durin demo mode (no real doors open) and tour records are stored with the
+This is a P0 demo: door access runs in demo mode (no real doors open) and tour records are stored with the
 Tour Core installation. Real visitor texting uses the messaging provider the operator chooses.
 
 **Grok is the installer and the operator console.** The intended way to run Tour Core is by talking to the
@@ -182,7 +181,7 @@ In the browser you:
 4. **Routes**: for each unit, the doors in order (Lobby Entrance ↓ Unit 101 Door). A suggested route is filled in.
 5. **Tour hours**: days, first start, last finish, tour length, spacing, and the early-arrival allowance. Different days can have different hours (for example weekdays 9 AM-5 PM and weekends 9 AM-8 PM). Once hours are saved, `save_hours` with new days adds them and the other days keep their hours; `replace` swaps out all the hours.
 6. **Verification**: basic identity form (recommended) or no form. No form asks first, because anyone who texts can book a tour and get in without saying who they are.
-7. **Records and messages**: demo records, demo messaging and Durin demo mode, plus who gets alerts.
+7. **Records and messages**: demo records, demo messaging and door access demo mode, plus who gets alerts.
 8. **Review**: everything on one page, with Edit beside each section.
 9. **Readiness check**: eight real checks, each failure with a button that takes you straight to the fix.
 10. **Practice tour**: a timeline of the visitor's journey, the safety test (too early, on time, no duplicate
@@ -218,8 +217,8 @@ On the phone, the visitor:
 8. can text DONE / I'm out / leaving at any point, or stay through the end: doors never open after the tour end, a +5 check-in asks if they've left, and at +15 the tour closes. After that close, other replies alert the team once per message and always reply to the visitor, until DONE, the operator marks the "Visitor hasn't confirmed leaving" issue handled, or 24 hours pass (alerts stop at 24 hours; the leaving issue stays open until DONE or the operator marks it handled). While that 24-hour window is open, a standalone HI (including yo) stays on after-close handling; a clear booking phrase (including see it again / schedule another visit or tour) starts a new booking only when nothing is held. After 24 hours, greetings go back to normal: HI starts a booking if nothing is held, or takes over a held booking. A greeting with more text, or anything about being stuck, locked, jammed, trapped, still inside, still in the unit, unable to leave, unable to get outside, unable to find the way out, where the way out is, how to get out, a gate that will not open, no way out, or an emergency, never starts booking. "Which way out of the lobby" is not distress. Help booking or help me book is a booking phrase, but other distress words in the same text still alert. A rebook or custom-time request made during the tour stays secondary until that tour ends for any reason (done, closed, called off, cancelled, or expired), then unfinished consent or identity checks continue. A bare yes or no answers the latest question asked: a door check wins over pending consent for the new booking. While they are touring, operator tools show and act on the running tour; the later booking is their next booking and is the one cancelled if tours are paused with cancel (the visitor is told the later tour is cancelled and their tour right now isn't affected). Calling off describes the tour that was called off; the later booking is `nextBooking`. A one-off overlap check sees the running tour and every future or held booking. `schedule_tour` will not move a tour in progress. After the running tour ends, texts and operator actions move to that later booking — or a greeting starts a new conversation if nothing is held. If extra time is offered, a yes takes the extra time. The texting YES already covers the visit record, so booking does not ask again. If the T-5 text cannot offer extra time, a later yes does not ask again. After the tour ends, a follow-up yes or no is the usual follow-up (it does not ask again); the booked-for line and the usual next steps already went out when the time was booked. If they have an unapproved custom-time request and no held or booked regular tour, they get that pending line once — "Your request for {time} on {day} is still with the {team}. I'll text you as soon as they respond. If you'd rather pick one of the regular times instead, just reply with a day." — then later texts use the normal booking flow (a day reply shows that day's regular slots; a slot pick books as usual). A held rebook is confirmed when it is booked: the booked-for line, then the usual next steps — not the regular-times sentence, and not a second consent question. Booking a regular slot withdraws the pending custom-time request so a later approve cannot double-book; the visitor gets the normal booked-for confirmation, and if that pick replaces a held or booked future tour they also get "That replaces your {time} tour on {day}." Operators see the request as withdrawn with "They booked a regular time instead." (inspect and approve/decline; list hides withdrawn unless asked). Asking for a regular open time moves a held or confirmed booking right away (it does not wait for the team). If that regular slot is taken, they hear "Sorry, {time} on {day} is already taken." plus "You're still booked for {curTime} on {curDay}." only when they have a held or future booking — never about a tour already in progress — then the remaining times that day ("I have these times available {day}:") or "If you'd like another time, just reply with a day." A numbered reply from that menu books the pick only when the menu was shown after the current booking, including after the operator moves it. A leftover number, time, or bare later/earlier/sooner does not move a booking. On hold, a taken slot gets the taken line and no menu. Farewells and arrival remarks at consent ("yes, see you later", "yes, I'll arrive earlier", "yes, no need to switch") record consent; "later"/"earlier"/"sooner" only counts as a change when it is an actual ask ("make it later", "earlier if possible", "later in the week", "can we do it later", "anything later", "sooner would be better", "can we do it sooner", "sooner?"). Idioms such as "yes, the sooner the better" and "yes, anything earlier is fine too" record consent. A named day ("tuesday works better") shows that day's times. If a visitor text cannot be handled, they are told "Sorry, I hit a snag with that. I've let the {team} know, and they'll reply here as soon as they can." when a landlord record was created, or "Sorry, I hit a snag with that. Could you text me again in a few minutes?" when it was not. That opens a handler-failed issue, not a flagged question. The team sees "{who} texted "{their message}" and I couldn't handle it, so they're waiting on you. I told them you'd reply as soon as you can." After a partial reply: "{who} texted "{their message}" and I couldn't finish handling it. They got part of a reply, so they may still be waiting on you." Partial reply plus empty text: "{who} sent a text I couldn't finish handling. They got part of a reply, so they may still be waiting on you." Empty text with no reply: "{who} sent a text I couldn't handle, so they're waiting on you. I told them you'd reply as soon as you can." `resolve_issue` on that issue texts the visitor and does not save a fact. First call: Send "{reply}" to {who}? After yes: Sent to {who}. If they cannot be texted: I couldn't text {who}, so nothing was sent and this is still open. If you can reach them another way, do that, then mark it handled. A repeat answer or resolve on a handler-failed issue returns "That's already been handled." A repeat answer on a flagged question returns "That question has already been handled." Raw errors stay in server logs. If that requested time has already passed, the request expires and the visitor is texted once: "The {team} couldn't get to your request for {newTime} on {newDay} in time." followed by "You're still booked for {time} on {day}." when they have a held or booked tour, or "If you'd like another time, just reply with a day." when they do not. Approve and decline tell the operator "That time has already passed, so I've let {who} know their request ran out. You can still book them a one-off time." Then use `schedule_tour`. Propose tells the operator "That request ran out because its time already passed, so your offer of {newTime} on {newDay} didn't go out. I've let {who} know, and you can still book them a one-off time." and does not send the proposal. If already expired, operators see "That request already ran out because its time passed, and {who} has been told. You can still book them a one-off time." Already approved or declined: "That request has already been handled." Approving a custom time that moves a confirmed booking uses the moved wording (`Your tour of {unit} has been moved to {time} on {day}. You're all set.`), not a second consent question. Distress and after-close handling keep priority over this. While the leaving issue is still open after the +15 close, stuck-inside texts and greetings alert the team and reply with the after-close line — they do not take over a held booking or fire a help alert. DONE after the close uses the usual thanks and follow-up question; only after that reply does a held booking take over.
 9. finishes the tour and answers the follow-up question. Yes uses the same path after a normal finish and after a closed tour: the visitor is told someone will be in touch, and the team is told they would like a follow-up.
 
-The **Test wrong door** demo control tries a door that isn't on the route. Tour Core refuses it and never contacts
-Durin.
+The **Test wrong door** demo control tries a door that isn't on the route. Tour Core refuses it and never asks
+the door system.
 
 The live view polls every 1.5 seconds and shows:
 
@@ -235,14 +234,14 @@ The live view polls every 1.5 seconds and shows:
 - the access decisions;
 - the full timeline, with downloads.
 
-Visitor demos run the real engine: the same `TourCore`, policy, messaging contract, verification boundary and Durin
-adapter. The phone page only draws what `src/visitor/` returns and sends taps back. A live demo lives in the setup
+Visitor demos run the real engine: the same `TourCore`, policy, messaging contract, verification boundary and door
+access adapter. The phone page only draws what `src/visitor/` returns and sends taps back. A live demo lives in the setup
 app's memory, and its records are saved after every step.
 
 Other commands:
 
 ```bash
-npm run setup:dev           # browser app plus internal ids, codes, adapter names, Durin calls and file paths
+npm run setup:dev           # browser app plus internal ids, codes, adapter names, door access calls and file paths
                             # (same as `npm run setup -- --dev`, which also works from PowerShell)
 npm run setup -- --no-open  # don't open the browser automatically
 npm run setup:cli           # the same setup in the terminal (development, scripting, quick debugging)
@@ -270,7 +269,7 @@ in their normal Messages app:
 - consent;
 - a personal identity-form link;
 - arrival, where early and on-time answers come from the real policy;
-- door access through Durin demo mode;
+- door access in demo mode;
 - questions answered from approved facts only;
 - a general ask for tour times ("what are your tour times?", "when can I tour?", "what hours do you do tours", "tour hours?", "what are your hours") is answered from the saved hours, for example "Tours run every day, 8 AM to midnight. Which day works for you? Just reply with a day, like today, tomorrow, or Saturday." With different hours on different days, it lists each set ("Tours run Monday to Friday, 9 AM to 5 PM, and Saturday and Sunday, 9 AM to 8 PM. …"). The examples are only days that have tours. Today and tomorrow are included only when those days have tours. The rest are open days by name, Saturday first when it's open, then Monday onward, up to three. Two examples are joined with "or", and three with a comma and ", or". It is passed to the property team only when no hours are saved. A weekday, or a longer question that mentions today, tomorrow, or tonight, still follows the day-menu rules. A message that is only "today" or "tonight" (with or without a question mark) opens today's remaining times when hours are saved, and is passed to the team only when no hours are saved;
 - HELP and STOP;
@@ -374,7 +373,7 @@ npm run sendblue:test -- --to +1XXXXXXXXXX   # manual: checks the connection, se
   manifest, records, exports or logs, and never returned by a tool.
 - **Access.** Messaging never decides access. A failed send is recorded ("couldn't be delivered" in the live view) and
   never changes a policy decision. A leave-check text that fails every retry opens at most one delivery exception per
-  step (T-15, T-5, T+5, T+15); a T-15 or T-5 that never went out is not marked sent. A wrong door texted from a phone is refused before Durin is contacted.
+  step (T-15, T-5, T+5, T+15); a T-15 or T-5 that never went out is not marked sent. A wrong door texted from a phone is refused before the door system is asked.
 - **STOP, UNSUBSCRIBE, CANCEL, QUIT.** Tour Core stops messaging that person and stays quiet until START. A tour that
   hasn't started yet is ended (open doors are switched off) and the team is alerted. A tour already in progress stays
   on its window: doors still follow policy until the end, and the leave check-in, close, and team alerts still fire.
@@ -417,13 +416,13 @@ current hours before it is booked.
 ```
 visitor text ─► interpreter ─► typed intent (ARRIVAL, AT_UNIT "Unit 101", ...) + confidence
                                    │
-                  src/visitor/conversation.ts: clear enough to act on?  ── no ──► ask back (never Durin)
+                  src/visitor/conversation.ts: clear enough to act on?  ── no ──► ask back (never the door system)
                                    │ yes
-                  the same visitor action a button tap runs ─► TourCore ─► evaluateAccess ─► Durin
+                  the same visitor action a button tap runs ─► TourCore ─► evaluateAccess ─► door access
 ```
 
 - **The interpreter says what the visitor means, never what's allowed.** Reservation, consent, verification, time
-  window, route, holds and Durin health are checked by Tour Core's policy exactly as before.
+  window, route, holds and door access health are checked by Tour Core's policy exactly as before.
 - **Rules first** (`src/intent/ruleBased.ts`): menu numbers, keywords, and the common ways people say "I'm here",
   "I'm at 101", "I'm done", "yes please", or that they want to cancel a booked tour. No network call.
 - **Optional language model** (`src/intent/llm.ts`, `src/intent/factPick.ts`) for texts the rules can't place, for a
@@ -507,7 +506,7 @@ keep texting after the restart.
   property card shows it, and nothing opens. The rest of the server keeps running.
 - **Access is re-decided every time.** Time windows, holds, revocations, completion and routes come from the tour
   records and the normal policy, so a restart can't make access looser. An opened door's grant is reused, not
-  re-requested from Durin.
+  re-requested from the door system.
 - **Identity-form links** are saved by the hash of the token (never the token), with expiry, single use and
   replacement intact across restarts.
 - **Retried webhooks** are recognised after a restart (`runtime/messaging-ledger/`), with provider, message id,
@@ -551,7 +550,7 @@ later):
 ## Grok Bot operator console
 
 ```
-Operator ─► Tour Core Bot (Grok Bot) ─► PUBLIC_BASE_URL/mcp ─► operator tools ─► Tour Core ─► Durin
+Operator ─► Tour Core Bot (Grok Bot) ─► PUBLIC_BASE_URL/mcp ─► operator tools ─► Tour Core ─► door access
                                           (thin MCP bridge)     src/operator/      state, policy, audit
 Browser app ─► /api ────────────────────────────────────────►  same actions
 Terminal wizard ─────────────────────────────────────────────►  same setup actions
@@ -762,7 +761,7 @@ Square footage, floor, parking, laundry, pets, utilities, furnished and features
 provided goes through the usual "I'll pass your question to the {team}, and they'll reply here as soon as they can." flow and operator alert. Nothing is ever invented:
 "$0" rent, a studio (0 bedrooms) and "not provided" are three different things.
 
-Messaging, storage, verification and Durin access all stay in demo mode. No physical door is controlled.
+Messaging, storage, verification and door access all stay in demo mode. No physical door is controlled.
 
 ## Setup engine (UI-independent)
 
@@ -876,17 +875,17 @@ credentials on Tour Core's secure setup page instead. Hosted Railway sets the fi
 | `CLEANER_CORE_TERMS_URL`, `CLEANER_CORE_TERMS_VERSION` | Multi-tenant Cleaner Core | The `https://` terms page a new account accepts, and the version recorded with the account. |
 | `CLEANER_CORE_ENABLED` | Cleaner Core demo | Off unless `1` or `true`. With it off, touring texts are unchanged. `npm run cleaner:doctor` reports the flag and sends nothing. `npm run cleaner:smoke` asks the Scratch Lane owner to confirm checkout and check-in, then offers the turnover, on 555 test numbers only. With no extra operation, that smoke answers YES three times and does not text a door code. `npm run cleaner:smoke -- --reply +15555550100=STOP` repeats for each inbound reply and does not add YES. `--feed`, `--then-feed`, `--now`, `--remind`, `--fail-sends`, and `--data` drive the step C journeys. `--with-pin` asks the approved cleaner to opt in. That cleaner receives the offer, the scheduled confirmation, and the reminder, and only that cleaner's YES confirms the job. After the host says the guests have left, smoke prints a private door code as `[redacted]` to `+15555550101` only, and tells the host `Door code sent to the cleaner.` `--unapproved` and `--group` cover the step D refusals. `--google` reads a Google Calendar fixture, `--notion` reads a Notion database fixture, `--closed` syncs with no open conversation, and `--tenant scratch-court` uses 8 Scratch Court (`+15555550110`, `+15555550111`) instead of Scratch Lane. A booking on Guesty Lite and another source stays one job. `--onboard` walks a new Scratch property from its nickname through activation, and texts a cleaning offer only after that cleaner's YES and the owner's APPROVE. `--group-mode native` with `--group-capable` sends a group text when every participant has opted in. Otherwise smoke mirrors the cleaner text and labels the copy. The door code stays a private text to the approved cleaner. A reply from outside the Scratch 555 block, or any other extra argument, fails the command and sends nothing. Step G adds `npm run cleaner:health`, which reports counters and sends nothing. `--watch-freshness` holds a new offer and the door code when the feed is older than the stale threshold. That threshold defaults to three hours, three missed hourly Guesty Lite polls. Set `CLEANER_CORE_STALE_AFTER_MS` or pass `--stale-after` to change it. `--backup` and `--restore` snapshot one tenant. `--replay` and `--crash` resume without a second send. The SQLite snapshot needs Node 22. `--group-chat` seats the host from the texting setup step. He does not text YES. The approved cleaner replies YES. The door code stays a private text to that cleaner. `--group-reply`, `--confirm-times`, and `--resume` drive that thread. `CLEANER_CORE_GROUP_CHAT` is the live switch for the same thread. |
 
-## The boundary: Tour Core, then policy, then Durin
+## The boundary: Tour Core, then policy, then door access
 
 ```
 TourCore.requestAccess()
    ├─ audit ACCESS_REQUESTED
-   ├─ durin.getHealth()
-   ├─ evaluateAccess()  ── DENY ──► audit ACCESS_DENIED, explain, stop (Durin never called)
+   ├─ door access health check
+   ├─ evaluateAccess()  ── DENY ──► audit ACCESS_DENIED, explain, stop (door system never asked)
    │        │ ALLOW
    ├─ existing active grant? ──► reuse it (no second grant)
    ├─ records check     ── fail ──► DENY_STORAGE_FAILURE, door stays locked, booking stays ready (no issue)
-   └─ durin.requestAccess()  ── failure ──► PROVIDER_FAILURE, safe denial, operator alerted
+   └─ door access request  ── failure ──► PROVIDER_FAILURE, safe denial, operator alerted
 ```
 
 If visit records cannot be confirmed before unlock, the operator alert is
@@ -897,9 +896,9 @@ the grant is revoked, the tour is paused, an issue is opened, and the operator
 alert is "Tour Core couldn't save the visit record, so the tour was paused."
 
 - `src/policy/evaluateAccess.ts` is a pure, deny-by-default policy. It checks the reservation, prospect, consent,
-  verification, time window, exact route, reservation status and Durin health.
-- `src/durin/DurinAccessAdapter.ts` is the Durin Access Platform contract Tour Core is built on: `requestAccess`, `revokeAccess` and `getHealth`.
-- `src/durin/MockDurinAccessAdapter.ts` is Durin demo mode (same contract, no live doors).
+  verification, time window, exact route, reservation status and door access health.
+- The door access contract is three calls: `requestAccess`, `revokeAccess` and `getHealth`.
+- Door access demo mode uses the same contract and opens no live doors.
 
 ## Layout
 
@@ -908,7 +907,6 @@ src/config/        TourCoreConfig schema, plain-language validation
 src/core/          TourCore engine, schedule, time zones, clock
 src/domain/        entities, reservation state machine
 src/policy/        evaluateAccess
-src/durin/         Durin contract + demo mode
 src/messaging/     Messenger contract + demo messaging
 src/verification/  basic identity form, or no form
 src/storage/       store contract + in-memory store; runtime store (sessions, links, lines, ledger) + atomic writes
@@ -950,11 +948,11 @@ src/cleaner-core/  host-confirmed turnover texts, off unless CLEANER_CORE_ENABLE
 | Messaging | Sendblue for real phones, or demo messaging | Other providers behind the same `Messenger` contract |
 | Storage | On this computer (in-memory, plus JSON/CSV files) | Google Drive behind `TourCoreStore` |
 | Verification | Basic identity form, or no form | Real Google Form mapped to `BasicFormResponseSchema` when a form is used |
-| Access | Durin demo mode (no live doors) | Live Durin Access Platform credentials/mode — same integration; demo vs live is the mode |
+| Access | Door access demo mode (no live doors) | Live door access credentials — same integration; demo vs live is the mode |
 
-Tour Core is already built on the Durin Access Platform. Demo uses Durin's demo path so no physical doors
-open. Production uses live Durin Access Platform credentials. Integration is assumed; what varies is demo
-vs live mode. Tour Core never controls locks; it requests scoped access through Durin after its own policy.
+Demo uses the door access provider's demo path, so no physical doors open. Production uses live door access
+credentials. Integration is assumed; what varies is demo vs live mode. Tour Core never controls locks; it
+requests scoped access from the door system after its own policy.
 
 Tour Core never stores government ID images. The basic form records claimed identity only (legal name, email,
 phone). It does not prove identity.
