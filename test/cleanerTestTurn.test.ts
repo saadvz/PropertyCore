@@ -1,3 +1,4 @@
+import { fixedCodePort } from "../src/cleaner-core/doorPort";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -509,7 +510,7 @@ describe("Scratch test turnover", () => {
       property: { id: LANE.property.id, address: LANE.property.address, timeZone: LANE.property.timeZone },
       ownerPhone: HOST,
       cleaner: { phone: CLEANER, approved: true },
-      pin: LANE.pin,
+      access: fixedCodePort(LANE.pin),
       hostName: "Scratch",
       consented: true,
       sink: { async send(text) { sent.push(text); } },

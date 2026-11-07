@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,7 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { EMPTY_TWIML } from "../src/cleaner-core/twilioHook";
 import { resetLiveDesks, setCleanerCalendarFetch } from "../src/cleaner-core/liveDesk";
 import { setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
-import { openPin, pinKeyFor, pinKeyFromHeader, sealPin } from "../src/cleaner-core/pinSeal";
+import { openPin, pinKeyFromHeader, sealPin } from "../src/hub/pinSeal";
+
+/** The old engine's key, made from the property id. Gone from the code; a seal made with it must never open. */
+const oldPropertyKey = (propertyId: string) => createHash("sha256").update(`cleaner-core-pin:${propertyId}`).digest();
 import {
   ADDRESS,
   BUSINESS,
@@ -257,9 +261,11 @@ describe("Cleaner Core live wiring", () => {
     const store = readFileSync(join(wired.root, "cleaner-live.json"), "utf8");
     expect(store).not.toContain(DOOR_CODE);
     expect(store).not.toContain(TEST_PIN_KEY);
-    const sealed = JSON.parse(store) as { propertyId: string; pinSeal: { iv: string; tag: string; data: string } };
+    const { propertyId } = JSON.parse(store) as { propertyId: string };
+    const sealed = JSON.parse(readFileSync(join(wired.root, "door-access.json"), "utf8")) as { pinSeal: { iv: string; tag: string; data: string } };
+    expect(sealed.pinSeal).toBeTruthy();
     expect(pinKeyFromHeader(undefined)).toBeUndefined();
-    expect(() => openPin(sealed.pinSeal, pinKeyFor(sealed.propertyId))).toThrow();
+    expect(() => openPin(sealed.pinSeal, oldPropertyKey(propertyId))).toThrow();
 
     writeEvidence({
       tools,
@@ -542,7 +548,7 @@ describe("Cleaner Core live wiring", () => {
     const serverKey = wired.env().CLEANER_CORE_PIN_KEY ?? "";
     expect(Buffer.from(serverKey, "base64")).toHaveLength(32);
     expect(serverSealed.raw).not.toContain(serverKey);
-    const savedPath = join(wired.root, "cleaner-live.json");
+    const savedPath = join(wired.root, "door-access.json");
     const serverSeal = readFileSync(savedPath, "utf8");
     expect(serverSeal).toContain("pinSeal");
     expect(serverSeal).not.toContain(DOOR_CODE);
@@ -572,8 +578,9 @@ describe("Cleaner Core live wiring", () => {
     expect(stored).not.toContain(serverKey);
     expect(toCleaner(wired.cleanerSent).filter((item) => item.body.includes(DOOR_CODE))).toEqual([]);
 
-    const parsed = JSON.parse(stored) as { propertyId: string; pinSeal: { iv: string; tag: string; data: string } };
-    parsed.pinSeal = sealPin(DOOR_CODE, pinKeyFor(parsed.propertyId));
+    const { propertyId } = JSON.parse(readFileSync(join(wired.root, "cleaner-live.json"), "utf8")) as { propertyId: string };
+    const parsed = JSON.parse(stored) as { pinSeal: { iv: string; tag: string; data: string } };
+    parsed.pinSeal = sealPin(DOOR_CODE, oldPropertyKey(propertyId));
     writeFileSync(savedPath, `${JSON.stringify(parsed)}\n`);
     resetLiveDesks();
     const stale = await wired.tool("/mcp/cleaner-core", CLEANER_TOKEN, "mark_guests_left", { confirmed: true });
@@ -630,13 +637,28 @@ describe("Cleaner Core live wiring", () => {
       expect(clean.stdout).not.toContain(code);
 
       const hidden = ["6", "4", "2", "0", "8", "1", "3", "5"].join("");
-      const propertySeal = { propertyId: "probe-property", pinSeal: sealPin(hidden, pinKeyFor("probe-property")) };
+      const propertySeal = { propertyId: "probe-property", pinSeal: sealPin(hidden, oldPropertyKey("probe-property")) };
       writeFileSync(join(dir, "saved.json"), `${JSON.stringify(propertySeal)}\n`);
       writeFileSync(join(dir, "leak.txt"), `the code is ${hidden}\n`);
       const missed = spawnSync(process.execPath, ["scripts/scan-cleaner-secrets.mjs", dir], { encoding: "utf8" });
       expect(missed.status).toBe(0);
       expect(missed.stdout).not.toContain(hidden);
       expect(missed.stderr).not.toContain(hidden);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("the secret scan catches a code sealed in door-access.json", () => {
+    const code = ["8", "3", "0", "6", "1", "9"].join("");
+    const dir = mkdtempSync(join(tmpdir(), "cleaner-secret-door-"));
+    try {
+      writeFileSync(join(dir, "door-access.json"), `${JSON.stringify({ schemaVersion: 1, pinSeal: sealPin(code, Buffer.from("cleaner-core-scanner-test-key!!!")) })}\n`);
+      writeFileSync(join(dir, "leak.txt"), `the code is ${code}\n`);
+      const leaked = spawnSync(process.execPath, ["scripts/scan-cleaner-secrets.mjs", dir], { encoding: "utf8" });
+      expect(leaked.status).not.toBe(0);
+      expect(leaked.stderr).toMatch(/secret scan found a saved door code/);
+      expect(leaked.stderr).not.toContain(code);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

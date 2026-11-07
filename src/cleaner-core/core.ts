@@ -1,4 +1,5 @@
-import { openPin, pinKeyFor, sealPin, type PinSeal } from "./pinSeal";
+import { joinSplitDigits } from "../hub/digits";
+import { cleaningWindow, DOOR_NOT_OPENED, DOOR_WINDOW_OVER, fixedCodePort, type AccessRefusedLines, type DoorAccessPort } from "./doorPort";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -292,10 +293,13 @@ export interface CleanerCoreOptions {
   ownerPhone: string;
   /** Approved cleaner. The door code is a private text to this number, and only after opt-in and departure. */
   cleaner: { phone: string; approved: boolean };
-  /** Standing door code. Absent means this engine never texts one. */
-  pin?: string;
-  /** Where the lock is, named in the private door-code text. Never a code. */
-  lockLocation?: string;
+  /**
+   * Where the door code comes from: the property hub's door access request on the live service, or a
+   * fixed made-up code (fixedCodePort). The engine asks only after its own checks pass.
+   */
+  access?: DoorAccessPort;
+  /** Host lines for a refused door access request, kept once per job. Unset reasons use DOOR_NOT_OPENED. */
+  accessRefused?: AccessRefusedLines;
   /** Name in the cleaner opt-in text. */
   hostName?: string;
   /** Numbers that share a group thread. They never receive the door code. */
@@ -362,8 +366,6 @@ export interface CleanerCoreOptions {
   cleanerConsent?: "pending" | "in" | "out";
   /** Host already texted STOP before this store existed. A saved choice wins. */
   ownerOptedOut?: boolean;
-  /** Live chat keeps the seal outside this store. Scratch fixtures seal here. */
-  sealPinAtRest?: boolean;
   /** Host sentence after the private text is accepted. Unset keeps the fixture sentence. */
   pinSentBody?: string;
   /** Host sentence when the private text fails. Unset keeps the fixture sentence. */
@@ -550,13 +552,7 @@ const CLEANER_HURT = "If someone is hurt, call 911 now. I've let the host know."
 const CLEANER_HURT_MISSED = "If someone is hurt, call 911 now. I couldn't reach the host, so please call them too.";
 export const SAFETY = new Set<TextKind>(["stop", "start", "emergency"]);
 
-/**
- * Joins digits split by spaces, dots, dashes, underscores, or slashes, so "8 0 8 8", "80-88", and
- * "8.0.8.8" read as 8088. A host message is checked for the door code in this form too.
- */
-export function joinSplitDigits(text: string): string {
-  return text.replace(/(\d)[\s.\-_/\u2010-\u2015]+(?=\d)/g, "$1");
-}
+export { joinSplitDigits };
 
 /** Every run of 4 or more digits, even split by spaces, dots, dashes, underscores, or slashes, as [redacted]. */
 export function redactDigitRuns(text: string): string {
@@ -731,7 +727,6 @@ interface Stored {
   blocks: FeedBlock[];
   cleanerConsent?: "pending" | "in" | "out";
   clearances?: Clearance[];
-  pinSeal?: PinSeal;
   onboarding?: OnboardingSession;
   origin?: "onboarding";
   activated?: boolean;
@@ -772,7 +767,6 @@ interface StoreFile {
   blocks?: FeedBlock[];
   cleanerConsent?: "pending" | "in" | "out";
   clearances?: Clearance[];
-  pinSeal?: PinSeal;
   pin?: unknown;
   onboarding?: OnboardingSession;
   origin?: "onboarding";
@@ -803,7 +797,9 @@ class Engine implements CleanerCore {
   private readonly enabled: boolean;
   private readonly owner: string | undefined;
   private readonly cleanerPhone: string | undefined;
+  /** The code, for leak checks and "is a code saved". The text's code comes from access, at release. */
   private pin: string | undefined;
+  private readonly access: DoorAccessPort | undefined;
   private readonly hostName: string;
   private readonly groupPhones: string[];
   private cleanerConsent: "pending" | "in" | "out" = "pending";
@@ -876,7 +872,9 @@ class Engine implements CleanerCore {
     this.enabled = options.enabled;
     this.owner = parsePhone(options.ownerPhone);
     this.cleanerPhone = parsePhone(options.cleaner.phone);
-    const pin = options.pin?.trim();
+    // The port is the one way a code reaches a text. The engine never stores the code.
+    this.access = options.access;
+    const pin = options.access?.codeForChecks()?.trim();
     this.pin = pin && /^\d{4,8}$/.test(pin) ? pin : undefined;
     this.hostName = options.hostName?.trim() || "Scratch";
     this.groupPhones = (options.groupPhones ?? []).flatMap((phone) => {
@@ -1499,7 +1497,7 @@ class Engine implements CleanerCore {
       },
       ownerPhone: session.hostPhone,
       cleaner: { phone: cleaner.phone, approved: true },
-      pin: this.pin,
+      access: fixedCodePort(this.pin),
       hostName: session.nickname,
       consented: true,
       sink: { send() {} },
@@ -2065,6 +2063,23 @@ class Engine implements CleanerCore {
     return { handled: true, reason: "host-time", sent };
   }
 
+  /**
+   * Asks for door access for the cleaner during this cleaning's window. A refusal sends nothing, is
+   * not retried here, and gives the host one note per job and reason.
+   */
+  private async requestAccess(job: Job): Promise<{ code: string; lockLocation?: string } | undefined> {
+    const checkout = this.latestFact(job.id, "checkout");
+    // deliverPin reaches here only with a checkout fact (pinKey needs one), so this guard never drops a release silently.
+    if (!this.access || !this.cleanerPhone || !checkout) return undefined;
+    const window = cleaningWindow({ checkoutDate: job.checkoutDate, checkoutTime: hm(checkout.minutes), nextCheckInDate: job.nextCheckInDate, timeZone: this.options.property.timeZone });
+    const grant = await this.access.request({ person: this.cleanerPhone, window, purpose: "cleaning", jobId: job.id });
+    if (grant.ok && /^\d{4,8}$/.test(grant.code)) return { code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}) };
+    const reason = grant.ok ? "sealed" : grant.reason;
+    this.keepHostNote(`host:access-refused:${job.id}:${reason}`, this.options.accessRefused?.[reason] ?? (reason === "window-over" ? DOOR_WINDOW_OVER : DOOR_NOT_OPENED));
+    this.save();
+    return undefined;
+  }
+
   private async deliverPin(job: Job): Promise<CleanerText[]> {
     if (!this.pin || !this.cleanerPhone || this.optedOut || this.stale(job) || job.canceled || job.declined) return [];
     const key = this.pinKey(job);
@@ -2090,11 +2105,18 @@ class Engine implements CleanerCore {
     }
     if (this.problemHold || this.groupPinTerminal) return sent;
     if (this.delivery(key) !== "sent" && this.pin) {
-      const pin = this.pin;
       const route = this.groupChat ? codeRoute(this.groupSeats()) : "private";
       if (route === "held") return sent;
+      // Every check above has passed. Only now is door access asked for, for the cleaner, for this cleaning.
+      const grant = await this.requestAccess(job);
+      if (!grant) return sent;
+      const pin = grant.code;
+      // The granted code is the one the leak checks guard from here on: a code saved again since this
+      // engine opened would otherwise reach the transcript and outbox unredacted.
+      this.pin = pin;
+      const lockLocation = grant.lockLocation?.trim() || undefined;
       // The host's note rides on the door code, so the cleaner reads it as the cleaning starts.
-      const body = withHostNote(doorCodeBody(this.options.property.address, pin, this.options.lockLocation?.trim() || undefined), this.options.cleaningNote);
+      const body = withHostNote(doorCodeBody(this.options.property.address, pin, lockLocation), this.options.cleaningNote);
       const addressed = addressCleaner(this.cleanerRecord(), { kind: "pin", body });
       if (!addressed) return sent;
       let text: CleanerText | null = null;
@@ -2107,7 +2129,7 @@ class Engine implements CleanerCore {
           jobId: job.id,
           to: addressed.to,
           kind: "pin",
-          body: withHostNote(groupDoorCodeBody(this.options.property.address, pin, this.groupChat!.cleanerName, this.options.lockLocation?.trim() || undefined), this.options.cleaningNote),
+          body: withHostNote(groupDoorCodeBody(this.options.property.address, pin, this.groupChat!.cleanerName, lockLocation), this.options.cleaningNote),
           channel: "group",
           audience,
         });
@@ -3549,10 +3571,6 @@ class Engine implements CleanerCore {
     return body.split(this.pin).join("[redacted]");
   }
 
-  private pinKeyMaterial(): Buffer {
-    return pinKeyFor(this.options.property.id);
-  }
-
   private load(): void {
     if (!this.file || !existsSync(this.file)) return;
     this.storeLoaded = true;
@@ -3560,6 +3578,8 @@ class Engine implements CleanerCore {
     if (parsed.schemaVersion !== 1) throw new Error("Cleaner Core store is not version 1.");
     const mine = sliceForTenant(parsed, this.tenantId);
     if (!mine) return;
+    // An older store's plaintext pin or sealed code is never read, and the next save leaves it out:
+    // the code comes only from access.
     const record = JSON.parse(JSON.stringify(mine)) as Stored & { pin?: unknown };
     delete record.pin;
     this.jobsState = record.jobs.map((job) => {
@@ -3614,13 +3634,6 @@ class Engine implements CleanerCore {
       if (last) this.lastIntro = last.id.slice("intro:".length).split(":")[0];
     }
     this.hostNoteState = (record.hostNotes ?? []).filter((note) => typeof note?.id === "string" && typeof note?.body === "string");
-    if (this.options.sealPinAtRest !== false && !this.pin && record.pinSeal) {
-      try {
-        this.pin = openPin(record.pinSeal, this.pinKeyMaterial());
-      } catch {
-        this.pin = undefined;
-      }
-    }
   }
 
   private save(): void {
@@ -3647,7 +3660,6 @@ class Engine implements CleanerCore {
       ...(this.participantConsent.size > 0
         ? { participantConsent: [...this.participantConsent].map(([phone, consent]) => ({ phone, consent })) }
         : {}),
-      ...(this.options.sealPinAtRest !== false && this.pin ? { pinSeal: sealPin(this.pin, this.pinKeyMaterial()) } : {}),
       ...(this.sourceRecords.length > 0 ? { sourceRecords: this.sourceRecords } : {}),
       ...(this.latest.size > 0 ? { snapshots: Object.fromEntries(this.latest) } : {}),
       ...(this.reviewItems.length > 0 ? { reviews: this.reviewItems } : {}),

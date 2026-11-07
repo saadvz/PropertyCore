@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { savedCalendars } from "../src/hub/calendars";
 import { hubFor, resetHubs, type HubGuards } from "../src/hub/hub";
-import { hubCalendarCode } from "../src/hub/paths";
+import { hubCalendarCode, hubDoorCode } from "../src/hub/paths";
 import { setCalendarFetch } from "../src/hub/calendarFetch";
 
 /** The property hub: details and calendars in hub.json. Made-up links and a made-up door code only. */
@@ -213,6 +213,14 @@ describe("hub upload flow", () => {
       { name: "Guesty Lite", url: "https://example.com/new.ics" },
       { name: "Vrbo", url: VRBO },
     ]);
+  });
+
+  it("hubDoorCode reads both prefixes and rejects a short code", () => {
+    const code = "a".repeat(43);
+    expect(hubDoorCode(`/door-code/${code}`)).toBe(code);
+    expect(hubDoorCode(`/cleaner-core/door-code/${code}`)).toBe(code);
+    expect(hubDoorCode(`/door-code/${"a".repeat(42)}`)).toBeUndefined();
+    expect(hubDoorCode(`/calendar-link/${code}`)).toBeUndefined();
   });
 
   it("hubCalendarCode accepts all three prefixes", () => {

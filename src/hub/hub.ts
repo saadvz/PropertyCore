@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import {
@@ -19,6 +19,8 @@ import { interpretFeed } from "./calendar";
 import { calendarFetch } from "./calendarFetch";
 import { calendarUrlAllowed, readPublicCalendar } from "./fetchLimits";
 import { googleCalendarSource, type GoogleEventList, type SourceSnapshot } from "./sources";
+import { DoorAccess } from "./doorAccess";
+import { sameHash, UPLOAD_GONE, UPLOAD_MINUTES, uploadHash } from "./uploadCode";
 import { folderNeedsMove, migrateFolder } from "./migrate";
 import { HUB_CALENDAR_PREFIX } from "./paths";
 import { emptyHub, hubPath, readHubFile, type HubCaller, type HubFile, type HubProperty } from "./store";
@@ -38,6 +40,8 @@ export interface HubGuards {
   wouldCancel(next: CalendarClaim[]): Promise<string[]>;
   /** True when a generated upload link happens to hold the door code or the server's key. */
   leaks?(text: string): boolean;
+  /** Cleaner Core's refusal for this door code or lock location, never holding the digits. */
+  codeRefused?(code: string, lockLocation?: string): string | undefined;
 }
 
 export interface HubDeps {
@@ -52,8 +56,7 @@ export interface HubDeps {
 
 export type HubSave = { ok: true } | { ok: false; error: string; reason: CalendarRefusal };
 
-export const UPLOAD_MINUTES = 10;
-export const UPLOAD_GONE = "This upload link isn't valid anymore. Ask for a new one.";
+export { UPLOAD_GONE, UPLOAD_MINUTES };
 export const CALENDAR_UPLOAD_REFUSED = "Send the calendar's public https link as url.";
 export const CALENDAR_UPLOAD_SAVED = "Saved the calendar link.";
 export const CALENDARS_BUSY = "The calendars changed while this link was saving. Send it again.";
@@ -65,16 +68,6 @@ export interface UploadResult {
   body: { ok: boolean; message?: string; error?: string };
 }
 
-function uploadHash(code: string): string {
-  return createHash("sha256").update(code).digest("hex");
-}
-
-/** Compares two sha256 hex digests in constant time. */
-function sameHash(a: string, b: string): boolean {
-  const left = Buffer.from(a, "hex");
-  const right = Buffer.from(b, "hex");
-  return left.length === 32 && right.length === 32 && timingSafeEqual(left, right);
-}
 
 /** One read of every saved calendar, for each flow to use its own way. */
 export interface HubRead {
@@ -87,7 +80,10 @@ export interface HubRead {
 
 const hubs = new Map<string, Hub>();
 
-/** The property folder's hub, one per folder. */
+/**
+ * The property folder's hub, one per folder. The first opener's deps win, including its clock, which
+ * the door access window check uses: every flow passes the real clock in production, so they agree.
+ */
 export function hubFor(root: string, deps: HubDeps): Hub {
   const existing = hubs.get(root);
   if (existing) return existing;
@@ -108,6 +104,7 @@ export function resetHubs(): void {
 export class Hub {
   protected file: HubFile;
   private guards: () => HubGuards | undefined = () => undefined;
+  private door: DoorAccess | undefined;
   /** Counts saves of the property's details in this process, so a flow can tell they changed under it. */
   private propertySaves = 0;
 
@@ -168,6 +165,18 @@ export class Hub {
   /** The engine's claims for a calendar list, the saved one by default. */
   claims(list: readonly StoredCalendar[] = this.file.calendars, google = this.google()): CalendarClaim[] {
     return claimsOf(list, google);
+  }
+
+  /**
+   * The property's door access, one per hub. `env` gives the server's key; the flow that opens it
+   * sets it, and on one property every flow shares the same env.
+   */
+  doorAccess(env: () => NodeJS.ProcessEnv): DoorAccess {
+    if (!this.door) {
+      this.door = new DoorAccess(this.root, this.deps.now, () => this.guards());
+    }
+    this.door.useEnv(env);
+    return this.door;
   }
 
   /** Cleaner Core's checks, asked for each time they're used, so a flow switched off stops guarding. */

@@ -2,13 +2,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { LEGACY_CALENDAR, type StoredCalendar } from "./calendars";
+import { doorAccessPath, type DoorAccessFile } from "./doorAccess";
 import { emptyHub, hubPath, type HubFile, type HubProperty } from "./store";
 
 /**
  * Moves a property's details and calendars out of Cleaner Core's cleaner-live.json and Supply Core's
- * supply.json into hub.json, once. hub.json is written first, then the fields are removed from each
- * old file, each write atomic, so a crash at any point is finished by the next open. Once hub.json
- * exists it is the record: an open only removes fields an old file still holds, and merges nothing.
+ * supply.json into hub.json, once, and Cleaner Core's door code into door-access.json, once. The new
+ * file is written first, then the fields are removed from each old file, each write atomic, so a crash
+ * at any point is finished by the next open. Once hub.json or door-access.json exists it is the
+ * record: an open only removes fields an old file still holds, and merges nothing.
  * The hub reads the old files as plain JSON and never imports either flow.
  */
 
@@ -18,6 +20,8 @@ const SUPPLY_FILE = "supply.json";
 const CLEANER_PLACE = ["nickname", "address", "propertyType", "timeZone", "checkoutTime", "checkInTime"] as const;
 const CLEANER_MOVED = [...CLEANER_PLACE, "calendarLink", "calendars", "google", "sourcesDone", "calendarUpload"] as const;
 const SUPPLY_MOVED = ["sources", "calendarUpload", "checkouts"] as const;
+/** Cleaner Core's door code fields, moved into door-access.json. doorCodeTo stays: it's a channel rule. */
+const DOOR_MOVED = ["pinSeal", "lockLocation", "doorCodeUpload"] as const;
 
 type Json = Record<string, unknown>;
 
@@ -30,7 +34,7 @@ const text = (value: unknown): string | undefined => (typeof value === "string" 
 const record = (value: unknown): Json | undefined => (value && typeof value === "object" && !Array.isArray(value) ? (value as Json) : undefined);
 
 function cleanerHolds(file: Json | undefined): boolean {
-  return Boolean(file && CLEANER_MOVED.some((key) => key in file));
+  return Boolean(file && [...CLEANER_MOVED, ...DOOR_MOVED].some((key) => key in file));
 }
 
 function supplyHolds(file: Json | undefined): boolean {
@@ -110,6 +114,20 @@ function built(cleaner: Json | undefined, supply: Json | undefined, cleaningInUs
   return hub;
 }
 
+/** door-access.json built from Cleaner Core's old fields, copied as they are. Undefined when there's nothing. */
+function builtDoor(cleaner: Json): DoorAccessFile | undefined {
+  const seal = record(cleaner.pinSeal);
+  const lock = text(cleaner.lockLocation);
+  const upload = record(cleaner.doorCodeUpload);
+  if (!seal && !lock && !upload) return undefined;
+  return {
+    schemaVersion: 1,
+    ...(seal ? { pinSeal: seal as unknown as DoorAccessFile["pinSeal"] } : {}),
+    ...(lock ? { lockLocation: lock } : {}),
+    ...(upload && text(upload.hash) && text(upload.expiresAt) ? { upload: upload as unknown as DoorAccessFile["upload"] } : {}),
+  };
+}
+
 function anythingToKeep(hub: HubFile): boolean {
   return Object.keys(hub.property).length > 0 || hub.calendars.length > 0 || hub.google === true || hub.calendarsDone === true || Boolean(hub.calendarUpload || hub.checkouts || hub.calendarsSetAside);
 }
@@ -128,9 +146,14 @@ export function migrateFolder(root: string, cleaningInUse: boolean): void {
     const hub = built(cleaner, supply, cleaningInUse);
     if (anythingToKeep(hub)) writeJsonAtomic(hubPath(root), hub);
   }
+  // The door code moves on its own: a folder whose hub.json was written before door access still holds it.
+  if (cleaner && !existsSync(doorAccessPath(root))) {
+    const door = builtDoor(cleaner);
+    if (door) writeJsonAtomic(doorAccessPath(root), door);
+  }
   if (cleaner && cleanerHolds(cleaner)) {
     const left = { ...cleaner };
-    for (const key of CLEANER_MOVED) delete left[key];
+    for (const key of [...CLEANER_MOVED, ...DOOR_MOVED]) delete left[key];
     writeJsonAtomic(cleanerPath, left);
   }
   if (supply && supplyHolds(supply)) {

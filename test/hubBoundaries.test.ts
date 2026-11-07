@@ -36,6 +36,14 @@ describe("module boundaries", () => {
     expect(offenders(join(SRC, "hub"), ["cleaner-core", "supply-core"])).toEqual([]);
   });
 
+  it("only the hub reads pinSeal or imports hub/pinSeal", () => {
+    const outside = tsFiles(SRC).filter((file) => !file.startsWith(join(SRC, "hub") + "/"));
+    const readers = outside.filter((file) => /\bpinSeal\b/.test(readFileSync(file, "utf8"))).map((file) => file.slice(SRC.length + 1));
+    expect(readers).toEqual([]);
+    const importers = outside.filter((file) => importsOf(file).includes(join(SRC, "hub", "pinSeal"))).map((file) => file.slice(SRC.length + 1));
+    expect(importers).toEqual([]);
+  });
+
   it("src/supply-core imports nothing from src/cleaner-core", () => {
     expect(offenders(join(SRC, "supply-core"), ["cleaner-core"])).toEqual([]);
   });

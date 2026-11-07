@@ -11,7 +11,7 @@ import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { hostedCleaner } from "../src/cleaner-core/hosted/router";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
 import { supplyDesk } from "../src/hosted/supplies";
-import { openPin } from "../src/cleaner-core/pinSeal";
+import { openPin } from "../src/hub/pinSeal";
 import { BASE, closeHostedApps, hostedApp, hostedEnv } from "./cleanerOauthHarness";
 import { cleanupDesks, openDesk, PIN_KEY, setUp } from "./cleanerDeskHarness";
 import { ADDRESS, CLEANER, DOOR_CODE, FROZEN, HOST } from "./wiringProof";
@@ -183,7 +183,7 @@ describe("migrateRegistry", () => {
     // The desk's folder becomes the tenant's folder, as on the live service.
     renameSync(opened.root, dir);
     migrateRegistry(root, NOW);
-    const moved = JSON.parse(readFileSync(join(dir, "properties", "prp_lane000001", "cleaner-live.json"), "utf8")) as { pinSeal: Parameters<typeof openPin>[0] };
+    const moved = JSON.parse(readFileSync(join(dir, "properties", "prp_lane000001", "door-access.json"), "utf8")) as { pinSeal: Parameters<typeof openPin>[0] };
     expect(openPin(moved.pinSeal, PIN_KEY)).toBe(DOOR_CODE);
   });
 });

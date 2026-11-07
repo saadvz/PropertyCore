@@ -1,11 +1,11 @@
-import { hubCalendarCode } from "../hub/paths";
+import { hubCalendarCode, hubDoorCode } from "../hub/paths";
 import { withCaller, type CleanerCaller } from "./callerContext";
 import { authorized } from "../mcp/mcpBridge";
 import { cleanerAssistant } from "./assistant";
 import { cleanerCoreEnabled } from "./flag";
 import { ALERT_UPLOAD_PREFIX, CALENDAR_UPLOAD_PREFIX, DOOR_CODE_UPLOAD_PREFIX, liveDeskFor } from "./liveDesk";
 import { CLEANER_MCP_PATH, handleCleanerMcpMessage, type DeleteSecrets, type SaveSecrets } from "./mcp";
-import { pinKeyFromHeader, serverPinKey } from "./pinSeal";
+import { pinKeyFromHeader, serverPinKey } from "../hub/doorAccess";
 import { scratchToolsOn } from "./scratchQa";
 import type { UploadPageKind } from "./uploadPage";
 import { CLEANER_TWILIO_GROUP_PATH, CLEANER_TWILIO_PATH, CLEANER_TWILIO_STATUS_PATH, handleCleanerGroupWebhook, handleCleanerTwilioStatus, handleCleanerTwilioWebhook, textAddressedTo } from "./twilioHook";
@@ -104,9 +104,8 @@ export function calendarUploadCode(pathname: string): string | undefined {
 
 /** The one-time code in a door code upload path, or undefined when the path isn't one. */
 export function doorCodeUploadCode(pathname: string): string | undefined {
-  if (!pathname.startsWith(DOOR_CODE_UPLOAD_PREFIX)) return undefined;
-  const code = pathname.slice(DOOR_CODE_UPLOAD_PREFIX.length);
-  return UPLOAD_CODE.test(code) ? code : undefined;
+  // The hub's link, and Cleaner Core's older prefix for a link issued before a deploy.
+  return hubDoorCode(pathname);
 }
 
 /** Which upload link a path is, for a Claude deployment's private page. */

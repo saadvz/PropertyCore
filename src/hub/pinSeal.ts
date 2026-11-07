@@ -1,13 +1,9 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
 export interface PinSeal {
   iv: string;
   tag: string;
   data: string;
-}
-
-export function pinKeyFor(propertyId: string): Buffer {
-  return createHash("sha256").update(`cleaner-core-pin:${propertyId}`).digest();
 }
 
 /** The only place a cleaning-chat request's door-code key is read. */
