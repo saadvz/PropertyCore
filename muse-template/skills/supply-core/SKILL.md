@@ -141,12 +141,17 @@ the cleaner's message is handled `supply-report` (see below).
      out at the last step): `record_problem` with its `cartToken`.
 5. Place an order only on go, or after the host's yes and `approve_cart`'s
    code. A recurring run never calls `approve_cart` with a code.
-6. If the store asks for a sign-in, a password, or a card's security code at
-   checkout, stop before Place Order. In a chat with the host, hand them the
-   browser on that page: they type it and click Place Order themselves, then
-   call `record_order` with `approvedBy: "host-browser"` and the same cart
-   token. In a recurring run, tell the host the store needs them, and try once
-   more on the next run.
+6. If the store asks for a sign-in, a password, or a card's security code,
+   stop. In a recurring run, tell the host the store needs them, and try once
+   more on the next run. In a chat with the host, hand them the browser on
+   that page so they type it themselves:
+   - Before the final page, they only sign in. Then go on to the final page
+     and call `check_cart` as step 4 says.
+   - On the final page, they click Place Order only for a cart `check_cart`
+     said go to, or one the host approved with `approve_cart`'s code. Then
+     call `record_order` with `approvedBy: "host-browser"` and that cart
+     token. Never hand over Place Order on a held cart or one you haven't
+     checked.
 7. When the store's tracking shows an order arrived, `mark_delivered`. Tell
    the host once about each order in `late`.
 
