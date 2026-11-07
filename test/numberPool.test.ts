@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -204,6 +204,45 @@ describe("the number pool", () => {
     const other = opened.number === A ? B : A;
     expect(await releasePooled(h, other)).toEqual({ released: other });
     expect(pool().get(other)).toBeUndefined();
+  });
+
+  it("a release under way never hands its number to a sign-up", async () => {
+    let finish: (res: Response) => void = () => {};
+    const calls = fakeTwilio({ [A]: "PNa" });
+    await topUp(h, [A]);
+    // Twilio holds the DELETE until the sign-up has run.
+    setTwilioNumbersFetch(async (input, init) => {
+      if ((init?.method ?? "GET") === "DELETE") return new Promise<Response>((resolve) => (finish = resolve));
+      calls.push({ method: init?.method ?? "GET", url: String(input) });
+      return new Response("{}", { status: 200 });
+    });
+    const releasing = releasePooled(h, A);
+    expect(await openAccount(h, { label: "Lane" })).toEqual({ refused: "no-line" });
+    finish(new Response(null, { status: 204 }));
+    expect(await releasing).toEqual({ released: A });
+    expect(pool().get(A)).toBeUndefined();
+  });
+
+  it("puts a number back as it was when Twilio refuses its release", async () => {
+    fakeTwilio({ [A]: "PNa" }, { release: true });
+    await topUp(h, [A]);
+    const before = pool().get(A);
+    expect(await releasePooled(h, A)).toEqual({ refused: "twilio" });
+    expect(pool().get(A)).toEqual(before);
+  });
+
+  it("refuses to pool one of the service's other numbers", async () => {
+    fakeTwilio({ [A]: "PNa" });
+    const base = h.baseEnv();
+    h.baseEnv = () => ({ ...base, TOURCORE_TWILIO_PHONE_NUMBER: A });
+    expect((await topUp(h, [A])).refused).toEqual([{ raw: A, reason: "in-use" }]);
+  });
+
+  it("keeps an account's texts working when the pool file can't be read", async () => {
+    const { tenant } = h.registry.create({ label: "Lane", twilioNumber: A });
+    const property = h.registry.addProperty(tenant.id, "12 Scratch Lane");
+    writeFileSync(join(dir, "number-pool.json"), "{ not json");
+    expect(propertyContext(h, h.registry.get(tenant.id)!, property).env().CLEANER_CORE_SERVICE_LINES).toBe(A);
   });
 
   it("records and skips a ready number an account already holds", async () => {
