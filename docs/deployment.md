@@ -593,7 +593,7 @@ Tour Core service's.
 | `TOUR_CORE_TENANTS` | `1` to offer touring, `0` for cleaning only |
 | `CLEANER_CORE_ENABLED` | `1` |
 | `CLEANER_CORE_ADMIN_PASSWORD` | Saad's admin password. Railway variables only |
-| `CLEANER_CORE_TWILIO_ACCOUNT_SID`, `CLEANER_CORE_TWILIO_AUTH_TOKEN` | The one Twilio account every tenant's number is on |
+| `CLEANER_CORE_TWILIO_ACCOUNT_SID`, `CLEANER_CORE_TWILIO_AUTH_TOKEN` | The one Twilio account every tenant's number, and every pooled number, is on |
 | `CLEANER_CORE_LIVE_SMS`, `CLEANER_CORE_SMS_ALLOWLIST` | As on any Cleaner Core deployment |
 | `CLEANER_CORE_SIGNUP` | `1` to offer Sign in and Create account on the connect page. Needs live texts on and the three below. Codes go only to phones the allowlist allows. Create account needs ready numbers in the pool, or it says no line is free |
 | `CLEANER_CORE_TWILIO_VERIFY_SERVICE_SID` | The Twilio Verify service (`VA…`) that texts the sign-in code, on the same Twilio account. In Twilio, limit the service's Geo Permissions to the United States and Canada |
@@ -605,9 +605,10 @@ Do not set `CLEANER_CORE_TWILIO_PHONE_NUMBER`, `CLEANER_CORE_ASSISTANT`, or
 tenant, and a fixed token names no tenant.
 
 Adding a host: with sign-up on, the host adds the connector and chooses Create
-account on the page that opens; nothing happens on `/admin`. Otherwise, on
-`/admin`, create a tenant with its label and Twilio number, then send the host
-the invite code. They add the connector at `<service>/mcp`
+account on the page that opens, which takes a line from the number pool;
+nothing happens on `/admin`. Otherwise, on `/admin`, create a tenant with its
+label, and leave the number blank to take one from the number pool (or type a
+Twilio number), then send the host the invite code. They add the connector at `<service>/mcp`
 (or `<service>/mcp/cleaner-core` from a Cleaner Core template), type the code
 on the page that opens, and choose touring or cleaning.
 
