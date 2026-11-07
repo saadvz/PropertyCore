@@ -32,7 +32,7 @@ const UNLINKED: Record<string, string> = {
   shared: "This connection isn't linked to an account on this service. Reconnect with an invite code from Saad.",
 };
 /** With sign-up open, the connect page offers Sign in, so the invite code isn't the only way back. */
-const UNLINKED_SIGN_IN = "This connection isn't linked to an account on this service. Reconnect, then sign in with your phone.";
+const UNLINKED_SIGN_IN = "This connection isn't linked to an account on this service. Reconnect, then sign in on the page that opens.";
 const TOURING_DOWN = "Touring isn't answering right now. Try again in a minute.";
 
 const TOURING_TOOLS = new Set(OPERATOR_TOOL_NAMES);

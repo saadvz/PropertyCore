@@ -1,5 +1,6 @@
 import type { Tenant, TenantOwner, TenantRegistry } from "../cleaner-core/hosted/registry";
 import { RegistryError } from "../cleaner-core/hosted/registry";
+import { isAllowlisted, liveSmsOn } from "../cleaner-core/liveSms";
 import { parsePhone } from "../core/phone";
 import type { AccountAnswer, AccountDoor } from "../mcp/oauth/provider";
 import type { PhoneCodes } from "./phoneCodes";
@@ -22,6 +23,8 @@ export type SignUpRefusal =
   | "too-many-sends"
   | "busy"
   | "send-failed"
+  | "not-allowed"
+  | "unavailable"
   | "locked"
   | "wrong-code"
   | "no-account"
@@ -39,6 +42,8 @@ export const SIGNUP_WORDS: Record<SignUpRefusal, string> = {
   "too-many-sends": "That's a lot of codes. Try again in an hour.",
   busy: "Too many people are signing up right now. Try again in a few minutes.",
   "send-failed": "The code couldn't be sent. Check the number and try again.",
+  "not-allowed": "Codes can't be sent to that phone from here. Ask Saad.",
+  unavailable: "Codes can't be checked right now. Try again in a minute.",
   locked: "Too many wrong codes for that phone. Try again in an hour.",
   "wrong-code": "That code isn't right, or it expired. Check it, or get a new one.",
   "no-account": "No account has that phone yet. Choose Create account.",
@@ -59,7 +64,21 @@ export const SENDS_PER_REQUEST = 5;
 export const SENDS_PER_SERVICE_HOUR = 200;
 /** Wrong codes per phone per hour before that phone is locked out for an hour. */
 export const WRONG_CODES_BEFORE_LOCK = 5;
+/** How long a code that checked out keeps that phone confirmed on its connect page, the life of the page. */
+export const VERIFIED_MS = 10 * 60_000;
 const HOUR = 60 * 60_000;
+
+/**
+ * Area codes inside +1 that aren't US or Canadian lines a landlord texts from: the Caribbean and
+ * Bermuda, and the non-geographic codes (toll-free, premium, personal and other services). Texts to
+ * these cost more and are where SMS pumping aims, so the connect page never sends a code to them.
+ */
+const NOT_US_OR_CA = new Set([
+  "242", "246", "264", "268", "284", "345", "441", "473", "649", "658", "664", "721", "758", "767", "784", "809", "829", "849", "868", "869", "876",
+  "456", "500", "521", "522", "523", "524", "525", "526", "527", "528", "529", "530", "531", "532", "533", "544", "566", "577", "588", "600", "700", "710", "900",
+]);
+/** N11 service codes and the toll-free codes 800, 833, 844, ... 888. */
+const SERVICE_CODE = /^([2-9]11|8([0-8])\2)$/;
 
 /** The pool's call: creates the account and gives it a ready number in one step. */
 export type OpenAccount = (input: { label: string }) => Promise<{ tenant: Tenant } | { refused: "bad-label" | "no-line" }>;
@@ -68,7 +87,7 @@ export interface SignUpDeps {
   registry: TenantRegistry;
   /** Undefined when the Verify service isn't set. */
   codes: () => PhoneCodes | undefined;
-  /** Undefined until the number pool is wired. Sign-up stays off without it. */
+  /** The pool's call. Sign-up stays off without it. */
   openAccount?: OpenAccount;
   env: () => NodeJS.ProcessEnv;
   now: () => number;
@@ -100,11 +119,13 @@ export function signUpTerms(env: NodeJS.ProcessEnv): SignUpTerms | undefined {
   }
 }
 
-/** A US or Canadian mobile number in E.164, the only kind the text lines serve. */
+/** A US or Canadian number in E.164, the only kind the text lines serve. */
 export function signUpPhone(raw: unknown): string | undefined {
   if (typeof raw !== "string" || raw.length > 40) return undefined;
   const phone = parsePhone(raw);
-  return phone && /^\+1[2-9]\d{2}[2-9]\d{6}$/.test(phone) ? phone : undefined;
+  if (!phone || !/^\+1[2-9]\d{2}[2-9]\d{6}$/.test(phone)) return undefined;
+  const area = phone.slice(2, 5);
+  return NOT_US_OR_CA.has(area) || SERVICE_CODE.test(area) ? undefined : phone;
 }
 
 const EMAIL = /^[^\s@<>"']{1,64}@[^\s@<>"']+\.[^\s@<>"']{2,}$/;
@@ -123,14 +144,24 @@ export class SignUpDesk {
   private readonly phoneSends = new Map<string, number[]>();
   private readonly wrong = new Map<string, number[]>();
   private readonly locked = new Map<string, number>();
+  /**
+   * The phone each connect page confirmed. Twilio Verify uses a code up once it checks out, so a
+   * landlord who tried Sign in and is told to choose Create account goes on without a new code.
+   */
+  private readonly verified = new Map<string, { phone: string; at: number }>();
+  /** Phones whose new account is being opened right now, so two pages can't both open one. */
+  private readonly opening = new Set<string>();
   private serviceSends: number[] = [];
 
   constructor(private readonly deps: SignUpDeps) {}
 
-  /** The terms when sign-up is fully set up: the flag, the Verify service, the terms, and the pool. */
+  /**
+   * The terms when sign-up is fully set up: the flag, live texts, the Verify service, the terms,
+   * and the pool. A code is a text, so it waits for CLEANER_CORE_LIVE_SMS like every other text.
+   */
   open(): SignUpTerms | undefined {
     const env = this.deps.env();
-    if (!signUpFlag(env) || !this.deps.codes() || !this.deps.openAccount) return undefined;
+    if (!signUpFlag(env) || !liveSmsOn(env) || !this.deps.codes() || !this.deps.openAccount) return undefined;
     return signUpTerms(env);
   }
 
@@ -139,6 +170,11 @@ export class SignUpDesk {
     const codes = this.deps.codes()!;
     const phone = signUpPhone(rawPhone);
     if (!phone) return { ok: false, refused: "bad-phone" };
+    // CLEANER_CORE_SMS_ALLOWLIST holds "*" on the live service; anywhere else only listed phones get codes.
+    if (!isAllowlisted(this.deps.env(), phone)) {
+      this.deps.log("A sign-up code wasn't sent: that phone isn't on CLEANER_CORE_SMS_ALLOWLIST.");
+      return { ok: false, refused: "not-allowed" };
+    }
     const t = this.deps.now();
     this.prune(t);
     if (this.isLocked(phone, t)) return { ok: false, refused: "locked" };
@@ -190,15 +226,24 @@ export class SignUpDesk {
     const checked = await this.checkCode(requestId, body.phone, body.code);
     if (!checked.ok) return checked;
     // Said only after the code checks out, so nobody learns which phones have accounts.
-    if (this.deps.registry.byOwnerPhone(checked.phone)) return { ok: false, refused: "has-account" };
+    if (this.opening.has(checked.phone) || this.deps.registry.byOwnerPhone(checked.phone)) return { ok: false, refused: "has-account" };
+    this.opening.add(checked.phone);
+    try {
+      return await this.openFor(checked.phone, email, terms);
+    } finally {
+      this.opening.delete(checked.phone);
+    }
+  }
+
+  private async openFor(phone: string, email: string, terms: SignUpTerms): Promise<Answer> {
     const opened = await this.deps.openAccount!({ label: email });
     if ("refused" in opened) return { ok: false, refused: opened.refused === "no-line" ? "no-line" : "bad-email" };
     const at = new Date(this.deps.now()).toISOString();
-    const owner: TenantOwner = { phone: checked.phone, email, phoneVerifiedAt: at, terms: { version: terms.version, acceptedAt: at } };
+    const owner: TenantOwner = { phone, email, phoneVerifiedAt: at, terms: { version: terms.version, acceptedAt: at } };
     try {
       this.deps.registry.setOwner(opened.tenant.id, owner);
     } catch (err) {
-      // Two pages for one phone at once: the other one won. This account keeps its line for /admin to close.
+      // Another process signed this phone up first. This account keeps its line for /admin to close.
       if (err instanceof RegistryError && err.reason === "owner-taken") {
         this.deps.log(`Sign-up opened ${opened.tenant.id}, but its phone signed up on another page first. Close ${opened.tenant.id} on /admin.`);
         return { ok: false, refused: "has-account" };
@@ -217,10 +262,16 @@ export class SignUpDesk {
     if (this.isLocked(phone, t)) return { ok: false, refused: "locked" };
     // Only a phone this page sent a code to, so the check can't be tried for any phone at all.
     if (!this.sentFor.get(requestId)?.phones.has(phone)) return { ok: false, refused: "not-sent" };
+    // This page already confirmed this phone; Twilio has used that code up.
+    const confirmed = this.verified.get(requestId);
+    if (confirmed?.phone === phone && t - confirmed.at < VERIFIED_MS) return { ok: true, phone };
     const code = cleanCode(rawCode);
-    const good = /^\d{4,10}$/.test(code) && (await this.deps.codes()?.check(phone, code)) === true;
-    if (good) {
+    const result = /^\d{4,10}$/.test(code) ? await this.deps.codes()?.check(phone, code) : "denied";
+    // Twilio couldn't answer: not the landlord's miss, so it doesn't count toward the lock.
+    if (result === undefined || result === "unavailable") return { ok: false, refused: "unavailable" };
+    if (result === "approved") {
       this.wrong.delete(phone);
+      this.verified.set(requestId, { phone, at: t });
       return { ok: true, phone };
     }
     const misses = [...(this.wrong.get(phone) ?? []), t];
@@ -255,6 +306,7 @@ export class SignUpDesk {
     for (const [phone, until] of this.locked) if (until <= t) this.locked.delete(phone);
     // An approval request lives 10 minutes; its sends are kept an hour, like the rest.
     for (const [id, page] of this.sentFor) if (t - page.at >= HOUR) this.sentFor.delete(id);
+    for (const [id, confirmed] of this.verified) if (t - confirmed.at >= VERIFIED_MS) this.verified.delete(id);
   }
 }
 

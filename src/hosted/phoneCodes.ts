@@ -9,12 +9,14 @@ const VERIFY = "https://verify.twilio.com/v2/Services";
 const SERVICE_SID = /^VA[0-9a-f]{32}$/i;
 
 export type CodeSent = { sent: true } | { sent: false; why: "bad-number" | "too-many" | "unavailable" };
+/** Unavailable when Twilio couldn't answer, so a landlord isn't charged a miss for it. */
+export type CodeChecked = "approved" | "denied" | "unavailable";
 
 /** Sends and checks the phone code. Tests replace it with a fake. */
 export interface PhoneCodes {
   send(phone: string): Promise<CodeSent>;
-  /** True only when Twilio approved this code for this phone. */
-  check(phone: string, code: string): Promise<boolean>;
+  /** Approved only when Twilio approved this code for this phone. */
+  check(phone: string, code: string): Promise<CodeChecked>;
 }
 
 type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ status: number; json(): Promise<unknown> }>;
@@ -63,11 +65,12 @@ export function phoneCodesFor(env: NodeJS.ProcessEnv, fetchImpl: FetchLike = fet
       try {
         const res = await post("VerificationCheck", { To: phone, Code: code });
         // 404: no code is waiting for that phone (expired, already used, or Twilio's own attempt limit).
-        if (res.status !== 200) return false;
+        if (res.status === 404 || res.status === 400) return "denied";
+        if (res.status !== 200) return "unavailable";
         const body = (await res.json().catch(() => ({}))) as { status?: string };
-        return body.status === "approved";
+        return body.status === "approved" ? "approved" : "denied";
       } catch {
-        return false;
+        return "unavailable";
       }
     },
   };
