@@ -82,7 +82,7 @@ describe("Cleaner Core setup asks: one question at a time", () => {
 
   it("returns each step's ask in order, with the step's tool, and no ask at the review", async () => {
     const wired = await app();
-    const picked = (await call(wired, "get_state", { choice: "cleaners" })).structured;
+    const picked = (await call(wired, "get_state", { choice: "cleaners", drafted: true })).structured;
     expect(String(picked?.next)).toMatch(/^That's Cleaner Core\. It schedules cleaners between guest stays\. Ask the host the questions in ask/);
     expect(askOf(picked).step).toBe("property");
     expect(fields(askOf(picked))).toEqual(["address", "business", "timeZone", "checkoutTime", "checkInTime"]);
@@ -117,7 +117,7 @@ describe("Cleaner Core setup asks: one question at a time", () => {
 
   it("asks how far ahead the cleaner is offered each cleaning, with 1 day before checkout first", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", PROPERTY);
     await call(wired, "save_sources", { calendars: [{ name: "Airbnb", url: CALENDAR_URL }] });
     const ask = askOf((await call(wired, "save_people", { host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-and-host" })).structured);
@@ -130,7 +130,7 @@ describe("Cleaner Core setup asks: one question at a time", () => {
 
   it("always asks how many locks there are and where, before the door code", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", PROPERTY);
     await call(wired, "save_sources", { calendars: [{ name: "Airbnb", url: CALENDAR_URL }], done: true });
     await call(wired, "save_people", { host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-and-host" });
@@ -142,7 +142,7 @@ describe("Cleaner Core setup asks: one question at a time", () => {
 
   it("offers who is in the texts as options, with the group of the host and the cleaner first", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", PROPERTY);
     const people = askOf((await call(wired, "save_sources", { calendars: [{ name: "Airbnb", url: CALENDAR_URL }], done: true })).structured);
     const group = people.questions.find((question) => question.field === "groupChat");
@@ -164,7 +164,7 @@ describe("Cleaner Core setup asks: one question at a time", () => {
 
   it("keeps asking for the usual times until both are saved, then moves on", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     const noTimes = await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE });
     expect(askOf(noTimes.structured).step).toBe("property");
     expect(fields(askOf(noTimes.structured))).toEqual(["checkoutTime", "checkInTime"]);
@@ -183,7 +183,7 @@ async function upload(wired: WiredApp, link: string, body: string, contentType =
 describe("Cleaner Core setup: a calendar link from Grok's secure card", () => {
   it("refuses a masked link and points Grok to the upload link", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", PROPERTY);
     for (const url of ["[REDACTED]", "https://app.guesty.com/••••••"]) {
       const masked = await call(wired, "save_sources", { calendars: [{ name: "Guesty Lite", url }] });
@@ -198,7 +198,7 @@ describe("Cleaner Core setup: a calendar link from Grok's secure card", () => {
 
   it("keeps asking for more booking calendars, keeps each one, and moves on only after done", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", PROPERTY);
     const first = String((await call(wired, "save_sources", { uploadLink: { name: "Guesty Lite" } })).structured?.uploadUrl);
     expect((await upload(wired, first, JSON.stringify({ url: GUESTY_LINK }))).status).toBe(200);
@@ -221,7 +221,7 @@ describe("Cleaner Core setup: a calendar link from Grok's secure card", () => {
 
   it("saves a link posted to a one-time upload link, once, and never repeats or stores the code", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", PROPERTY);
     const issued = await call(wired, "save_sources", { uploadLink: { name: "Guesty Lite" } });
     expect(issued.isError, issued.text).toBe(false);
@@ -254,7 +254,7 @@ describe("Cleaner Core setup: a calendar link from Grok's secure card", () => {
 
   it("replaces only the calendar with the same name and keeps the others", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", PROPERTY);
     await call(wired, "save_sources", { calendars: [{ name: "Airbnb", url: CALENDAR_URL }, { name: "Guesty Lite", url: "https://app.guesty.com/old" }] });
     const issued = await call(wired, "save_sources", { uploadLink: { name: "guesty lite" } });
@@ -267,7 +267,7 @@ describe("Cleaner Core setup: a calendar link from Grok's secure card", () => {
     let at = new Date(FROZEN);
     const started = await startWiredApp({ now: () => at });
     open.push(started);
-    await call(started, "get_state", { choice: "cleaners" });
+    await call(started, "get_state", { choice: "cleaners", drafted: true });
     await call(started, "save_property", PROPERTY);
     const issued = await call(started, "save_sources", { uploadLink: {} });
     at = new Date(at.getTime() + 11 * 60_000);
@@ -299,7 +299,7 @@ async function activatedGroup(
     PUBLIC_BASE_URL: "https://cleaner.example",
   };
   const desk = liveDeskFor(root, () => env, options.now ?? (() => new Date(FROZEN)));
-  ok(await desk.getState("cleaners"));
+  ok(await desk.getState("cleaners", true));
   ok(await desk.saveProperty(PROPERTY));
   ok(await desk.saveSources({ calendars: [{ name: "Guesty Lite", url: CALENDAR_URL }] }));
   ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Maria", groupChat: options.groupChat ?? "cleaner-and-host", ...(options.hostName ? { hostName: options.hostName } : {}) }));
@@ -447,7 +447,7 @@ const DOOR_PREFIX = `${PUBLIC}/door-code/`;
 
 describe("Cleaner Core setup: the door code from Grok's secure card", () => {
   async function atDoor(wired: WiredApp) {
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     await call(wired, "save_property", PROPERTY);
     await call(wired, "save_sources", { calendars: [{ name: "Airbnb", url: CALENDAR_URL }] });
     await call(wired, "save_people", { host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-and-host" });

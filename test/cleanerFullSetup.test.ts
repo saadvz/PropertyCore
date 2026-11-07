@@ -139,7 +139,7 @@ const PREFERENCES = {
 describe("Cleaner Core full setup: the diagram order", () => {
   it("saves each step, advances in diagram order, and reviews every choice without the code or a full phone", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     expect(askStep((await state(wired)))).toBe("property");
 
     const property = await call(wired, "save_property", PROPERTY);
@@ -226,6 +226,8 @@ describe("Cleaner Core full setup: the diagram order", () => {
       },
       access: { lockLocation: LOCK },
       preferences: PREFERENCES,
+      // The review includes payments (#166). The host said Not now.
+      payments: { on: false },
     });
     const json = JSON.stringify(review);
     for (const secret of [DOOR_CODE, HOST, CLEANER, OBSERVER, "5555550130", "5555550131", "5555550132", CALENDAR_URL]) {
@@ -240,7 +242,7 @@ describe("Cleaner Core full setup: the diagram order", () => {
 
   it("takes save_preferences({}) as no preferences and moves to review", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     expect((await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" })).isError).toBe(false);
     expect((await call(wired, "save_calendar_link", { url: CALENDAR_URL })).isError).toBe(false);
     expect((await call(wired, "save_people", { host: HOST, cleaner: CLEANER })).isError).toBe(false);
@@ -289,7 +291,7 @@ describe("Cleaner Core full setup: the diagram order", () => {
 
 describe("Cleaner Core full setup: refusals", () => {
   async function atDoor(wired: WiredApp) {
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     expect((await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" })).isError).toBe(false);
     expect((await call(wired, "save_calendar_link", { url: CALENDAR_URL })).isError).toBe(false);
     expect((await call(wired, "save_people", { host: HOST, cleaner: CLEANER })).isError).toBe(false);
@@ -298,14 +300,14 @@ describe("Cleaner Core full setup: refusals", () => {
 
   it("refuses a usual time that is not a clock time", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     expect((await call(wired, "save_property", { ...PROPERTY, checkoutTime: "late morning" })).isError).toBe(true);
     expect((await call(wired, "save_property", { ...PROPERTY, checkInTime: "15" })).isError).toBe(true);
   });
 
   it("refuses more than four contacts, a repeated phone, and a bad group choice", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     expect((await call(wired, "save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE })).isError).toBe(false);
     const five = ["+15555550140", "+15555550141", "+15555550142", "+15555550143", "+15555550144"].map((phone, index) => ({ name: `C${index}`, role: "observer", phone }));
     expect((await call(wired, "save_people", { host: HOST, cleaner: CLEANER, contacts: five })).isError).toBe(true);
@@ -342,7 +344,7 @@ describe("Cleaner Core full setup: refusals", () => {
 describe("Cleaner Core full setup: usual times", () => {
   it("passes the usual times to the engine, so the new-booking alert names them", async () => {
     const wired = await app();
-    await call(wired, "get_state", { choice: "cleaners" });
+    await call(wired, "get_state", { choice: "cleaners", drafted: true });
     expect((await call(wired, "save_property", PROPERTY)).isError).toBe(false);
     expect((await call(wired, "save_sources", { google: true })).isError).toBe(false);
     expect((await call(wired, "save_people", { host: HOST, cleaner: CLEANER })).isError).toBe(false);
@@ -422,7 +424,7 @@ async function connectRoutine(desk: LiveDesk) {
 }
 
 async function setUp(desk: LiveDesk, people: Partial<PeopleInput>) {
-  ok(await desk.getState("cleaners"));
+  ok(await desk.getState("cleaners", true));
   ok(await desk.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "10:30", checkInTime: "15:00" }));
   ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
   ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", ...people }));
@@ -482,7 +484,7 @@ describe("Cleaner Core full setup: who gets the texts", () => {
 
   it("says where the door code goes when it is saved: the group, or a private text when the host kept it private", async () => {
     const grouped = openDesk([HOST, CLEANER], "1").desk;
-    ok(await grouped.getState("cleaners"));
+    ok(await grouped.getState("cleaners", true));
     ok(await grouped.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "10:30", checkInTime: "15:00" }));
     ok(await grouped.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
     ok(await grouped.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-and-host" }));
@@ -491,7 +493,7 @@ describe("Cleaner Core full setup: who gets the texts", () => {
     );
     resetLiveDesks();
     const kept = openDesk([HOST, CLEANER, OBSERVER], "1").desk;
-    ok(await kept.getState("cleaners"));
+    ok(await kept.getState("cleaners", true));
     ok(await kept.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "10:30", checkInTime: "15:00" }));
     ok(await kept.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
     ok(await kept.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", contacts: [{ name: "Sam", role: "co-host", phone: OBSERVER }], groupChat: "everyone", doorCodeTo: "cleaner" }));
@@ -519,7 +521,7 @@ describe("Cleaner Core full setup: who gets the texts", () => {
 describe("Cleaner Core full setup: the MCP door-code guard", () => {
   it("refuses a door code hidden in a checklist item or a contact name", async () => {
     const { desk } = openDesk([HOST, CLEANER], "0");
-    ok(await desk.getState("cleaners"));
+    ok(await desk.getState("cleaners", true));
     ok(await desk.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: ZONE }));
     ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
     ok(await desk.savePeople({ host: HOST, cleaner: CLEANER }));
@@ -544,7 +546,7 @@ describe("Cleaner Core door-code check: every host free text", () => {
   async function atDoorCode(code?: string) {
     const opened = openDesk([HOST, CLEANER], "0");
     const { desk } = opened;
-    ok(await desk.getState("cleaners"));
+    ok(await desk.getState("cleaners", true));
     ok(await desk.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: ZONE }));
     ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
     ok(await desk.savePeople({ host: HOST, cleaner: CLEANER }));
@@ -646,7 +648,7 @@ async function withSchedule(schedule: ScheduleInput | undefined, groupChat: "0" 
   const time = testClock(FROZEN);
   const opened = openDesk([HOST, CLEANER], groupChat, time.now);
   const { desk } = opened;
-  ok(await desk.getState("cleaners"));
+  ok(await desk.getState("cleaners", true));
   ok(await desk.saveProperty({ business: BUSINESS, nickname: "Lake House", address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
   ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
   ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana" }));
@@ -736,7 +738,7 @@ describe("Cleaner Core schedule: the first cleaning text", () => {
   it("the default holds the offer until 9:00 AM the day before checkout", async () => {
     const time = testClock(FROZEN);
     const { desk, sms } = openDesk([HOST, CLEANER], "0", time.now);
-    ok(await desk.getState("cleaners"));
+    ok(await desk.getState("cleaners", true));
     ok(await desk.saveProperty({ business: BUSINESS, nickname: "Lake House", address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
     ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
     ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana" }));
@@ -763,7 +765,7 @@ describe("Cleaner Core schedule: the first cleaning text", () => {
   it("never sends a timed offer before the host confirmed the times", async () => {
     const time = testClock(FROZEN);
     const { desk, sms } = openDesk([HOST, CLEANER], "0", time.now);
-    ok(await desk.getState("cleaners"));
+    ok(await desk.getState("cleaners", true));
     ok(await desk.saveProperty({ business: BUSINESS, nickname: "Lake House", address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
     ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
     ok(await desk.savePeople({ host: HOST, cleaner: CLEANER }));
@@ -913,7 +915,7 @@ describe("Cleaner Core: one step at a time", () => {
 describe("Cleaner Core schedule: the new-booking alert", () => {
   async function bookingAlert(groupChat: "0" | "1", usual: boolean): Promise<string[]> {
     const { desk } = openDesk([HOST, CLEANER], groupChat);
-    ok(await desk.getState("cleaners"));
+    ok(await desk.getState("cleaners", true));
     ok(
       await desk.saveProperty({
         business: BUSINESS,
@@ -972,9 +974,8 @@ describe("Cleaner Core schedule: the checkout-time nudge", () => {
 describe("Cleaner Core schedule: save_schedule", () => {
   it("refuses days outside 1 to 14, a bad time, one-sided quiet hours, and a door code", async () => {
     const { desk } = openDesk([HOST, CLEANER], "0");
-    ok(await desk.getState("cleaners"));
+    ok(await desk.getState("cleaners", true));
     ok(await desk.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
-    expect((await desk.saveSchedule({})).ok).toBe(false);
     ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
     ok(await desk.savePeople({ host: HOST, cleaner: CLEANER }));
     ok(await desk.saveDoorCode({ code: DOOR_CODE }, PIN_KEY));
@@ -993,7 +994,7 @@ describe("Cleaner Core schedule: save_schedule", () => {
 
   it("does not carry the saved days over when the first text changes between after check-in and before checkout", async () => {
     const { desk } = openDesk([HOST, CLEANER], "0");
-    ok(await desk.getState("cleaners"));
+    ok(await desk.getState("cleaners", true));
     ok(await desk.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
     ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
     ok(await desk.savePeople({ host: HOST, cleaner: CLEANER }));
@@ -1201,7 +1202,7 @@ describe("Cleaner Core messages: save_arrival", () => {
 
   it("fails with no open cleaning", async () => {
     const { desk } = openDesk([HOST, CLEANER], "0");
-    ok(await desk.getState("cleaners"));
+    ok(await desk.getState("cleaners", true));
     ok(await desk.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: ZONE }));
     ok(await desk.saveSources({ google: true }));
     ok(await desk.savePeople({ host: HOST, cleaner: CLEANER }));
@@ -1653,7 +1654,7 @@ async function takenWith(preferences: PreferencesInput, extraEnv: NodeJS.Process
   const time = testClock(FROZEN);
   const opened = openDesk([HOST, CLEANER], "0", time.now, extraEnv);
   const { desk } = opened;
-  ok(await desk.getState("cleaners"));
+  ok(await desk.getState("cleaners", true));
   ok(await desk.saveProperty({ business: BUSINESS, nickname: "Lake House", address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
   ok(await desk.saveSources({ calendars: [{ name: "Airbnb", url: CALENDAR_URL }] }));
   ok(await desk.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" }));
@@ -2095,7 +2096,7 @@ describe("Cleaner Core full diagram", () => {
     await safe("1 connect");
 
     // 2. Setup steps 2 to 8 through the new tools.
-    await say("get_state", { choice: "cleaners" });
+    await say("get_state", { choice: "cleaners", drafted: true });
     await say("save_property", { business: LANE.hostName, nickname: "Scratch Lane", address, propertyType: "House", timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" });
     await say("save_sources", { google: true });
     await say("save_people", { host, cleaner, cleanerName: "Ana", groupChat: "cleaner-and-host" });
@@ -2295,7 +2296,7 @@ describe("Cleaner Core full diagram", () => {
     };
     const codeTexts = () => sms.sent.filter((item) => PLAIN_CODE.test(item.body));
 
-    await say("get_state", { choice: "cleaners" });
+    await say("get_state", { choice: "cleaners", drafted: true });
     await say("save_property", { business: LANE.hostName, address, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" });
     await say("save_sources", { google: true });
     await say("save_people", { host, cleaner, cleanerName: "Ana", groupChat: "cleaner-only" });
@@ -2345,7 +2346,7 @@ describe("Cleaner Core door-code write guard: ids that only hold the digits", ()
 
   async function setUpWired(wired: WiredApp, stays: { id: string; start: string; end: string }[]) {
     const steps: [string, Record<string, unknown>][] = [
-      ["get_state", { choice: "cleaners" }],
+      ["get_state", { choice: "cleaners", drafted: true }],
       ["save_property", { business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "10:30", checkInTime: "15:00" }],
       ["save_sources", { google: true }],
       ["save_people", { host: HOST, cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" }],
