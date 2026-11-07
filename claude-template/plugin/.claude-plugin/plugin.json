@@ -2,7 +2,7 @@
   "name": "cleaner-core",
   "version": "0.1.0",
   "description": "Set up and run Cleaner Core, the cleaning scheduler for a short-term rental, through its Cleaner Core connector.",
-  "author": { "name": "Tour Core" },
+  "author": { "name": "Property Core" },
   "homepage": "https://github.com/saadvz/TourCore/tree/master/claude-template",
   "repository": "https://github.com/saadvz/TourCore",
   "license": "Apache-2.0",
