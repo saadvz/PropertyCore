@@ -27,7 +27,7 @@ const Confirmation = z.string().max(40).optional();
 const GoogleEvents = z.object({ timeZone: z.string().max(80).optional(), items: z.array(z.unknown()).max(2000) }).strict();
 const CartLine = z.object({ itemId: z.string().max(40), product: z.enum(["preferred", "backup"]), qty: z.number().int(), unitCents: Cents }).strict();
 
-const NO_CARDS = "Never pass a card number, expiry, or security code: checkout uses your Vault.";
+export const NO_CARDS = "Never pass a card number, expiry, or security code: checkout uses your Vault.";
 
 export const SUPPLY_TOOLS: SupplyTool[] = [
   {
@@ -164,7 +164,7 @@ export const SUPPLY_TOOLS: SupplyTool[] = [
         orderNumber: z.string().max(80).optional(),
         chargedCents: Cents,
         expectedBy: Ymd.optional(),
-        approvedBy: z.literal("grok-card").optional(),
+        approvedBy: z.enum(["grok-card", "host-browser"]).optional(),
       })
       .strict(),
   },
@@ -195,10 +195,11 @@ export const SUPPLY_TOOL_NAMES: ReadonlySet<string> = new Set(SUPPLY_TOOLS.map((
 
 export const CARD_REFUSAL = "That looks like a card number. Supply Core never takes card details: keep them in your Vault.";
 
-export function listedSupplyTools(names: readonly string[]): Record<string, unknown>[] {
+/** The tools as tools/list shows them, in Grok's words. src/hosted/supplyWording.ts words them for Muse. */
+export function listedSupplyTools(names: readonly string[], describe: (tool: SupplyTool) => string = (tool) => tool.description): Record<string, unknown>[] {
   return SUPPLY_TOOLS.filter((tool) => names.includes(tool.name)).map((tool) => {
     const { $schema: _schema, ...inputSchema } = z.toJSONSchema(tool.input) as Record<string, unknown>;
-    return { name: tool.name, title: tool.title, description: tool.description, inputSchema };
+    return { name: tool.name, title: tool.title, description: describe(tool), inputSchema };
   });
 }
 
