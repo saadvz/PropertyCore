@@ -21,7 +21,8 @@ export const MUSE_SUPPLY_SKILL = "muse-template/skills/supply-core";
 const MUSE_NO_CARDS = "Never pass a card number, expiry, or security code: each store keeps its own saved payment method.";
 
 /** The card refusal on Muse: no Vault there, since each store keeps its own payment method. */
-export const MUSE_CARD_REFUSAL = "That looks like a card number. Supply Core never takes card details: each store keeps its own saved payment method.";
+export const MUSE_CARD_REFUSAL =
+  "That looks like a card number, so nothing was saved. Supply Core never takes card details. Don't repeat the number. Each store keeps the host's card on its own account: if one is missing, the host adds it on the store's payment page in your browser.";
 
 const MUSE_CARDS =
   "Search only the plan's stores, in your browser. Show 3 to 4 products from them as product cards if you can show them, each with its short name, pack size, price, and store. Then show a choice card with one option per product, by its short name, so the host can tap their pick. Never list products as plain text.";
