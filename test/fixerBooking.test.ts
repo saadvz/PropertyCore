@@ -387,7 +387,7 @@ describe("cancel", () => {
     const reply = await cancelTwice(w);
     const question = "Joe's Plumbing knows the door code. Want to change it? Set the new code on the lock, then save it here.";
     expect(reply.structured!.rotationAsk).toEqual([{ jobId: w.job().id, question }]);
-    expect(w.job().rotationAsked).toEqual({ at: NOW.toISOString() });
+    expect(w.job().rotationAsked).toEqual({ at: NOW.toISOString(), proId: w.job().booking!.proId });
     const asks = ((await w.desk.checkFixes({})).structured as { rotationAsk: { question: string }[] }).rotationAsk;
     expect(asks).toEqual([{ jobId: w.job().id, question: "Joe's Plumbing knows the door code. Want to change it? Set the new code on the lock, then save it here." }]);
     expect(readFileSync(join(w.root, FIXER_FILE), "utf8")).not.toContain(CODE);

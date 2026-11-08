@@ -221,8 +221,26 @@ function localYmd(at: Date, timeZone: string): string {
 /** Jobs still going: not done and not cancelled. */
 const isOpen = (job: Job): boolean => job.state !== "done" && job.state !== "cancelled";
 
-/** Was the door code shown or texted on any visit of this job? A rebook keeps the answer. */
-const codeWasShown = (job: Job): boolean => job.codeShown === true || (job.booking?.revealedAt?.length ?? 0) > 0;
+/** The pros the door code was shown or texted to on any visit of this job. A rebook keeps the list. */
+function shownTo(job: Job): string[] {
+  const ids = [...(job.codeShownTo ?? [])];
+  const booking = job.booking;
+  if (booking?.revealedAt?.length && !ids.includes(booking.proId)) ids.push(booking.proId);
+  return ids;
+}
+
+const codeWasShown = (job: Job): boolean => shownTo(job).length > 0;
+
+/** Notes that the booked pro was given the code. */
+function markShown(job: Job): void {
+  const proId = job.booking?.proId;
+  if (proId && !(job.codeShownTo ??= []).includes(proId)) job.codeShownTo.push(proId);
+}
+
+/** A short tag for one booked visit, so its host notes have ids no other visit of the job shares. */
+function visitTag(booking: Booking | undefined): string {
+  return booking ? tokenHash(`${booking.fingerprint}|${booking.hostYes?.at ?? ""}`).slice(0, 8) : "none";
+}
 
 /** Digit runs of 4 or more (after split digits are joined) become a note, so a door code or account number never lands in a job. */
 export function redactDigits(text: string): string {
@@ -1173,14 +1191,8 @@ export class FixerDesk {
     job.cancelledAt = at;
     job.cancelReason = reason;
     for (const contact of job.contacts) if (contact.outcome === undefined || contact.outcome === "waiting") contact.cancelled = true;
-    let rotationAsk: { jobId: string; question: string } | undefined;
-    if (job.booking) {
-      delete job.booking.visitToken;
-      if (codeWasShown(job)) {
-        job.rotationAsked = { at };
-        rotationAsk = { jobId: job.id, question: rotationQuestion({ proName }) };
-      }
-    }
+    if (job.booking) delete job.booking.visitToken;
+    const rotationAsk = this.askRotation(file, job, { open: true });
     return { ...(tellPro ? { tellPro } : {}), ...(rotationAsk ? { rotationAsk } : {}) };
   }
 
@@ -1192,8 +1204,9 @@ export class FixerDesk {
       if (!job) return fail("There's no job with that id. Call get_fixer_state for the list.");
       if (!isOpen(job)) return fail("That job is already closed.");
       if (input.reason !== undefined && !isText(input.reason, 200)) return fail("Keep the reason under 200 characters.");
-      if (liveBooking(job) && job.booking) {
-        const gate = this.approved(file, "fixer-cancel", job.id, input, cancelQuestion({ proName: this.nameOf(file, job, job.booking.proId) ?? "the pro" }));
+      if (liveBooking(job) && job.booking && file.settings.activatedAt) {
+        // Bound to this booking as it stands, so a yes given before a rebook or an extend doesn't cancel the new one.
+        const gate = this.confirm("fixer-cancel", job.id, this.bookingBound(job.booking, input.reason), input.confirmation, cancelQuestion({ proName: this.nameOf(file, job, job.booking.proId) ?? "the pro" }));
         if (gate !== "go") return gate;
       }
       const { tellPro, rotationAsk } = this.cancelCore(file, job, input.reason ? redactDigits(input.reason).trim() : "Cancelled");
@@ -1218,16 +1231,14 @@ export class FixerDesk {
       if (!booking?.hostYes || !liveBooking(job)) return fail("Only a booked visit can be moved to a new time.");
       if (input.reason !== undefined && !isText(input.reason, 200)) return fail("Keep the reason under 200 characters.");
       const proName = this.bookedName(file, job);
-      const gate = this.approved(file, "fixer-reschedule", job.id, input, rescheduleQuestion({ proName }));
+      const gate = this.confirm("fixer-reschedule", job.id, this.bookingBound(booking, input.reason), input.confirmation, rescheduleQuestion({ proName }));
       if (gate !== "go") return gate;
       const at = this.deps.now().toISOString();
       const tellPro = { name: proName, reach: this.reachOfId(file, job, booking.proId) };
-      let rotationAsk: { jobId: string; question: string } | undefined;
-      if (codeWasShown(job)) {
-        job.codeShown = true;
-        job.rotationAsked = { at, proId: booking.proId };
-        rotationAsk = { jobId: job.id, question: rotationQuestion({ proName }) };
-      }
+      // Who saw the code moves to the job, since the booking goes.
+      const seen = shownTo(job);
+      if (seen.length > 0) job.codeShownTo = seen;
+      const rotationAsk = this.askRotation(file, job, { open: true });
       (job.reschedules ??= []).push({ at, ...(input.reason ? { reason: redactDigits(input.reason).trim() } : {}) });
       // The old booking goes with its visit link; the next visit's code text is its own.
       delete job.booking;
@@ -1238,6 +1249,30 @@ export class FixerDesk {
       this.write(file);
       return ok({ rescheduled: true, jobId: job.id, state: job.state, tellPro, ...(rotationAsk ? { rotationAsk: [rotationAsk] } : {}), next: `Tell ${proName} this time is off. Ask them, or another pro, for a new time, then record_contact with booked.` });
     });
+  }
+
+  /** What a cancel or reschedule yes is bound to: the booking as it stands (times, pro, extension) and the reason. */
+  private bookingBound(booking: Booking, reason: string | undefined): string {
+    return tokenHash(JSON.stringify([booking.fingerprint, booking.hostYes?.at ?? null, booking.extendedUntil ?? null, reason ?? null]));
+  }
+
+  /**
+   * The rotation question for the pros who saw the code. An open one stays as it is (returned when
+   * `open`); otherwise a fresh one names the first pro who saw the code and hasn't been asked about.
+   * `skip` leaves out a pro, like one the host keeps on the preferred list.
+   */
+  private askRotation(file: FixerFile, job: Job, opts: { open: boolean; skip?: (proId: string) => boolean }): { jobId: string; question: string } | undefined {
+    const current = job.rotationAsked;
+    const nameFor = (proId: string | undefined) => (proId && this.nameOf(file, job, proId)) || "The pro";
+    if (current && !current.answer) return opts.open ? { jobId: job.id, question: rotationQuestion({ proName: nameFor(current.proId ?? job.booking?.proId) }) } : undefined;
+    // An older record asked about the booked pro without naming them.
+    const legacy = current?.proId ?? job.booking?.proId;
+    const asked = job.rotationAskedFor ?? (current && legacy ? [legacy] : []);
+    const fresh = shownTo(job).find((proId) => !asked.includes(proId) && !opts.skip?.(proId));
+    if (!fresh) return undefined;
+    job.rotationAsked = { at: this.deps.now().toISOString(), proId: fresh };
+    job.rotationAskedFor = [...asked, fresh];
+    return { jobId: job.id, question: rotationQuestion({ proName: nameFor(fresh) }) };
   }
 
   /** Contacts with no outcome after 2 hours (told once) and waiting ones past their follow-up time. */
@@ -1414,7 +1449,7 @@ export class FixerDesk {
     if (grant.ok && /^\d{4,8}$/.test(grant.code)) return { ok: true, code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}) };
     if (!job.codeNoteAt) {
       job.codeNoteAt = this.deps.now().toISOString();
-      notes.push(this.news(job, "code-refused", codeRefusedNote({ proName: this.bookedName(file, job) })));
+      notes.push(this.news(job, "code-refused", codeRefusedNote({ proName: this.bookedName(file, job) }), `fixer:${job.id}:${visitTag(job.booking)}:code-refused`));
     }
     return { ok: false, reason: grant.ok ? "sealed" : grant.reason };
   }
@@ -1445,8 +1480,8 @@ export class FixerDesk {
         const at = this.deps.now().toISOString();
         const revealed = (job.booking.revealedAt ??= []);
         revealed.push(at);
-        job.codeShown = true;
-        notes.push(this.news(job, "revealed", revealNews({ proName: this.bookedName(file, job), at, timeZone: this.timeZone() }), `fixer:${job.id}:revealed:${revealed.length}`));
+        markShown(job);
+        notes.push(this.news(job, "revealed", revealNews({ proName: this.bookedName(file, job), at, timeZone: this.timeZone() }), `fixer:${job.id}:${visitTag(job.booking)}:revealed:${revealed.length}`));
       }
       this.write(file);
       await this.tell(notes);
@@ -1480,7 +1515,7 @@ export class FixerDesk {
     if (job.codeTextAt) {
       if (!job.codeTextSent && !job.codeNoteAt) {
         job.codeNoteAt = at;
-        notes.push(this.news(job, "code-text-unsure", codeTextUnsureNote({ proName })));
+        notes.push(this.news(job, "code-text-unsure", codeTextUnsureNote({ proName }), `fixer:${job.id}:${visitTag(booking)}:code-text-unsure`));
       }
       return;
     }
@@ -1494,7 +1529,7 @@ export class FixerDesk {
     const opened = this.openCode(file, job, check.window, notes);
     if (!opened.ok) return;
     (booking.revealedAt ??= []).push(at);
-    job.codeShown = true;
+    markShown(job);
     this.write(file);
     const street = streetOf(this.hub().property().address ?? "");
     let sent = false;
@@ -1505,10 +1540,10 @@ export class FixerDesk {
     }
     if (sent) {
       job.codeTextSent = true;
-      notes.push(this.news(job, "code-texted", codeTextNews({ proName, at, timeZone: this.timeZone() })));
+      notes.push(this.news(job, "code-texted", codeTextNews({ proName, at, timeZone: this.timeZone() }), `fixer:${job.id}:${visitTag(booking)}:code-texted`));
     } else {
       job.codeNoteAt = at;
-      notes.push(this.news(job, "code-text-unsure", codeTextUnsureNote({ proName })));
+      notes.push(this.news(job, "code-text-unsure", codeTextUnsureNote({ proName }), `fixer:${job.id}:${visitTag(booking)}:code-text-unsure`));
     }
     this.write(file);
   }
@@ -1734,10 +1769,12 @@ export class FixerDesk {
   private answerPreferred(file: FixerFile, job: Job, answer: "yes" | "no", pro?: Pro): { jobId: string; question: string } | undefined {
     const at = this.deps.now().toISOString();
     job.preferredAsked = { at: job.preferredAsked?.at ?? at, answer };
-    const preferred = pro?.status === "saved" && pro.preferredFor.some((entry) => entry.trade === job.trade);
-    if (preferred || !codeWasShown(job) || job.rotationAsked) return undefined;
-    job.rotationAsked = { at };
-    return { jobId: job.id, question: rotationQuestion({ proName: this.bookedName(file, job) }) };
+    // A pro the host keeps on the preferred list gets no rotation question.
+    const preferred = (proId: string) => {
+      const saved = proId === pro?.id ? pro : file.pros.find((entry) => entry.id === proId);
+      return saved?.status === "saved" && saved.preferredFor.some((entry) => entry.trade === job.trade);
+    };
+    return this.askRotation(file, job, { open: false, skip: preferred });
   }
 
   /** Done jobs whose pro isn't preferred for the trade, waiting on the host's answer. */

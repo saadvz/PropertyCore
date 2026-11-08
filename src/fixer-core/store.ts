@@ -143,10 +143,12 @@ export interface Job {
   /** What the host has been told, once each. `text` is the line, never a code. */
   news: { kind: string; at: string; text?: string; toldAt?: string }[];
   preferredAsked?: { at: string; answer?: "yes" | "no" };
-  /** `proId` names the pro when the booking that showed the code was rescheduled away. */
+  /** The open or last rotation question; `proId` is the pro who saw the code that it names. */
   rotationAsked?: { at: string; answer?: "yes" | "no"; proId?: string };
-  /** The door code was shown or texted on some visit of this job, kept across a reschedule. */
-  codeShown?: true;
+  /** The pros the door code was shown or texted to, on any visit of this job, kept across a reschedule. */
+  codeShownTo?: string[];
+  /** The pros a rotation question was asked about, so each one is asked once. */
+  rotationAskedFor?: string[];
   /** Each time the host moved the visit to a new time. */
   reschedules?: { at: string; reason?: string }[];
   /** Set and saved before the hub is asked for the code, so a restart never texts it twice. */

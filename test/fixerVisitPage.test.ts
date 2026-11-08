@@ -556,7 +556,7 @@ describe("reschedule", () => {
     expect(moved.structured).toMatchObject({ rescheduled: true, state: "contacted", tellPro: { name: "Sam Spigot", reach: { phone: SAM } }, rotationAsk: [{ jobId: w.job().id, question: rotation }] });
     expect(w.job().state).toBe("contacted");
     expect(w.job().booking).toBeUndefined();
-    expect(w.job().codeShown).toBe(true);
+    expect(w.job().codeShownTo).toEqual([w.pro("Sam").id]);
     expect(w.job().reschedules).toEqual([{ at: TUE.from, reason: "Pro is running late" }]);
     expect((await call(w, first.token)).status).toBe(404);
     // Only a live booking can be moved.
@@ -589,8 +589,75 @@ describe("reschedule", () => {
     expect(w.sent).toHaveLength(2);
     expect(w.sent[1]!.body === codeText({ proName: "Joe's Plumbing", street: "12 Scratch Lane", code: CODE })).toBe(true);
     expect(w.job().codeTextSent).toBe(true);
+    // Each visit's note has its own id, so the second isn't taken for the first.
+    const texted = w.notes.filter((n) => n.id.endsWith(":code-texted")).map((n) => n.id);
+    expect(texted).toHaveLength(2);
+    expect(new Set(texted).size).toBe(2);
     // Joe is preferred, so done asks neither question; the rotation question came at the reschedule.
     expect(moved.structured!.rotationAsk).toEqual([expect.objectContaining({ jobId: w.job().id })]);
+  });
+
+  it("names the pro who saw the code when a later visit by another pro is cancelled", async () => {
+    const w = await setup();
+    await book(w);
+    const first = await link(w);
+    w.at(TUE.from);
+    expect(doorWord(await call(w, first.token, "door"))).toBe("opened");
+    await reschedule(w, "Sam Spigot");
+    // Joe takes the new time and never sees the code.
+    const joe = (await w.keep(w.desk().contactPro({ jobId: w.job().id, to: w.pro("Joe").id, how: "call" }))).structured!.contactToken as string;
+    await rebook(w, joe, WED);
+    expect(w.job().booking!.proId).toBe(w.pro("Joe").id);
+    const ask = await w.keep(w.desk().cancelJob({ jobId: w.job().id }));
+    const cancelled = await w.keep(w.desk().cancelJob({ jobId: w.job().id, confirmation: codeOf(ask) }));
+    const rotation = "Sam Spigot knows the door code. Want to change it? Set the new code on the lock, then save it here.";
+    expect(cancelled.structured!.rotationAsk).toEqual([{ jobId: w.job().id, question: rotation }]);
+    expect(w.job().rotationAsked).toMatchObject({ proId: w.pro("Sam").id });
+    expect(w.job().rotationAsked!.answer).toBeUndefined();
+  });
+
+  it("asks once more for a second pro who sees the code after the first question was answered", async () => {
+    const w = await setup();
+    w.people().optIn(JOE, PROPERTY_ID);
+    await book(w, TUE, {}, "Joe");
+    w.at(TUE.from);
+    await w.desk().tick();
+    expect(w.sent).toHaveLength(1);
+    const moved = await reschedule(w, "Joe's Plumbing");
+    expect(moved.structured!.rotationAsk).toEqual([{ jobId: w.job().id, question: expect.stringContaining("Joe's Plumbing knows the door code") }]);
+    expect((await w.keep(w.desk().skipQuestion({ jobId: w.job().id, question: "rotate" }))).isError).toBe(false);
+    // Sam takes the new time and opens the code on the page.
+    const sam = w.pro("Sam").id;
+    const pick = await w.keep(w.desk().pickPros({ jobId: w.job().id, ids: [sam] }));
+    expect((await w.keep(w.desk().pickPros({ jobId: w.job().id, ids: [sam], confirmation: codeOf(pick) }))).isError).toBe(false);
+    const contact = (await w.keep(w.desk().contactPro({ jobId: w.job().id, to: sam, how: "call" }))).structured!.contactToken as string;
+    await rebook(w, contact, WED);
+    const { token } = await link(w);
+    w.at(WED.from);
+    expect(doorWord(await call(w, token, "door"))).toBe("opened");
+    expect((await call(w, token, "done")).status).toBe(200);
+    const skipped = await w.keep(w.desk().skipQuestion({ jobId: w.job().id, question: "preferred" }));
+    const rotation = "Sam Spigot knows the door code. Want to change it? Set the new code on the lock, then save it here.";
+    expect(skipped.structured!.rotationAsk).toEqual([{ jobId: w.job().id, question: rotation }]);
+    expect(w.job().rotationAskedFor).toEqual([w.pro("Joe").id, sam]);
+    const asks = ((await w.keep(w.desk().checkFixes({}))).structured as { rotationAsk: unknown[] }).rotationAsk;
+    expect(asks).toEqual([{ jobId: w.job().id, question: rotation }]);
+    // Once answered, nothing more is asked.
+    expect((await w.keep(w.desk().skipQuestion({ jobId: w.job().id, question: "rotate" }))).isError).toBe(false);
+    expect(((await w.keep(w.desk().checkFixes({}))).structured as { rotationAsk: unknown[] }).rotationAsk).toEqual([]);
+  });
+
+  it("refuses a reschedule or cancel yes given before the booking changed", async () => {
+    const w = await setup();
+    await book(w);
+    const moveAsk = await w.keep(w.desk().rescheduleJob({ jobId: w.job().id }));
+    const cancelAsk = await w.keep(w.desk().cancelJob({ jobId: w.job().id }));
+    const until = new Date(Date.parse(TUE.until) + HOUR).toISOString();
+    const extend = await w.keep(w.desk().extendVisit({ jobId: w.job().id, until }));
+    expect((await w.keep(w.desk().extendVisit({ jobId: w.job().id, until, confirmation: codeOf(extend) }))).isError).toBe(false);
+    expect((await w.keep(w.desk().rescheduleJob({ jobId: w.job().id, confirmation: codeOf(moveAsk) }))).isError).toBe(true);
+    expect((await w.keep(w.desk().cancelJob({ jobId: w.job().id, confirmation: codeOf(cancelAsk) }))).isError).toBe(true);
+    expect(w.job().state).toBe("booked");
   });
 
   it("needs the host's yes", async () => {
