@@ -9,8 +9,6 @@ const deny = document.getElementById("oauth-deny");
 const allow = document.getElementById("oauth-allow");
 // A multi-tenant Cleaner Core asks for the invite code from Saad, unless the host signs in instead.
 const invite = document.getElementById("oauth-invite");
-// The shared address's service pick, when the page offers one. None picked: the chat asks instead.
-const picked = () => document.querySelector('input[name="oauth-service"]:checked')?.value;
 // With sign-up open, the page offers Sign in, Create account, and the invite code, one at a time.
 const mode = () => document.querySelector('input[name="oauth-mode"]:checked')?.value;
 const phone = document.getElementById("oauth-phone");
@@ -61,7 +59,7 @@ function showMode() {
 
 /** What Allow sends: the phone and its code, the new account's details, or the invite code. */
 function approval() {
-  const body = { matchCode: allow.dataset.code || "", ...(picked() ? { service: picked() } : {}) };
+  const body = { matchCode: allow.dataset.code || "" };
   if (mode() === "sign-in") return { ...body, signIn: { phone: phone.value, code: phoneCode.value } };
   if (mode() === "sign-up") {
     return {
