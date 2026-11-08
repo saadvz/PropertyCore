@@ -1,11 +1,12 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { fixerDeskFor, resetFixerDesks, type FixerDeps } from "../src/fixer-core/desk";
 import { proRoute } from "../src/fixer-core/proLine";
-import { PRO_HURT, proInvite } from "../src/fixer-core/texts";
+import { PRO_DONE_ACK, PRO_HURT, proInvite, proTextFailed } from "../src/fixer-core/texts";
 import { readFixer, writeFixer, type Job } from "../src/fixer-core/store";
+import { randomBytes } from "node:crypto";
 import { photoCount, setCleanerPhotoFetch } from "../src/cleaner-core/photos";
 import type { Property } from "../src/cleaner-core/hosted/properties";
 import { peopleFor, resetPeople } from "../src/hub/people";
@@ -135,7 +136,7 @@ describe("pros in people.json", () => {
 const SAM = "+15555550143";
 const MIN = 60_000;
 const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from("made-up photo"), Buffer.from([0xff, 0xd9])]);
-const ENV = { CLEANER_CORE_TWILIO_ACCOUNT_SID: `AC${"a".repeat(32)}`, CLEANER_CORE_TWILIO_AUTH_TOKEN: "made-up-token" } as NodeJS.ProcessEnv;
+const ENV = { CLEANER_CORE_TWILIO_ACCOUNT_SID: `AC${"a".repeat(32)}`, CLEANER_CORE_TWILIO_AUTH_TOKEN: "made-up-token", CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64") } as NodeJS.ProcessEnv;
 
 function lineSetup(opts: { texts?: boolean; business?: string | undefined } = {}) {
   const sent: { to: string; body: string }[] = [];
@@ -152,7 +153,7 @@ function lineSetup(opts: { texts?: boolean; business?: string | undefined } = {}
       notes.push({ id, text });
     },
   });
-  return { ...base, sent, notes };
+  return { ...base, sent, notes, hub: () => hubFor(base.root, { now: () => NOW }) };
 }
 type Line = ReturnType<typeof lineSetup>;
 
@@ -351,5 +352,136 @@ describe("a pro's text on the line", () => {
     await inProgress(w);
     await w.desk.proInbound(text(JOE, "ouch someone is hurt"));
     for (const m of w.sent) expect(m.body).not.toMatch(/Other Street|prp_/);
+  });
+});
+
+describe("review fixes: one other-role check, opt-in, photos, replays", () => {
+  const photoFetch = () =>
+    setCleanerPhotoFetch(async () => new Response(jpeg, { status: 200, headers: { "content-type": "image/jpeg" } }));
+  const mm = (i: number) => ({ url: `https://api.twilio.com/2010-04-01/Accounts/${ENV.CLEANER_CORE_TWILIO_ACCOUNT_SID}/Messages/MM${i}/Media/ME${i}`, contentType: "image/jpeg" });
+
+  it("gives a pro who is the cleaner on another property no invite and no code text", async () => {
+    const w = lineSetup();
+    w.people.savePropertyPeople(B, "+15555550101", [{ phone: JOE, role: "cleaner", name: "Joe" }]);
+    await w.desk.savePro({ ...joe, shared: true, prefersText: true });
+    expect(w.sent).toEqual([]);
+    w.people.optIn(JOE, A);
+    // The same visit, once with the cleaner role elsewhere and once without it.
+    const book = async (x: Line) => {
+      x.hub().doorAccess(() => ENV).save("5821", undefined, undefined);
+      const file = readFixer(x.root);
+      file.settings.activatedAt = NOW.toISOString();
+      file.jobs.push({ id: "job_abcde12345", trade: "plumbing", what: "Sink", source: "host", photos: [], urgency: "soon", state: "booked", candidates: [], picked: [], contacts: [], news: [], createdAt: NOW.toISOString(), booking: { proId: file.pros[0]!.id, from: new Date(NOW.getTime() + 20 * MIN).toISOString(), until: new Date(NOW.getTime() + 140 * MIN).toISOString(), access: "code", hostYes: { at: NOW.toISOString() }, fingerprint: "fp" } });
+      writeFixer(x.root, file);
+      await x.desk.tick();
+    };
+    await book(w);
+    expect(job0(w).codeTextAt).toBeUndefined();
+    expect(w.sent).toEqual([]);
+    const control = lineSetup();
+    await control.desk.savePro({ ...joe, prefersText: true });
+    control.people.optIn(JOE, A);
+    await book(control);
+    expect(job0(control).codeTextAt).toBeDefined();
+  });
+
+  it("invites each phone once even when the pro's phone goes A to B to A", async () => {
+    const w = lineSetup();
+    const id = (await w.desk.savePro({ ...joe, prefersText: true })).structured!.proId as string;
+    await w.desk.savePro({ ...joe, prefersText: true, id, reach: { phone: SAM } });
+    await w.desk.savePro({ ...joe, prefersText: true, id });
+    expect(w.sent.map((m) => m.to)).toEqual([JOE, SAM]);
+  });
+
+  it("treats DONE and a price from a pro who has not said YES, or has stopped, as news", async () => {
+    const w = lineSetup();
+    await inProgress(w);
+    w.people.stop(JOE);
+    await w.desk.proInbound(text(JOE, "DONE"));
+    await w.desk.proInbound(text(JOE, "$420"));
+    expect(job0(w).state).toBe("in-progress");
+    expect(job0(w).booking!.revisedQuote).toBeUndefined();
+    expect(job0(w).news.filter((x) => x.kind === "pro-text")).toHaveLength(2);
+    expect(w.sent.filter((m) => m.body === PRO_DONE_ACK)).toEqual([]);
+  });
+
+  it("keeps a photo-only text's photos for the job with no empty news, and a non-DONE text with photos is news too", async () => {
+    const w = lineSetup();
+    const id = await inProgress(w);
+    photoFetch();
+    await w.desk.proInbound(text(JOE, "", [mm(1)]));
+    expect(photoCount(w.root, `fixer:${id}`)).toBe(1);
+    expect(job0(w).photos).toHaveLength(1);
+    expect(job0(w).news).toEqual([]);
+    expect(w.notes).toEqual([]);
+    await w.desk.proInbound(text(JOE, "under the sink", [mm(2)]));
+    expect(photoCount(w.root, `fixer:${id}`)).toBe(2);
+    expect(job0(w).news.map((x) => x.kind)).toEqual(["pro-text"]);
+    expect(job0(w).state).toBe("in-progress");
+  });
+
+  it("thanks an opted-in pro for DONE, and says nothing back to a price", async () => {
+    const w = lineSetup();
+    await inProgress(w);
+    w.sent.length = 0;
+    await w.desk.proInbound(text(JOE, "$420"));
+    expect(w.sent).toEqual([]);
+    await w.desk.proInbound(text(JOE, "DONE"));
+    expect(w.sent).toEqual([{ to: JOE, body: "Thanks, marked done." }]);
+  });
+
+  it("tells the host when a text could not be handled", async () => {
+    const w = lineSetup();
+    await inProgress(w);
+    writeFileSync(join(w.root, "fixer.json"), "{ not json");
+    await w.desk.proInbound(text(JOE, "hello"));
+    expect(w.notes.map((x) => x.text)).toEqual([proTextFailed({ proName: "A pro" })]);
+    expect(proTextFailed({ proName: "Joe" })).toBe("A text from Joe couldn't be handled. Check with them.");
+  });
+
+  it("ignores a replayed message id, and keeps only the last 200", async () => {
+    const w = lineSetup();
+    await inProgress(w);
+    await w.desk.proInbound({ id: "SM1", from: JOE, text: "all good here" });
+    await w.desk.proInbound({ id: "SM1", from: JOE, text: "all good here" });
+    expect(job0(w).news.filter((x) => x.kind === "pro-text")).toHaveLength(1);
+    for (let i = 0; i < 205; i++) await w.desk.proInbound({ id: `X${i}`, from: JOE, text: "HELP" });
+    const seen = readFixer(w.root).seenInbound!;
+    expect(seen).toHaveLength(200);
+    expect(seen.at(-1)).toBe("X204");
+  });
+
+  it("lets an injury win over a text that is also DONE or a price", async () => {
+    const w = lineSetup();
+    await inProgress(w);
+    await w.desk.proInbound(text(JOE, "DONE, my helper fell"));
+    await w.desk.proInbound(text(JOE, "$420 and he is bleeding"));
+    expect(job0(w).state).toBe("in-progress");
+    expect(job0(w).booking!.revisedQuote).toBeUndefined();
+    expect(w.sent.filter((m) => m.body === PRO_HURT)).toHaveLength(2);
+  });
+
+  it("STOP for a pro saved on two properties stops texts on both", async () => {
+    const first = lineSetup();
+    await first.desk.savePro({ ...joe, prefersText: true });
+    const second = setup(B, first.account);
+    await second.desk.savePro({ ...joe, shared: true });
+    first.people.optIn(JOE, A);
+    await first.desk.proInbound(text(JOE, "STOP"));
+    expect(second.people.stopped(JOE)).toBe(true);
+    expect(roles(second.people, JOE, B)).toEqual(["pro"]);
+    expect(second.people.claimInvite(JOE, B)).toBe(false);
+  });
+
+  it("a YES while a booking approval is pending opts in and leaves the booking alone", async () => {
+    const w = lineSetup();
+    await inProgress(w, 18000, "booked");
+    const file = readFixer(w.root);
+    delete file.jobs[0]!.booking!.hostYes;
+    file.jobs[0]!.state = "contacted";
+    writeFixer(w.root, file);
+    const before = JSON.stringify(readFixer(w.root).jobs);
+    await w.desk.proInbound(text(JOE, "YES"));
+    expect(JSON.stringify(readFixer(w.root).jobs)).toBe(before);
   });
 });

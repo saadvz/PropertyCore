@@ -18,9 +18,9 @@ import { ConfirmationBook } from "../operator/confirmations";
 import { nextDates, scheduleProblem, type Schedule } from "../supply-core/schedule";
 import { supplyAskOn } from "../supply-core/store";
 import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
-import { priceCents } from "./proLine";
+import { holdsOtherRole, priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
-import { bookingQuestion, cancelQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_HURT, proHurtNews, proInvite, proTextNews, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
+import { bookingQuestion, cancelQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, proHurtNews, proTextFailed, proInvite, proTextNews, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type Candidate, type Contact, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
@@ -475,13 +475,13 @@ export class FixerDesk {
     const phone = pro.reach.phone;
     const people = this.deps.people?.();
     const here = this.deps.propertyId;
-    if (pro.status !== "saved" || !pro.prefersText || !phone || pro.invitedPhone === phone || !people || !here || !this.deps.send) return;
-    if (people.rolesOn(phone, here).some((role) => role !== "pro")) return;
+    if (pro.status !== "saved" || !pro.prefersText || !phone || pro.invitedPhones?.includes(phone) || !people || !here || !this.deps.send) return;
+    if (holdsOtherRole(people, phone)) return;
     try {
       if ((await this.deps.textsAllowed?.()) !== true) return;
       const business = await this.deps.business?.();
       if (!business || !people.claimInvite(phone, here)) return;
-      pro.invitedPhone = phone;
+      (pro.invitedPhones ??= []).push(phone);
       this.write(file);
       await this.deps.send(phone, proInvite({ proName: pro.name, business, street: streetOf(this.hub().property().address ?? "") }));
     } catch {
@@ -1524,7 +1524,7 @@ export class FixerDesk {
     const people = this.deps.people?.();
     const here = this.deps.propertyId;
     if (!pro?.prefersText || !phone || !people || !here || !this.deps.send) return undefined;
-    if (people.rolesOn(phone, here).some((role) => role !== "pro")) return undefined;
+    if (holdsOtherRole(people, phone)) return undefined;
     return people.optedIn(phone) && !people.stopped(phone) ? phone : undefined;
   }
 
@@ -2024,21 +2024,22 @@ export class FixerDesk {
    * runs removed. It never approves, books or changes anything else, and nothing it sends names another property.
    */
   async proInbound(input: { id: string; from: string; text: string; media?: readonly InboundMedia[] }): Promise<void> {
+    let who = "A pro";
+    const id = input.id || newId("msg_", 10);
     await this.serial(async () => {
       const people = this.deps.people?.();
       const here = this.deps.propertyId;
       if (!people || !here || !input.from) return;
-      const roles = people.rolesOn(input.from, here);
-      if (!roles.includes("pro") || roles.some((role) => role !== "pro")) return;
+      if (!people.rolesOn(input.from, here).includes("pro") || holdsOtherRole(people, input.from)) return;
       const text = input.text.trim();
-      let file: FixerFile;
-      try {
-        file = this.read();
-      } catch {
-        return;
-      }
+      const file = this.read();
+      // A replayed webhook is ignored: the last 200 handled ids are kept.
+      if (file.seenInbound?.includes(id)) return;
+      file.seenInbound = [...(file.seenInbound ?? []), id].slice(-200);
+      this.write(file);
       const pro = file.pros.find((entry) => entry.status === "saved" && entry.reach.phone === input.from);
       const proName = pro?.name ?? "A pro";
+      who = proName;
       const street = streetOf(this.hub().property().address ?? "");
       if (isInjuryReport(text)) {
         try {
@@ -2046,7 +2047,7 @@ export class FixerDesk {
         } catch {
           // The host note below still goes.
         }
-        await this.tell([{ id: `fixer:pro-hurt:${input.id}`, text: proHurtNews({ proName, street }) }]);
+        await this.tell([{ id: `fixer:pro-hurt:${id}`, text: proHurtNews({ proName, street }) }]);
         return;
       }
       const keyword = keywordOf(text);
@@ -2057,35 +2058,42 @@ export class FixerDesk {
       const now = this.deps.now().getTime();
       const mine = pro && !this.inactive(file) ? file.jobs.filter((job) => job.booking?.proId === pro.id && job.booking.hostYes && liveBooking(job)) : [];
       const started = mine.filter((job) => job.state === "in-progress" || (job.state === "booked" && now >= Date.parse(job.booking!.from)));
-      if (isDone(text) && started.length > 0) {
-        const job = started.find((entry) => entry.state === "in-progress") ?? started[0]!;
-        await this.photosFromText(job, input.media);
+      const live = mine.find((job) => job.state === "in-progress");
+      const target = live ?? started[0];
+      // Photos on any text from a pro at a visit that has started are kept for that job.
+      if (target && input.media && input.media.length > 0) {
+        await this.photosFromText(target, input.media);
+        this.write(file);
+      }
+      // DONE and a price count only from a pro who said YES and has not stopped.
+      const agreed = people.optedIn(input.from) && !people.stopped(input.from);
+      if (isDone(text) && started.length > 0 && agreed) {
         const notes: HostNote[] = [];
-        this.finishJob(file, job, "pro-text", undefined, notes);
+        this.finishJob(file, target!, "pro-text", undefined, notes);
         this.write(file);
         await this.tell(notes);
+        if ((await this.deps.textsAllowed?.()) === true) await this.deps.send?.(input.from, PRO_DONE_ACK).catch(() => undefined);
         return;
       }
       const cents = priceCents(text);
-      const live = mine.find((job) => job.state === "in-progress");
-      if (cents !== undefined && live && cents <= 2_000_000) {
+      if (cents !== undefined && live && agreed && cents <= 2_000_000) {
         const reply = await this.raisePriceNow(live.id, cents);
         if (!reply.isError) return;
       }
+      if (!text) return;
       const news = proTextNews({ proName, text: redactDigits(text).slice(0, 300).trim() });
-      const job = live ?? started[0];
-      if (job) {
+      if (target) {
         const fresh = this.read();
-        const target = fresh.jobs.find((entry) => entry.id === job.id);
-        if (target) {
-          const note = this.news(target, "pro-text", news, `fixer:${target.id}:pro-text:${input.id}`);
+        const job = fresh.jobs.find((entry) => entry.id === target.id);
+        if (job) {
+          const note = this.news(job, "pro-text", news, `fixer:${job.id}:pro-text:${id}`);
           this.write(fresh);
           await this.tell([note]);
           return;
         }
       }
-      await this.tell([{ id: `fixer:pro-text:${input.id}`, text: news }]);
-    }).catch(() => undefined);
+      await this.tell([{ id: `fixer:pro-text:${id}`, text: news }]);
+    }).catch(() => this.tell([{ id: `fixer:pro-text-failed:${id}`, text: proTextFailed({ proName: who }) }]));
   }
 
   /** raisePrice for a text, already inside the desk's one-at-a-time turn. */

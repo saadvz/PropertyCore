@@ -7,15 +7,18 @@ import type { People } from "../hub/people";
  * job's done and price; the desk's `proInbound` does the work, this file only picks who it is for.
  */
 
+/** True when the phone is the host of any of the account's properties, or holds a role other than pro on any of them. */
+export function holdsOtherRole(people: Pick<People, "person" | "isHost">, phone: string): boolean {
+  return people.isHost(phone) || (people.person(phone)?.where.some((w) => w.role !== "pro") ?? false);
+}
+
 /**
  * The properties with Fixer Core on where `from` is a pro, or undefined. A person who holds any other
  * role on any of the account's properties (cleaner, co-host, assistant, observer, or the host) stays
  * with Cleaner Core, and Fixer Core reaches them by the visit page only.
  */
-export function proRoute(tenant: Pick<Tenant, "properties">, people: Pick<People, "rolesOn" | "hostOf">, from: string): Property[] | undefined {
-  if (!from) return undefined;
-  const other = tenant.properties.some((p) => people.hostOf(p.id) === from || people.rolesOn(from, p.id).some((role) => role !== "pro"));
-  if (other) return undefined;
+export function proRoute(tenant: Pick<Tenant, "properties">, people: Pick<People, "rolesOn" | "person" | "isHost">, from: string): Property[] | undefined {
+  if (!from || holdsOtherRole(people, from)) return undefined;
   const mine = tenant.properties.filter((p) => p.flows.fixer.on && people.rolesOn(from, p.id).includes("pro"));
   return mine.length > 0 ? mine : undefined;
 }

@@ -167,6 +167,11 @@ export class People {
     return this.file.people.find((p) => p.phone === phone)?.where.filter((w) => w.propertyId === propertyId).map((w) => w.role) ?? [];
   }
 
+  /** True when the phone is the host of any property on the account. */
+  isHost(phone: string): boolean {
+    return Object.values(this.file.hosts).includes(phone);
+  }
+
   hostOf(propertyId: string): string | undefined {
     return this.file.hosts[propertyId];
   }

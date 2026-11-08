@@ -38,8 +38,8 @@ export interface Pro {
   source: "host" | "drafted" | "job";
   addedAt: string;
   lastJobAt?: string;
-  /** The phone the text invite went to, so each number is invited once. */
-  invitedPhone?: string;
+  /** Every phone the text invite went to, so each number is invited once. */
+  invitedPhones?: string[];
 }
 
 export interface Upkeep {
@@ -183,6 +183,8 @@ export interface FixerFile {
   jobs: Job[];
   /** The local date (YYYY-MM-DD) the host last said the guests have left, for every job's checkout-day check. */
   clearedYmd?: string;
+  /** The last 200 inbound pro text ids handled, so a replayed webhook does nothing. */
+  seenInbound?: string[];
   offAt?: string;
 }
 

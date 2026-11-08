@@ -207,3 +207,11 @@ export function proHurtNews(f: { proName: string; street: string }): string {
 export function proTextNews(f: { proName: string; text: string }): string {
   return `${f.proName} texted: "${f.text}"`;
 }
+
+/** Sent to an opted-in pro whose DONE text marked the visit done (a design-pass item). */
+export const PRO_DONE_ACK = "Thanks, marked done.";
+
+/** Told to the host when a pro's text could not be handled. */
+export function proTextFailed(f: { proName: string }): string {
+  return `A text from ${f.proName} couldn't be handled. Check with them.`;
+}
