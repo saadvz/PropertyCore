@@ -169,9 +169,9 @@ run_logged() {
 run_ci_gate() {
   local dir="$EVIDENCE/ci-local"
   mkdir -p "$dir"
-  # scripts/ci-proofs.sh runs after scripts/ci-check.sh in CI, so the gate has already run there.
+  # In CI, scripts/ci-check.sh runs in its own job of the same workflow run, and the run fails if it fails.
   if [[ "${CLEANER_CI_CHECK_DONE:-}" == "1" ]]; then
-    printf '%s\n' "skipped: scripts/ci-check.sh already ran in this CI job" >"$dir/decision.txt"
+    printf '%s\n' "skipped: scripts/ci-check.sh runs in this CI workflow run" >"$dir/decision.txt"
     return
   fi
   local changed=()
@@ -498,14 +498,23 @@ fi
 run_journeys
 
 printf '%s\n' "== regressions"
-if ! bash "$SKILL/scripts/prove-step-d.sh" >"$EVIDENCE/regression-step-d.txt"; then
-  fail "prove-step-d failed"
-fi
-if ! bash "$SKILL/scripts/prove-step-e.sh" >"$EVIDENCE/regression-step-e.txt"; then
-  fail "prove-step-e failed"
-fi
-if ! bash "$SKILL/scripts/prove-step-f.sh" >"$EVIDENCE/regression-step-f.txt"; then
-  fail "prove-step-f failed"
+REGRESSIONS="prove-step-d.sh prove-step-e.sh prove-step-f.sh"
+# scripts/ci-proofs.sh runs those three proofs itself before this one, so CI does not run them twice.
+if [[ "${CLEANER_CI_REGRESSIONS_DONE:-}" == "1" ]]; then
+  for step in d e f; do
+    printf '%s\n' "skipped: scripts/ci-proofs.sh already ran prove-step-$step.sh in this CI job" >"$EVIDENCE/regression-step-$step.txt"
+  done
+  REGRESSIONS="skipped, scripts/ci-proofs.sh ran $REGRESSIONS"
+else
+  if ! bash "$SKILL/scripts/prove-step-d.sh" >"$EVIDENCE/regression-step-d.txt"; then
+    fail "prove-step-d failed"
+  fi
+  if ! bash "$SKILL/scripts/prove-step-e.sh" >"$EVIDENCE/regression-step-e.txt"; then
+    fail "prove-step-e failed"
+  fi
+  if ! bash "$SKILL/scripts/prove-step-f.sh" >"$EVIDENCE/regression-step-f.txt"; then
+    fail "prove-step-f failed"
+  fi
 fi
 
 doctor "$EVIDENCE/ci-local"
@@ -528,7 +537,7 @@ fi
 
 cat >"$EVIDENCE/result.txt" <<EOF
 features: ci-local stale-source host-override-beats-stale-feed permanent-code backup-restore no-cleaner replay-no-resend recovery-after-restart review-queue observability tenant-isolation stop-help-injury
-regressions: prove-step-d.sh prove-step-e.sh prove-step-f.sh
+regressions: $REGRESSIONS
 script: .cursor/skills/verify-cleanercore/scripts/prove-step-g.sh
 pins: redacted
 stale-default: 3 hours, three missed hourly Guesty Lite polls
