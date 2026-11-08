@@ -770,7 +770,7 @@ function validationStatuses(services: OperatorServices, propertyReady: boolean, 
   const guards = publishGuards(services, primary.id, config.messagingMode, installed);
   const texting = visitorTexting(services, primary.id, config.messagingMode, installed);
   const textingStatus = texting.state === "test-mode" ? "test mode" : texting.state === "connected" ? "live" : "practice only";
-  const liveSummary = `${name} is published. Visitor texting: ${textingStatus}. Door access: ${config.accessMode === "durin-mock" ? "demo" : "connected"}.`;
+  const liveSummary = `${name} is published. Visitor texting: ${textingStatus}. Door access: ${config.accessMode === "door-demo" ? "demo" : "connected"}.`;
   const readinessOk = !!state.readiness?.passed && isCurrent(state.readiness, state);
   const dryOk = !!state.dryTour?.passed && isCurrent(state.dryTour, state);
   const published = state.status === "PUBLISHED_FOR_DEMO";
