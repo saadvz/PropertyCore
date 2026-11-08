@@ -244,7 +244,7 @@ describe("failure behavior", () => {
     const core = new TourCore({
       config,
       clock,
-      store: new DurableTourStore(inner, drive, () => false),
+      store: new DurableTourStore(inner, () => drive, () => false),
       durin: new MockDurinAccessAdapter({ doorNames: {}, now: () => clock.now() }),
       messenger: new ConsoleMessenger((line) => lines.push(line)),
       verification: createVerificationProvider(config),
@@ -252,6 +252,37 @@ describe("failure behavior", () => {
     await expect(core.startInquiry({ name: "Jane Smith", phone: "(555) 010-1234", unitId: "apt_101" })).rejects.toBeInstanceOf(StorageUnavailableError);
     expect(lines.join("\n")).not.toMatch(/booked/);
     expect(await inner.list("reservations")).toEqual([]);
+  });
+
+  it("a tour store made before Drive opens saves to Drive once it opens, not to memory", async () => {
+    const root = tempDir();
+    const drive = new FakeGoogleDrive();
+    const installation = () => new Installation({ root, runtime: new FileRuntimeStore(join(root, "runtime")), env: () => ({}), driveClient: drive, now: () => Date.parse("2026-10-08T12:00:00.000Z") });
+    const first = installation();
+    first.files.ensure({ deploymentMode: "LOCAL_DEVELOPER" });
+    first.secrets.set({ GOOGLE_OAUTH_REFRESH_TOKEN: "google-refresh-test-token" });
+    expect((await first.records.finish()).ok).toBe(true);
+
+    // A restart: Drive is the canonical store, but this process hasn't opened it yet.
+    const restarted = installation();
+    expect(restarted.records.provider()).toBe("GOOGLE_DRIVE_READY");
+    const config = loadConfig();
+    const clock = new SimulatedClock(zonedTimeToUtc({ ...TOUR_DAY, hour: 10, minute: 0 }, config.property.timezone));
+    const core = new TourCore({
+      config,
+      clock,
+      store: restarted.records.wrapStore(new InMemoryStore()),
+      durin: new MockDurinAccessAdapter({ doorNames: {}, now: () => clock.now() }),
+      messenger: new ConsoleMessenger(() => {}),
+      verification: createVerificationProvider(config),
+    });
+    await expect(core.startInquiry({ name: "Jane Smith", phone: "(555) 010-1234", unitId: "apt_101" })).rejects.toBeInstanceOf(StorageUnavailableError);
+
+    await restarted.records.beforeAccess();
+    const started = await core.startInquiry({ name: "Jane Smith", phone: "(555) 010-1234", unitId: "apt_101" });
+    const saved = [...drive.files.values()].map((file) => file.meta.appProperties.tourCorePath);
+    expect(saved).toContain(`tours-data/reservations/${started.reservation.id}.json`);
+    expect(saved).toContain(`tours-data/prospects/${started.prospect.id}.json`);
   });
 
   it("does not call Durin when canonical records cannot be confirmed before unlock, keeps the booking ready, and hands the visitor off", async () => {

@@ -278,6 +278,17 @@ describe("one Scratch turnover", () => {
     expect(job.jobs().filter((item) => item.live && item.id === "stay-anita@guesty.com")).toEqual([]);
   });
 
+  it("counts a called-off cleaning once in health", async () => {
+    const job = core(sink());
+    await job.pollFeed(feed("guesty-lite-scratch.ics"));
+    await job.receive({ id: "c1", from: OWNER, text: "YES" });
+    expect(job.health().counters.canceled).toBe(0);
+    await job.pollFeed(feed("guesty-lite-stay-removed.ics"));
+    expect(job.health().counters.canceled).toBe(1);
+    await job.pollFeed(feed("guesty-lite-stay-removed.ics"));
+    expect(job.health().counters.canceled).toBe(1);
+  });
+
   it("sends each reminder once across a second poll, a failed send, and a restart", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cleaner-core-"));
     try {

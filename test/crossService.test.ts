@@ -89,6 +89,19 @@ describe("on a touring account", () => {
     expect(m.sms.sent).toEqual([]);
   });
 
+  it("keeps the host's notes when touring's get_state answers with an error, and shows them on the next good one (#215)", SLOW, async () => {
+    const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
+    const { token } = await touringAfterCleaning(m);
+    await m.text(LANE, CLEANER, "DONE", "SMn1");
+    const refused = await m.toolAt("/mcp", token, "get_state", { notAnArgument: true });
+    expect(refused.isError).toBe(true);
+    expect(refused.structured?.serviceNotices).toBeUndefined();
+    const state = await m.toolAt("/mcp", token, "get_state");
+    expect(state.structured?.serviceNotices).toEqual(["Someone from your cleaning setup texted this number, which is set up for touring now. They didn't get a reply."]);
+    // Shown once: the reply that carried them cleared them.
+    expect((await m.toolAt("/mcp", token, "get_state")).structured?.serviceNotices).toBeUndefined();
+  });
+
   it("rejects a forged STOP: the signature is checked before any opt-out is kept", SLOW, async () => {
     const m = (open = await multiTenantApp({ env: { TOUR_CORE_TENANTS: "1" } }));
     const { tenant } = await touringAfterCleaning(m);

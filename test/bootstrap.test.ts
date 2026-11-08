@@ -1,7 +1,8 @@
+import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { runBootstrap } from "../src/install/bootstrap";
+import { nodeVersionProblem, runBootstrap } from "../src/install/bootstrap";
 import { publicHealth } from "../src/install/checks";
 import type { ProcessControl } from "../src/install/processes";
 import { CloudflareQuickTunnelProvider, ManualPublicEndpointProvider } from "../src/install/publicEndpoint";
@@ -235,5 +236,31 @@ describe("bootstrap:grok", () => {
     expect(report.steps.at(-1)).toEqual({ step: "dependencies", ok: false, message: "Dependencies aren't installed (missing tsx)." });
     expect(report.status.nextStep).toMatchObject({ component: "RUNTIME", action: "START_RUNTIME", command: "npm run bootstrap:grok" });
     expect(w.spawned).toHaveLength(0);
+  });
+});
+
+describe("Node.js version check", () => {
+  const TOO_OLD = /^Tour Core needs Node\.js 22\.13 or newer \(this computer has [0-9.]+\)\.$/;
+
+  it("requires Node.js 22.13, which package.json engines and ci-check.sh need", () => {
+    expect(nodeVersionProblem("20.11.0")).toMatch(TOO_OLD);
+    expect(nodeVersionProblem("22.12.0")).toBe("Tour Core needs Node.js 22.13 or newer (this computer has 22.12.0).");
+    expect(nodeVersionProblem("22.13.0")).toBeUndefined();
+    expect(nodeVersionProblem("23.0.0")).toBeUndefined();
+  });
+
+  it("bootstrap:grok stops on an older Node.js with the same message, before installing anything", () => {
+    for (const version of ["20.11.0", "22.12.0"]) {
+      // Pretend to be an older Node, and never let the script run npm or the real bootstrap.
+      const fake = [
+        `Object.defineProperty(process.versions, "node", { value: "${version}" });`,
+        `const cp = await import("node:child_process"); const { syncBuiltinESMExports } = await import("node:module");`,
+        `cp.default.spawnSync = () => ({ status: 99 }); syncBuiltinESMExports();`,
+      ].join(" ");
+      const run = spawnSync(process.execPath, ["--import", `data:text/javascript,${encodeURIComponent(fake)}`, join("scripts", "bootstrap-grok.mjs")], { encoding: "utf8" });
+      expect(run.status, version).toBe(1);
+      expect(run.stderr.trim()).toBe(`Tour Core needs Node.js 22.13 or newer (this computer has ${version}).`);
+      expect(run.stdout).toBe("");
+    }
   });
 });
