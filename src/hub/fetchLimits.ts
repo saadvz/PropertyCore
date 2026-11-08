@@ -1,4 +1,4 @@
-import { isIP } from "node:net";
+import { isPrivateAddress } from "../net/addresses";
 
 const MAX_BYTES = 1_000_000;
 const MAX_MS = 10_000;
@@ -15,23 +15,11 @@ export function calendarUrlAllowed(raw: string): boolean {
   }
   if (url.protocol !== "https:") return false;
   if (url.username || url.password) return false;
-  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return false;
   if (host === "metadata.google.internal") return false;
-  if (isIP(host) && privateAddress(host)) return false;
+  if (isPrivateAddress(host)) return false;
   return true;
-}
-
-function privateAddress(host: string): boolean {
-  if (host === "::1" || host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd")) return true;
-  const parts = host.split(".").map((part) => Number(part));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) return false;
-  const [a, b] = parts;
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b !== undefined && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  return false;
 }
 
 export interface CalendarFetch {
