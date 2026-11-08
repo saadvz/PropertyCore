@@ -214,14 +214,16 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
 .tip b { color: var(--accent); }
 .stuck { background: var(--surface); border: 2px solid var(--accent); border-radius: 14px; padding: 18px 20px; display: grid; gap: 6px; }
 .stuck h3 { font-family: var(--f-body); font-size: 1.08rem; }
-
+.pcards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.pcard { border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: var(--bg); font-size: 0.74rem; line-height: 1.3; }
+.pcard i { display: block; height: 26px; border-radius: 5px; background: var(--line); margin-bottom: 4px; }
 
 .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-/* Service switch: the page's one deliberate flourish. Tour Core is blue, Cleaner Core teal. */
-:root { --tour: #2d4fb0; --tour-soft: #e2e8f8; --clean: #0d6e6e; --clean-soft: #dcefee; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --tour: #9db2f2; --tour-soft: #1d2747; --clean: #5cc8c3; --clean-soft: #163634; } }
-:root[data-theme="dark"] { --tour: #9db2f2; --tour-soft: #1d2747; --clean: #5cc8c3; --clean-soft: #163634; }
-:root.svc-tour body { --accent: var(--tour); --accent-soft: var(--tour-soft); }
+/* Flow switch: the page's one deliberate flourish. Cleaner Core is teal, Supply Core blue. */
+:root { --supply: #2d4fb0; --supply-soft: #e2e8f8; --clean: #0d6e6e; --clean-soft: #dcefee; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --supply: #9db2f2; --supply-soft: #1d2747; --clean: #5cc8c3; --clean-soft: #163634; } }
+:root[data-theme="dark"] { --supply: #9db2f2; --supply-soft: #1d2747; --clean: #5cc8c3; --clean-soft: #163634; }
+:root.svc-supply body { --accent: var(--supply); --accent-soft: var(--supply-soft); }
 :root.svc-clean body { --accent: var(--clean); --accent-soft: var(--clean-soft); }
 .picker { display: grid; gap: 12px; }
 .picker h2 { font-size: 1.3rem; }
@@ -231,33 +233,34 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
 .switch button span { color: var(--muted); font-size: 0.95rem; }
 .switch button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 3px var(--accent-soft); }
 .switch button[aria-pressed="true"] b::after { content: "  ✓"; color: var(--accent); }
-.svc-tour [data-svc="clean"], .svc-clean [data-svc="tour"] { display: none !important; }
+.svc-clean [data-svc="supply"], .svc-supply [data-svc="clean"] { display: none !important; }
 </style>
-<script>document.documentElement.classList.add("svc-tour")</script>
+<script>document.documentElement.classList.add("svc-clean")</script>
 
 <div class="wrap">
 
 <header>
   <div class="eyebrow">Property Core · Muse guide</div>
   <h1>Set up Property Core in Muse</h1>
-  <p class="lede">Property Core runs one of two helpers on your phone number. <b>Tour Core</b> lets people text to book a self-guided tour of your rental. <b>Cleaner Core</b> texts your cleaner about each turnover and hands over the door code once the guests have left.</p>
-  <p class="lede">You don't need any technical skills. Pick the one you're setting up, then follow the steps in order.</p>
-  <div class="facts"><span class="fact"><b>About 20 minutes</b></span><span class="fact" data-svc="tour"><b>5 steps</b></span><span class="fact" data-svc="clean"><b>5 steps</b></span><span class="fact">Starts with <b>one paste</b></span></div>
+  <p class="lede">Property Core runs your rental's jobs from one chat, property by property. <b>Cleaner Core</b> texts your cleaner about each turnover and hands over the door code once the guests have left. <b>Supply Core</b> keeps the place stocked: you pick each product once, Muse shops in its own browser, and every cart is checked before checkout.</p>
+  <p class="lede">You don't need any technical skills. Pick a flow to see its steps, then follow them in order.</p>
+  <div class="facts"><span class="fact" data-svc="clean"><b>About 20 minutes</b></span><span class="fact" data-svc="clean"><b>5 steps</b></span><span class="fact" data-svc="supply"><b>About 20 minutes</b>, more for a long list</span><span class="fact" data-svc="supply"><b>5 steps</b></span><span class="fact">Starts with <b>one paste</b></span></div>
 </header>
 
 <section class="picker" aria-labelledby="pick-h">
-  <h2 id="pick-h">Which are you setting up?</h2>
+  <h2 id="pick-h">Which flow are you setting up?</h2>
   <div class="switch" role="group" aria-labelledby="pick-h">
-    <button type="button" data-pick="tour" aria-pressed="true"><b>Tour Core</b><span>Self-guided tours for a rental unit</span></button>
-    <button type="button" data-pick="clean" aria-pressed="false"><b>Cleaner Core</b><span>A cleaner for a property</span></button>
+    <button type="button" data-pick="clean" aria-pressed="true"><b>Cleaner Core</b><span>Your cleaner, on schedule for each turnover</span></button>
+    <button type="button" data-pick="supply" aria-pressed="false"><b>Supply Core</b><span>Supplies reordered for your property</span></button>
   </div>
-  <p class="map-note">Your number runs one at a time. You can switch later by asking Muse.</p>
+  <p class="map-note">A property can run both. Set up one now, and turn the other on later by asking Muse.</p>
+  <p class="map-note">Fixer Core, for repairs, comes next. Tour Core (self-guided tours) is parked: only touring accounts Saad sets up get it. Its guide is <a href="tour-core/README.md">here</a>.</p>
 </section>
 
 <div class="stuck" role="note">
   <h3>Stuck at any point? That's normal. Two easy ways out:</h3>
   <p>1. In your Muse chat, type <b>"I'm stuck on step 2"</b> (or whichever step) and describe what you see. Muse will walk you through it.</p>
-  <p>2. Or text Saad the step number and what the screen says. A screenshot helps, as long as it doesn't show a door code or a secret code.</p>
+  <p>2. Or text Saad the step number and what the screen says. A screenshot helps, as long as it doesn't show a door code, a card, or a secret code.</p>
 </div>
 
 <section aria-labelledby="need-h">
@@ -267,10 +270,11 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
   </div>
   <div class="need">
     <div class="need-item"><span class="from">Your Meta account</span><h3>A Muse account</h3><p>Muse needs a payment card on file, even on the free tier. Each check Muse makes counts toward your usage.</p></div>
-    <div class="need-item"><span class="from">From Saad</span><h3>Your invite code</h3><p>Saad sends it, and sets up the phone number your helper texts from. The code only works once, and only for 7 days.</p></div>
-    <div class="need-item" data-svc="tour"><span class="from">Your own details</span><h3>Your property basics</h3><p>The address, which units people can tour, the door visitors come in through, and when tours can happen.</p></div>
-    <div class="need-item" data-svc="tour"><span class="from">Optional</span><h3>Answers visitors ask for</h3><p>How to apply, fees, lease lengths, what's due at move-in. Handy, but you can skip any of them.</p></div><div class="need-item" data-svc="clean"><span class="from">You type these during setup</span><h3>Two phone numbers</h3><p>Your mobile number and your cleaner's. With both, you get a group chat with your cleaner. Only have one number? Enter it as the cleaner's number too, and you get a chat with the assistant instead.</p></div>
+    <div class="need-item"><span class="from">Your phone, or Saad</span><h3>A way to sign in</h3><p>Where sign-up is open, you create an account with a code texted to your phone. Otherwise Saad sends an invite code. It only works once, and only for 7 days.</p></div>
+    <div class="need-item" data-svc="clean"><span class="from">You type these during setup</span><h3>Two phone numbers</h3><p>Your mobile number and your cleaner's. With both, you get a group chat with your cleaner. Only have one number? Enter it as the cleaner's number too, and you get a chat with the assistant instead.</p></div>
     <div class="need-item" data-svc="clean"><span class="from">Your own details</span><h3>Property basics at hand</h3><p>Your property's address, usual checkout and check-in times, your cleaner's name, and your door code.</p></div>
+    <div class="need-item" data-svc="supply"><span class="from">Each store you'll use</span><h3>A store account with a way to pay</h3><p>You sign in yourself, in Muse's browser. The account needs its payment method saved. Supply Core never sees your card.</p></div>
+    <div class="need-item" data-svc="supply"><span class="from">Your own details</span><h3>Your shopping list</h3><p>The property's address and everything you want restocked, up to 30 items.</p></div>
   </div>
 </section>
 
@@ -279,125 +283,13 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
     <h2 id="words-h">A few words you'll see</h2>
     <p>Here's what they mean. You don't need to understand more than this.</p>
   </div>
-  <dl class="words"><div class="word"><dt>Property Core</dt><dd>The add-on that connects Muse to Tour Core or Cleaner Core. Muse adds it for you.</dd></div><div class="word"><dt>Choice card</dt><dd>Buttons Muse shows for a question. Tap one to answer.</dd></div><div class="word"><dt>Muse's browser</dt><dd>A web page Muse opens and hands to you. You type in it yourself, so secrets stay private.</dd></div><div class="word"><dt>Recurring task</dt><dd>A helper Muse makes that checks for news on a schedule you pick.</dd></div><div class="word" data-svc="tour"><dt>Practice tour</dt><dd>A pretend tour run to check everything works. Nobody gets a text.</dd></div><div class="word" data-svc="tour"><dt>Publish</dt><dd>Turning tours on, so visitors can book by text.</dd></div></dl>
+  <dl class="words"><div class="word"><dt>Property Core</dt><dd>The add-on that connects Muse to Cleaner Core and Supply Core. Muse adds it for you.</dd></div><div class="word"><dt>Flow</dt><dd>One job Muse runs at a property: Cleaner Core or Supply Core. A property can run both.</dd></div><div class="word"><dt>Choice card</dt><dd>Buttons Muse shows for a question. Tap one to answer.</dd></div><div class="word"><dt>Muse's browser</dt><dd>A web page Muse opens and hands to you. You type in it yourself, so secrets stay private.</dd></div><div class="word"><dt>Recurring task</dt><dd>A helper Muse makes that checks for news on a schedule.</dd></div><div class="word" data-svc="supply"><dt>Held cart</dt><dd>A cart Supply Core stopped before checkout, like a price jump or a cart over your cap. Nothing is bought until you say yes.</dd></div></dl>
 </section>
 
 <section aria-labelledby="steps-h">
   <div class="sec-head">
-    <h2 id="steps-h">The steps for <span data-svc="tour">Tour Core</span><span data-svc="clean">Cleaner Core</span></h2>
+    <h2 id="steps-h">The steps for <span data-svc="clean">Cleaner Core</span><span data-svc="supply">Supply Core</span></h2>
     <p>Tick "Done" as you finish each step. The ticks are remembered in this browser, so you can take a break and come back.</p>
-  </div>
-  <div class="steps" data-svc="tour">
-    <article class="step" id="tour-step-1">
-      <div class="step-head">
-        <span class="num">1</span>
-        <h3>Paste the setup message</h3>
-        <span class="place pl-chat">Muse chat</span>
-        <label class="done-toggle"><input type="checkbox" id="done-tour-1" data-step="tour-1"> Done</label>
-      </div>
-      <div class="step-body">
-        <div class="do">
-          <ol class="todo">
-            <li><div>Open Muse and start a <b>new chat</b>.</div></li>
-            <li><div>Click <b>Copy message</b> below, then paste it in Muse's message box and send it.</div></li>
-            <li><div>Muse starts working. This can take a few minutes.</div></li>
-          </ol>
-          <div class="mock-btns" style="justify-content:flex-start"><button type="button" class="mbtn primary" data-copy="paste-tour" style="cursor:pointer;font:inherit;font-weight:700">Copy message</button></div>
-          <details><summary>See the message you're pasting</summary><div><pre class="prompt" id="paste-tour">Set up Property Core using the open-source repository at https://github.com/saadvz/TourCore.
-Use your cloud computer to clone the repository only so you can read its setup instructions. Save the folder property-core-template/muse/skills/property-core as a skill named Property Core, then follow its SKILL.md as the authoritative setup instructions. Do not start anything on your computer.
-Create the Property Core connector at the hosted service&#x27;s /mcp yourself. When the connection asks for approval, hand me the approval page so I can type my invite code from Saad, pick Tour Core or Cleaner Core, and click Allow. Never ask me for the invite code in chat, and never click Allow yourself.
-As soon as you&#x27;re connected, ask me which I want to set up, Tour Core or Cleaner Core, as a choice card. Then follow that service&#x27;s guide one question at a time.
-Never ask me to paste API keys, passwords, tokens, or door codes into chat or a card.
-Start now.</pre></div></details>
-          <p class="note">It looks technical, but you don't need to read it. It tells Muse where to find the setup instructions.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>New chat</span></div><div class="mock-body"><div class="bubble me">Set up Property Core using the open-source repository at…</div><div class="bubble ai">On it. I'm adding the Property Core connector.</div></div></div></div>
-      </div>
-    </article>
-    <article class="step" id="tour-step-2">
-      <div class="step-head">
-        <span class="num">2</span>
-        <h3>Connect with your invite code</h3>
-        <span class="place pl-private">Muse's browser</span><span class="place pl-settings">Muse settings</span>
-        <label class="done-toggle"><input type="checkbox" id="done-tour-2" data-step="tour-2"> Done</label>
-      </div>
-      <div class="step-body">
-        <div class="do">
-          <ol class="todo">
-            <li><div>A page titled <b>Connect Muse to Tour Core and Cleaner Core</b> opens in Muse's browser, and Muse hands it to you. Type the invite code Saad sent you.</div></li>
-            <li><div>Under <b>What do you want to set up?</b>, pick <b>Tour Core: self-guided tours for a rental unit</b>.</div></li>
-            <li><div>Click <span class="btn-label">Allow</span> yourself. Muse isn't allowed to do this part.</div></li>
-            <li><div>Open <b>Settings → Connectors → Property Core</b> and let Muse use it <b>without asking each time</b>. This lets the checks run while you're away.</div></li>
-          </ol>
-          <p class="tip"><b>Only for Cleaner Core, and only if your bookings are on a Google calendar:</b> connect Muse's <b>Google Calendar</b> connector too.</p>
-          <p class="note warn">Never type your invite code in the chat or in a choice card.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Approval page</span></div><div class="mock-body"><div class="mock-title">Connect Muse to Tour Core and Cleaner Core</div>
-      <div class="field"><label>Invite code from Saad</label><div class="val hl secret">••••••••</div></div>
-      <div class="field"><label>What do you want to set up?</label><div class="radio"><b></b> Tour Core: self-guided tours for a rental unit</div><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> Cleaner Core: a cleaner for a property</div></div>
-      <div class="mock-btns"><span class="mbtn">Deny</span><span class="mbtn primary">Allow</span></div></div></div></div>
-      </div>
-    </article>
-    <article class="step" id="tour-step-3">
-      <div class="step-head">
-        <span class="num">3</span>
-        <h3>Answer Muse's questions</h3>
-        <span class="place pl-chat">Muse chat</span>
-        <label class="done-toggle"><input type="checkbox" id="done-tour-3" data-step="tour-3"> Done</label>
-      </div>
-      <div class="step-body">
-        <div class="do"><ol class="todo"><li><div>Tour Core is paused for new accounts. Ask Saad to make your account a touring account first.</div></li><li><div>Muse asks one question at a time. When it shows buttons, pick one. Otherwise answer in your own words. It will ask about:
-              <ol class="qs">
-                <li>The street address, and then checks it with you.</li>
-                <li>The kind of place: a single-family home, a multifamily home, or one apartment or condo.</li>
-                <li>Which places people can tour, and what to call them (like Unit A, or the street name).</li>
-                <li>How someone walks in: the door they come in through, then the way to the door they tour.</li>
-                <li>A phone number stuck visitors can call during tour hours. You can skip this.</li>
-                <li>What days and times people can tour. Different days can have different hours.</li>
-                <li>Questions visitors often ask: how to apply, fees, lease lengths, what's due at move-in, bringing someone, building rules, the area. Skip any you like.</li>
-                <li>Whether visitors fill out a short identity form first. It's recommended.</li>
-              </ol>
-            </div></li></ol><p class="tip"><b>Not sure how to answer?</b> Just say so. "I don't know, what do most people pick?" works fine.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Muse chat</span></div><div class="mock-body"><div class="bubble ai">Is this a single-family home, a multifamily home, or one apartment or condo?</div><div class="chips"><span class="chip">Single-family</span><span class="chip on">Multifamily</span><span class="chip">Apartment or condo</span></div></div></div></div>
-      </div>
-    </article>
-    <article class="step" id="tour-step-4">
-      <div class="step-head">
-        <span class="num">4</span>
-        <h3>Turn on tour updates</h3>
-        <span class="place pl-chat">Muse chat</span>
-        <label class="done-toggle"><input type="checkbox" id="done-tour-4" data-step="tour-4"> Done</label>
-      </div>
-      <div class="step-body">
-        <div class="do">
-          <ol class="todo">
-            <li><div>Muse asks <b>"Want me to tell you when someone books, starts, or finishes a tour, and when something needs you?"</b> Say <b>yes</b>.</div></li>
-            <li><div>Muse asks how often to check for tour news. <b>Every 15 minutes</b> is a good start. Checking more often uses more of your Muse usage.</div></li>
-            <li><div>Muse makes a recurring task called <b>Tour Core</b> by itself. You don't copy anything.</div></li>
-            <li><div>Muse asks <b>"Want tour updates texted to your phone too?"</b> Pick <b>Urgent only</b> (recommended) and give your mobile number.</div></li>
-          </ol>
-          <p class="note">The texts never include a visitor's name. They just tell you to open your chat.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Muse chat</span></div><div class="mock-body"><div class="bubble ai">How often should I check?</div><div class="chips"><span class="chip">Every 5 minutes</span><span class="chip on">Every 15 minutes</span><span class="chip">Every hour</span></div><div class="bubble ai">Want tour updates texted to your phone too?</div><div class="chips"><span class="chip on">Urgent only</span><span class="chip">Everything</span><span class="chip">No texts</span></div></div></div></div>
-      </div>
-    </article>
-    <article class="step" id="tour-step-5">
-      <div class="step-head">
-        <span class="num">5</span>
-        <h3>Check it and go live</h3>
-        <span class="place pl-chat">Muse chat</span>
-        <label class="done-toggle"><input type="checkbox" id="done-tour-5" data-step="tour-5"> Done</label>
-      </div>
-      <div class="step-body">
-        <div class="do">
-          <ol class="todo">
-            <li><div>Muse reads your setup back as a short list. If something's wrong, just say what to change.</div></li>
-            <li><div>Muse runs a <b>readiness check</b> and a <b>practice tour</b>. Nobody gets a text and no real door opens.</div></li>
-            <li><div>If something needs fixing, Muse tells you in plain words and fixes it with you.</div></li>
-            <li><div>When both pass, Muse asks <b>"Everything passed. Want me to publish this for a demo?"</b> Say <b>yes</b>.</div></li>
-            <li><div>Muse tells you the number visitors text to book a tour. Share that number in your listing.</div></li>
-          </ol>
-          <p class="tip"><b>You're done!</b> 🎉 That's the whole setup.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Muse chat</span></div><div class="mock-body"><div class="bubble ai">I'm running a practice tour. Nobody is texted, and no real door opens.</div><div class="bubble ai">Everything passed. Want me to publish this for a demo?</div><div class="bubble me">Yes</div></div></div><span class="caption">Example wording. Muse's exact words will differ.</span></div>
-      </div>
-    </article>
   </div>
   <div class="steps" data-svc="clean">
     <article class="step" id="clean-step-1">
@@ -415,36 +307,35 @@ Start now.</pre></div></details>
             <li><div>Muse starts working. This can take a few minutes.</div></li>
           </ol>
           <div class="mock-btns" style="justify-content:flex-start"><button type="button" class="mbtn primary" data-copy="paste-clean" style="cursor:pointer;font:inherit;font-weight:700">Copy message</button></div>
-          <details><summary>See the message you're pasting</summary><div><pre class="prompt" id="paste-clean">Set up Property Core using the open-source repository at https://github.com/saadvz/TourCore.
+          <details><summary>See the message you're pasting</summary><div><pre class="prompt" id="paste-clean">Set up Property Core for my short-term rental using the open-source repository at https://github.com/saadvz/TourCore.
 Use your cloud computer to clone the repository only so you can read its setup instructions. Save the folder property-core-template/muse/skills/property-core as a skill named Property Core, then follow its SKILL.md as the authoritative setup instructions. Do not start anything on your computer.
-Create the Property Core connector at the hosted service&#x27;s /mcp yourself. When the connection asks for approval, hand me the approval page so I can type my invite code from Saad, pick Tour Core or Cleaner Core, and click Allow. Never ask me for the invite code in chat, and never click Allow yourself.
-As soon as you&#x27;re connected, ask me which I want to set up, Tour Core or Cleaner Core, as a choice card. Then follow that service&#x27;s guide one question at a time.
-Never ask me to paste API keys, passwords, tokens, or door codes into chat or a card.
+Create the Property Core connector at the hosted service's /mcp yourself. When the connection asks for approval, hand me the approval page so I can sign in or type my invite code from Saad and click Allow. Never ask me for the invite code in chat, and never click Allow yourself.
+As soon as you're connected, call get_state. Add my property, then ask which flows I want there, Cleaner Core, Supply Core, or both, as a choice card. Then follow each flow's skill one question at a time.
+Never ask me to paste API keys, passwords, tokens, calendar links, card details, or door codes into chat or a card. When a secret is needed, open the service's private page in your browser and hand the browser to me, so I type it there myself.
 Start now.</pre></div></details>
           <p class="note">It looks technical, but you don't need to read it. It tells Muse where to find the setup instructions.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>New chat</span></div><div class="mock-body"><div class="bubble me">Set up Property Core using the open-source repository at…</div><div class="bubble ai">On it. I'm adding the Property Core connector.</div></div></div></div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>New chat</span></div><div class="mock-body"><div class="bubble me">Set up Property Core for my short-term rental using…</div><div class="bubble ai">On it. I'm adding the Property Core connector.</div></div></div></div>
       </div>
     </article>
     <article class="step" id="clean-step-2">
       <div class="step-head">
         <span class="num">2</span>
-        <h3>Connect with your invite code</h3>
+        <h3>Connect your account</h3>
         <span class="place pl-private">Muse's browser</span><span class="place pl-settings">Muse settings</span>
         <label class="done-toggle"><input type="checkbox" id="done-clean-2" data-step="clean-2"> Done</label>
       </div>
       <div class="step-body">
         <div class="do">
           <ol class="todo">
-            <li><div>A page titled <b>Connect Muse to Tour Core and Cleaner Core</b> opens in Muse's browser, and Muse hands it to you. Type the invite code Saad sent you.</div></li>
-            <li><div>Under <b>What do you want to set up?</b>, pick <b>Cleaner Core: a cleaner for a property</b>.</div></li>
+            <li><div>A page titled <b>Connect Muse to Tour Core and Cleaner Core</b> opens in Muse's browser, and Muse hands it to you. That old name is expected. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you.</div></li>
             <li><div>Click <span class="btn-label">Allow</span> yourself. Muse isn't allowed to do this part.</div></li>
             <li><div>Open <b>Settings → Connectors → Property Core</b> and let Muse use it <b>without asking each time</b>. This lets the checks run while you're away.</div></li>
           </ol>
-          <p class="tip"><b>Only for Cleaner Core, and only if your bookings are on a Google calendar:</b> connect Muse's <b>Google Calendar</b> connector too.</p>
+          <p class="tip"><b>Only if your bookings are on a Google calendar:</b> connect Muse's <b>Google Calendar</b> connector too.</p>
           <p class="note warn">Never type your invite code in the chat or in a choice card.</p></div>
         <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Approval page</span></div><div class="mock-body"><div class="mock-title">Connect Muse to Tour Core and Cleaner Core</div>
-      <div class="field"><label>Invite code from Saad</label><div class="val hl secret">••••••••</div></div>
-      <div class="field"><label>What do you want to set up?</label><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> Tour Core: self-guided tours for a rental unit</div><div class="radio"><b></b> Cleaner Core: a cleaner for a property</div></div>
+      <div class="field"><label>Your Property Core account</label><div class="radio"><b></b> Sign in</div><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> Create account</div><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> I have an invite code</div></div>
+      <div class="field"><label>Code from the text</label><div class="val hl secret">••••••</div></div>
       <div class="mock-btns"><span class="mbtn">Deny</span><span class="mbtn primary">Allow</span></div></div></div></div>
       </div>
     </article>
@@ -456,17 +347,17 @@ Start now.</pre></div></details>
         <label class="done-toggle"><input type="checkbox" id="done-clean-3" data-step="clean-3"> Done</label>
       </div>
       <div class="step-body">
-        <div class="do"><ol class="todo"><li><div>When Muse asks for your property's address, give it. Muse adds the property and turns on Cleaner Core for it. Have more than one property? Add each one the same way.</div></li><li><div>Muse asks one question at a time. When it shows buttons, pick one. Otherwise answer in your own words. It will ask about:
+        <div class="do"><ol class="todo"><li><div>Give Muse your property's address. It asks which flows to turn on there. Tap <b>Cleaner Core</b>, or both. Have more than one property? Add each one the same way.</div></li><li><div>Muse asks one question at a time. When it shows buttons, pick one. Otherwise answer in your own words. It will ask about:
               <ol class="qs">
                 <li>Your property: its name, address, and usual checkout and check-in times.</li>
                 <li>Where your bookings are (Guesty, Google Calendar, Airbnb and so on).</li>
                 <li>Who's involved: your mobile number and your cleaner's number. Two numbers set up a group chat with your cleaner. If you only have one number, give it as the cleaner's number too, and you'll get a chat with the assistant.</li>
                 <li>Timing: how early to offer each cleaning, when to remind, and hours not to text.</li>
-                <li>Your lock, then your door code.</li>
+                <li>Your door system, then your door code.</li>
                 <li>Your cleaning checklist and anything else you prefer.</li>
               </ol>
             </div></li><li><div>For your door code, Muse opens a private page in its browser and hands it to you. Type the code there and click <span class="btn-label">Save</span>.</div></li><li><div>For a calendar link, pick <b>I have the link</b> and paste it on the page Muse hands you, or <b>Find it for me</b> and sign in to your booking site yourself when asked.</div></li></ol><p class="tip"><b>Not sure how to answer?</b> Just say so. "I don't know, what do most people pick?" works fine.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Muse chat</span></div><div class="mock-body"><div class="bubble ai">Do you have the calendar link?</div><div class="chips"><span class="chip">I have the link</span><span class="chip on">Find it for me</span></div></div></div><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Muse's browser · your turn</span></div><div class="mock-body"><div class="mock-title">Save the door code</div><div class="field"><label>Door code</label><div class="val hl secret">••••</div></div><div class="mock-btns"><span class="mbtn primary">Save</span></div><span class="caption">Works once. Stops working after 10 minutes.</span></div></div></div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Muse chat</span></div><div class="mock-body"><div class="bubble ai">Which flows do you want at 12 Example St?</div><div class="chips"><span class="chip on">Cleaner Core</span><span class="chip">Supply Core</span><span class="chip">Both</span></div></div></div><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Muse's browser · your turn</span></div><div class="mock-body"><div class="mock-title">Save the door code</div><div class="field"><label>Door code</label><div class="val hl secret">••••</div></div><div class="mock-btns"><span class="mbtn primary">Save</span></div><span class="caption">Works once. Stops working after 10 minutes.</span></div></div></div>
       </div>
     </article>
     <article class="step" id="clean-step-4">
@@ -504,16 +395,117 @@ Start now.</pre></div></details>
       </div>
     </article>
   </div>
+  <div class="steps" data-svc="supply">
+    <article class="step" id="supply-step-1">
+      <div class="step-head">
+        <span class="num">1</span>
+        <h3>Paste the setup message</h3>
+        <span class="place pl-chat">Muse chat</span>
+        <label class="done-toggle"><input type="checkbox" id="done-supply-1" data-step="supply-1"> Done</label>
+      </div>
+      <div class="step-body">
+        <div class="do">
+          <p class="tip"><b>Already running Cleaner Core?</b> Skip to step 3. Just tell Muse <b>"Set up Supply Core"</b>.</p>
+          <ol class="todo">
+            <li><div>Open Muse and start a <b>new chat</b>.</div></li>
+            <li><div>Click <b>Copy message</b> below, then paste it in Muse's message box and send it. It's the same message as for Cleaner Core.</div></li>
+          </ol>
+          <div class="mock-btns" style="justify-content:flex-start"><button type="button" class="mbtn primary" data-copy="paste-supply" style="cursor:pointer;font:inherit;font-weight:700">Copy message</button></div>
+          <details><summary>See the message you're pasting</summary><div><pre class="prompt" id="paste-supply">Set up Property Core for my short-term rental using the open-source repository at https://github.com/saadvz/TourCore.
+Use your cloud computer to clone the repository only so you can read its setup instructions. Save the folder property-core-template/muse/skills/property-core as a skill named Property Core, then follow its SKILL.md as the authoritative setup instructions. Do not start anything on your computer.
+Create the Property Core connector at the hosted service's /mcp yourself. When the connection asks for approval, hand me the approval page so I can sign in or type my invite code from Saad and click Allow. Never ask me for the invite code in chat, and never click Allow yourself.
+As soon as you're connected, call get_state. Add my property, then ask which flows I want there, Cleaner Core, Supply Core, or both, as a choice card. Then follow each flow's skill one question at a time.
+Never ask me to paste API keys, passwords, tokens, calendar links, card details, or door codes into chat or a card. When a secret is needed, open the service's private page in your browser and hand the browser to me, so I type it there myself.
+Start now.</pre></div></details></div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>New chat</span></div><div class="mock-body"><div class="bubble me">Set up Property Core for my short-term rental using…</div><div class="bubble ai">On it. I'm adding the Property Core connector.</div></div></div></div>
+      </div>
+    </article>
+    <article class="step" id="supply-step-2">
+      <div class="step-head">
+        <span class="num">2</span>
+        <h3>Connect your account</h3>
+        <span class="place pl-private">Muse's browser</span><span class="place pl-settings">Muse settings</span>
+        <label class="done-toggle"><input type="checkbox" id="done-supply-2" data-step="supply-2"> Done</label>
+      </div>
+      <div class="step-body">
+        <div class="do">
+          <ol class="todo">
+            <li><div>A page titled <b>Connect Muse to Tour Core and Cleaner Core</b> opens in Muse's browser. That old name is expected. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you.</div></li>
+            <li><div>Click <span class="btn-label">Allow</span> yourself. Muse isn't allowed to do this part.</div></li>
+            <li><div>Open <b>Settings → Connectors → Property Core</b> and let Muse use it <b>without asking each time</b>. Otherwise the daily check stops at a question nobody sees.</div></li>
+          </ol>
+          <p class="note warn">Never type your invite code in the chat or in a choice card.</p></div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Muse settings</span></div><div class="mock-body"><div class="row"><span><b>Property Core</b> · without asking each time</span><span class="chip on">On</span></div></div></div></div>
+      </div>
+    </article>
+    <article class="step" id="supply-step-3">
+      <div class="step-head">
+        <span class="num">3</span>
+        <h3>Answer Muse's questions</h3>
+        <span class="place pl-chat">Muse chat</span>
+        <label class="done-toggle"><input type="checkbox" id="done-supply-3" data-step="supply-3"> Done</label>
+      </div>
+      <div class="step-body">
+        <div class="do"><ol class="todo"><li><div>Give Muse the property's address. Supplies are delivered there. When it asks which flows to turn on, tap <b>Supply Core</b>, or both. If Muse says Cleaner Core has to be on first, pick both.</div></li><li><div>Muse asks one question at a time. It will ask about:
+              <ol class="qs">
+                <li>Your list: everything you want restocked, up to 30 items. It reads the list back once.</li>
+                <li>Where to buy: stores that deliver to the door, like Walmart, Target, or Costco. Maybe also a same-day service, like Instacart, for rush orders.</li>
+                <li>Schedules: one for everything, or one per item. Every so many days, a day of the month, or once every so many stays.</li>
+                <li>A product for each item. Tap your pick from the products Muse shows. Then a backup if you want one, and how many to buy each time.</li>
+                <li>Your booking calendar, only if an item goes by stays and none is saved yet. You paste the link on a page Muse hands you.</li>
+                <li>Hands-off ordering, or stop at checkout for your yes.</li>
+                <li>Spending caps: per order, per month, both, or none.</li>
+                <li>The check time for the daily check. 10:00 unless you pick another.</li>
+              </ol>
+            </div></li></ol><p class="tip"><b>Not sure how to answer?</b> Just say so. "I don't know, what do most people pick?" works fine.</p></div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Muse chat</span></div><div class="mock-body"><div class="bubble ai">Which paper towels?</div><div class="pcards"><div class="pcard"><i></i>Brand A · 12 rolls</div><div class="pcard"><i></i>Brand B · 8 rolls</div><div class="pcard"><i></i>Store brand · 15 rolls</div></div><div class="chips"><span class="chip on">Brand A</span><span class="chip">Brand B</span><span class="chip">Store brand</span></div></div></div><span class="caption">Example products. Muse shows real ones from your stores.</span></div>
+      </div>
+    </article>
+    <article class="step" id="supply-step-4">
+      <div class="step-head">
+        <span class="num">4</span>
+        <h3>The daily check and your stores</h3>
+        <span class="place pl-task">Recurring task</span><span class="place pl-private">Muse's browser</span>
+        <label class="done-toggle"><input type="checkbox" id="done-supply-4" data-step="supply-4"> Done</label>
+      </div>
+      <div class="step-body">
+        <div class="do">
+          <ol class="todo">
+            <li><div>Muse makes a recurring task called <b>Supply Core</b> by itself. It runs every day at your check time. You don't copy anything.</div></li>
+            <li><div>Muse opens each store in its browser, without ordering. If it isn't signed in, it hands you the browser. Sign in yourself, including any code the site texts or emails you.</div></li>
+            <li><div>The account's delivery address should be your property's, and a payment method must be saved. If one is missing, Muse hands you the store's payment page to add it there.</div></li>
+          </ol>
+          <p class="note warn">Never type a password or card number in the chat. You type them only on the store's own page.</p></div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Muse's browser · your turn</span></div><div class="mock-body"><div class="mock-title">Sign in to your store</div><div class="field"><label>Email</label><div class="val hl">you@example.com</div></div><div class="field"><label>Password</label><div class="val secret">••••••••</div></div><div class="mock-btns"><span class="mbtn primary">Sign in</span></div></div></div><span class="caption">Example only. Each store's page looks different.</span></div>
+      </div>
+    </article>
+    <article class="step" id="supply-step-5">
+      <div class="step-head">
+        <span class="num">5</span>
+        <h3>Turn it on</h3>
+        <span class="place pl-chat">Muse chat</span>
+        <label class="done-toggle"><input type="checkbox" id="done-supply-5" data-step="supply-5"> Done</label>
+      </div>
+      <div class="step-body">
+        <div class="do">
+          <ol class="todo">
+            <li><div>Muse sums up your list, mode, caps, and check time. If it all looks right, type <b>Activate</b>.</div></li>
+            <li><div>After that, every change (an item, the mode, a cap, the check time) asks for your yes first.</div></li>
+          </ol>
+          <p class="tip"><b>You're done!</b> 🎉 That's the whole setup.</p></div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Muse chat</span></div><div class="mock-body"><div class="bubble ai">12 items from Walmart, hands-off, $150 a month cap, checks at 10:00. Reply <b>Activate</b> to turn it on.</div><div class="bubble me">Activate</div></div></div><span class="caption">Example wording. Muse's exact words will differ.</span></div>
+      </div>
+    </article>
+  </div>
 </section>
 
 <section aria-labelledby="after-h">
   <div class="sec-head">
     <h2 id="after-h">What happens from now on</h2>
-    <p data-svc="tour">Visitors text your number, and Tour Core handles the booking and the tour.</p>
-    <p data-svc="clean">Most days you don't need to do anything. You hear when something needs you.</p>
+    <p>Most days you don't need to do anything. You hear when something needs you.</p>
   </div>
-  <div class="after" data-svc="tour"><div><span class="place pl-chat">Visitors</span><h3>People text to book</h3><p>Someone texts your number, picks a time, and fills out the identity form if you turned it on.</p></div><div><span class="place pl-chat">Tour time</span><h3>Tour Core guides them</h3><p>It texts them the way in and checks in near the end of the tour. You don't have to be there.</p></div><div><span class="place pl-task">On your schedule</span><h3>Muse checks in</h3><p>Its task posts what's new. Urgent things also come to your phone if you picked Urgent only.</p></div><div><span class="place pl-chat">Any time</span><h3>Ask Muse</h3><p>Try "what tours are booked today?", "pause tours", or "change the tour hours".</p></div></div>
   <div class="after" data-svc="clean"><div><span class="place pl-chat">Group text</span><h3>Your cleaner texts</h3><p>You see their message right away in the group text. Muse picks it up at its next check. To reply, tell Muse "Maria texted, draft a reply".</p></div><div><span class="place pl-private">Door code</span><h3>The code waits for your yes</h3><p>Your cleaner only gets the door code after you've said the guests have left.</p></div><div><span class="place pl-chat">Summary</span><h3>Cleaning finished</h3><p>Your assistant looks at the cleaner's photos, checks them against your checklist, and sends you a short report.</p></div></div>
+  <div class="after" data-svc="supply"><div><span class="place pl-task">Every day</span><h3>Muse checks what's due</h3><p>At your check time, the Supply Core task finds what's due and shops for it in Muse's browser.</p></div><div><span class="place pl-chat">Checkout</span><h3>Every cart is checked</h3><p>Before any order, Muse checks the cart with Supply Core (<code>check_cart</code>). On go, it orders and tells you. A held cart waits for your yes: buy anyway, use the backup, or skip.</p></div><div><span class="place pl-private">Store account</span><h3>Your cards stay yours</h3><p>Card details never reach Supply Core. Muse pays with the method saved on the store account. If a store asks for a sign-in or a card code, Muse hands you the browser.</p></div><div><span class="place pl-chat">Any time</span><h3>Running low?</h3><p>Say "we're low on paper towels". With Cleaner Core too, your cleaner's "running low" answer after a cleaning turns into an order.</p></div></div>
 </section>
 
 <section aria-labelledby="tr-h">
@@ -523,16 +515,16 @@ Start now.</pre></div></details>
   </div>
   <div class="trouble">
     <details><summary>It says my invite code "isn't right", "has expired", or "was already used"</summary><div><p>Each invite code works only once, and only for 7 days.</p><p><b>What to do:</b> text Saad for a new code, then connect again.</p></div></details>
-    <details><summary>Muse set up the wrong one (tours instead of cleanings, or the other way)</summary><div><p>The other choice was picked on the approval page.</p><p><b>What to do:</b> tell Muse "switch to Tour Core" or "switch to Cleaner Core". If nothing is live yet, it switches right away.</p></div></details>
-    <details><summary>Muse says to start a new chat, or can't find the right tools</summary><div><p>New tools only show up in a fresh chat.</p><p><b>What to do:</b> start a new chat and say "Set up Tour Core" or "Set up Cleaner Core". Your answers so far are saved.</p></div></details>
-    <div data-svc="tour" style="display:grid;gap:10px"><details><summary>The practice tour didn't pass</summary><div><p>Something needs fixing, like a missing door or tour hours.</p><p><b>What to do:</b> Muse says what's wrong. Answer its question, and it checks again.</p></div></details></div>
+    <details><summary>I picked the wrong flow, or want to add the other one</summary><div><p>You can change it any time.</p><p><b>What to do:</b> tell Muse "turn on Supply Core" or "turn off Cleaner Core". If anything is live, it shows what stops and waits for your yes. Your setup is kept.</p></div></details>
+    <details><summary>Muse says to start a new chat, or can't find the right tools</summary><div><p>New tools only show up in a fresh chat.</p><p><b>What to do:</b> start a new chat and say "Set up Property Core". Your answers so far are saved.</p></div></details>
     <div data-svc="clean" style="display:grid;gap:10px"><details><summary>Setup is finished but my cleaner never got a text</summary><div><p>Usually the next booking's times aren't confirmed yet.</p><p><b>What to do:</b> tell Muse "confirm the times for the next booking". If it says nothing was sent, text Saad.</p></div></details></div>
+    <div data-svc="supply" style="display:grid;gap:10px"><details><summary>Muse says a store needs me</summary><div><p>The store asked for a sign-in or a card code. Muse never types those.</p><p><b>What to do:</b> in a chat with Muse, take the browser it hands you and type it there yourself. A daily run tries once more the next day.</p></div></details><details><summary>Muse says a cart is held</summary><div><p>Something changed, like a price jump or a cart over your cap. Nothing was bought.</p><p><b>What to do:</b> answer in the chat: buy anyway, switch to the backup, or skip.</p></div></details></div>
     <details><summary>Muse warns it hasn't checked in</summary><div><p>Usually Muse is waiting for an approval nobody saw.</p><p><b>What to do:</b> check <b>Settings → Connectors → Property Core</b> is set to not ask each time. Then ask Muse to turn the task back on.</p></div></details><details><summary>Muse is using more of my usage than I'd like</summary><div><p><b>What to do:</b> tell Muse "check less often, every hour".</p></div></details><details><summary>Muse asks me to type a door code or password in the chat</summary><div><p>It shouldn't. <b>What to do:</b> reply "please open the private page in your browser for me instead".</p></div></details>
     <details><summary>Anything else</summary><div><p><b>What to do:</b> type "I'm stuck" in the chat and describe what you see, or text Saad the step number and what the screen says.</p></div></details>
   </div>
 </section>
 
-<footer>When you ask Saad or anyone else for help, never send a door code, your invite code, or any secret code from setup.</footer>
+<footer>When you ask Saad or anyone else for help, never send a door code, your invite code, a card number, or any secret code from setup.</footer>
 
 </div>
 
@@ -564,9 +556,10 @@ document.querySelectorAll("input[data-step]").forEach(function (box) {
     saved[n] = box.checked; card.classList.toggle("is-done", box.checked); save("done", saved);
   });
 });
-var HASH = { tour: "tour-core", clean: "cleaner-core" };
+var HASH = { clean: "cleaner-core", supply: "supply-core" };
 function pick(svc, fromHash) {
-  document.documentElement.classList.remove("svc-tour", "svc-clean");
+  if (!HASH.hasOwnProperty(svc)) svc = "clean";
+  document.documentElement.classList.remove("svc-clean", "svc-supply");
   document.documentElement.classList.add("svc-" + svc);
   document.querySelectorAll("[data-pick]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-pick") === svc)); });
   save("svc", svc);
@@ -574,10 +567,10 @@ function pick(svc, fromHash) {
 }
 function fromHash() {
   if (location.hash === "#cleaner-core") return "clean";
-  if (location.hash === "#tour-core") return "tour";
+  if (location.hash === "#supply-core") return "supply";
   return null;
 }
 document.querySelectorAll("[data-pick]").forEach(function (b) { b.addEventListener("click", function () { pick(b.getAttribute("data-pick")); }); });
 window.addEventListener("hashchange", function () { var h = fromHash(); if (h) pick(h, true); });
-pick(fromHash() || load("svc", "tour"), true);
+pick(fromHash() || load("svc", "clean"), true);
 </script>
