@@ -106,7 +106,7 @@ export interface Booking {
   visitToken?: string;
   /** Each time the page showed the code. */
   revealedAt?: string[];
-  revisedQuote?: { cents: number; at: string; hostYes?: { at: string } };
+  revisedQuote?: { cents: number; at: string; by?: "pro" | "agent" | "host"; hostYes?: { at: string } };
   extendedUntil?: string;
   /** What the booking was checked against, so a replay is not a second booking. */
   fingerprint: string;
@@ -138,10 +138,15 @@ export interface Job {
   booking?: Booking;
   done?: { at: string; by: "pro-page" | "pro-text" | "agent" | "host"; note?: string };
   cost?: { cents: number; by: "pro" | "agent" | "host"; at: string; note?: string };
-  news: { kind: string; at: string; toldAt?: string }[];
+  /** What the host has been told, once each. `text` is the line, never a code. */
+  news: { kind: string; at: string; text?: string; toldAt?: string }[];
   preferredAsked?: { at: string; answer?: "yes" | "no" };
   rotationAsked?: { at: string; answer?: "yes" | "no" };
+  /** Set and saved before the hub is asked for the code, so a restart never texts it twice. */
   codeTextAt?: string;
+  /** Set once the code text was sent. */
+  codeTextSent?: true;
+  /** The one host note about the code for this job. */
   codeNoteAt?: string;
   /** The local date the host said guests left. */
   cleared?: string;

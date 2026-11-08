@@ -67,9 +67,63 @@ export function bookingQuestion(f: {
   return `${f.proName} can come ${when}${about}. ${holds}Book it and ${tail}`;
 }
 
-export function raisedPrice(f: { proName: string; newCents: number; oldCents: number }): string {
-  return `${f.proName} says the fix is ${dollars(f.newCents)}, not ${dollars(f.oldCents)}. Go ahead?`;
+/** With no estimate to compare, the "not {$old}" part is left out. */
+export function raisedPrice(f: { proName: string; newCents: number; oldCents?: number }): string {
+  return `${f.proName} says the fix is ${dollars(f.newCents)}${f.oldCents === undefined ? "" : `, not ${dollars(f.oldCents)}`}. Go ahead?`;
 }
+
+/** A raised price that doesn't wait for the host: news only. */
+export function raisedPriceNews(f: { proName: string; newCents: number; oldCents?: number }): string {
+  return `${f.proName} says the fix is ${dollars(f.newCents)}${f.oldCents === undefined ? "" : `, not ${dollars(f.oldCents)}`}.`;
+}
+
+/** What was charged, told once when it's over the cost line or more than 20% over the estimate. */
+export function costNewsText(f: { proName: string; cents: number; estimateCents?: number; costLineCents?: number }): string {
+  if (f.costLineCents !== undefined && f.cents > f.costLineCents) return `${f.proName} charged ${dollars(f.cents)}, over your ${shortDollars(f.costLineCents)} cost line.`;
+  return `${f.proName} charged ${dollars(f.cents)}, more than 20% over the ${dollars(f.estimateCents ?? 0)} estimate.`;
+}
+
+/** The street line of an address: what comes before the first comma. */
+export function streetOf(address: string): string {
+  return address.split(",")[0]!.trim();
+}
+
+/** Told to the host when the tick texted the code to the pro. */
+export function codeTextNews(f: { proName: string; at: string; timeZone: string }): string {
+  return `${f.proName} got the door code by text at ${clock(f.at, f.timeZone)}.`;
+}
+
+/** The hub wouldn't open the code (no key after a restart, or the window is over): nothing went to the pro. */
+export function codeRefusedNote(f: { proName: string }): string {
+  return `I couldn't open the door code for ${f.proName}'s visit, so it wasn't sent. You'll need to let them in.`;
+}
+
+/** The code text was marked to go out, but it isn't known that it did (a restart or a failed send). It is never sent twice. */
+export function codeTextUnsureNote(f: { proName: string }): string {
+  return `The door code text to ${f.proName} may not have gone out. Check with them, or let them in yourself.`;
+}
+
+/** The visit's end passed with no done. */
+export function visitOverNews(f: { proName: string; until: string; timeZone: string }): string {
+  return `${f.proName}'s visit was due to end at ${clock(f.until, f.timeZone)}, and there's no done yet. Mark it done, give more time, rebook or cancel.`;
+}
+
+/** The visit's end passed with no done, and guests check in within the hour after it. */
+export function lateBeforeCheckInNews(f: { proName: string; until: string; checkIn: string; timeZone: string }): string {
+  return `${f.proName}'s visit was due to end at ${clock(f.until, f.timeZone)}, and there's no done yet. Guests check in at ${clock(f.checkIn, f.timeZone)}.`;
+}
+
+/** Done, with no photos from the pro. */
+export function noPhotosNews(f: { proName: string }): string {
+  return `${f.proName}'s job is marked done, but no photos came.`;
+}
+
+export function extendQuestion(f: { proName: string; until: string; timeZone: string }): string {
+  return `Give ${f.proName} until ${clock(f.until, f.timeZone)} to finish?`;
+}
+
+/** After the host says yes to changing the code. */
+export const CODE_CHANGE_NEXT = "Send the host this link. They set the new code on the lock first, then save it through the link. Never ask for the code in chat.";
 
 export function revealNews(f: { proName: string; at: string; timeZone: string }): string {
   return `${f.proName} opened the door code at ${clock(f.at, f.timeZone)}.`;

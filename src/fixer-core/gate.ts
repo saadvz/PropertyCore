@@ -75,7 +75,8 @@ export type AccessRefusal = "not-booked" | "no-yes" | "host-access" | "no-phone"
 /** May the visit page show the door code now? The window runs from 30 minutes before the visit. */
 export function accessCheck(input: {
   job: Job;
-  pro: Pro | undefined;
+  /** The booked pro or candidate: only its phone is read. */
+  pro: Pick<Pro, "reach"> | undefined;
   now: Date;
   checkoutDay: boolean;
   cleared: boolean;

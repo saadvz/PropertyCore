@@ -229,7 +229,8 @@ describe("the host's yes", () => {
   });
 
   it("approves a held raised price with revised", async () => {
-    const w = await setup();
+    // Over the $250 cost line, so the raised price waits for the host.
+    const w = await setup({ costLine: 25_000 });
     await booked(w);
     await yes(w);
     const file = readFixer(w.root);

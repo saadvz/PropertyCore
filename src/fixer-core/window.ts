@@ -146,3 +146,10 @@ export function overlapsStay(span: { from: string; until: string }, stays: reado
   const until = Date.parse(span.until);
   return occupiedOf(stays, input).some((o) => from < o.end && until > o.start);
 }
+
+/** The first check-in after an instant, as epoch ms, or undefined when no stay starts later. */
+export function nextCheckIn(after: number, stays: readonly Stay[], input: Pick<WindowInput, "timeZone" | "checkInTime">): number | undefined {
+  const time = input.checkInTime ?? DEFAULT_CHECK_IN;
+  const starts = stays.map((stay) => Date.parse(zonedInstant(stay.checkIn, time, input.timeZone))).filter((at) => at > after);
+  return starts.length > 0 ? Math.min(...starts) : undefined;
+}

@@ -1,21 +1,22 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { localDateOf } from "../core/timezone";
-import { copyPhotos, messagePhotoId, photoCount } from "../cleaner-core/photos";
+import { copyPhotos, messagePhotoId, photoCount, photoLinks, prunePhotos } from "../cleaner-core/photos";
 import { askNext } from "../hub/ask";
 import { addCalendarDays } from "../hub/calendar";
 import { joinSplitDigits } from "../hub/digits";
 import type { GoogleEventList } from "../hub/sources";
 import { refuseCards } from "../hub/cards";
+import type { AccessRefusal as DoorRefusal } from "../hub/doorAccess";
 import { hubFor, type Hub } from "../hub/hub";
 import type { People } from "../hub/people";
 import { ConfirmationBook } from "../operator/confirmations";
 import { nextDates, scheduleProblem, type Schedule } from "../supply-core/schedule";
 import { supplyAskOn } from "../supply-core/store";
-import { bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, defaultAccess, liveBooking } from "./gate";
+import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
-import { bookingQuestion, cancelQuestion, cleaningOrderQuestion, hostGoQuestion, pickQuestion, raisedPrice, rotationQuestion } from "./texts";
-import { latestYmd, overlapsStay, visitWindows, type VisitWindow } from "./window";
+import { bookingQuestion, cancelQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, visitOverNews } from "./texts";
+import { latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type Candidate, type Contact, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
 /**
@@ -47,6 +48,18 @@ export interface FixerDeps {
   photoKey?(): Buffer | undefined;
 }
 
+/** Why the visit page (or the tick) got no code. */
+export type RevealRefusal = AccessRefusal | DoorRefusal | "no-job" | "off" | "damaged";
+
+/** The visit page's answer. Never passed to a tool reply, a log line or a file. */
+export type RevealResult = { ok: true; code: string; lockLocation?: string } | { ok: false; reason: RevealRefusal };
+
+/** A line for the host, sent once the record holding its news is saved. */
+interface HostNote {
+  id: string;
+  text: string;
+}
+
 export const MAX_PROS = 60;
 export const MAX_UPKEEP = 30;
 export const MAX_CANDIDATES = 8;
@@ -54,10 +67,13 @@ const UNCONFIRMED_MS = 2 * 60 * 60_000;
 export const GOOGLE_EVENTS_NEEDED = "Google Calendar is saved for this property: read its events and call approve_booking again with them as googleEvents.";
 const PAST_SPAN = "That time has already started, so it can't be booked. Ask the pro for a time still to come.";
 const FOLLOW_UP_MS = 24 * 60 * 60_000;
+const HOUR_MS = 60 * 60_000;
+const COST_BYS = ["pro", "agent", "host"] as const;
 const HOWS: readonly Contact["how"][] = ["call", "email", "form", "booking-page", "text", "network"];
 const OUTCOMES: readonly NonNullable<Contact["outcome"]>[] = ["booked", "quoted", "no-answer", "declined", "waiting"];
 export const CARD_REFUSAL = "That looks like a card number. Fixer Core never takes card details: keep them in your Vault.";
 const APPROVAL_STALE = "That approval has expired or doesn't match this change. Ask the host again.";
+const NO_JOB = "There's no job with that id. Call get_fixer_state for the list.";
 const DAMAGED = "Fixer Core's record (fixer.json) couldn't be read, so nothing was changed. Ask for help restoring it.";
 const E164 = /^\+[1-9]\d{9,14}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -452,12 +468,14 @@ export class FixerDesk {
       else file.pros.push(pro);
       renumber(file, trades, pro);
       if (existing) renumber(file, existing.trades.filter((trade) => !trades.includes(trade)));
+      // Only a saved pro answers the preferred question; a draft is the agent's, not the host's.
+      const rotationAsk = job && pro.status === "saved" ? this.answerPreferred(file, job, "yes", pro) : undefined;
       this.write(file);
       if (pro.status === "saved") {
         this.syncPros(file);
         if (existing?.status !== "saved") this.inviteIfAsked(pro);
       }
-      return ok({ saved: true, proId: pro.id, status: pro.status, ...(file.settings.activatedAt ? {} : { next: "Ask whether there's anyone else they call." }) });
+      return ok({ saved: true, proId: pro.id, status: pro.status, ...(rotationAsk ? { rotationAsk: [rotationAsk] } : {}), ...(file.settings.activatedAt ? {} : { next: "Ask whether there's anyone else they call." }) });
     });
   }
 
@@ -946,8 +964,12 @@ export class FixerDesk {
     };
   }
 
+  private door() {
+    return this.hub().doorAccess(this.deps.env ?? (() => process.env));
+  }
+
   private codeSaved(): boolean {
-    return this.hub().doorAccess(this.deps.env ?? (() => process.env)).saved();
+    return this.door().saved();
   }
 
   /** The gate holds for a span, with the windows they were checked against. */
@@ -1091,14 +1113,14 @@ export class FixerDesk {
   private approveRevised(file: FixerFile, job: Job, input: { confirmation?: string }): FixerReply {
     const booking = job.booking;
     const revised = booking?.revisedQuote;
-    if (!booking || !liveBooking(job) || !revised || revised.hostYes) return fail("There's no raised price waiting for the host's yes.");
+    if (!booking || !liveBooking(job) || !revised || revised.hostYes || !raisedPriceHeld(file.settings.costLineCents, booking.estimateCents, revised.cents)) return fail("There's no raised price waiting for the host's yes.");
     const name = this.nameOf(file, job, booking.proId) ?? "The pro";
-    const question = raisedPrice({ proName: name, newCents: revised.cents, oldCents: booking.estimateCents ?? 0 });
+    const question = raisedPrice({ proName: name, newCents: revised.cents, ...(booking.estimateCents !== undefined ? { oldCents: booking.estimateCents } : {}) });
     const gate = this.confirm("fixer-revised", job.id, tokenHash(JSON.stringify([booking.fingerprint, revised.cents])), input.confirmation, question);
     if (gate !== "go") return gate;
     revised.hostYes = { at: this.deps.now().toISOString() };
     this.write(file);
-    return ok({ approved: true, jobId: job.id, revised: true });
+    return ok({ approved: true, jobId: job.id, revised: true, tellPro: { name, reach: this.reachOfId(file, job, booking.proId) }, next: `Tell ${name} to go ahead.` });
   }
 
   /** Cancels one job for good: ends the visit link, asks about changing the code if it was shown, and says who to tell. */
@@ -1168,6 +1190,8 @@ export class FixerDesk {
   private heldList(file: FixerFile): Record<string, unknown>[] {
     const out: Record<string, unknown>[] = [];
     for (const job of file.jobs) {
+      const held = this.heldRevised(file, job);
+      if (held) out.push({ jobId: job.id, revised: held });
       if (!isOpen(job) || liveBooking(job)) continue;
       const booking = job.booking && !job.booking.hostYes ? job.booking : undefined;
       const others = job.contacts
@@ -1238,11 +1262,11 @@ export class FixerDesk {
         if (isOpen(job) && job.hostGo && !liveBooking(job)) windows[job.id] = await this.windowsFor(job);
       }
       const at = this.deps.now().toISOString();
-      const news: { jobId: string; kind: string; at: string }[] = [];
+      const news: { jobId: string; kind: string; at: string; text?: string }[] = [];
       for (const job of file.jobs) {
         for (const item of job.news) {
           if (item.toldAt) continue;
-          news.push({ jobId: job.id, kind: item.kind, at: item.at });
+          news.push({ jobId: job.id, kind: item.kind, at: item.at, ...(item.text ? { text: item.text } : {}) });
           item.toldAt = at;
         }
       }
@@ -1255,13 +1279,438 @@ export class FixerDesk {
         unconfirmed: swept.unconfirmed,
         followUps: swept.followUps,
         held: this.heldList(file),
-        delays: [],
-        preferredAsk: [],
+        delays: this.delayList(file),
+        preferredAsk: this.preferredList(file),
         rotationAsk: this.rotationList(file),
         news,
       };
       this.write(file);
       return ok(body);
+    });
+  }
+
+  /** The booked pro's or candidate's name. */
+  private bookedName(file: FixerFile, job: Job): string {
+    return (job.booking && this.nameOf(file, job, job.booking.proId)) ?? "The pro";
+  }
+
+  /** When the visit ends: the extension, else the booked end, in epoch ms. */
+  private endOf(booking: Booking): number {
+    return Date.parse(booking.extendedUntil ?? booking.until);
+  }
+
+  /** Adds one news item for the host and gives back the note to send once the record is saved. Never a code. */
+  private news(job: Job, kind: string, text: string, id = `fixer:${job.id}:${kind}`): HostNote {
+    job.news.push({ kind, at: this.deps.now().toISOString(), text });
+    return { id, text };
+  }
+
+  /** Sends the host notes. A note that fails to go is still in check_fixes' news. */
+  private async tell(notes: readonly HostNote[]): Promise<void> {
+    for (const note of notes) {
+      try {
+        await this.deps.notifyHost?.(note.id, note.text);
+      } catch {
+        // The news item stays untold, so check_fixes passes it on.
+      }
+    }
+  }
+
+  /**
+   * May the code go out for this visit now? On a day a stay checks out, the guests must have left:
+   * the host's guests_left for that date, or Cleaner Core's clearance.
+   */
+  private async accessFor(file: FixerFile, job: Job): Promise<ReturnType<typeof accessCheck>> {
+    const booking = job.booking;
+    const ymd = booking ? localYmd(new Date(booking.from), this.timeZone()) : this.today();
+    const checkoutDay = (this.hub().stays() ?? []).some((stay) => stay.checkout === ymd);
+    let cleared = job.cleared === ymd;
+    if (checkoutDay && !cleared && this.deps.cleanings) cleared = (await this.deps.cleanings(ymd))?.cleared === true;
+    return accessCheck({ job, pro: booking ? { reach: this.reachOfId(file, job, booking.proId) } : undefined, now: this.deps.now(), checkoutDay, cleared });
+  }
+
+  /** Asks the hub for the code, for the pro's phone and this window. A refusal gives the host one note for the job, and nothing else. */
+  private openCode(file: FixerFile, job: Job, window: { from: string; until: string }, notes: HostNote[]): { ok: true; code: string; lockLocation?: string } | { ok: false; reason: DoorRefusal } {
+    const phone = this.reachOfId(file, job, job.booking!.proId).phone!;
+    const grant = this.door().request({ person: phone, window, purpose: "repair" });
+    if (grant.ok && /^\d{4,8}$/.test(grant.code)) return { ok: true, code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}) };
+    if (!job.codeNoteAt) {
+      job.codeNoteAt = this.deps.now().toISOString();
+      notes.push(this.news(job, "code-refused", codeRefusedNote({ proName: this.bookedName(file, job) })));
+    }
+    return { ok: false, reason: grant.ok ? "sealed" : grant.reason };
+  }
+
+  /**
+   * The visit page's "I'm at the door": the gate, then the hub. Each reveal is logged and told to the
+   * host. Only the visit page calls this, never a tool; the code it returns goes on that page alone.
+   */
+  revealCode(jobId: string): Promise<RevealResult> {
+    return this.serial(async (): Promise<RevealResult> => {
+      let file: FixerFile;
+      try {
+        file = this.read();
+      } catch (error) {
+        if (error instanceof DamagedRecord) return { ok: false, reason: "damaged" };
+        throw error;
+      }
+      const job = this.jobOf(file, jobId);
+      if (!job?.booking) return { ok: false, reason: "no-job" };
+      if (!file.settings.activatedAt || file.offAt) return { ok: false, reason: "off" };
+      const check = await this.accessFor(file, job);
+      if (!check.ok) return check;
+      const notes: HostNote[] = [];
+      const opened = this.openCode(file, job, check.window, notes);
+      if (opened.ok) {
+        const at = this.deps.now().toISOString();
+        const revealed = (job.booking.revealedAt ??= []);
+        revealed.push(at);
+        notes.push(this.news(job, "revealed", revealNews({ proName: this.bookedName(file, job), at, timeZone: this.timeZone() }), `fixer:${job.id}:revealed:${revealed.length}`));
+      }
+      this.write(file);
+      await this.tell(notes);
+      return opened;
+    });
+  }
+
+  /** The pro's phone when the code may go by text: a saved pro who prefers text, said YES, and hasn't stopped. */
+  private textPhone(file: FixerFile, job: Job): string | undefined {
+    const pro = file.pros.find((entry) => entry.id === job.booking?.proId && entry.status === "saved");
+    const phone = pro?.reach.phone;
+    const people = this.deps.people?.();
+    if (!pro?.prefersText || !phone || !people || !this.deps.send) return undefined;
+    return people.optedIn(phone) && !people.stopped(phone) ? phone : undefined;
+  }
+
+  /**
+   * The code text, at most once per job. The mark is saved before the hub is asked, so a restart
+   * between the mark and the send never sends a second text: the host gets one note instead.
+   */
+  private async codeTextPass(file: FixerFile, job: Job, notes: HostNote[]): Promise<void> {
+    const booking = job.booking!;
+    const proName = this.bookedName(file, job);
+    const at = this.deps.now().toISOString();
+    if (job.codeTextAt) {
+      if (!job.codeTextSent && !job.codeNoteAt) {
+        job.codeNoteAt = at;
+        notes.push(this.news(job, "code-text-unsure", codeTextUnsureNote({ proName })));
+      }
+      return;
+    }
+    if (booking.access !== "code") return;
+    const phone = this.textPhone(file, job);
+    if (!phone || (await this.deps.textsAllowed?.()) !== true) return;
+    const check = await this.accessFor(file, job);
+    if (!check.ok) return;
+    job.codeTextAt = at;
+    this.write(file);
+    const opened = this.openCode(file, job, check.window, notes);
+    if (!opened.ok) return;
+    (booking.revealedAt ??= []).push(at);
+    this.write(file);
+    const street = streetOf(this.hub().property().address ?? "");
+    let sent = false;
+    try {
+      sent = (await this.deps.send!(phone, codeText({ proName, street, code: opened.code, ...(opened.lockLocation ? { lockLocation: opened.lockLocation } : {}) }))) === true;
+    } catch {
+      // Whether it went is unknown, so it is never sent again.
+    }
+    if (sent) {
+      job.codeTextSent = true;
+      notes.push(this.news(job, "code-texted", codeTextNews({ proName, at, timeZone: this.timeZone() })));
+    } else {
+      job.codeNoteAt = at;
+      notes.push(this.news(job, "code-text-unsure", codeTextUnsureNote({ proName })));
+    }
+    this.write(file);
+  }
+
+  /** The next check-in when it comes within an hour of the visit's end. */
+  private checkInNear(booking: Booking): string | undefined {
+    const property = this.hub().property();
+    const at = nextCheckIn(Date.parse(booking.from), this.hub().stays() ?? [], { timeZone: this.timeZone(), ...(property.checkInTime ? { checkInTime: property.checkInTime } : {}) });
+    return at !== undefined && at - this.endOf(booking) <= HOUR_MS ? new Date(at).toISOString() : undefined;
+  }
+
+  /** The visit's end passed with no done: the host is told once per end (an extension gives a new end). */
+  private delayPass(file: FixerFile, job: Job, notes: HostNote[]): void {
+    const booking = job.booking!;
+    const end = this.endOf(booking);
+    if (this.deps.now().getTime() < end) return;
+    if (job.news.some((item) => (item.kind === "visit-over" || item.kind === "late-check-in") && Date.parse(item.at) >= end)) return;
+    const proName = this.bookedName(file, job);
+    const until = new Date(end).toISOString();
+    const checkIn = this.checkInNear(booking);
+    const timeZone = this.timeZone();
+    notes.push(
+      checkIn
+        ? this.news(job, "late-check-in", lateBeforeCheckInNews({ proName, until, checkIn, timeZone }), `fixer:${job.id}:late-check-in:${end}`)
+        : this.news(job, "visit-over", visitOverNews({ proName, until, timeZone }), `fixer:${job.id}:visit-over:${end}`),
+    );
+  }
+
+  /**
+   * The clock pass: a booked visit goes in progress at its start, the code text goes out once, the
+   * host hears of a visit that ended with no done, and a done job's photos go 30 days after done.
+   */
+  tick(): Promise<void> {
+    return this.serial(async () => {
+      let file: FixerFile;
+      try {
+        file = this.read();
+      } catch (error) {
+        if (error instanceof DamagedRecord) return;
+        throw error;
+      }
+      if (!file.settings.activatedAt) return;
+      const before = JSON.stringify(file);
+      const notes: HostNote[] = [];
+      const now = this.deps.now().getTime();
+      for (const job of file.jobs) {
+        const booking = job.booking;
+        if (!booking?.hostYes || !liveBooking(job)) continue;
+        if (job.state === "booked" && now >= Date.parse(booking.from)) job.state = "in-progress";
+        if (!file.offAt) await this.codeTextPass(file, job, notes);
+        this.delayPass(file, job, notes);
+      }
+      prunePhotos(this.root, file.jobs.flatMap((job) => (job.done ? [{ id: `fixer:${job.id}`, doneAt: job.done.at }] : [])), this.deps.now());
+      if (JSON.stringify(file) !== before) this.write(file);
+      await this.tell(notes);
+    });
+  }
+
+  /** The host says the guests have left: today counts as cleared for each open job's checkout-day check. */
+  guestsLeft(input: { confirmed?: true }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      if (input.confirmed !== true) return fail("Ask the host whether the guests have left, then call again with confirmed: true.");
+      const today = this.today();
+      for (const job of file.jobs) if (isOpen(job)) job.cleared = today;
+      this.write(file);
+      return ok({ cleared: today, next: "A repair visit today can get the door code now." });
+    });
+  }
+
+  /** What the host expects to pay: a raised price they approved or only needed to hear of, else the estimate. */
+  private expectedCents(file: FixerFile, job: Job): number | undefined {
+    const booking = job.booking;
+    const revised = booking?.revisedQuote;
+    if (revised && (revised.hostYes || !raisedPriceHeld(file.settings.costLineCents, booking.estimateCents, revised.cents))) return revised.cents;
+    return booking?.estimateCents;
+  }
+
+  /** Logs the amount. Over the cost line, or more than 20% over what was expected, the host is told once. */
+  private logCost(file: FixerFile, job: Job, cents: number, by: "pro" | "agent" | "host", note: string | undefined, notes: HostNote[]): void {
+    job.cost = { cents, by, at: this.deps.now().toISOString(), ...(note ? { note } : {}) };
+    const line = file.settings.costLineCents;
+    const estimateCents = this.expectedCents(file, job);
+    if (job.news.some((item) => item.kind === "cost-over") || !costNews(line, estimateCents, cents)) return;
+    notes.push(this.news(job, "cost-over", costNewsText({ proName: this.bookedName(file, job), cents, ...(estimateCents !== undefined ? { estimateCents } : {}), ...(line !== undefined ? { costLineCents: line } : {}) })));
+  }
+
+  /** A live job becomes done. The questions after the visit start here: the preferred list first. */
+  protected finishJob(file: FixerFile, job: Job, by: NonNullable<Job["done"]>["by"], note: string | undefined, notes: HostNote[]): void {
+    const at = this.deps.now().toISOString();
+    job.state = "done";
+    job.done = { at, by, ...(note ? { note } : {}) };
+    const pro = file.pros.find((entry) => entry.id === job.booking?.proId && entry.status === "saved");
+    if (pro) pro.lastJobAt = at;
+    const item = job.source === "upkeep" ? file.upkeep.find((entry) => entry.id === job.sourceRef) : undefined;
+    if (item) item.lastDoneAt = at;
+    if (!pro?.preferredFor.some((entry) => entry.trade === job.trade)) job.preferredAsked = { at };
+    if (!job.photos.some((photo) => photo.from === "pro")) notes.push(this.news(job, "no-photos", noPhotosNews({ proName: this.bookedName(file, job) })));
+  }
+
+  /** The agent's or host's word that the pro finished, with the amount when known. */
+  recordDone(input: { jobId?: string; note?: string; by?: "agent" | "host"; cents?: number }): Promise<FixerReply> {
+    return this.guarded(input, async () => {
+      const file = this.read();
+      const job = this.jobOf(file, input.jobId);
+      if (!job) return fail(NO_JOB);
+      if (!job.booking?.hostYes || !liveBooking(job)) return fail("Only a booked visit can be marked done.");
+      if (input.by !== undefined && input.by !== "agent" && input.by !== "host") return fail("Done is from the agent or the host.");
+      if (input.note !== undefined && !isText(input.note, 300)) return fail("Keep the note under 300 characters.");
+      if (input.cents !== undefined && !isInt(input.cents, 0, 2_000_000)) return fail("An amount is 0 to 2,000,000 cents.");
+      const by = input.by ?? "agent";
+      const notes: HostNote[] = [];
+      this.finishJob(file, job, by, input.note ? redactDigits(input.note).trim() : undefined, notes);
+      if (input.cents !== undefined) this.logCost(file, job, input.cents, by, undefined, notes);
+      this.write(file);
+      await this.tell(notes);
+      const preferredAsk = this.preferredList(file).filter((ask) => ask.jobId === job.id);
+      return ok({ done: true, jobId: job.id, ...(preferredAsk.length > 0 ? { preferredAsk } : {}) });
+    });
+  }
+
+  /** The amount charged, from the pro, the agent or the host. There's no payment step. */
+  recordCost(input: { jobId?: string; cents?: number; by?: "pro" | "agent" | "host"; note?: string }): Promise<FixerReply> {
+    return this.guarded(input, async () => {
+      const file = this.read();
+      const job = this.jobOf(file, input.jobId);
+      if (!job) return fail(NO_JOB);
+      if (!job.booking?.hostYes || !(liveBooking(job) || job.state === "done")) return fail("A cost goes on a booked or finished job.");
+      if (!isInt(input.cents, 0, 2_000_000)) return fail("An amount is 0 to 2,000,000 cents.");
+      if (!COST_BYS.includes(input.by as never)) return fail("Say who gave the amount: pro, agent or host.");
+      if (input.note !== undefined && !isText(input.note, 300)) return fail("Keep the note under 300 characters.");
+      const notes: HostNote[] = [];
+      this.logCost(file, job, input.cents, input.by!, input.note ? redactDigits(input.note).trim() : undefined, notes);
+      this.write(file);
+      await this.tell(notes);
+      return ok({ logged: true, jobId: job.id, cents: input.cents });
+    });
+  }
+
+  /** A raised price the host must say yes to, as approve_booking's revised question, or undefined. */
+  private heldRevised(file: FixerFile, job: Job): { cents: number; question: string } | undefined {
+    const booking = job.booking;
+    const revised = booking?.revisedQuote;
+    if (!booking || !liveBooking(job) || !revised || revised.hostYes || !raisedPriceHeld(file.settings.costLineCents, booking.estimateCents, revised.cents)) return undefined;
+    return { cents: revised.cents, question: raisedPrice({ proName: this.bookedName(file, job), newCents: revised.cents, ...(booking.estimateCents !== undefined ? { oldCents: booking.estimateCents } : {}) }) };
+  }
+
+  /** The pro says the work costs more than the estimate. Over the cost line or 20% it waits for the host's yes; otherwise it's news. */
+  raisePrice(jobId: string, cents: number, by: "pro" | "agent" | "host"): Promise<FixerReply> {
+    return this.guarded({ jobId, cents, by }, async () => {
+      const file = this.read();
+      const job = this.jobOf(file, jobId);
+      const booking = job?.booking;
+      if (!job || !booking?.hostYes || !liveBooking(job)) return fail("Only a booked visit can have a raised price.");
+      if (!isInt(cents, 0, 2_000_000)) return fail("A price is 0 to 2,000,000 cents.");
+      if (!COST_BYS.includes(by)) return fail("Say who raised it: pro, agent or host.");
+      const old = booking.estimateCents;
+      if (old !== undefined && cents <= old) return fail(`That isn't more than the ${dollars(old)} estimate. Log what was charged with record_cost when the work is done.`);
+      const at = this.deps.now().toISOString();
+      booking.revisedQuote = { cents, at, by };
+      const proName = this.bookedName(file, job);
+      const prices = { proName, newCents: cents, ...(old !== undefined ? { oldCents: old } : {}) };
+      if (raisedPriceHeld(file.settings.costLineCents, old, cents)) {
+        const question = raisedPrice(prices);
+        this.write(file);
+        await this.tell([{ id: `fixer:${job.id}:raised:${at}`, text: question }]);
+        return ok({ held: true, jobId: job.id, question, next: `Tell ${proName} to wait for the host's answer. Ask the host this question, then call approve_booking with revised: true.` });
+      }
+      const note = this.news(job, "raised-price", raisedPriceNews(prices), `fixer:${job.id}:raised:${at}`);
+      this.write(file);
+      await this.tell([note]);
+      return ok({ held: false, jobId: job.id, next: `${proName} can go ahead. The host is told.` });
+    });
+  }
+
+  /** More time for a visit (two calls, bound to the job and the new end), never into the next check-in's buffer. The visit link changes. */
+  extendVisit(input: { jobId?: string; until?: string; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      const booking = job?.booking;
+      if (!job || !booking?.hostYes || !liveBooking(job)) return fail("Only a booked visit can be given more time.");
+      if (typeof input.until !== "string" || Number.isNaN(Date.parse(input.until))) return fail("Say until when, as a date and time.");
+      const until = new Date(input.until).toISOString();
+      if (Date.parse(until) <= Math.max(this.endOf(booking), this.deps.now().getTime())) return fail("That isn't later than the visit's end now.");
+      if (overlapsStay({ from: booking.from, until }, this.hub().stays() ?? [], this.occupyInput(file))) {
+        return fail(`That runs into the next check-in, or the ${file.settings.checkInBufferMinutes} minutes kept free before it. Pick an earlier time.`);
+      }
+      const proName = this.bookedName(file, job);
+      const gate = this.confirm("fixer-extend", job.id, tokenHash(JSON.stringify([booking.fingerprint, until])), input.confirmation, extendQuestion({ proName, until, timeZone: this.timeZone() }));
+      if (gate !== "go") return gate;
+      booking.extendedUntil = until;
+      // The old visit link ends; visit_link gives a new one.
+      delete booking.visitToken;
+      this.write(file);
+      return ok({ extended: true, jobId: job.id, until, tellPro: { name: proName, reach: this.reachOfId(file, job, booking.proId) }, next: `Tell ${proName} the new end. If they use the visit page, their old link has ended: call visit_link for a new one.` });
+    });
+  }
+
+  /**
+   * The host's answer to the preferred question. If the code was shown or texted and the pro still
+   * isn't preferred for the trade, the rotation question comes next (Decision 6).
+   */
+  private answerPreferred(file: FixerFile, job: Job, answer: "yes" | "no", pro?: Pro): { jobId: string; question: string } | undefined {
+    const at = this.deps.now().toISOString();
+    job.preferredAsked = { at: job.preferredAsked?.at ?? at, answer };
+    const preferred = pro?.status === "saved" && pro.preferredFor.some((entry) => entry.trade === job.trade);
+    if (preferred || !job.booking?.revealedAt?.length || job.rotationAsked) return undefined;
+    job.rotationAsked = { at };
+    return { jobId: job.id, question: rotationQuestion({ proName: this.bookedName(file, job) }) };
+  }
+
+  /** Done jobs whose pro isn't preferred for the trade, waiting on the host's answer. */
+  private preferredList(file: FixerFile): { jobId: string; question: string }[] {
+    return file.jobs
+      .filter((job) => job.state === "done" && job.preferredAsked && !job.preferredAsked.answer)
+      .map((job) => ({ jobId: job.id, question: preferredQuestion({ proName: this.bookedName(file, job), trade: job.trade }) }));
+  }
+
+  /** Live visits past their end with no done. */
+  private delayList(file: FixerFile): Record<string, unknown>[] {
+    const now = this.deps.now().getTime();
+    return file.jobs
+      .filter((job) => job.booking?.hostYes && liveBooking(job) && now >= this.endOf(job.booking))
+      .map((job) => {
+        const booking = job.booking!;
+        const checkIn = this.checkInNear(booking);
+        return {
+          jobId: job.id,
+          proId: booking.proId,
+          name: this.bookedName(file, job),
+          endedAt: new Date(this.endOf(booking)).toISOString(),
+          ...(checkIn ? { checkInAt: checkIn } : {}),
+          next: "Ask the host: is it done (record_done), does the pro need more time (extend_visit), a new time, or a cancel?",
+        };
+      });
+  }
+
+  /** The host says no to the preferred question or the rotation question. */
+  skipQuestion(input: { jobId?: string; question?: "preferred" | "rotate" }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const job = this.jobOf(file, input.jobId);
+      if (!job) return fail(NO_JOB);
+      if (input.question === "preferred") {
+        if (!job.preferredAsked || job.preferredAsked.answer) return fail("That question isn't open for this job.");
+        const pro = file.pros.find((entry) => entry.id === job.booking?.proId);
+        const rotationAsk = this.answerPreferred(file, job, "no", pro);
+        this.write(file);
+        return ok({ skipped: "preferred", jobId: job.id, ...(rotationAsk ? { rotationAsk: [rotationAsk] } : {}) });
+      }
+      if (input.question === "rotate") {
+        if (!job.rotationAsked || job.rotationAsked.answer) return fail("That question isn't open for this job.");
+        job.rotationAsked.answer = "no";
+        this.write(file);
+        return ok({ skipped: "rotate", jobId: job.id });
+      }
+      return fail("Say which question: preferred or rotate.");
+    });
+  }
+
+  /** The host's yes to changing the code: the hub's one-time upload link, for the host alone. The new code is never in chat. */
+  changeDoorCode(input: { jobId?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const job = this.jobOf(file, input.jobId);
+      if (!job) return fail(NO_JOB);
+      if (!job.rotationAsked) return fail("Changing the code is asked after a visit where the pro got it.");
+      const link = this.door().issueUpload(undefined, undefined, this.deps.publicBase?.());
+      if (!link.ok) return fail(link.error);
+      job.rotationAsked.answer = "yes";
+      this.write(file);
+      return ok({ uploadUrl: link.uploadUrl, expiresInMinutes: link.expiresInMinutes, next: CODE_CHANGE_NEXT });
+    });
+  }
+
+  /** Links to the job's photos, each good for an hour. */
+  jobPhotos(jobId: string): Promise<FixerReply> {
+    return this.guarded({ jobId }, () => {
+      const file = this.read();
+      const job = this.jobOf(file, jobId);
+      if (!job) return fail(NO_JOB);
+      const base = this.deps.publicBase?.();
+      const key = this.deps.photoKey?.();
+      if (!base || !key) return fail("Photo links need the server's public address and photo key.");
+      return ok({ jobId: job.id, photos: photoLinks(this.root, `fixer:${job.id}`, base, key, this.deps.now()) });
     });
   }
 
