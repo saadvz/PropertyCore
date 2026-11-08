@@ -23,8 +23,7 @@ export async function accountPeople(h: HostedCleaner, tenant: Tenant): Promise<P
 }
 
 /** Builds people.json from each property's saved people and consent, and the line's older STOP list. */
-export async function movePeople(h: HostedCleaner, tenant: Tenant, people = peopleFor(tenantFolder(h.dataRoot, tenant.id), { now: () => h.now() })): Promise<void> {
-  if (people.moved()) return;
+async function movePeople(h: HostedCleaner, tenant: Tenant, people: People): Promise<void> {
   const sources: MoveSource[] = [];
   for (const property of tenant.properties) {
     const ctx = propertyContext(h, tenant, property);

@@ -8,7 +8,7 @@ import { propertyContext, type HostedCleaner, type HostedRequest } from "../clea
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { sendLiveSms } from "../cleaner-core/liveSms";
 import type { InboundMedia } from "../cleaner-core/photos";
-import { handleCleanerTwilioWebhook, mediaOf } from "../cleaner-core/twilioHook";
+import { EMPTY_TWIML, handleCleanerTwilioWebhook, mediaOf } from "../cleaner-core/twilioHook";
 import { hubFor } from "../hub/hub";
 import type { People } from "../hub/people";
 import { keywordOf } from "../intent/ruleBased";
@@ -30,7 +30,6 @@ import { answerOf, bareAnswer, businessFor, droppedNote, lineStartText, lineStop
 export const LANDLORD_USE_AGENT = "Please tell me in your agent chat so I know which property.";
 /** The landlord's reply goes out at most once in this long per phone. */
 const REPLY_EVERY_MS = 12 * 60 * 60_000;
-const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 
 export type LineRoute =
   | { kind: "property"; property: Property }
@@ -238,8 +237,7 @@ export async function handleLineText(h: HostedCleaner, r: HostedRequest, tenant:
     return r.send(200, "text/xml", EMPTY_TWIML);
   }
   if (route.kind === "host-unused") {
-    const ctx = propertyContext(h, tenant, route.property);
-    const desk = liveDeskFor(ctx.root, ctx.env, () => h.now());
+    const { ctx, desk } = deskOf(h, tenant, route.property);
     await desk.noteUnusedHostText(text);
     if ((await desk.textsAllowed()) && replyDue(h, tenant.id, from)) await sendLiveSms(ctx.env(), { to: from, body: LANDLORD_USE_AGENT }).catch(() => undefined);
     h.log(`The host texted ${tenant.id}'s line one-to-one. It wasn't used: the account has several properties.`);

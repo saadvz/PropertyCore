@@ -76,7 +76,7 @@ export function forwardMcp(target: WorkerTarget, r: HostedRequest, body?: Buffer
 }
 
 /** One MCP POST to the process, answered whole, so the service can add to it. Undefined when it can't be reached. */
-export function callWorkerMcp(target: WorkerTarget, body: Buffer, headers: IncomingHttpHeaders = {}, assistant?: string): Promise<{ status: number; headers: IncomingHttpHeaders; body: Buffer } | undefined> {
+export function callWorkerMcp(target: WorkerTarget, body: Buffer, headers: IncomingHttpHeaders = {}, assistant?: string): Promise<{ status: number; body: Buffer } | undefined> {
   const sent = forwardedHeaders(headers, target.key, assistant);
   sent.authorization = `Bearer ${target.key}`;
   sent["content-type"] = "application/json";
@@ -86,7 +86,7 @@ export function callWorkerMcp(target: WorkerTarget, body: Buffer, headers: Incom
     const upstream = request({ host: "127.0.0.1", port: target.port, path: "/mcp", method: "POST", headers: sent }, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (chunk: Buffer) => chunks.push(chunk));
-      res.on("end", () => resolve({ status: res.statusCode ?? 502, headers: res.headers, body: Buffer.concat(chunks) }));
+      res.on("end", () => resolve({ status: res.statusCode ?? 502, body: Buffer.concat(chunks) }));
       res.on("error", () => resolve(undefined));
     });
     upstream.on("error", () => resolve(undefined));
@@ -222,35 +222,4 @@ export async function replayInbox(
       options.taken?.(raw);
     }
   }
-}
-
-/** One internal JSON call to the process: what's live, or the stand-down. Undefined when it can't be reached. */
-export function workerJson<T>(target: WorkerTarget, method: "GET" | "POST", path: string, body?: unknown): Promise<{ status: number; json: T } | undefined> {
-  const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
-  return new Promise((resolve) => {
-    const upstream = request(
-      {
-        host: "127.0.0.1",
-        port: target.port,
-        path,
-        method,
-        headers: { [WORKER_KEY_HEADER]: target.key, [WORKER_INTERNAL_HEADER]: target.key, ...(payload ? { "content-type": "application/json", "content-length": String(payload.length) } : {}) },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
-        res.on("end", () => {
-          try {
-            resolve({ status: res.statusCode ?? 502, json: JSON.parse(Buffer.concat(chunks).toString("utf8") || "null") as T });
-          } catch {
-            resolve(undefined);
-          }
-        });
-        res.on("error", () => resolve(undefined));
-      },
-    );
-    upstream.on("error", () => resolve(undefined));
-    if (payload) upstream.write(payload);
-    upstream.end();
-  });
 }

@@ -62,7 +62,6 @@ interface Running {
   restarts: number[];
   alerts: boolean;
   polled: boolean;
-  retry?: { unref?(): void };
   waiting: (() => void)[];
 }
 
@@ -180,7 +179,6 @@ export class TouringSupervisor {
         if (this.running.get(id) === entry && !entry.handle) this.start(entry);
       }, delay);
       timer.unref?.();
-      entry.retry = timer;
     });
   }
 }

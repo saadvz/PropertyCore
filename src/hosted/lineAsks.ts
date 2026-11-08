@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 
@@ -26,7 +26,7 @@ export class LineAsks {
   private readonly path: string;
 
   constructor(
-    private readonly accountRoot: string,
+    accountRoot: string,
     private readonly now: () => Date,
   ) {
     this.path = join(accountRoot, "line-asks.json");
@@ -42,7 +42,6 @@ export class LineAsks {
   }
 
   private write(doc: Record<string, HeldText>): void {
-    mkdirSync(this.accountRoot, { recursive: true });
     writeJsonAtomic(this.path, doc);
   }
 

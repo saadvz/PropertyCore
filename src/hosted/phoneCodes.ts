@@ -28,7 +28,7 @@ export function setPhoneCodes(next: PhoneCodes | undefined): void {
   override = next;
 }
 
-/** The Verify service's sid, when it and the account are set. */
+/** The Verify service's sid, when it is set and has a Verify sid's shape. */
 export function verifyServiceSid(env: NodeJS.ProcessEnv): string | undefined {
   const sid = env.CLEANER_CORE_TWILIO_VERIFY_SERVICE_SID?.trim();
   return sid && SERVICE_SID.test(sid) ? sid : undefined;
