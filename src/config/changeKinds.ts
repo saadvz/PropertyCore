@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { isValidTimeZone } from "../core/timezone";
 import { normalizeStoredDraft } from "../setup/normalizeDraft";
-import { TourCoreConfigShape, type TourCoreConfig } from "./tourCoreConfig";
+import { LEGACY_ACCESS_MODES, TourCoreConfigShape, type TourCoreConfig } from "./tourCoreConfig";
 
 /**
  * The one place that decides which setup changes affect safety.
@@ -50,7 +50,20 @@ export function legacyVisitorHelpSafetyHash(config: TourCoreConfig): string {
   });
 }
 
-const shortHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
+/**
+ * Fingerprints keep the door access spelling they were made with before
+ * saadvz/PropertyCore#179, so a property saved then still matches its readiness,
+ * practice tour and publication after the rename.
+ */
+const FINGERPRINT_ACCESS_MODES: Readonly<Record<string, string>> = Object.fromEntries(Object.entries(LEGACY_ACCESS_MODES).map(([old, current]) => [current, old]));
+
+function fingerprintSpelling(value: unknown): unknown {
+  if (!value || typeof value !== "object" || !("accessMode" in value)) return value;
+  const mode = (value as { accessMode?: unknown }).accessMode;
+  return typeof mode === "string" && FINGERPRINT_ACCESS_MODES[mode] ? { ...value, accessMode: FINGERPRINT_ACCESS_MODES[mode] } : value;
+}
+
+const shortHash = (value: unknown) => createHash("sha256").update(JSON.stringify(fingerprintSpelling(value))).digest("hex").slice(0, 16);
 
 /** Fingerprint of the structural/safety part of a setup. Readiness, practice tours and publication are tied to this. */
 export function safetyHash(config: TourCoreConfig): string {
