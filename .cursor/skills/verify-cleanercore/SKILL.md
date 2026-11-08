@@ -23,7 +23,7 @@ Doctor and smoke do not call the live service. Before a live run, check the conn
 
 This CLI is short-lived. Launch means install dependencies once, then start each drive as its own process.
 
-From the repo root, with Node 22 (Node 20 can still run doctor and smoke; the SQLite backup store needs Node 22):
+From the repo root, with Node 22.13 or newer (the package and the SQLite backup store need it):
 
 ```
 npm ci

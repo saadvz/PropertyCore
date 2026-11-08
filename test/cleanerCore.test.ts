@@ -289,6 +289,20 @@ describe("one Scratch turnover", () => {
     expect(job.health().counters.canceled).toBe(1);
   });
 
+  it("counts each HELP text once in health (#215 follow-up)", async () => {
+    const job = core(sink());
+    await job.pollFeed(feed("guesty-lite-scratch.ics"));
+    expect(job.health().counters.help).toBe(0);
+    await job.receive({ id: "h1", from: OWNER, text: "HELP" });
+    expect(job.health().counters.help).toBe(1);
+    // The same text again (a webhook retry) is not a second HELP.
+    await job.receive({ id: "h1", from: OWNER, text: "HELP" });
+    expect(job.health().counters.help).toBe(1);
+    await job.receive({ id: "h2", from: OWNER, text: "help" });
+    await job.receive({ id: "y1", from: OWNER, text: "YES" });
+    expect(job.health().counters.help).toBe(2);
+  });
+
   it("sends each reminder once across a second poll, a failed send, and a restart", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cleaner-core-"));
     try {
@@ -970,6 +984,7 @@ describe("step D private door code", () => {
       const outbox = job.outbox();
       const optedOut = job.cleanerHasOptedOut();
       const sent = box.sent.length;
+      const helps = job.health().counters.help;
       expect(await job.receive({ id: `plain-help-${helpN++}`, from, text })).toEqual({ handled: true, reason: "ignored", sent: [] });
       expect(job.jobs()).toEqual(jobs);
       expect(job.outbox()).toEqual(outbox);
@@ -977,11 +992,13 @@ describe("step D private door code", () => {
       expect(box.sent).toHaveLength(sent);
       expect(box.sent.filter((item) => item.kind === "help")).toEqual([]);
       expect(box.sent.some((item) => item.body.includes("I've let Cory know"))).toBe(false);
-      expect(job.health().counters.help).toBe(0);
+      // Health counts the HELP text that came in. Nothing is sent for it.
+      expect(job.health().counters.help).toBe(helps + 1);
       expect(await job.receive({ id: `plain-help-${helpN++}`, from, text })).toEqual({ handled: true, reason: "ignored", sent: [] });
       expect(job.jobs()).toEqual(jobs);
       expect(job.cleanerHasOptedOut()).toBe(optedOut);
       expect(box.sent).toHaveLength(sent);
+      expect(job.health().counters.help).toBe(helps + 2);
     };
 
     const discovered = sink();

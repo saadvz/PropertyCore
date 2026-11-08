@@ -6,7 +6,7 @@ Without `--with-pin`, the owner receives the schedule text. With `--with-pin`, t
 
 ## Baseline preconditions
 
-- Repo root of this checkout, Node 20 or newer, `node_modules/.bin/tsx` present (`npm ci` when it is not).
+- Repo root of this checkout, Node 22.13 or newer, `node_modules/.bin/tsx` present (`npm ci` when it is not).
 - Default doctor and smoke do not read `TOURCORE_HOME`. A journey that says `--data` uses only that temporary directory.
 - Scratch Lane recipients are only `+15555550100` (owner) and `+15555550101` (approved cleaner). `+15555550199` may be a reply sender and must not be a recipient. Scratch Court recipients are only `+15555550110` (owner) and `+15555550111` (approved cleaner). `+15555550119` may be a reply sender and must not be a recipient. A drive for one tenant must not text the other. All of these are Scratch 555 numbers. Never type a real person's number.
 - Run doctor in the same flag setting as the drive and require `sends` false.

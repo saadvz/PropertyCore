@@ -1,5 +1,8 @@
+import { readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LiveDesk } from "../src/cleaner-core/liveDesk";
+import { doorAccessPath } from "../src/hub/doorAccess";
 import { cleanupDesks, LOCK, ok, openDesk, PIN_KEY, ROUTINE, ZONE } from "./cleanerDeskHarness";
 import { ADDRESS, BUSINESS, CALENDAR_URL, CLEANER, DOOR_CODE, HOST, OBSERVER, TEST_PIN_KEY } from "./wiringProof";
 
@@ -160,5 +163,106 @@ describe("a saved contact's STOP before the engine first opens is kept (#215 ite
     expect(earlyOut).toBe(lateOut);
     // The same reply to the START and nothing else: no invite and no group text either way.
     expect(earlyAfter).toEqual(said(late, OBSERVER, lateBefore));
+  });
+});
+
+describe("a contact who opted out comes back by START, then YES (#215 follow-up)", () => {
+  const people = { contacts: SAM, groupChat: "everyone", doorCodeTo: "cleaner" } as const;
+  const BACK_IN = `You're opted back in to cleaning texts for ${ADDRESS}. Reply YES to join, or STOP to opt out.`;
+
+  /** Activated, with Sam's STOP taken by the engine after Sam was invited. */
+  async function stoppedAfterInvite() {
+    const opened = await beforeActivate(people);
+    const desk = opened.reopen();
+    await activateAndSchedule(desk);
+    await desk.inbound({ id: "sam-stop", from: OBSERVER, text: "STOP" });
+    return { opened, desk };
+  }
+
+  it("START no longer says they're back in while leaving them out: it asks for YES", async () => {
+    const { opened, desk } = await stoppedAfterInvite();
+    const before = mark(opened);
+    await desk.inbound({ id: "sam-start", from: OBSERVER, text: "START" });
+    expect(said(opened, OBSERVER, before)).toEqual([BACK_IN]);
+    expect((await desk.moveSource()).optedOut).not.toContain(OBSERVER);
+  });
+
+  it("their YES after START puts them back in the group", async () => {
+    const { opened, desk } = await stoppedAfterInvite();
+    await desk.inbound({ id: "sam-start", from: OBSERVER, text: "START" });
+    const before = mark(opened);
+    await desk.inbound({ id: "sam-yes", from: OBSERVER, text: "YES" });
+    expect(reached(opened, OBSERVER, before).length).toBeGreaterThan(0);
+    expect((await desk.moveSource()).optedOut).not.toContain(OBSERVER);
+  });
+
+  it("without START, a YES after STOP still changes nothing (control)", async () => {
+    const { opened, desk } = await stoppedAfterInvite();
+    const before = mark(opened);
+    await desk.inbound({ id: "sam-yes", from: OBSERVER, text: "YES" });
+    expect(reached(opened, OBSERVER, before)).toEqual([]);
+    expect((await desk.moveSource()).optedOut).toContain(OBSERVER);
+  });
+
+  it("an early STOP, before any invite, comes back the same way: START, then YES", async () => {
+    const opened = await beforeActivate(people);
+    await opened.desk.inbound({ id: "sam-stop", from: OBSERVER, text: "STOP" });
+    const desk = opened.reopen();
+    await activateAndSchedule(desk);
+    const before = mark(opened);
+    await desk.inbound({ id: "sam-start", from: OBSERVER, text: "START" });
+    expect(said(opened, OBSERVER, before)).toEqual([BACK_IN]);
+    // They were never sent the invite, so the START reply is the one their YES answers.
+    await desk.inbound({ id: "sam-yes", from: OBSERVER, text: "YES" });
+    expect(reached(opened, OBSERVER, before).length).toBeGreaterThan(1);
+    expect((await desk.moveSource()).optedOut).not.toContain(OBSERVER);
+  });
+});
+
+describe("a host's STOP or START while the engine can't open counts when it reopens (#215 follow-up)", () => {
+  const people = { groupChat: "cleaner-and-host" } as const;
+
+  /** The host's consent as the engine saved it. One property, so one tenant in the store. */
+  function hostConsent(root: string): { ownerOptedOut: boolean; hostGroup: unknown } {
+    const store = JSON.parse(readFileSync(join(root, "cleaner-job", "cleaner-core.json"), "utf8")) as Record<string, unknown> & { tenants?: Record<string, Record<string, unknown>> };
+    const mine = store.tenants ? Object.values(store.tenants)[0]! : store;
+    return { ownerOptedOut: mine.ownerOptedOut === true, hostGroup: mine.hostGroup };
+  }
+
+  /** Activated and seated, then the door code is gone and the server restarts, so no engine opens. */
+  async function engineClosed() {
+    const opened = await beforeActivate(people);
+    await activateAndSchedule(opened.desk);
+    expect(hostConsent(opened.root)).toEqual({ ownerOptedOut: false, hostGroup: "in" });
+    rmSync(doorAccessPath(opened.root), { force: true });
+    return { opened, desk: opened.reopen() };
+  }
+
+  it("a STOP while it's closed takes the host out of the group once the code is saved again", async () => {
+    const { opened, desk } = await engineClosed();
+    await desk.inbound({ id: "host-stop", from: HOST, text: "STOP" });
+    ok(await desk.saveDoorCode({ code: DOOR_CODE, lockLocation: LOCK }, PIN_KEY));
+    await desk.inbound({ id: "cleaner-hi", from: CLEANER, text: "On my way" });
+    expect(hostConsent(opened.root)).toEqual({ ownerOptedOut: true, hostGroup: "out" });
+  });
+
+  it("a START while it's closed brings back a host who stopped while it was open", async () => {
+    const opened = await beforeActivate(people);
+    await activateAndSchedule(opened.desk);
+    await opened.desk.inbound({ id: "host-stop", from: HOST, text: "STOP" });
+    expect(hostConsent(opened.root)).toEqual({ ownerOptedOut: true, hostGroup: "out" });
+    rmSync(doorAccessPath(opened.root), { force: true });
+    const desk = opened.reopen();
+    await desk.inbound({ id: "host-start", from: HOST, text: "START" });
+    ok(await desk.saveDoorCode({ code: DOOR_CODE, lockLocation: LOCK }, PIN_KEY));
+    await desk.inbound({ id: "cleaner-hi", from: CLEANER, text: "On my way" });
+    expect(hostConsent(opened.root)).toEqual({ ownerOptedOut: false, hostGroup: "in" });
+  });
+
+  it("with nothing from the host while it's closed, the engine reopens as it was (control)", async () => {
+    const { opened, desk } = await engineClosed();
+    ok(await desk.saveDoorCode({ code: DOOR_CODE, lockLocation: LOCK }, PIN_KEY));
+    await desk.inbound({ id: "cleaner-hi", from: CLEANER, text: "On my way" });
+    expect(hostConsent(opened.root)).toEqual({ ownerOptedOut: false, hostGroup: "in" });
   });
 });

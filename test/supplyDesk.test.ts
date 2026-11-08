@@ -186,6 +186,24 @@ describe("setup", () => {
     }
   });
 
+  it("checks a shared schedule saved with the property against that property's date (#215 follow-up)", async () => {
+    // No property saved yet, so the only time zone is the one in the same save_settings call.
+    const lastDay = { kind: "custom" as const, rrule: "FREQ=DAILY;UNTIL=20261105", said: "daily until 5 November" };
+    const at = new Date("2026-11-05T01:30:00.000Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(at);
+    try {
+      const saveIn = (timeZone: string) =>
+        supplyDeskFor(folder(), { now: () => at }).saveSettings({ property: { name: PROPERTY.name, address: PROPERTY.address, timeZone }, sharedSchedule: lastDay });
+      // Still 4 November in Los Angeles, though it's the 5th in UTC: the 5th is still to come.
+      expect(await saveIn("America/Los_Angeles")).toMatchObject({ isError: false });
+      // Already 5 November in Tokyo: the rule never comes up again.
+      expect(await saveIn("Asia/Tokyo")).toMatchObject({ isError: true, text: "That rule never comes up again." });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("activate is refused without an item, a mode, and a check time", async () => {
     const { desk } = cleaning();
     expect((await desk.activate({})).isError).toBe(true);
