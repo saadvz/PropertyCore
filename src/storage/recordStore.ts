@@ -19,7 +19,6 @@ import {
   verifyMigration,
   type MigrationProgress,
 } from "./canonical";
-import { MemoryDocumentStore } from "./documentStore";
 import { DurableTourStore } from "./durableTourStore";
 import { StorageUnavailableError, StoreBusyError } from "./errors";
 import { GoogleDriveStore, type DriveClient } from "./googleDrive";
@@ -99,7 +98,7 @@ export class RecordStore {
 
   wrapStore(inner: TourCoreStore = new InMemoryStore()): TourCoreStore {
     if (this.provider() !== "GOOGLE_DRIVE_READY") return inner;
-    return new DurableTourStore(inner, this.remote ?? new MemoryDocumentStore(), () => this.driveUp() && !!this.remote);
+    return new DurableTourStore(inner, () => this.remote, () => this.driveUp() && !!this.remote);
   }
 
   summary(): string {

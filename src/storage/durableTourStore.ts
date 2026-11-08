@@ -6,13 +6,21 @@ import { sha256Json, type DocumentStore } from "./documentStore";
 /**
  * Tour records that must be on Drive before Tour Core tells anyone they
  * happened. The in-memory store updates only after Drive accepts the write.
+ * The Drive store is looked up on each call, so a store made before Drive
+ * opened writes to Drive once it does.
  */
 export class DurableTourStore implements TourCoreStore {
   constructor(
     private readonly inner: TourCoreStore,
-    private readonly remote: DocumentStore,
+    private readonly current: () => DocumentStore | undefined,
     private readonly available: () => boolean,
   ) {}
+
+  private get remote(): DocumentStore {
+    const remote = this.current();
+    if (!remote) throw new StorageUnavailableError("Tour records can't be saved right now, so that wasn't confirmed.");
+    return remote;
+  }
 
   private path(collection: string, id: string): string {
     return `tours-data/${collection}/${id}.json`;
