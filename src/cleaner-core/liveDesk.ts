@@ -9,6 +9,7 @@ import { parsePhone } from "../core/phone";
 import { FileRuntimeStore } from "../storage/runtimeStore";
 import { ConfirmationBook } from "../operator/confirmations";
 import { supplyAskOn } from "../supply-core/store";
+import { fixerAskOn } from "../fixer-core/store";
 import { messagingKeyword, normalize } from "../intent";
 import { spokenTimes } from "../core/spokenTime";
 import { formatWhen, zonedInstant } from "../hub/calendar";
@@ -849,6 +850,16 @@ export class LiveDesk {
       // The link's maker is the connection whose routine this is.
       return pending.by ? withCaller(pending.by, finish) : finish();
     });
+  }
+
+  /**
+   * Cleaner Core's cleaning for a checkout date, for Fixer Core's visit windows: when it was done, and
+   * whether the cleaner has cleared the unit (the code went out, or the cleaning started or finished).
+   */
+  async cleaningFor(checkoutYmd: string): Promise<{ id: string; doneAt?: string; cleared: boolean } | undefined> {
+    const job = this.engine?.jobs().find((item) => item.checkoutDate === checkoutYmd && item.status !== "canceled" && item.status !== "declined");
+    if (!job) return undefined;
+    return { id: job.id, ...(job.doneAt ? { doneAt: job.doneAt } : {}), cleared: job.status === "cleared" || job.status === "in_progress" || job.status === "done" };
   }
 
   /** Delivers every pending wake-up that is due. A routine that is down or not saved leaves them pending. */
@@ -3551,7 +3562,11 @@ export class LiveDesk {
   /** The engine options for the saved preferences. The cleaning note is set only when instructions are saved. */
   private preferenceOptions(): Partial<Parameters<typeof openCleanerCore>[0]> {
     // Supply Core on and active: the done text also asks what's running low.
-    const supplies = supplyAskOn(this.root) ? { supplyAsk: true } : {};
+    // Fixer Core on and chosen: it also asks "Anything broken?".
+    const supplies = {
+      ...(supplyAskOn(this.root) ? { supplyAsk: true } : {}),
+      ...(fixerAskOn(this.root) ? { repairAsk: true, ...(this.file.cleanerName ? { cleanerName: this.file.cleanerName } : {}) } : {}),
+    };
     const preferences = this.file.preferences;
     if (!preferences) return supplies;
     return {

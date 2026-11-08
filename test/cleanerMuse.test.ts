@@ -132,8 +132,11 @@ describe("Muse template", () => {
     expect(prompt).not.toMatch(/after the host's yes in this conversation and approve_cart's code/);
   });
 
+  // The repair-report step names Fixer Core's open_job, which is a tool once Fixer Core's tools are wired in.
+  const FIXER_PROMPT_TOOLS = ["open_job"];
+
   it("names only real Cleaner Core or Supply Core tools, or the account's own", async () => {
-    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name)), ...SUPPLY_TOOL_NAMES, CHOOSE];
+    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name)), ...SUPPLY_TOOL_NAMES, CHOOSE, ...FIXER_PROMPT_TOOLS];
     for (const file of filesUnder(TEMPLATE)) {
       for (const m of read(file).matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) expect(tools, `${file}: ${m[1]}`).toContain(m[1]);
     }

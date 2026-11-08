@@ -27,7 +27,7 @@ import {
 } from "../hub/sources";
 import { fingerprintOf, freshnessOf, GUESTY_POLL_MS, staleAfterMs, type FreshnessStatus, type SourceRecord } from "./freshness";
 import { containsCodeToken, redactLine, redactPhone } from "./redact";
-import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, SUPPLY_DONE_ASK, SUPPLY_NOTED, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, schedulerOptInBody, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
+import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, SUPPLY_DONE_ASK, SUPPLY_NOTED, repairDoneAsk, supplyRepairDoneAsk, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, schedulerOptInBody, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
 import { codeRoute, GroupNotConfirmed, type GroupSeat } from "./groupThread";
 import { GROK_HELPER } from "./assistant";
 import { codeHandlingText, HEALTH_NOTE, reviewAlert, reviewId, type AuditEvent, type ReviewDetail, type ReviewItem, type ReviewKind } from "./review";
@@ -250,7 +250,7 @@ export type ReceiveReason =
   | "retry";
 
 /** What Cleaner Core did with an inbound text, for Grok to read beside the message. */
-export type MessageHandled = "opted-in" | "confirmed" | "declined" | "done" | "stop" | "start" | "injury" | "code-held" | "checklist-asked" | "checklist-not-done" | "supply-report" | "none" | "sent";
+export type MessageHandled = "opted-in" | "confirmed" | "declined" | "done" | "stop" | "start" | "injury" | "code-held" | "checklist-asked" | "checklist-not-done" | "supply-report" | "repair-report" | "none" | "sent";
 
 export interface ReceiveResult {
   handled: boolean;
@@ -403,6 +403,13 @@ export interface CleanerCoreOptions {
   supplyNotes?: boolean;
   /** Supply Core is on: the done text also asks what's running low, and the next reply is the answer. */
   supplyAsk?: boolean;
+  /**
+   * Fixer Core is on and the host chose it: the done text also asks "Anything broken?", and the
+   * next reply is labeled repair-report (with Supply Core on too, it covers supplies as well).
+   */
+  repairAsk?: boolean;
+  /** The cleaner's saved name. The done text uses its first word. A group text names them itself. */
+  cleanerName?: string;
   /**
    * The host's other instructions, added to the end of the door code text, so the cleaner reads them
    * as the cleaning starts. LiveDesk sets it only when instructions are saved, so the Scratch CLI and
@@ -1944,16 +1951,28 @@ class Engine implements CleanerCore {
     return { ...replied, label: "checklist-not-done" };
   }
 
+  /** True when the done text asks the cleaner a question: supplies, repairs, or both. */
+  private asksAfterDone(): boolean {
+    return Boolean(this.options.supplyAsk || this.options.repairAsk);
+  }
+
+  /** The done text. A group names the cleaner itself, so no first name goes in here. */
+  private doneBody(): string {
+    const name = this.groupChat ? undefined : this.options.cleanerName;
+    if (this.options.repairAsk) return this.options.supplyAsk ? supplyRepairDoneAsk(name) : repairDoneAsk(name);
+    return this.options.supplyAsk ? SUPPLY_DONE_ASK : "Thanks, cleaning marked done.";
+  }
+
   /** Marks the cleaning done once the cleaner's acknowledgement went out, and tells the host. */
   private async markDone(job: Job, from: string, id: string): Promise<ReceiveResult & { label?: MessageHandled }> {
-    const body = this.options.supplyAsk ? SUPPLY_DONE_ASK : "Thanks, cleaning marked done.";
+    const body = this.doneBody();
     const result = await this.reply(from, body, "done", "done", id, job.id);
     const acked = result.sent.length > 0 || this.delivery(`done:${id}`) === "sent";
     if (acked) {
       job.started = true;
       job.done = true;
       job.doneAt = this.now().toISOString();
-      if (this.options.supplyAsk && !job.supplyAskedAt) job.supplyAskedAt = job.doneAt;
+      if (this.asksAfterDone() && !job.supplyAskedAt) job.supplyAskedAt = job.doneAt;
       if (!this.inboundIds.includes(id)) this.inboundIds.push(id);
       await this.tellHostDone(job);
     }
@@ -1968,7 +1987,7 @@ class Engine implements CleanerCore {
    * plain-language stop, or a code-like text, which keep their own meaning.
    */
   private supplyWaiting(from: string, raw: string): Job | undefined {
-    if (!this.options.supplyAsk || !from || from !== this.cleanerPhone || this.cleanerConsent !== "in") return undefined;
+    if (!this.asksAfterDone() || !from || from !== this.cleanerPhone || this.cleanerConsent !== "in") return undefined;
     const text = raw.trim();
     if (!text || keywordOf(text) !== undefined || isYes(text) || isDone(text) || isInjuryReport(text) || isPlainLanguageStop(text) || this.looksLikeCode(text)) return undefined;
     // A bare NO while the next cleaning's offer waits declines that offer.
@@ -1988,7 +2007,7 @@ class Engine implements CleanerCore {
     const replied = await this.reply(from, SUPPLY_NOTED, "next", "ignored", id, job.id);
     this.inboundIds.push(id);
     this.save();
-    return { ...replied, label: "supply-report" };
+    return { ...replied, label: this.options.repairAsk ? "repair-report" : "supply-report" };
   }
 
   /** The cleaning in progress: the code went to the cleaner and it isn't done, called off, or declined. */
