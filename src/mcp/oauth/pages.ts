@@ -100,7 +100,7 @@ const CLEANER_WORDS: ConsentWords = {
 /** The one address on the multi-tenant service: the host picks touring or cleaning after connecting. */
 const SHARED_WORDS: ConsentWords = {
   product: "Property Core",
-  asking: "is asking to run touring or cleaning on your number.",
+  asking: "is asking to run cleanings, supplies, or tours at your properties.",
   can: ["set your number up for touring or cleaning", "save your properties, calendars, people and schedule", "text visitors or your cleaner as that service does", "tell you what they say"],
   cannot: ["read back a door code", "reach another host's number or records", "read provider secrets"],
 };

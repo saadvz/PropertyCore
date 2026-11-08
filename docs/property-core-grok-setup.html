@@ -254,7 +254,7 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
     <button type="button" data-pick="supply" aria-pressed="false"><b>Supply Core</b><span>Supplies reordered for your property</span></button>
   </div>
   <p class="map-note">A property can run both. Set up one now, and turn the other on later by asking the bot.</p>
-  <p class="map-note">Fixer Core, for repairs, comes next. Tour Core (self-guided tours) is parked: only touring accounts Saad sets up get it. Its guide is <a href="tour-core/README.md">here</a>.</p>
+  <p class="map-note">Coming soon: Fixer Core, for repairs. Self-guided tours (Tour Core) are on hold for new hosts, and Saad sets them up by hand. Their guide is <a href="tour-core/README.md">here</a>.</p>
 </section>
 
 <div class="stuck" role="note">
@@ -320,12 +320,12 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
         <div class="do">
           <ol class="todo">
             <li><div>In the bot's chat, type <b>Set up Property Core</b> and press Enter. The bot gets ready, which can take a minute or two.</div></li>
-            <li><div>A page titled <b>Connect your Grok Bot to Tour Core and Cleaner Core</b> opens. That old name is expected. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you.</div></li>
+            <li><div>A page titled <b>Connect your Grok Bot to Property Core</b> opens. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you.</div></li>
             <li><div>Click <span class="btn-label">Allow</span>.</div></li>
             <li><div>Back in the chat, give the bot your property's address. It asks which flows to turn on there. Tap <b>Cleaner Core</b>, or both. Have more than one property? Add each one the same way.</div></li>
           </ol>
           <p class="note warn">Never type your invite code in the chat. It only goes on the approval page.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Approval page</span></div><div class="mock-body"><div class="mock-title">Connect Grok to Tour Core and Cleaner Core</div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Approval page</span></div><div class="mock-body"><div class="mock-title">Connect your Grok Bot to Property Core</div>
       <div class="field"><label>Your Property Core account</label><div class="radio"><b></b> Sign in</div><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> Create account</div><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> I have an invite code</div></div>
       <div class="field"><label>Code from the text</label><div class="val hl secret">••••••</div></div>
       <div class="mock-btns"><span class="mbtn">Deny</span><span class="mbtn primary">Allow</span></div></div></div><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Property Core bot</span></div><div class="mock-body"><div class="bubble ai">Which flows do you want at 12 Example St?</div><div class="chips"><span class="chip on">Cleaner Core</span><span class="chip">Supply Core</span><span class="chip">Both</span></div></div></div><span class="caption">Example wording. Grok's exact words will differ.</span></div>
@@ -420,7 +420,7 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
         <div class="do">
           <ol class="todo">
             <li><div>In the bot's chat, type <b>Set up Property Core</b> and press Enter.</div></li>
-            <li><div>A page titled <b>Connect your Grok Bot to Tour Core and Cleaner Core</b> opens. That old name is expected. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you. Then click <span class="btn-label">Allow</span>.</div></li>
+            <li><div>A page titled <b>Connect your Grok Bot to Property Core</b> opens. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you. Then click <span class="btn-label">Allow</span>.</div></li>
             <li><div>Back in the chat, give the bot the property's address. Supplies are delivered there. When it asks which flows to turn on, tap <b>Supply Core</b>, or both. If the bot says Cleaner Core has to be on first, pick both.</div></li>
           </ol>
           <p class="note warn">Never type your invite code in the chat. It only goes on the approval page.</p></div>
@@ -494,7 +494,7 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
     <p>Most days you don't need to do anything. You hear when something needs you.</p>
   </div>
   <div class="after" data-svc="clean"><div><span class="place pl-chat">Bot chat</span><h3>Your cleaner texts back</h3><p>The bot posts a short summary right away. Reply to it in plain words, like "yes, the guests have left".</p></div><div><span class="place pl-private">Door code</span><h3>The code waits for your yes</h3><p>Your cleaner only gets the door code after you've said the guests have left.</p></div><div><span class="place pl-chat">Summary</span><h3>Cleaning finished</h3><p>Your assistant looks at the cleaner's photos, checks them against your checklist, and sends you a short report.</p></div></div>
-  <div class="after" data-svc="supply"><div><span class="place pl-task">Every day</span><h3>The bot checks what's due</h3><p>At your check time, Supply Core Check finds what's due and shops for it. With nothing to do, it posts nothing.</p></div><div><span class="place pl-chat">Checkout</span><h3>Every cart is checked</h3><p>Before any order, the bot checks the cart with Supply Core (<code>check_cart</code>). On go, it orders and tells you. A held cart waits for your yes: buy anyway, use the backup, or skip.</p></div><div><span class="place pl-private">Your Vault</span><h3>Your cards stay yours</h3><p>Card details never reach Supply Core. Grok pays from your Vault. If Grok shows its own pay card, tap Pay.</p></div><div><span class="place pl-chat">Any time</span><h3>Running low?</h3><p>Say "we're low on paper towels". With Cleaner Core too, your cleaner's "running low" answer after a cleaning turns into an order.</p></div></div>
+  <div class="after" data-svc="supply"><div><span class="place pl-task">Every day</span><h3>The bot checks what's due</h3><p>At your check time, Supply Core Check finds what's due and shops for it. With nothing to do, it posts nothing.</p></div><div><span class="place pl-chat">Checkout</span><h3>Every cart is checked</h3><p>Before any order, Supply Core checks the final cart: the items, the total, and the delivery date. If it passes, the bot orders and tells you. A held cart waits for your yes: buy anyway, use the backup, or skip.</p></div><div><span class="place pl-private">Your Vault</span><h3>Your cards stay yours</h3><p>Card details never reach Supply Core. Grok pays from your Vault. If Grok shows its own pay card, tap Pay.</p></div><div><span class="place pl-chat">Any time</span><h3>Running low?</h3><p>Say "we're low on paper towels". With Cleaner Core too, your cleaner's "running low" answer after a cleaning turns into an order.</p></div></div>
 </section>
 
 <section aria-labelledby="tr-h">

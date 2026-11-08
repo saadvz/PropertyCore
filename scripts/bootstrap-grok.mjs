@@ -10,7 +10,7 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 // Same check as nodeVersionProblem in src/install/bootstrap.ts (package.json engines: >=22.13.0).
 const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
 if (major < 22 || (major === 22 && minor < 13)) {
-  console.error(`  Tour Core needs Node.js 22.13 or newer (this computer has ${process.versions.node}).`);
+  console.error(`  Tour Core needs Node.js 22.13 or newer, and this computer has ${process.versions.node}. Install the LTS version from nodejs.org, then run this again.`);
   process.exit(1);
 }
 
