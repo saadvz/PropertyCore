@@ -72,30 +72,25 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
   const caller = { grantId: extra.grantId, assistant: extra.assistant };
   h.registry.touch(tenant.id);
   if (toolsFor(tenant) === "properties") return propertiesAnswer(h, r, tenant, caller, `grant:${caller.grantId}`);
-  return touringAnswer(h, r, tenant, caller, `grant:${caller.grantId}`);
+  return touringAnswer(h, r, tenant, caller);
 }
 
 /** A parked touring account: Tour Core's own process answers, with the touring tools the service adds. */
-async function touringAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: TouringCaller, sessionKey: string): Promise<void> {
+async function touringAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller): Promise<void> {
   if (r.method !== "POST") return touringPass(h, r, tenant, caller);
   const raw = await r.readRaw();
   const message = parseMessage(raw);
   if (message?.method === "initialize") initializes.set(caller.grantId, raw);
   if (message?.method === "tools/call" && message.id !== undefined) {
     const name = typeof message.params?.name === "string" ? message.params.name : "";
-    const reply = await handleFrontTool({ h, tenant, caller, noteToolsChanged: () => noteInitialized(sessionKey) }, name, message.params?.arguments);
+    const reply = await handleFrontTool({ h, tenant, caller }, name, message.params?.arguments);
     if (reply) return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult(reply)));
     if (refusedHere(name)) return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult({ text: wrongServiceLine("touring"), isError: true })));
   }
   if (message?.method === "tools/list" && message.id !== undefined) {
     const answer = await touringCall(h, tenant.id, caller, raw, r);
     if (!answer) return r.send(503, JSON_TYPE, JSON.stringify({ error: { message: TOURING_DOWN } }));
-    let listed: { result?: { tools?: unknown[] } } | undefined;
-    try {
-      listed = JSON.parse(answer.body) as { result?: { tools?: unknown[] } };
-    } catch {
-      listed = undefined;
-    }
+    const listed = deskJson(answer) as { result?: { tools?: unknown[] } } | undefined;
     if (!listed?.result || !Array.isArray(listed.result.tools)) return r.send(answer.status, JSON_TYPE, answer.body);
     listed.result.tools = [...listed.result.tools, ...listedFrontTools("touring", scratchFor(h, tenant))];
     return r.send(200, JSON_TYPE, JSON.stringify(listed));
@@ -119,6 +114,7 @@ function parseMessage(raw: Buffer): RpcMessage | undefined {
   }
 }
 
+/** The connection a call is for, and the chat its sign-in recorded. */
 type Caller = { grantId: string; assistant: CleanerAssistant };
 
 /**
@@ -155,7 +151,7 @@ export const PROPERTY_INSTRUCTIONS =
 
 async function propertyToolList(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller): Promise<Record<string, unknown>[]> {
   const required = tenant.properties.length > 1;
-  const tools: Record<string, unknown>[] = [...accountTools(), ...listedFrontTools("properties")];
+  const tools: Record<string, unknown>[] = [...accountTools()];
   const cleaning = tenant.properties.find((p) => p.flows.cleaning.on);
   if (cleaning) {
     const listed = deskJson(await cleaningCall(h, tenant, cleaning, caller, rpcBody("tools/list", {}), r));
@@ -181,8 +177,6 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
     if (!reply.isError) await shareRoutine(h, tenant.id);
     return reply;
   }
-  const front = await handleFrontTool({ h, tenant, caller, noteToolsChanged }, name, args);
-  if (front) return front;
   const supply = SUPPLY_FRONT_NAMES.has(name);
   if (!supply && !CLEANING_TOOLS.has(name)) return { text: `There's no tool named ${name || "that"} here. Call get_state.`, isError: true };
   // A scheduled run checks every property at once: check_now with no property, on an account of two
@@ -311,11 +305,11 @@ function withNotices(body: string, notices: string[], warn?: (state: Record<stri
   }
 }
 
-/** The touring process for this tenant, once it has seen this connection's initialize. */
 /** How long a call waits for a touring process that is still starting. */
 const STARTING_WAIT_MS = 30_000;
 
-async function touringTarget(h: HostedCleaner, tenantId: string, caller: TouringCaller, isInitialize = false): Promise<WorkerTarget | undefined> {
+/** The touring process for this tenant, once it has seen this connection's initialize. */
+async function touringTarget(h: HostedCleaner, tenantId: string, caller: Caller, isInitialize = false): Promise<WorkerTarget | undefined> {
   // A process still starting (the service was just picked, or it's restarting) is waited for, so a
   // chat's first tool list is never empty: Claude and ChatGPT keep the list a chat started with.
   if (!h.touring?.supervisor.target(tenantId)) {
@@ -340,16 +334,13 @@ async function touringTarget(h: HostedCleaner, tenantId: string, caller: Touring
   return target;
 }
 
-/** The connection a touring call is for, and the chat its sign-in recorded, which picks touring's playbook. */
-type TouringCaller = { grantId: string; assistant: CleanerAssistant };
-
-async function touringPass(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: TouringCaller, raw?: Buffer, isInitialize = false): Promise<void> {
+async function touringPass(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller, raw?: Buffer, isInitialize = false): Promise<void> {
   const target = await touringTarget(h, tenant.id, caller, isInitialize);
   if (!target) return r.send(503, JSON_TYPE, JSON.stringify({ error: { message: TOURING_DOWN } }));
   return forwardMcp(target, r, raw, caller.assistant);
 }
 
-async function touringCall(h: HostedCleaner, tenantId: string, caller: TouringCaller, raw: Buffer, r: HostedRequest): Promise<{ status: number; body: string } | undefined> {
+async function touringCall(h: HostedCleaner, tenantId: string, caller: Caller, raw: Buffer, r: HostedRequest): Promise<{ status: number; body: string } | undefined> {
   const target = await touringTarget(h, tenantId, caller);
   if (!target) return undefined;
   const answer = await callWorkerMcp(target, raw, r.req.headers, caller.assistant);

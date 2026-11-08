@@ -9,7 +9,7 @@ import type { OperatorEvent } from "../alerts/operatorEvents";
 /** The header that carries a touring process's key. The shared service sets it on every request it forwards. */
 export const WORKER_KEY_HEADER = "x-tourcore-worker-key";
 
-/** Carries the key again on the front's own internal calls. Never forwarded from a caller, so /t/<id>/ links can't reach /internal/. */
+/** A touring process opens its /internal/ routes only when this carries its key too. The front never sends it and drops it from anything it forwards, so /t/<id>/ links can't reach /internal/. */
 export const WORKER_INTERNAL_HEADER = "x-tourcore-internal";
 
 /**
