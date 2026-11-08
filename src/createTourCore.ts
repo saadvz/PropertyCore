@@ -8,9 +8,8 @@ import { DemoMessagingAdapter, type Messenger } from "./messaging/Messenger";
 import type { MessagingLedger } from "./messaging/ledger";
 import type { MessagingCheck } from "./messaging/provider";
 import { usesLocalMessaging } from "./messaging/propertyScope";
-import { createMessagingProvider, currentMessagingInput, resolveMessagingSelection } from "./messaging/registry";
+import { createMessagingProvider, currentMessagingInput, resolveMessagingSelection, selectionFromInstallation } from "./messaging/registry";
 import { sendblueConfigured } from "./messaging/sendblue/provider";
-import { sendblueRuntime } from "./messaging/sendblue/runtime";
 import { InMemoryStore, type TourCoreStore } from "./storage/Store";
 import { presentVerification } from "./setup/verification";
 import { BasicFormVerification, NoFormVerification, type VerificationProvider } from "./verification/basicForm";
@@ -36,8 +35,8 @@ export function createStore(config: TourCoreConfig): TourCoreStore {
 
 export function createMessenger(config: TourCoreConfig, log?: Log, options: { ledger?: MessagingLedger } = {}): Messenger {
   if (config.messagingMode === "demo") return new DemoMessagingAdapter(log);
-  if (usesLocalMessaging(config, resolveMessagingSelection(currentMessagingInput()))) {
-    const input = currentMessagingInput();
+  const input = currentMessagingInput();
+  if (usesLocalMessaging(config, resolveMessagingSelection(input))) {
     return createMessagingProvider("local", { env: () => input.env, sendblue: () => input.sendblue, ledger: options.ledger });
   }
   return createLiveMessagingTransport(options.ledger);
@@ -58,22 +57,9 @@ export function createLiveMessagingTransport(ledger?: MessagingLedger): Messenge
 
 /** The running installation's transport. Uses the saved provider, not a hardcoded one. */
 export function liveTransportFor(inst: Installation, ledger?: MessagingLedger): Messenger {
-  const selection = resolveMessagingSelection({
-    env: inst.env(),
-    sendblue: inst.sendblueEnv(),
-    choice: inst.files.state().messagingProviderChoice,
-    manifestProvider: safeManifestProvider(inst),
-  });
+  const selection = selectionFromInstallation(inst);
   if (!selection.provider) throw new UnavailableModeError("MESSAGING_NOT_CONFIGURED", "Visitor messaging isn't connected yet.");
   return createMessagingProvider(selection.provider, { env: () => inst.env(), sendblue: () => inst.sendblueEnv(), ledger, now: () => new Date(inst.now()) });
-}
-
-function safeManifestProvider(inst: Installation) {
-  try {
-    return inst.files.manifest()?.messagingProvider;
-  } catch {
-    return undefined;
-  }
 }
 
 /** Whether the chosen messaging can reach visitors, as plain-language checks. Demo messaging always can. */
