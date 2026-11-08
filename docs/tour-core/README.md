@@ -901,10 +901,9 @@ src/alerts/        operator events, notification sinks (Grok Routine), durable o
 scripts/           bootstrap-grok.mjs (dependency-installing entry point for npm run bootstrap:grok)
 .grok/skills/      Install Tour Core plus the seven Grok operator skills (SKILL.md)
 grok-template/     Tour Core Bot profile, context, routine, safe examples, integration notes, manifest
-property-core-template/  Property Core: one bot that asks Tour Core or Cleaner Core, then follows that service's guide. Grok at the root;
-                   claude/, chatgpt/, and muse/ for the other chats
-muse-template/     Cleaner Core and Supply Core for Muse: the paste-in prompt, the cleaner-core and supply-core skills, and
-                   their recurring tasks
+property-core-template/  Property Core, the one way to start: Cleaner Core and Supply Core, with touring parked. Grok at the
+                   root; claude/, chatgpt/, and muse/ for the other chats
+muse-template/     Cleaner Core and Supply Core for Muse: the cleaner-core and supply-core skills and their recurring tasks
 src/intent/        what a typed message means: intent schema, rule-based interpreter, optional language-model
                    interpreter behind a vendor-neutral interface
 src/visitor/       visitor session over the real engine (browser phone and real phones), typed-reply
