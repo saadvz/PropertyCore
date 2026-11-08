@@ -54,7 +54,6 @@ export type PropertyType = z.infer<typeof PropertyTypeSchema>;
 
 /** Types offered during setup. Whole-building apartments and "Other" stay readable on older files. */
 export const SETUP_PROPERTY_TYPES = ["SINGLE_FAMILY", "MULTIFAMILY_HOME", "APARTMENT_OR_CONDO"] as const;
-export type SetupPropertyType = (typeof SETUP_PROPERTY_TYPES)[number];
 
 export const PROPERTY_TYPE_LABELS: Record<PropertyType, string> = {
   SINGLE_FAMILY: "Single-family home",
@@ -248,8 +247,6 @@ export const TourCoreConfigShape = z.object({
 export type TourCoreConfig = z.infer<typeof TourCoreConfigShape>;
 export type Door = z.infer<typeof DoorSchema>;
 export type Unit = z.infer<typeof UnitSchema>;
-export type Route = z.infer<typeof RouteSchema>;
-export type Property = z.infer<typeof PropertySchema>;
 export type TourHours = z.infer<typeof TourHoursSchema>;
 export type TourWindow = z.infer<typeof TourWindowSchema>;
 
