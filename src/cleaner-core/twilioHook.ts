@@ -34,8 +34,19 @@ export function textAddressedTo(raw: Buffer, number: string | undefined): boolea
 }
 
 function header(headers: IncomingHttpHeaders, name: string): string | undefined {
-  const value = headers[name] ?? headers[name.toLowerCase()];
+  const value = headers[name];
   return Array.isArray(value) ? value[0] : value;
+}
+
+/** Each webhook's first steps: cleaning texts on (else 404), then a valid Twilio signature (else 403). */
+function signedForm(input: { rawBody: Buffer; headers: IncomingHttpHeaders; url: string | undefined; env: () => NodeJS.ProcessEnv }): { params: Record<string, string> } | { status: number; body: string } {
+  const env = input.env();
+  if (!cleanerCoreEnabled(env)) return { status: 404, body: "" };
+  const params = formParams(input.rawBody);
+  const signature = header(input.headers, "x-twilio-signature");
+  const verified = verifyTwilioSignature(env.CLEANER_CORE_TWILIO_AUTH_TOKEN?.trim(), input.url, params, signature);
+  if (!verified.ok) return { status: 403, body: JSON.stringify({ error: "unauthorized" }) };
+  return { params };
 }
 
 /**
@@ -51,12 +62,9 @@ export async function handleCleanerTwilioWebhook(input: {
   root: string;
   now: () => Date;
 }): Promise<{ status: number; body: string; contentType?: string }> {
-  const env = input.env();
-  if (!cleanerCoreEnabled(env)) return { status: 404, body: "" };
-  const params = formParams(input.rawBody);
-  const signature = header(input.headers, "x-twilio-signature");
-  const verified = verifyTwilioSignature(env.CLEANER_CORE_TWILIO_AUTH_TOKEN?.trim(), input.url, params, signature);
-  if (!verified.ok) return { status: 403, body: JSON.stringify({ error: "unauthorized" }) };
+  const form = signedForm(input);
+  if (!("params" in form)) return form;
+  const params = form.params;
   const from = params.From ?? "";
   const text = params.Body ?? "";
   const id = params.MessageSid?.trim() || createHash("sha256").update(`${from}\n${text}`).digest("hex");
@@ -76,12 +84,9 @@ export async function handleCleanerTwilioStatus(input: {
   root: string;
   now: () => Date;
 }): Promise<{ status: number; body: string }> {
-  const env = input.env();
-  if (!cleanerCoreEnabled(env)) return { status: 404, body: "" };
-  const params = formParams(input.rawBody);
-  const signature = header(input.headers, "x-twilio-signature");
-  const verified = verifyTwilioSignature(env.CLEANER_CORE_TWILIO_AUTH_TOKEN?.trim(), input.url, params, signature);
-  if (!verified.ok) return { status: 403, body: JSON.stringify({ error: "unauthorized" }) };
+  const form = signedForm(input);
+  if (!("params" in form)) return form;
+  const params = form.params;
   const sid = params.MessageSid?.trim() || params.SmsSid?.trim() || "";
   const status = (params.MessageStatus || params.SmsStatus || "").toLowerCase();
   if (sid && status) {
@@ -121,12 +126,9 @@ export async function handleCleanerGroupWebhook(input: {
   root: string;
   now: () => Date;
 }): Promise<{ status: number; body: string }> {
-  const env = input.env();
-  if (!cleanerCoreEnabled(env)) return { status: 404, body: "" };
-  const params = formParams(input.rawBody);
-  const signature = header(input.headers, "x-twilio-signature");
-  const verified = verifyTwilioSignature(env.CLEANER_CORE_TWILIO_AUTH_TOKEN?.trim(), input.url, params, signature);
-  if (!verified.ok) return { status: 403, body: JSON.stringify({ error: "unauthorized" }) };
+  const form = signedForm(input);
+  if (!("params" in form)) return form;
+  const params = form.params;
   const author = params.Author?.trim() ?? "";
   const conversationSid = params.ConversationSid?.trim() ?? "";
   const id = params.MessageSid?.trim() ?? "";

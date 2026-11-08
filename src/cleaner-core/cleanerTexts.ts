@@ -107,12 +107,12 @@ export const PHOTO_FIRST = "Please send a photo of the finished rooms, then repl
 /** DONE's question when the cleaner was sent a checklist. The job is done only after YES. */
 export const CHECKLIST_ASK = "Before I mark it done: is everything on the checklist I sent finished? Reply YES or NO.";
 
-/** The reply to NO: the cleaning stays open. */
 /** The done text when Supply Core is on: the cleaner is asked once what's running low. */
 export const SUPPLY_DONE_ASK = "Thanks, cleaning marked done. Anything running low? Reply with what's low, or NONE.";
 /** The reply to the cleaner's supplies answer. */
 export const SUPPLY_NOTED = "Thanks, noted.";
 
+/** The reply to NO: the cleaning stays open. */
 export const CHECKLIST_NOT_DONE = "No problem. Finish up and reply DONE when everything's done.";
 
 export function reminderBody(address: string, when: { day: string; time: string }, privateTurn: boolean): string {
@@ -191,13 +191,14 @@ export function hostDoneLine(address: string): string {
   return `The cleaner marked the cleaning at ${address} done.`;
 }
 
-export function groupOptInBody(name: string, otherName: string, address: string): string {
-  return `${name}, you're invited to the cleaning group for ${address} with ${otherName}. Reply YES to join that group, or STOP to opt out.`;
-}
-
 /** The group invite. The cleaner replies YES to join the group chat. */
 export function groupInviteBody(landlordName: string, address: string): string {
   return `${landlordName} wants to set up a group chat with you for cleaner services at ${address}. Reply YES to join, or STOP to opt out.`;
+}
+
+/** The one-to-one opt-in text. The person replies YES to get cleaning texts. */
+export function schedulerOptInBody(name: string, address: string): string {
+  return `Hi, this is ${name}'s cleaning scheduler for ${address}. Reply YES to get cleaning texts, or STOP to opt out.`;
 }
 
 /** Names joined as "A", "A and B", or "A, B and C". */

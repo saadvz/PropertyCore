@@ -1,4 +1,5 @@
 import type { TextKind } from "./core";
+import { isOn } from "./flag";
 
 export const SCRATCH_PROPERTY_REFUSAL = "That only works on the Scratch test property.";
 export const SCRATCH_NUMBER_REFUSAL = "That only works with 555 test numbers.";
@@ -79,8 +80,7 @@ const KIND_NAME: Record<TextKind, string> = {
 };
 
 export function scratchToolsOn(env: NodeJS.ProcessEnv): boolean {
-  const raw = env.CLEANER_CORE_SCRATCH_TOOLS?.trim().toLowerCase();
-  return raw === "1" || raw === "true";
+  return isOn(env.CLEANER_CORE_SCRATCH_TOOLS);
 }
 
 export function isScratchPropertyAddress(address: string | undefined): boolean {

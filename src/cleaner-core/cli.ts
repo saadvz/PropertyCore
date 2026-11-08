@@ -2,21 +2,15 @@ import { readFileSync } from "node:fs";
 import { fixedCodePort } from "./doorPort";
 import { pathToFileURL } from "node:url";
 import { cleanerCoreEnabled } from "./flag";
-import { HaltError, openCleanerCore, type CleanerText, type HealthReport, type JobView, type OutboxView, type SyncState } from "./core";
+import { HaltError, openCleanerCore, type CleanerCoreOptions, type CleanerText, type HealthReport, type JobView, type MessagingView, type OutboxView, type SetupView, type SyncState } from "./core";
 import type { SourceRecord } from "./freshness";
-import type { AuditEvent, ReviewItem, ReviewKind } from "./review";
-import { isReviewKind } from "./review";
+import { isReviewKind, type AuditEvent, type ReviewItem, type ReviewKind } from "./review";
 import type { FeedBlock } from "../hub/calendar";
 import { isScratchTestNumber } from "./scratch";
 import { googleCalendarFixtureSource, notionFixtureSource } from "../hub/sources";
 import { scratchTenant, SCRATCH_TENANTS } from "./tenants";
-import type { MessagingView, SetupView } from "./core";
 
-type MessagingOpt = {
-  requested: "cleaner-only" | "group";
-  capable: boolean;
-  participants: { phone: string; role: "owner" | "manager" | "observer" | "cleaner"; approved?: boolean }[];
-};
+type MessagingOpt = NonNullable<CleanerCoreOptions["messaging"]>;
 
 /**
  * Launch: `npx tsx src/cleaner-core/cli.ts doctor` or
@@ -87,9 +81,7 @@ export interface SmokeReport {
 
 const LANE = scratchTenant("scratch-lane");
 if (!LANE) throw new Error("Scratch Lane is missing.");
-const ADDRESS = LANE.property.address;
 const OWNER = LANE.ownerPhone;
-const CLEANER = LANE.cleanerPhone;
 const NOW = "2026-10-14T15:00:00.000Z";
 
 /** Same-day Scratch turnover. The later stay is first. The checkout date is folded. */
