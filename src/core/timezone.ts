@@ -124,6 +124,10 @@ export function addDays(date: LocalDate, days: number): LocalDate {
   return { year: t.getUTCFullYear(), month: t.getUTCMonth() + 1, day: t.getUTCDate() };
 }
 
+export function sameLocalDate(a: LocalDate, b: LocalDate): boolean {
+  return a.year === b.year && a.month === b.month && a.day === b.day;
+}
+
 export function weekdayOf(date: LocalDate): Weekday {
   return WEEKDAYS[new Date(Date.UTC(date.year, date.month - 1, date.day)).getUTCDay()]!;
 }
@@ -151,13 +155,6 @@ export function formatDay(date: Date, timeZone: string): string {
 /** "Monday" */
 export function formatWeekday(date: Date, timeZone: string): string {
   return clean(dateFormat({ weekday: "long", timeZone: zoneForDates(timeZone) }).format(date));
-}
-
-/** "Mon, Oct 5 at 2:00 PM" — operator confirmation stamps that name the day and time. */
-export function formatConfirmStamp(date: Date, timeZone: string): string {
-  const zone = zoneForDates(timeZone);
-  const day = clean(dateFormat({ weekday: "short", month: "short", day: "numeric", timeZone: zone }).format(date));
-  return `${day} at ${formatTime(date, zone)}`;
 }
 
 /** "Sep 27, 2:14 PM" */
