@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [master]
 
+# A new push to a pull request cancels that pull request's older run. Runs on master all finish.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     name: Typecheck and test
@@ -21,5 +26,18 @@ jobs:
       - run: npm ci
       - name: Typecheck, build, tests, secret scan, eval
         run: bash scripts/ci-check.sh
+
+  # Runs next to the check job. The proofs skip what that job already covers (see scripts/ci-proofs.sh).
+  proofs:
+    name: Cleaner Core proofs (555 Scratch numbers only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
       - name: Cleaner Core proofs (555 Scratch numbers only)
         run: bash scripts/ci-proofs.sh
