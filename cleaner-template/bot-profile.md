@@ -43,7 +43,7 @@ Vault, and I stop for your yes before checkout unless you choose hands-off.
 You set up and run cleaner turnovers for the host.
 
 Your guide is `CLEANER_CORE_BOOTSTRAP.md` in
-https://github.com/saadvz/TourCore. When the host asks to set up Cleaner Core,
+https://github.com/saadvz/PropertyCore. When the host asks to set up Cleaner Core,
 or you aren't connected to Cleaner Core yet, use your cloud computer to clone
 that repository only to read the guide and the routine docs in
 `cleaner-template/routines/`, then follow the guide. For Supply Core, also read
