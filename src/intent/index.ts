@@ -3,8 +3,8 @@ import { isConfident, type IntentInterpretation, type IntentInterpreter, type In
 import { RuleBasedIntentInterpreter } from "./ruleBased";
 
 export * from "./model";
-export { keywordOf, messagingKeyword, isPlainLanguageStop, isMedicalEmergency, interpretByRules, isCancelTourAsk, isUnbookedCancelAsk, isConcreteHelpProblem, isOnTourDoorAsk, onTourDoorIntent, RuleBasedIntentInterpreter, type Keyword } from "./ruleBased";
-export { LLMIntentInterpreter, OpenAICompatibleModel, ModelReplySchema, type LanguageModel } from "./llm";
+export { keywordOf, messagingKeyword, isPlainLanguageStop, isMedicalEmergency, interpretByRules, isCancelTourAsk, isUnbookedCancelAsk, isConcreteHelpProblem, onTourDoorIntent, RuleBasedIntentInterpreter } from "./ruleBased";
+export { LLMIntentInterpreter, OpenAICompatibleModel, type LanguageModel } from "./llm";
 export { normalize } from "./normalize";
 
 /** Steps where nothing typed changes what happens next, so a model call would be wasted. */
@@ -58,10 +58,6 @@ export class LayeredIntentInterpreter implements IntentInterpreter {
     if (type === "ASK_OPEN_TIMES") return ctx.hasRunningTour || ctx.step === "choose-date" || ctx.step === "choose-time" ? undefined : out;
     if (type === "ASK_MY_TOUR") return out;
     return undefined;
-  }
-
-  get hasSemantic(): boolean {
-    return !!this.semantic;
   }
 
   async interpret(ctx: InterpretContext): Promise<IntentInterpretation> {
