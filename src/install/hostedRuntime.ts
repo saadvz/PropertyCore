@@ -145,6 +145,20 @@ export function startupLines(facts: StartupFacts): string[] {
   ];
 }
 
+/** What the hosted service is: Tour Core's one-owner demo, or the shared service of many hosts (CLEANER_CORE_MULTI_TENANT). */
+export function hostedTenancyLine(multiTenant: boolean): string {
+  return multiTenant
+    ? "Hosted Railway P0 is multi-tenant: each host's account is kept apart, and /admin manages them."
+    : "Hosted Railway P0 is single-tenant. Marketplace publication requires tenant isolation.";
+}
+
+/** How a chat connects to the hosted service, and what its Allow page asks. */
+export function hostedConnectLine(mcpUrl: string, multiTenant: boolean): string {
+  return multiTenant
+    ? `Chats connect at ${mcpUrl}. The Allow page takes a host's invite code from /admin, or a sign-in when sign-up is on.`
+    : `Grok connects at ${mcpUrl}. The first Allow on the authorization page claims this demo.`;
+}
+
 export function redactSecrets(text: string, secrets: string[]): string {
   return secrets.filter((secret) => secret.length >= 6).reduce((out, secret) => out.split(secret).join("[hidden]"), text);
 }

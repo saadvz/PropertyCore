@@ -29,9 +29,20 @@ import { getInstallationStatus, type InstallationStatus } from "./status";
 
 export const REQUIRED_MODULES = ["tsx", "@modelcontextprotocol/sdk", "express", "sendblue", "spectrum-ts", "zod"];
 
+/**
+ * Why this Node.js can't run Tour Core, or undefined when it can. 22.13 matches
+ * package.json engines and scripts/ci-check.sh (node:sqlite, process.loadEnvFile).
+ * scripts/bootstrap-grok.mjs repeats this check before dependencies exist.
+ */
+export function nodeVersionProblem(version: string): string | undefined {
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  if (major < 22 || (major === 22 && minor < 13)) return `Tour Core needs Node.js 22.13 or newer (this computer has ${version}).`;
+  return undefined;
+}
+
 export function checkDependencies(repoDir: string): { ok: boolean; message: string } {
-  const major = Number(process.versions.node.split(".")[0]);
-  if (major < 20) return { ok: false, message: `Tour Core needs Node.js 20 or newer (this computer has ${process.versions.node}).` };
+  const problem = nodeVersionProblem(process.versions.node);
+  if (problem) return { ok: false, message: problem };
   const missing = REQUIRED_MODULES.filter((m) => !existsSync(join(repoDir, "node_modules", ...m.split("/"))));
   if (missing.length) return { ok: false, message: `Dependencies aren't installed (missing ${missing.join(", ")}). Run npm ci in the Tour Core folder.` };
   return { ok: true, message: `Node.js ${process.versions.node}; dependencies installed.` };
