@@ -999,6 +999,7 @@ class Engine implements CleanerCore {
         if (!STAND_DOWN_STATUSES.has(this.derive(job))) continue;
         job.canceled = true;
         job.version += 1;
+        this.counters.canceled += 1;
         this.tombstones.push({ uid: job.id, version: job.version, contentHash: job.contentHash });
         this.dropClearance(job.id);
         this.cancelUnsentPin(job.id);
@@ -2362,6 +2363,7 @@ class Engine implements CleanerCore {
       if (job.done || job.started || this.pinDelivered(job) || this.beforeToday(job.checkoutDate)) continue;
       job.canceled = true;
       job.version += 1;
+      this.counters.canceled += 1;
       this.tombstones.push({ uid: job.id, version: job.version, contentHash: job.contentHash });
       this.dropClearance(job.id);
       this.cancelUnsentPin(job.id);

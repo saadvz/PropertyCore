@@ -3,20 +3,20 @@ import { deadlineFor, dueOn, nextDates, scheduleProblem } from "../src/supply-co
 
 describe("scheduleProblem", () => {
   it("accepts the documented bounds", () => {
-    expect(scheduleProblem({ kind: "every", days: 1 })).toBeUndefined();
-    expect(scheduleProblem({ kind: "every", days: 365 })).toBeUndefined();
-    expect(scheduleProblem({ kind: "every", monthlyOn: 28 })).toBeUndefined();
-    expect(scheduleProblem({ kind: "bookings", stays: 50 })).toBeUndefined();
-    expect(scheduleProblem({ kind: "custom", rrule: "FREQ=MONTHLY;BYDAY=1MO;BYMONTH=5,6,7,8,9", said: "first Monday, May to September" })).toBeUndefined();
+    expect(scheduleProblem({ kind: "every", days: 1 }, "2026-11-04")).toBeUndefined();
+    expect(scheduleProblem({ kind: "every", days: 365 }, "2026-11-04")).toBeUndefined();
+    expect(scheduleProblem({ kind: "every", monthlyOn: 28 }, "2026-11-04")).toBeUndefined();
+    expect(scheduleProblem({ kind: "bookings", stays: 50 }, "2026-11-04")).toBeUndefined();
+    expect(scheduleProblem({ kind: "custom", rrule: "FREQ=MONTHLY;BYDAY=1MO;BYMONTH=5,6,7,8,9", said: "first Monday, May to September" }, "2026-11-04")).toBeUndefined();
   });
 
   it("refuses out-of-range values and unsupported rules", () => {
-    expect(scheduleProblem({ kind: "every", days: 0 })).toBeDefined();
-    expect(scheduleProblem({ kind: "every", monthlyOn: 29 })).toBeDefined();
-    expect(scheduleProblem({ kind: "bookings", stays: 51 })).toBeDefined();
-    expect(scheduleProblem({ kind: "custom", rrule: "FREQ=HOURLY", said: "hourly" })).toBeDefined();
-    expect(scheduleProblem({ kind: "custom", rrule: "FREQ=DAILY;BYHOUR=9", said: "9am" })).toBeDefined();
-    expect(scheduleProblem({ kind: "custom", rrule: "FREQ=WEEKLY;UNTIL=20200101", said: "ended" })).toBeDefined();
+    expect(scheduleProblem({ kind: "every", days: 0 }, "2026-11-04")).toBeDefined();
+    expect(scheduleProblem({ kind: "every", monthlyOn: 29 }, "2026-11-04")).toBeDefined();
+    expect(scheduleProblem({ kind: "bookings", stays: 51 }, "2026-11-04")).toBeDefined();
+    expect(scheduleProblem({ kind: "custom", rrule: "FREQ=HOURLY", said: "hourly" }, "2026-11-04")).toBeDefined();
+    expect(scheduleProblem({ kind: "custom", rrule: "FREQ=DAILY;BYHOUR=9", said: "9am" }, "2026-11-04")).toBeDefined();
+    expect(scheduleProblem({ kind: "custom", rrule: "FREQ=WEEKLY;UNTIL=20200101", said: "ended" }, "2026-11-04")).toBeDefined();
   });
 });
 

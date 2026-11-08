@@ -34,6 +34,15 @@ describe("export_records day parser", () => {
     expect(read("Dec 1")).toEqual({ ok: true, day: { year: 2025, month: 12, day: 1 } });
   });
 
+  it("reads Feb 29 with no year as the most recent past Feb 29", () => {
+    expect(read("Feb 29")).toEqual({ ok: true, day: { year: 2024, month: 2, day: 29 } });
+    expect(read("2/29")).toEqual({ ok: true, day: { year: 2024, month: 2, day: 29 } });
+    expect(parseExportDay("Feb 29", { year: 2028, month: 2, day: 29 })).toEqual({ ok: true, day: { year: 2028, month: 2, day: 29 } });
+    expect(parseExportDay("Feb 29", { year: 2028, month: 2, day: 28 })).toEqual({ ok: true, day: { year: 2024, month: 2, day: 29 } });
+    expect(read("Feb 30")).toEqual({ ok: false });
+    expect(read("2/30")).toEqual({ ok: false });
+  });
+
   it("rejects an impossible day", () => {
     expect(read("Feb 30")).toEqual({ ok: false });
     expect(read("13/5")).toEqual({ ok: false });

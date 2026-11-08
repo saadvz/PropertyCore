@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { publicHealth, runtimeHealth, testVisitorMessaging } from "../src/install/checks";
 import { selectPublicEndpoint } from "../src/install/bootstrap";
 import { parseDeploymentMode, resolveDeploymentMode } from "../src/install/deployment";
-import { externalUrls, listenHost, listenPort, redactSecrets, resolveHostedPublicUrl, startupLines, validateHostedConfig } from "../src/install/hostedRuntime";
+import { externalUrls, hostedConnectLine, hostedTenancyLine, listenHost, listenPort, redactSecrets, resolveHostedPublicUrl, startupLines, validateHostedConfig } from "../src/install/hostedRuntime";
 import { Installation } from "../src/install/installation";
 import { HOSTED_SETUP_WRITES } from "../src/install/setupSessions";
 import { handleSecureSetupApi } from "../src/install/secureSetup";
@@ -293,6 +293,19 @@ describe("hosted storage, secrets, and one demo tenant", () => {
     expect(lines.join("\n")).not.toContain(SECRET);
     expect(lines.join("\n")).not.toContain(REFRESH);
     expect(JSON.stringify(second.files.manifest())).not.toContain(SECRET);
+  });
+
+  it("describes the hosted service as it runs: one demo owner, or many hosts on invite codes (#215)", () => {
+    const mcp = `https://${DOMAIN}/mcp`;
+    expect(hostedTenancyLine(false)).toBe("Hosted Railway P0 is single-tenant. Marketplace publication requires tenant isolation.");
+    expect(hostedConnectLine(mcp, false)).toBe(`Grok connects at ${mcp}. The first Allow on the authorization page claims this demo.`);
+    const tenancy = hostedTenancyLine(true);
+    const connect = hostedConnectLine(mcp, true);
+    expect(tenancy).toContain("multi-tenant");
+    expect(tenancy).not.toContain("single-tenant");
+    expect(connect).toContain(mcp);
+    expect(connect).toContain("invite code");
+    expect(connect).not.toContain("claims this demo");
   });
 
   it("restores Drive records, refuses a second live writer, and does not let a stale cache win", async () => {

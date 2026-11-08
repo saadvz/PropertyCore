@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "
 import { request, type IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { handoffIdFromPath } from "../src/backup/handoff";
 import { RESTORE_UPLOAD_MAX_BYTES, restoreUploadTooLargeMessage } from "../src/backup/limits";
 import { PropertyWorkspace } from "../src/setup";
 import { createSetupServer } from "../src/web/server";
@@ -393,5 +394,13 @@ describe("restore upload limit", () => {
       root: h.root,
     });
     expectZeroBytes(h.root, before, posted);
+  });
+});
+
+describe("expired upload tombstone id", () => {
+  it("reads the upload id from a Windows-style handoff path so its body is dropped", () => {
+    const id = "art_abcdefghijklmnopqrstuvwx";
+    expect(handoffIdFromPath(`C:\\Users\\owner\\TourCore\\portable-handoff\\${id}.json`)).toBe(id);
+    expect(handoffIdFromPath(`/home/owner/TourCore/portable-handoff/${id}.json`)).toBe(id);
   });
 });

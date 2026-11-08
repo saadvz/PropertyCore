@@ -7,9 +7,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
-const major = Number(process.versions.node.split(".")[0]);
-if (major < 20) {
-  console.error(`  Tour Core needs Node.js 20 or newer (this computer has ${process.versions.node}).`);
+// Same check as nodeVersionProblem in src/install/bootstrap.ts (package.json engines: >=22.13.0).
+const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+if (major < 22 || (major === 22 && minor < 13)) {
+  console.error(`  Tour Core needs Node.js 22.13 or newer (this computer has ${process.versions.node}).`);
   process.exit(1);
 }
 

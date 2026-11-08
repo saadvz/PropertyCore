@@ -156,6 +156,21 @@ describe("the admin page", () => {
     expect(m.registry.list()).toHaveLength(1);
   });
 
+  it("keeps each account's health on the list after a refused add", async () => {
+    const m = await start();
+    const admin = await signIn(m);
+    const court = m.registry.create({ label: "Court", twilioNumber: "+15555550160" }).tenant;
+    m.registry.addProperty(court.id, "8 Scratch Court");
+    m.registry.addProperty(court.id, "9 Scratch Annex");
+    const table = (page: string) => /<table>[\s\S]*?<\/table>/.exec(page)?.[0];
+    const normal = (await admin.page("/admin")).html;
+    expect(normal).toMatch(/Court<\/a>.*<td>2 properties<\/td>/);
+    const refused = await admin.post("/admin/tenants", { label: " ", number: LANE_LINE });
+    expect(refused.status).toBe(400);
+    expect(refused.html).toContain("Add a label.");
+    expect(table(refused.html)).toBe(table(normal));
+  });
+
   it("makes a new invite, changes the primary, disables and enables", async () => {
     const m = await start();
     fakeTwilio();
@@ -190,6 +205,23 @@ describe("the admin page", () => {
     expect(secrets.connection(lane.id, grant.id)).toEqual({});
     expect(m.registry.get(lane.id)!.connections).toHaveLength(0);
     expect((await m.tool(token, "get_state")).status).toBe(401);
+  });
+
+  it("disconnect keeps the other grants that are live by the service's OAuth clock (#215)", async () => {
+    // OAuth runs on a clock well behind the real one, so by the real clock every grant here has expired.
+    const authNow = () => Date.parse("2024-01-15T12:00:00Z");
+    open = await multiTenantApp({ env: { CLEANER_CORE_ADMIN_PASSWORD: PASSWORD }, authNow });
+    const m = open;
+    fakeTwilio();
+    const admin = await signIn(m);
+    await admin.post("/admin/tenants", { label: "Lane", number: LANE_LINE });
+    const lane = m.registry.list()[0]!;
+    const store = new OAuthGrantStore(m.app.inst.runtime, authNow);
+    const first = store.findByAccessHash(hashSecret(await m.join(lane.id, "grok")))!;
+    const second = store.findByAccessHash(hashSecret(await m.join(lane.id, "claude")))!;
+    await admin.post(`/admin/tenants/${lane.id}/disconnect`, { grantId: first.id });
+    expect(store.get(first.id)).toBeUndefined();
+    expect(store.get(second.id)).toBeDefined();
   });
 
   it("drops a connection whose grant is gone when the list loads", async () => {

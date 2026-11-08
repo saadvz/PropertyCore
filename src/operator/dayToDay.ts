@@ -201,11 +201,13 @@ export function parseExportDay(input: string, today: LocalDate): { ok: true; day
   const month = named ? MONTH_NUMBER[named[1]!.toLowerCase()] : numeric ? Number(numeric[1]) : undefined;
   const day = named ? Number(named[2]) : numeric ? Number(numeric[2]) : undefined;
   if (!month || !day) return { ok: false };
-  const thisYear = { year: today.year, month, day };
-  if (!realCalendarDay(thisYear)) return { ok: false };
-  if (thisYear.month < today.month || (thisYear.month === today.month && thisYear.day <= today.day)) return { ok: true, day: thisYear };
-  const lastYear = { year: today.year - 1, month, day };
-  return realCalendarDay(lastYear) ? { ok: true, day: lastYear } : { ok: false };
+  // Checked against a leap year, so Feb 29 is a real month and day; the year used is the latest past one that has it.
+  if (!realCalendarDay({ year: 2000, month, day })) return { ok: false };
+  const passed = month < today.month || (month === today.month && day <= today.day);
+  for (let year = passed ? today.year : today.year - 1; year > today.year - 9; year--) {
+    if (realCalendarDay({ year, month, day })) return { ok: true, day: { year, month, day } };
+  }
+  return { ok: false };
 }
 
 /** Landlord line for get_tours. Texting with no booking is not a tour. */

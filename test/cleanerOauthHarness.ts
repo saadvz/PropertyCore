@@ -83,8 +83,8 @@ export const pkce = () => {
   return { verifier, challenge: createHash("sha256").update(verifier).digest("base64url") };
 };
 
-/** `now` is the server's clock for Cleaner Core; OAuth keeps the real clock. */
-export async function hostedApp(extra: NodeJS.ProcessEnv = {}, existing?: { root: string; env: NodeJS.ProcessEnv }, mcpAuth?: McpAuthMode, now?: () => Date) {
+/** `now` is the server's clock for Cleaner Core; OAuth keeps the real clock unless `authNow` is given. */
+export async function hostedApp(extra: NodeJS.ProcessEnv = {}, existing?: { root: string; env: NodeJS.ProcessEnv }, mcpAuth?: McpAuthMode, now?: () => Date, authNow?: () => number) {
   const root = existing?.root ?? tempDir();
   const env = existing?.env ?? hostedEnv(root, extra);
   const inst = installation(root, env);
@@ -101,6 +101,7 @@ export async function hostedApp(extra: NodeJS.ProcessEnv = {}, existing?: { root
     oauthRateLimit: false,
     ...(mcpAuth ? { mcpAuth } : {}),
     ...(now ? { now } : {}),
+    ...(authNow ? { authNow } : {}),
     log: (line) => logs.push(line),
   });
   cleanups.push(() => server.close());

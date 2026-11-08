@@ -32,7 +32,7 @@ and developer installs.
 
 **Tour Core computer** (the machine that runs Tour Core)
 
-- Node.js 20+, this repository, `npm install`.
+- Node.js 22.13 or newer, this repository, `npm install`.
 - Real texting set up as in the Tour Core guide's [Sendblue section](tour-core/README.md#sendblue-one-adapter):
   `.env` with the Sendblue values, a secure tunnel, `PUBLIC_BASE_URL` set to the
   tunnel's https address, and `npm run sendblue:configure` done.

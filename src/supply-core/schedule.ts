@@ -45,10 +45,6 @@ function ymdOf(y: number, m: number, d: number): string {
   return new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10);
 }
 
-function todayUtc(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function ints(value: string, min: number, max: number): number[] | undefined {
   const out = value.split(",").map((part) => (/^-?\d+$/.test(part) ? Number(part) : NaN));
   return out.every((n) => Number.isInteger(n) && n !== 0 && Math.abs(n) >= min && Math.abs(n) <= max) ? out : undefined;
@@ -202,8 +198,8 @@ function* everyDays(days: number, startYmd: string, endYmd: string): Generator<s
 /** The lookahead: three years past a date. */
 const horizon = (ymd: string) => addCalendarDays(ymd, 366 * LOOKAHEAD_YEARS);
 
-/** A plain-language refusal, or undefined when the schedule is valid. */
-export function scheduleProblem(schedule: Schedule): string | undefined {
+/** A plain-language refusal, or undefined when the schedule is valid. `todayYmd` is the property's local date. */
+export function scheduleProblem(schedule: Schedule, todayYmd: string): string | undefined {
   if (schedule.kind === "every" && "days" in schedule) {
     return Number.isInteger(schedule.days) && schedule.days >= 1 && schedule.days <= 365 ? undefined : "Every so many days has to be from 1 to 365.";
   }
@@ -215,8 +211,7 @@ export function scheduleProblem(schedule: Schedule): string | undefined {
   }
   const rule = parseRule(schedule.rrule);
   if (typeof rule === "string") return rule;
-  const today = todayUtc();
-  for (const day of occurrences(rule, today, horizon(today))) if (day > today) return undefined;
+  for (const day of occurrences(rule, todayYmd, horizon(todayYmd))) if (day > todayYmd) return undefined;
   return "That rule never comes up again.";
 }
 

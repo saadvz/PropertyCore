@@ -720,6 +720,50 @@ describe("Cleaner Core live wiring", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("ignores test timings in a coloured test log, as GitHub Actions writes it", () => {
+    const code = ["7", "3", "9", "1"].join("");
+    const dir = mkdtempSync(join(tmpdir(), "cleaner-secret-colour-"));
+    const esc = (n: number) => `\u001b[${n}m`;
+    try {
+      writeFileSync(join(dir, "saved.json"), `${JSON.stringify({ pin: code })}\n`);
+      // Vitest's own colour codes, copied from a FORCE_COLOR=1 run.
+      const coloured = [
+        ` ${esc(32)}✓${esc(39)} test/hostTexts.test.ts > answers a visitor${esc(32)} ${code}${esc(2)}ms${esc(22)}${esc(39)}`,
+        `${esc(2)} Test Files ${esc(22)} ${esc(1)}${esc(32)}211 passed${esc(39)}${esc(22)}${esc(90)} (211)${esc(39)}`,
+        `${esc(2)}      Tests ${esc(22)} ${esc(1)}${esc(32)}${code} passed${esc(39)}${esc(22)}${esc(90)} (${code})${esc(39)}`,
+        `${esc(2)}   Start at ${esc(22)} 20:47:30`,
+        `${esc(2)}   Duration ${esc(22)} ${code}.05s${esc(2)} (transform 64%, setup 34%, tests 1%)${esc(22)}`,
+      ].join("\n");
+      writeFileSync(join(dir, "test-default.log"), `${coloured}\n`);
+      const byChance = spawnSync(process.execPath, ["scripts/scan-cleaner-secrets.mjs", dir], { encoding: "utf8" });
+      expect(byChance.stderr).toBe("");
+      expect(byChance.status).toBe(0);
+
+      writeFileSync(join(dir, "test-default.log"), `${coloured}\n${esc(90)}texted +15555550100: code ${code}${esc(39)}\n`);
+      const leaked = spawnSync(process.execPath, ["scripts/scan-cleaner-secrets.mjs", dir], { encoding: "utf8" });
+      expect(leaked.status).not.toBe(0);
+      expect(leaked.stderr).toMatch(/secret scan found a saved door code in:[\s\S]*test-default\.log/);
+      expect(leaked.stderr).not.toContain(code);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("says which line of a file held a saved door code, with its digits masked", () => {
+    const code = ["7", "3", "9", "1"].join("");
+    const dir = mkdtempSync(join(tmpdir(), "cleaner-secret-where-"));
+    try {
+      writeFileSync(join(dir, "saved.json"), `${JSON.stringify({ pin: code })}\n`);
+      writeFileSync(join(dir, "test-default.log"), `first line\nsecond line\ntexted +15555550100: code ${code} at 10:30\n`);
+      const leaked = spawnSync(process.execPath, ["scripts/scan-cleaner-secrets.mjs", dir], { encoding: "utf8" });
+      expect(leaked.status).not.toBe(0);
+      expect(leaked.stderr).toMatch(/test-default\.log:3: texted \+#{11}: code #{4} at #{2}:#{2}/);
+      expect(leaked.stderr).not.toContain(code);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 async function throughSchedule(wired: WiredApp, tag: string): Promise<void> {

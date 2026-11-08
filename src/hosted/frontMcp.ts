@@ -10,6 +10,7 @@ import { sweepHeldTexts } from "./lineRouter";
 import { signUpFlag } from "./signUp";
 import { afterPeopleSaved, draftPeople, peopleRefusal } from "./sharedPeople";
 import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
+import { SUPPORTED_PROTOCOL_VERSIONS } from "../mcp/mcpBridge";
 import { OPERATOR_TOOL_NAMES } from "../operator/tools";
 import { ServiceNotices } from "./crossService";
 import { FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsFor, wrongServiceLine, type FrontReply } from "./serviceTools";
@@ -47,8 +48,28 @@ interface RpcMessage {
 
 /** Each connection's last initialize, so a touring process that never saw it (a switch, a restart) gets it first. */
 const initializes = new Map<string, Buffer>();
-/** `${process key}|${grant}` pairs whose initialize the process has seen. A restart's new key starts over. */
-const introduced = new Set<string>();
+/** Each connection's process key that has seen its initialize. A restart's new key starts over. */
+const introduced = new Map<string, string>();
+
+/** A new initialize drops what both maps keep for connections whose grant has ended. */
+function rememberInitialize(h: HostedCleaner, grantId: string, raw: Buffer): void {
+  const tracked = new Set([...initializes.keys(), ...introduced.keys()]);
+  tracked.delete(grantId);
+  // One read of the grants for the whole sweep, when the service offers it.
+  const live = tracked.size > 0 ? h.liveGrantIds?.() : undefined;
+  for (const id of tracked) {
+    if (!(live ? live.has(id) : h.grantLive(id))) {
+      initializes.delete(id);
+      introduced.delete(id);
+    }
+  }
+  initializes.set(grantId, raw);
+}
+
+/** For tests: the keys both maps hold now. */
+export function trackedConnections(): { initializes: string[]; introduced: string[] } {
+  return { initializes: [...initializes.keys()], introduced: [...introduced.keys()] };
+}
 
 /** A tool of Cleaner Core or the property front on a touring account: refused, never forwarded. */
 function refusedHere(name: string): boolean {
@@ -80,7 +101,7 @@ async function touringAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tenant,
   if (r.method !== "POST") return touringPass(h, r, tenant, caller);
   const raw = await r.readRaw();
   const message = parseMessage(raw);
-  if (message?.method === "initialize") initializes.set(caller.grantId, raw);
+  if (message?.method === "initialize") rememberInitialize(h, caller.grantId, raw);
   if (message?.method === "tools/call" && message.id !== undefined) {
     const name = typeof message.params?.name === "string" ? message.params.name : "";
     const reply = await handleFrontTool({ h, tenant, caller }, name, message.params?.arguments);
@@ -100,7 +121,12 @@ async function touringAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tenant,
     const answer = await touringCall(h, tenant.id, caller, raw, r);
     if (!answer) return r.send(503, JSON_TYPE, JSON.stringify({ error: { message: TOURING_DOWN } }));
     const warn = (state: Record<string, unknown>) => taskWarning(h, tenant, isPublished(state));
-    return r.send(answer.status, JSON_TYPE, withNotices(answer.body, new ServiceNotices(h.dataRoot).take(tenant.id), warn));
+    const notices = new ServiceNotices(h.dataRoot);
+    const pending = notices.pending(tenant.id);
+    const reply = withNotices(answer.body, pending, warn);
+    // Cleared only once a good reply carried them; an error reply leaves them for the next get_state.
+    if (reply.delivered && answer.status === 200) notices.shown(tenant.id, pending);
+    return r.send(answer.status, JSON_TYPE, reply.body);
   }
   return touringPass(h, r, tenant, caller, raw, message?.method === "initialize");
 }
@@ -134,7 +160,9 @@ async function propertiesAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tena
   if (!message) return r.send(400, JSON_TYPE, rpcError(null, -32600, "That isn't a valid request."));
   if (message.id === undefined) return r.send(202, JSON_TYPE, "");
   if (message.method === "initialize") {
-    const version = typeof message.params?.protocolVersion === "string" ? message.params.protocolVersion : "2025-03-26";
+    // The client's version when it's one this service speaks, otherwise the newest it does (MCP lifecycle).
+    const asked = typeof message.params?.protocolVersion === "string" ? message.params.protocolVersion : undefined;
+    const version = asked && SUPPORTED_PROTOCOL_VERSIONS.includes(asked) ? asked : SUPPORTED_PROTOCOL_VERSIONS[0];
     return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "property-core", title: "Property Core", version: "0.1.0" }, instructions: `${PROPERTY_INSTRUCTIONS} ${cleanerInstructions(caller.assistant)}` }));
   }
   if (message.method === "ping") return r.send(200, JSON_TYPE, rpcResult(message.id, {}));
@@ -287,21 +315,23 @@ function isPublished(state: Record<string, unknown>): boolean {
 
 /**
  * Adds the notes, and a stopped-task warning when `warn` gives one, to a tools/call reply's
- * structured content and its JSON text. Unchanged when there's nothing to add.
+ * structured content and its JSON text. Unchanged when there's nothing to add. An error reply
+ * never carries the notes. `delivered` is true only when the notes went into the reply.
  */
-function withNotices(body: string, notices: string[], warn?: (state: Record<string, unknown>) => string | undefined): string {
+function withNotices(body: string, notices: string[], warn?: (state: Record<string, unknown>) => string | undefined): { body: string; delivered: boolean } {
   try {
-    const reply = JSON.parse(body) as { result?: { structuredContent?: Record<string, unknown>; content?: { type: string; text?: string }[] } };
+    const reply = JSON.parse(body) as { result?: { isError?: boolean; structuredContent?: Record<string, unknown>; content?: { type: string; text?: string }[] } };
     const result = reply.result;
-    if (!result?.structuredContent) return body;
+    if (!result?.structuredContent) return { body, delivered: false };
+    const carried = result.isError === true ? [] : notices;
     const warning = warn?.(result.structuredContent);
-    if (notices.length === 0 && !warning) return body;
-    result.structuredContent = { ...result.structuredContent, ...(notices.length > 0 ? { serviceNotices: notices } : {}), ...(warning ? { warning } : {}) };
+    if (carried.length === 0 && !warning) return { body, delivered: false };
+    result.structuredContent = { ...result.structuredContent, ...(carried.length > 0 ? { serviceNotices: carried } : {}), ...(warning ? { warning } : {}) };
     const first = result.content?.[0];
     if (first?.type === "text") first.text = JSON.stringify(result.structuredContent);
-    return JSON.stringify(reply);
+    return { body: JSON.stringify(reply), delivered: carried.length > 0 };
   } catch {
-    return body;
+    return { body, delivered: false };
   }
 }
 
@@ -320,16 +350,15 @@ async function touringTarget(h: HostedCleaner, tenantId: string, caller: Caller,
   }
   const target = h.touring?.supervisor.target(tenantId);
   if (!target) return undefined;
-  const seen = `${target.key}|${caller.grantId}`;
   if (isInitialize) {
-    introduced.add(seen);
+    introduced.set(caller.grantId, target.key);
     return target;
   }
   const init = initializes.get(caller.grantId);
-  if (init && !introduced.has(seen)) {
+  if (init && introduced.get(caller.grantId) !== target.key) {
     await callWorkerMcp(target, init, {}, caller.assistant);
     await callWorkerMcp(target, Buffer.from(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })), {}, caller.assistant);
-    introduced.add(seen);
+    introduced.set(caller.grantId, target.key);
   }
   return target;
 }

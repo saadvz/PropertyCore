@@ -3217,7 +3217,13 @@ export class LiveDesk {
     }
     if (from === this.file.host && keyword === "stop") this.file.hostOut = true;
     if (from === this.file.host && keyword === "start") this.file.hostOut = false;
+    // A saved contact's STOP goes on the desk's opt-out list, which the engine's sends check and a
+    // START or YES clears. On an account the line already kept it in the account's people list.
+    const contact = from !== this.file.host && from !== this.file.cleaner && contactsOf(this.file).some((item) => item.phone === from);
+    if (contact && keyword === "stop" && !this.people && !this.lineOptedOut(from)) this.file.lineOptOuts = [...(this.file.lineOptOuts ?? []), from];
     this.noteSeen(id);
+    // Kept on disk now, so a restart before the engine first opens keeps it.
+    this.persist();
     const address = this.place.address ?? "the property";
     const host = from === this.file.host;
     const body = host
@@ -3632,6 +3638,23 @@ export class LiveDesk {
     this.syncHold();
   }
 
+  /**
+   * A saved contact's STOP kept before this engine opened, on a desk without an account, counts in
+   * the engine as their STOP would have: before its first send, so no invite is marked sent. An
+   * account's STOPs are applied by applyAccount.
+   */
+  private applyLineStops(engine: CleanerCore): void {
+    if (this.people) return;
+    const host = parsePhone(this.file.host ?? "");
+    const cleaner = parsePhone(this.file.cleaner ?? "");
+    for (const contact of contactsOf(this.file)) {
+      const phone = parsePhone(contact.phone);
+      if (!phone || phone === host || phone === cleaner || !this.lineOptedOut(phone)) continue;
+      // A contact's accountStop only marks them out and saves: nothing is sent and nothing waits.
+      void engine.accountStop(phone).catch(() => undefined);
+    }
+  }
+
   private noteSeen(id: string): void {
     const seen = this.file.seenInbound ?? [];
     if (seen.includes(id)) return;
@@ -3650,7 +3673,7 @@ export class LiveDesk {
     const dataDir = join(this.root, "cleaner-job");
     const extra = this.groupExtras();
     mkdirSync(dataDir, { recursive: true });
-    return openCleanerCore({
+    const engine = openCleanerCore({
       enabled: true,
       property: {
         id: file.propertyId,
@@ -3753,6 +3776,8 @@ export class LiveDesk {
       now: this.now,
       dataDir,
     });
+    this.applyLineStops(engine);
+    return engine;
   }
 
   /** Scratch only. The host and cleaner saved with save_people are allowed even when they are not 555 numbers. */

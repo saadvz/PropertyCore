@@ -302,7 +302,7 @@ function refreshTouringAlerts(h: HostedCleaner, tenantId: string): void {
 
 async function createTenant(deps: AdminDeps, form: URLSearchParams, csrf: string, html: (status: number, body: string) => boolean): Promise<boolean> {
   const { h } = deps;
-  const refuse = (words: string) => html(400, tenantsPage(h.registry.list(), csrf, words, undefined, numberPool(h).summary()));
+  const refuse = (words: string) => html(400, tenantsPage(h.registry.list(), csrf, words, (t) => healthOf(h, t), numberPool(h).summary()));
   const label = form.get("label") ?? "";
   const raw = (form.get("number") ?? "").trim();
   // Validate before asking Twilio, so a typo doesn't cost a network call.

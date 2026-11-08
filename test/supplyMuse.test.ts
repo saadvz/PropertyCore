@@ -5,9 +5,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { museAsk, SUPPLIES_AGENTS_ONLY } from "../src/cleaner-core/assistant";
 import { SUPPLIES_STEP } from "../src/cleaner-core/setupAsk";
 import { MUSE_SUPPLY_UPLOAD_NEXT, supplyReplyFor } from "../src/hosted/supplyWording";
-import { supplyDeskFor } from "../src/supply-core/desk";
+import { CARD_REFUSAL, supplyDeskFor } from "../src/supply-core/desk";
 import { CARDS } from "../src/supply-core/setupAsk";
 import { readSupply } from "../src/supply-core/store";
+import { handleSupplyTool } from "../src/supply-core/tools";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 
@@ -136,6 +137,21 @@ describe("Muse's words for one Supply Core reply", () => {
     expect(muse.structured).toMatchObject({ uploadUrl: grok.structured!.uploadUrl, expiresInMinutes: grok.structured!.expiresInMinutes, next: MUSE_SUPPLY_UPLOAD_NEXT });
     for (const word of GROK_ONLY_WORDS) expect(muse.text).not.toMatch(word);
     expect(supplyReplyFor("grok", "save_supply_sources", grok)).toBe(grok);
+  });
+
+  it("a card number is refused in Muse's words, with no Vault, and in Grok's words unchanged", async () => {
+    const root = mkdtempSync(join(tmpdir(), "supply-muse-"));
+    dirs.push(root);
+    const desk = supplyDeskFor(root, { now: () => new Date("2026-11-04T15:00:00.000Z") });
+    const refused = (await handleSupplyTool(desk, "save_supply_item", { ...towels, storeNote: "use 4242 4242 4242 4242" }))!;
+    expect(refused).toMatchObject({ isError: true, text: CARD_REFUSAL });
+    expect(supplyReplyFor("grok", "save_supply_item", refused)).toBe(refused);
+    const muse = supplyReplyFor("muse", "save_supply_item", refused);
+    expect(muse.isError).toBe(true);
+    expect(muse.text).toContain("card number");
+    expect(muse.text).toContain("store");
+    for (const word of GROK_ONLY_WORDS) expect(muse.text).not.toMatch(word);
+    expect(readSupply(root).items).toHaveLength(0);
   });
 
   it("an order the host placed in Muse's browser is recorded as host-browser", async () => {

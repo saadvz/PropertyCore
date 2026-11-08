@@ -195,6 +195,14 @@ describe("hosted first approved connection owns the demo", () => {
     return new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: redirect, code_challenge: challenge, code_challenge_method: "S256", state, scope: OPERATOR_SCOPE, resource: `${BASE}/mcp` });
   }
 
+  it("never sends the /connect page to the removed /claim page (#215)", async () => {
+    const app = await hostedApp({ seed: true });
+    const script = await app.http("/connect.js");
+    expect(script.status).toBe(200);
+    expect(await script.text()).not.toContain("/claim");
+    expect((await app.http("/claim")).status).toBe(404);
+  });
+
   it("claims only when a human clicks Allow, then the same owner can reconnect", async () => {
     const app = await hostedApp({ seed: true });
     expect(app.inst.files.state().hostedTenant).toBeUndefined();

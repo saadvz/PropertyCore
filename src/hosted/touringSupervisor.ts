@@ -81,7 +81,10 @@ export class TouringSupervisor {
     },
   ) {}
 
-  /** Starts the tenant's process when none runs. Resolves once a process for it is ready. */
+  /**
+   * Starts the tenant's process when none runs. Resolves once a process for it is ready, or once the
+   * tenant is stopped before that: check target() to tell the two apart.
+   */
   ensure(tenant: Tenant): Promise<void> {
     const current = this.running.get(tenant.id);
     if (current) {
@@ -95,7 +98,7 @@ export class TouringSupervisor {
     return ready;
   }
 
-  /** Kills the tenant's process and forgets it. No restart follows. */
+  /** Kills the tenant's process and forgets it. No restart follows. Anyone waiting in ensure() is let go. */
   stop(tenantId: string): void {
     const entry = this.running.get(tenantId);
     if (!entry) return;
@@ -103,6 +106,7 @@ export class TouringSupervisor {
     entry.handle?.kill();
     entry.handle = undefined;
     entry.port = undefined;
+    for (const resolve of entry.waiting.splice(0)) resolve();
   }
 
   /** Stops every process. The service is shutting down. */

@@ -115,7 +115,7 @@ path to production: [`docs/deployment.md`](../deployment.md).
 
 ### Path B: Self-hosted
 
-1. Deploy Tour Core at a stable https URL (any host that runs Node.js 20+). Set `TOURCORE_DEPLOYMENT_MODE=SELF_HOSTED`
+1. Deploy Tour Core at a stable https URL (any host that runs Node.js 22.13 or newer). Set `TOURCORE_DEPLOYMENT_MODE=SELF_HOSTED`
    and `PUBLIC_BASE_URL`, then `npm run bootstrap:self-hosted` (or run `npm run setup -- --no-open` under your
    host's process manager).
 2. In Grok, add Tour Core as a custom connector at `PUBLIC_BASE_URL/mcp` (OAuth; approve it on the server's
@@ -166,7 +166,7 @@ does not use this guard.
 
 ## Quick start (developer)
 
-Requires Node.js 20+ (built on 22). No environment variables or accounts needed.
+Requires Node.js 22.13 or newer. No environment variables or accounts needed.
 
 ```bash
 npm install

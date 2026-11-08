@@ -72,7 +72,7 @@ import { WORKER_CLIENT_HEADER, WORKER_CLIENT_NAMES, WORKER_INTERNAL_HEADER, WORK
 import { touringPublicRoute } from "../hosted/workerRoutes";
 import { handleHostedApproval } from "../install/hostedApproval";
 import { HOSTED_OWNER_RESET, OAUTH_REQUEST_ID } from "../install/hostedOwner";
-import { RAILWAY_HEALTHCHECK_HOST, redactSecrets, startupLines, validateHostedConfig } from "../install/hostedRuntime";
+import { hostedConnectLine, hostedTenancyLine, RAILWAY_HEALTHCHECK_HOST, redactSecrets, startupLines, validateHostedConfig } from "../install/hostedRuntime";
 import { applyHostedStorageGuard, runStorageCheck } from "../install/persistentVolume";
 import { Installation, TOURCORE_VERSION } from "../install/installation";
 import { bindHostedTenant, clearHostedTenant, hostedTenantDecision, HOSTED_TENANT_RESET } from "../install/tenant";
@@ -480,6 +480,10 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
       const grant = store.get(grantId);
       return Boolean(grant && store.isLive(grant));
     },
+    liveGrantIds: () => {
+      const store = new OAuthGrantStore(installation.runtime, options.authNow);
+      return new Set(store.list().filter((grant) => store.isLive(grant)).map((grant) => grant.id));
+    },
     now: clock,
     log,
   });
@@ -754,7 +758,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
         const admin = await handleAdmin(req, res, url, {
           h: hostedCleanerService,
           password: () => installation.env().CLEANER_CORE_ADMIN_PASSWORD,
-          revokeGrant: (grantId) => void new OAuthGrantStore(installation.runtime).revokeGrant(grantId),
+          revokeGrant: (grantId) => void new OAuthGrantStore(installation.runtime, options.authNow).revokeGrant(grantId),
           grantIds: () => {
             const store = new OAuthGrantStore(installation.runtime, options.authNow);
             return new Set(store.list().filter((grant) => store.isLive(grant)).map((grant) => grant.id));
@@ -1304,7 +1308,7 @@ if (!touringProcess && process.argv[1] && import.meta.url === pathToFileURL(proc
     const lines = startupLines({ version: TOURCORE_VERSION, mode: deployment.mode, port, host: hostedConfig.host, publicHost: new URL(hostedConfig.publicUrl).host, storage }).map((line) => redactSecrets(line, secretValues()));
     console.log("");
     for (const line of lines) console.log(`  ${line}`);
-    console.log("  Hosted Railway P0 is single-tenant. Marketplace publication requires tenant isolation.");
+    console.log(`  ${hostedTenancyLine(cleanerMultiTenant(installation.env()))}`);
     console.log("");
   }
   if (!hosted) {
@@ -1328,7 +1332,7 @@ if (!touringProcess && process.argv[1] && import.meta.url === pathToFileURL(proc
   const origin = base ? new URL(base).origin : undefined;
   const mode = mcpAuthModeFromEnv();
   if (mode === "oauth") {
-    console.log(hosted ? `  Grok connects at ${mcpUrl}. The first Allow on the authorization page claims this demo.\n` : `  Grok Bot connector:   ${mcpUrl} (OAuth: approve connections at ${url}grok)\n`);
+    console.log(hosted ? `  ${hostedConnectLine(mcpUrl, cleanerMultiTenant(installation.env()))}\n` : `  Grok Bot connector:   ${mcpUrl} (OAuth: approve connections at ${url}grok)\n`);
     const compatLine = hostedCompatStartupLine(process.env, deployment.mode);
     if (compatLine) console.log(`  ${redactSecrets(compatLine, secretValues())}\n`);
     else if (grokLegacyCompatFromEnv()) {

@@ -56,6 +56,8 @@ export interface HostedCleaner {
   /** The process environment, before any tenant's values. */
   baseEnv(): NodeJS.ProcessEnv;
   grantLive(grantId: string): boolean;
+  /** Every live grant's id, from one read of the grants. Without it, callers ask grantLive per id. */
+  liveGrantIds?(): Set<string>;
   now(): Date;
   log(line: string): void;
   /** Touring tenants' processes and saved texts. Absent when the service runs no touring. */

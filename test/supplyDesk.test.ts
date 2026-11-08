@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { hubFor, resetHubs } from "../src/hub/hub";
 import { resetSupplyDesks, supplyDeskFor, type SupplyDeps } from "../src/supply-core/desk";
 import { emptySupply, monthSpentCents, readSupply, type Order } from "../src/supply-core/store";
@@ -161,6 +161,29 @@ describe("setup", () => {
     expect(ok.structured?.nextDates).toEqual(["2027-05-03", "2027-06-07", "2027-07-05"]);
     const bad = await desk.previewSchedule({ schedule: { kind: "custom", rrule: "FREQ=HOURLY", said: "hourly" } });
     expect(bad.isError).toBe(true);
+  });
+
+  it("checks a custom rule against the property's local date, not the UTC date", async () => {
+    // A rule whose last day is 2026-11-05, checked just after midnight UTC on that day.
+    const lastDay = { kind: "custom" as const, rrule: "FREQ=DAILY;UNTIL=20261105", said: "daily until 5 November" };
+    const at = new Date("2026-11-05T01:30:00.000Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(at);
+    try {
+      const deskIn = (timeZone: string) => {
+        const root = folder();
+        hubFor(root, { now: () => at }).saveProperty({ nickname: PROPERTY.name, address: PROPERTY.address, timeZone });
+        return supplyDeskFor(root, { now: () => at });
+      };
+      // Still 4 November in Los Angeles: the 5th is still to come.
+      const la = await deskIn("America/Los_Angeles").previewSchedule({ schedule: lastDay });
+      expect(la).toMatchObject({ isError: false, structured: { nextDates: ["2026-11-05"] } });
+      // Already 5 November in Tokyo (10:30): the rule never comes up again.
+      const tokyo = await deskIn("Asia/Tokyo").previewSchedule({ schedule: lastDay });
+      expect(tokyo).toMatchObject({ isError: true, text: "That rule never comes up again." });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("activate is refused without an item, a mode, and a check time", async () => {
