@@ -101,7 +101,7 @@ describe("door access values saved before #179", () => {
 
     const remote = new MemoryDocumentStore();
     await remote.put("tours-data/accessGrants/grant_1.json", { ...grant, durinGrantRef: "demo_grant_1" }, { schemaVersion: 1, kind: "accessGrants" });
-    const store = new DurableTourStore(new InMemoryStore(), remote, () => true);
+    const store = new DurableTourStore(new InMemoryStore(), () => remote, () => true);
     expect((await store.get("accessGrants", "grant_1"))?.doorGrantRef).toBe("demo_grant_1");
     expect((await store.list("accessGrants"))[0]?.doorGrantRef).toBe("demo_grant_1");
   });
