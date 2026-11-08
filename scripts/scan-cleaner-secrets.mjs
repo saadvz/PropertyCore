@@ -108,21 +108,45 @@ function withoutTestTimings(text) {
     .replace(/^(\s*(?:Test Files|Tests|Start at|Duration)\s{2}).*$/gm, (_line, label) => `${label}N`);
 }
 
-// A code counts when it stands alone. A run of digits that only contains it, such as
-// a port, a pid, or a longer id, is a different number.
-function hasCode(text, code) {
-  return new RegExp(`(?<!\\d)${code}(?!\\d)`).test(text);
+// GitHub Actions runs the tests with colour on, so the log holds terminal colour codes
+// between a number and its label ("3\x1b[2mms"). They are removed first so the
+// timing and summary patterns above match the same text they match locally.
+function withoutColour(text) {
+  return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
 }
 
+// A code counts when it stands alone. A run of digits that only contains it, such as
+// a port, a pid, or a longer id, is a different number.
+function codeIndex(text, code) {
+  return text.search(new RegExp(`(?<!\\d)${code}(?!\\d)`));
+}
+
+// Where a code matched: the line number and that line with every digit masked,
+// so a CI failure says what to look at without printing the code.
+function where(text, index) {
+  const start = text.lastIndexOf("\n", index - 1) + 1;
+  const endAt = text.indexOf("\n", index);
+  const line = text.slice(start, endAt === -1 ? text.length : endAt);
+  const lineNo = text.slice(0, start).split("\n").length;
+  const from = Math.max(0, index - start - 60);
+  const shown = line.slice(from, from + 160).replace(/\d/g, "#");
+  return `${lineNo}: ${from > 0 ? "..." : ""}${shown}${from + 160 < line.length ? "..." : ""}`;
+}
+
+/** The first place one of the codes appears in the file, or undefined. */
 function leak(path, values) {
   let buf;
   try {
     buf = readFileSync(path);
   } catch {
-    return false;
+    return undefined;
   }
-  const text = withoutTestTimings(withoutNodePid(buf.toString(buf.includes(0) ? "latin1" : "utf8")));
-  return values.some((value) => hasCode(text, value));
+  const text = withoutTestTimings(withoutNodePid(withoutColour(buf.toString(buf.includes(0) ? "latin1" : "utf8"))));
+  for (const value of values) {
+    const index = codeIndex(text, value);
+    if (index !== -1) return where(text, index);
+  }
+  return undefined;
 }
 
 let scratch;
@@ -184,12 +208,13 @@ for (const path of files) {
   if (rel === secretSource) continue;
   if (seen.has(path)) continue;
   seen.add(path);
-  const leaked = [];
+  let found;
   for (const [code, sources] of allowedIn) {
     if (sources.has(rel)) continue;
-    if (leak(path, [code])) leaked.push(code);
+    found = leak(path, [code]);
+    if (found) break;
   }
-  if (leaked.length > 0) hits.push(rel.startsWith("..") ? path : rel);
+  if (found) hits.push(`${rel.startsWith("..") ? path : rel}:${found}`);
 }
 
 if (hits.length > 0) {
