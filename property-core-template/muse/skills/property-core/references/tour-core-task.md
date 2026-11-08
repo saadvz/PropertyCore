@@ -1,5 +1,9 @@
 # Recurring task: Tour Core (Muse)
 
+> **Parked.** Tour Core isn't offered to new accounts. Make this task only for
+> an account Saad has made a touring account on `/admin`, where `get_state`
+> shows Tour Core.
+
 Nothing outside Muse can start a Muse task, so Tour Core can't wake Muse when
 a visitor asks for a tour time. The task runs as often as the host sets it,
 and each run reads what's new with `get_updates`.
