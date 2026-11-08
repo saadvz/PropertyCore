@@ -8,7 +8,7 @@
   "readme": "README.md",
   "hostedSupplyCoreUrl": "https://tourcore-production-8b80.up.railway.app",
   "repository": {
-    "url": "https://github.com/saadvz/TourCore",
+    "url": "https://github.com/saadvz/PropertyCore",
     "bootstrap": "SUPPLY_CORE_BOOTSTRAP.md",
     "note": "The public repository. Grok clones it only to read SUPPLY_CORE_BOOTSTRAP.md and these files. It never runs Supply Core from the clone."
   },
