@@ -7,9 +7,8 @@ only by these instructions.
 
 - The Bot has no tool that opens, unlocks, grants or mints access. None exists.
 - Doors open only when a visitor asks during their own tour, on their own
-  route, and Tour Core's policy allows it. Tour Core is built on the Durin
-  Access Platform; it then asks Durin. Say "door access" to the operator;
-  never name Durin.
+  route, and Tour Core's policy allows it; it then asks the door system. Say
+  "door access" to the operator; never name the door access provider.
 - Pausing a tour switches its doors off; resuming lets policy decide again.
   Calling a tour off is permanent. All three need the operator's yes.
 

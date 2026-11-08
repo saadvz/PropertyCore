@@ -198,7 +198,7 @@ wildcards. Everything else is unchanged:
 - owner approval on this computer with the matching code
 - PKCE S256, `state`, exact redirect match and single-use codes
 - token lifetime, scope and revocation
-- Tour Core's confirmation codes, policy and Durin
+- Tour Core's confirmation codes, policy and door access
 
 `api2.cursor.sh` is **not** allowed. If a refusal line names it, copy that
 whole `refused redirect: ...` line into the test notes. Only if the real flow

@@ -66,7 +66,7 @@
     "Tour Core connector token or OAuth tokens",
     "Google OAuth access or refresh tokens",
     "a Google account or Tour Core Drive folder id from another installation",
-    "Durin credentials",
+    "door access credentials",
     "visitor names, phone numbers or other PII",
     "live property records",
     "tour history",

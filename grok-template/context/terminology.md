@@ -27,7 +27,7 @@ calls it internally; use it only if the operator asks for technical detail.
 | called off | revoked |
 | needs attention, issue | an exception |
 | approved fact | an operator-written property or unit fact |
-| door system, door access | Durin Access Platform (Durin demo mode in P0). Never name Durin to the operator |
+| door system, door access | the door access provider (demo mode in P0). Never name the provider to the operator |
 | tour updates | operator events delivered to the Tour Core Operator Updates Grok Routine |
 | visitor texting is live | the property uses real texts through the installation's messaging provider (Sendblue, Twilio, or Photon) |
 | texting is in test mode | the property uses local test texts (`get_state` / `set_up_texting local`); texts stay off real phones |
