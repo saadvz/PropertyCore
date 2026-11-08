@@ -9,7 +9,7 @@ import { propertyContext, type HostedCleaner } from "../src/cleaner-core/hosted/
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
 import { setTwilioNumbersFetch } from "../src/cleaner-core/hosted/twilioNumbers";
 
-/** saadvz/TourCore#163: the pool of registered numbers each account takes its line from. Only 555 numbers. */
+/** saadvz/PropertyCore#163: the pool of registered numbers each account takes its line from. Only 555 numbers. */
 
 const ORIGIN = "https://cleaner-pool.example.test";
 const T0 = Date.parse("2026-11-07T12:00:00.000Z");
