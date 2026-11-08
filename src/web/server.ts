@@ -33,7 +33,7 @@ import { assistantProfile, cleanerAssistant, type CleanerAssistant } from "../cl
 import { TenantRegistry, type InviteRefusal } from "../cleaner-core/hosted/registry";
 import { migrateRegistry, MigrationError } from "../cleaner-core/hosted/migrate";
 import { migrateHubs } from "../hosted/hubStartup";
-import { drainAllTenants, handleHostedCleaner, hostedCleaner, splitTenantPath, type HostedCleaner } from "../cleaner-core/hosted/router";
+import { drainAllTenants, handleHostedCleaner, tickAllFixers, hostedCleaner, splitTenantPath, type HostedCleaner } from "../cleaner-core/hosted/router";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import { TenantSecrets } from "../cleaner-core/hosted/tenantSecrets";
 import { handleAdmin } from "../cleaner-core/hosted/admin";
@@ -1093,7 +1093,8 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     void Promise.resolve()
       .then(() => {
         if (!cleanerOn()) return undefined;
-        if (multiTenant()) return drainAllTenants(hostedCleanerService);
+        // Fixer Core's clock runs on the same tick, after the alerts: booked visits start, code texts go once.
+        if (multiTenant()) return drainAllTenants(hostedCleanerService).catch(() => undefined).then(() => tickAllFixers(hostedCleanerService));
         return drainCleanerAlerts(installation.root, () => installation.env(), clock);
       })
       .catch(() => undefined);

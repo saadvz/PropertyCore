@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { localDateOf } from "../core/timezone";
+import { isValidTimeZone, localDateOf } from "../core/timezone";
 import { isDone, isYes } from "../cleaner-core/core";
 import { isInjuryReport } from "../cleaner-core/injury";
 import { cleanerPhotoFetch, copyPhotos, downloadPhotos, MAX_JOB_PHOTOS, messagePhotoId, photoCount, photoLinks, prunePhotos, storePhoto, type InboundMedia } from "../cleaner-core/photos";
@@ -676,6 +676,47 @@ export class FixerDesk {
       delete file.offAt;
       this.write(file);
       return ok({ active: true, line: this.line(file) });
+    });
+  }
+
+  /** The property's address, time zone and name, saved in its hub and shared with the other flows. Activate needs them. */
+  saveProperty(input: { address?: string; timeZone?: string; name?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      if (!isText(input.address, 200)) return fail("Give the property's street address.");
+      if (input.name !== undefined && !isText(input.name, 80)) return fail("Keep the property's name under 80 characters.");
+      if (typeof input.timeZone !== "string" || !isValidTimeZone(input.timeZone)) return fail("That time zone isn't one I know. Use a name like America/New_York.");
+      // Read so a damaged fixer.json fails this call too.
+      const file = this.read();
+      const saved = this.hub().saveProperty({ address: input.address.trim(), timeZone: input.timeZone, nickname: input.name?.trim() || undefined });
+      if (!saved.ok) return fail(saved.error);
+      return ok({ saved: true, ...(this.askFor(file) ? { next: "Call get_fixer_state for the next step." } : {}) });
+    });
+  }
+
+  /**
+   * The property's booking calendars, in its hub and shared with the other flows: a one-time upload
+   * link for one calendar, google: true for Google Calendar, or done: true when that's all (none is fine).
+   */
+  saveSources(input: { uploadLink?: { name?: string }; google?: true; done?: true }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      this.read();
+      const hub = this.hub();
+      if (input.uploadLink) {
+        const name = input.uploadLink.name?.trim() ?? "";
+        if (!isText(name, 40)) return fail("Give the calendar a short name, like Airbnb.");
+        const base = this.deps.publicBase?.();
+        if (!base) return fail("I can't make an upload link until the server's public address is saved.");
+        const made = hub.issueCalendarUpload({ name, base, ...(input.google ? { google: true } : {}) });
+        if ("error" in made) return fail(made.error);
+        return ok({
+          uploadUrl: made.uploadUrl,
+          expiresInMinutes: made.expiresInMinutes,
+          next: 'From your own cloud computer, POST JSON {"url": "<calendar link>"} to uploadUrl with Content-Type: application/json, or open uploadUrl in your own browser and hand it to the host to paste the link there. Never put the link or uploadUrl in chat. Then call get_fixer_state.',
+        });
+      }
+      const saved = hub.setCalendars({ ...(input.google ? { google: true } : {}), ...(input.done ? { done: true } : {}) });
+      if (!saved.ok) return fail(saved.error);
+      return ok({ calendars: [...hub.calendars().map((c) => c.name), ...(hub.google() ? ["Google Calendar"] : [])], ...(hub.calendarsDone() ? { done: true } : {}) });
     });
   }
 

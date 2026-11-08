@@ -7,8 +7,10 @@ import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/rout
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { ConfirmationBook } from "../operator/confirmations";
 import { supplyDesk, turnOffSupplies, turnOnSupplies } from "./supplies";
-import { supplyCoreOn } from "../cleaner-core/flag";
-import { runsSupplies, SUPPLIES_AGENTS_ONLY, type CleanerAssistant } from "../cleaner-core/assistant";
+import { fixerCoreOn, supplyCoreOn } from "../cleaner-core/flag";
+import { FIXER_AGENTS_ONLY, runsFixer, runsSupplies, SUPPLIES_AGENTS_ONLY, type CleanerAssistant } from "../cleaner-core/assistant";
+import { fixerOffQuestion } from "../fixer-core/texts";
+import { cancelFingerprint, jobsToCancel, turnOffFixer, turnOnFixer } from "./fixer";
 import { FIXER_NOT_YET, resolveProperty } from "./propertyTools";
 import type { FrontReply } from "./serviceTools";
 
@@ -23,7 +25,7 @@ export interface FlowContext {
   h: HostedCleaner;
   tenant: Tenant;
   actor: "host" | "admin";
-  /** The chat asking. Supply Core turns on only for Grok, which shops with its own tools. */
+  /** The chat asking. Supply Core and Fixer Core turn on only for Grok Bot and Muse, which shop and book pros themselves. */
   assistant?: CleanerAssistant;
   noteToolsChanged(): void;
 }
@@ -42,7 +44,7 @@ const NAMES: Record<FlowName, string> = { cleaning: "Cleaner Core", supplies: "S
 
 const fail = (text: string): FrontReply => ({ text, isError: true });
 
-/** The property's approvals for turning Supply Core off, kept in its folder across restarts. */
+/** The property's approvals for turning Supply Core or Fixer Core off, kept in its folder across restarts. */
 function flowApprovals(h: HostedCleaner, tenant: Tenant, property: Property): ConfirmationBook {
   return new ConfirmationBook(10 * 60_000, () => h.now().getTime(), { file: join(propertyFolder(h.dataRoot, tenant.id, property), "flow-approvals.json") });
 }
@@ -63,7 +65,8 @@ export async function setFlows(ctx: FlowContext, input: FlowInput): Promise<Fron
   const latest = () => (h.registry.get(tenant.id) ?? tenant).properties.find((p) => p.id === property.id) ?? property;
   const wanted = (["cleaning", "supplies", "fixer"] as const).filter((flow) => typeof input[flow] === "boolean");
   if (wanted.length === 0) return fail("Say which flow to turn on or off: cleaning, supplies, or fixer, each true or false.");
-  if (input.fixer === true) return fail(FIXER_NOT_YET);
+  // Fixer Core turns on only while FIXER_CORE is set on the service; without it nothing changes.
+  if (input.fixer === true && !fixerCoreOn(h.baseEnv())) return fail(FIXER_NOT_YET);
   if (wanted.length > 1 && typeof input.confirmation === "string") return fail("Turn one flow off at a time when you pass a confirmation.");
   const forced = ctx.actor === "admin" && input.force === true;
   const confirmation = typeof input.confirmation === "string" ? input.confirmation.trim() : "";
@@ -75,6 +78,8 @@ export async function setFlows(ctx: FlowContext, input: FlowInput): Promise<Fron
     if (refusal) return fail(refusal);
   }
   const done: string[] = [];
+  // What a flow's turn-off leaves for the agent to do, such as the pros to tell.
+  const extra: Record<string, unknown> = {};
   for (const flow of wanted) {
     const on = input[flow] as boolean;
     const current = latest();
@@ -82,20 +87,24 @@ export async function setFlows(ctx: FlowContext, input: FlowInput): Promise<Fron
       done.push(`${NAMES[flow]} was already ${on ? "on" : "off"} for ${current.label}.`);
       continue;
     }
-    const reply = on ? await turnOn(ctx, current, flow) : await turnOff(ctx, current, flow, confirmation, forced);
+    const reply = on ? await turnOn(ctx, current, flow) : await turnOff(ctx, current, flow, confirmation, forced, extra);
     if (reply) return reply;
     recordFlow(h, tenant.id, { actor: ctx.actor, property: current.id, flow, on, forced });
     h.log(`${tenant.id}/${current.id} turned ${flow} ${on ? "on" : "off"}${forced ? " (forced by the admin)" : ""}.`);
     done.push(`${NAMES[flow]} is ${on ? "on" : "off"} for ${current.label}.${on ? "" : " Its setup is kept."}`);
   }
+  if (Array.isArray(extra.tellPro) && extra.tellPro.length > 0) done.push("Tell each pro in tellPro their visit is cancelled.");
+  if (Array.isArray(extra.rotationAsk) && extra.rotationAsk.length > 0) done.push("Then ask the host each question in rotationAsk.");
   ctx.noteToolsChanged();
   const after = latest();
-  const structured = { property: after.id, flows: { cleaning: after.flows.cleaning.on, supplies: after.flows.supplies.on, fixer: after.flows.fixer.on } };
+  const structured = { property: after.id, flows: { cleaning: after.flows.cleaning.on, supplies: after.flows.supplies.on, fixer: after.flows.fixer.on }, ...extra };
   return { text: `${done.join(" ")} Call get_state with property ${after.id} for the next step. If the tools don't change, start a new chat.`, structured, isError: false };
 }
 
 /** Why a flow can't turn on, or undefined. `cleaningComing` is true when the same call turns cleaning on. */
 function turnOnRefusal(ctx: FlowContext, property: Property, flow: FlowName, cleaningComing: boolean): string | undefined {
+  // Fixer Core runs on an always-on agent that finds, calls and books pros itself.
+  if (flow === "fixer") return ctx.assistant && runsFixer(ctx.assistant) ? undefined : FIXER_AGENTS_ONLY;
   if (flow !== "supplies") return undefined;
   if (!ctx.assistant || !runsSupplies(ctx.assistant)) return SUPPLIES_AGENTS_ONLY;
   // Supply Core on its own, without Cleaner Core at the property, only while SUPPLY_CORE is on.
@@ -108,17 +117,18 @@ async function turnOn(ctx: FlowContext, property: Property, flow: FlowName): Pro
     await turnOnSupplies(ctx.h, ctx.tenant, property);
     return undefined;
   }
+  if (flow === "fixer") {
+    await turnOnFixer(ctx.h, ctx.tenant, property);
+    return undefined;
+  }
   ctx.h.registry.setFlow(ctx.tenant.id, property.id, flow, true);
   return undefined;
 }
 
 /** Stands the flow down and turns it off. A reply means it stopped there: a question with a code, or a refusal. */
-async function turnOff(ctx: FlowContext, property: Property, flow: FlowName, confirmation: string, forced: boolean): Promise<FrontReply | undefined> {
+async function turnOff(ctx: FlowContext, property: Property, flow: FlowName, confirmation: string, forced: boolean, extra: Record<string, unknown>): Promise<FrontReply | undefined> {
   const { h, tenant } = ctx;
-  if (flow === "fixer") {
-    h.registry.setFlow(tenant.id, property.id, "fixer", false);
-    return undefined;
-  }
+  if (flow === "fixer") return turnOffRepairs(ctx, property, confirmation, forced, extra);
   if (flow === "cleaning") {
     // Forced from /admin: the flow goes off and its desk sends nothing more. What was live stays frozen.
     if (!forced) {
@@ -147,5 +157,34 @@ async function turnOff(ctx: FlowContext, property: Property, flow: FlowName, con
   }
   await supplyDesk(h, tenant, property).clearCarts();
   await turnOffSupplies(h, tenant, property);
+  return undefined;
+}
+
+/**
+ * Fixer Core off. With a visit booked, the host's yes comes first: the question names every job that
+ * will be cancelled, and the code is bound to them as they stand. After the yes the jobs are cancelled,
+ * and `extra` carries the pros to tell and any door-code question. Forced from /admin, nothing is
+ * cancelled or sent: what was booked stays frozen.
+ */
+async function turnOffRepairs(ctx: FlowContext, property: Property, confirmation: string, forced: boolean, extra: Record<string, unknown>): Promise<FrontReply | undefined> {
+  const { h, tenant } = ctx;
+  const jobs = forced ? [] : jobsToCancel(h, tenant, property);
+  if (jobs.length > 0) {
+    const fingerprint = cancelFingerprint(h, tenant, property);
+    const book = flowApprovals(h, tenant, property);
+    if (!confirmation) {
+      const question = fixerOffQuestion({ label: property.label, jobs });
+      return { text: question, structured: { question, jobs, confirmation: book.issue("fixer-off", property.id, fingerprint, question) }, isError: false };
+    }
+    try {
+      book.redeem(confirmation, "fixer-off", property.id, fingerprint);
+    } catch {
+      return fail(STALE);
+    }
+  }
+  const reply = await turnOffFixer(h, tenant, property, jobs.length > 0);
+  const { tellPro, rotationAsk } = (reply.structured ?? {}) as { tellPro?: unknown[]; rotationAsk?: unknown[] };
+  if (tellPro?.length) extra.tellPro = tellPro;
+  if (rotationAsk?.length) extra.rotationAsk = rotationAsk;
   return undefined;
 }

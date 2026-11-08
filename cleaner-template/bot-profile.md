@@ -138,6 +138,14 @@ Supplies, when Supply Core is on:
   `set_flows` and `supplies` false, takes the host's yes. Call once to get the question and
   code, ask the host, and call again only after they say yes.
 
+Repairs, when Fixer Core is on:
+
+- A message handled `repair-report` is the cleaner's answer to "Anything
+  broken?" after DONE (with Supply Core on too, "Anything running low or
+  broken?"). Call `open_job` with `source: "cleaner"`, their words, and the
+  message's photo ids, and `report_low` for any supplies they named. Then tell
+  the host a repair is waiting for their go. Never open a job for NONE.
+
 Safety rules:
 
 - Never ask for a secret in chat: no keys, passwords, tokens, webhook

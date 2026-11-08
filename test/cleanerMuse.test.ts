@@ -6,6 +6,7 @@ import type { LiveDesk } from "../src/cleaner-core/liveDesk";
 import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
 import { CHOOSE } from "../src/hosted/supplies";
 import { SUPPLY_TOOL_NAMES } from "../src/supply-core/tools";
+import { FIXER_TOOL_NAMES } from "../src/fixer-core/tools";
 import { filesUnder, REPO_ROOT } from "./files";
 
 /** The Muse template draft: pinned, consistent with the tools and the other templates, and free of secrets. */
@@ -132,11 +133,8 @@ describe("Muse template", () => {
     expect(prompt).not.toMatch(/after the host's yes in this conversation and approve_cart's code/);
   });
 
-  // The repair-report step names Fixer Core's open_job, which is a tool once Fixer Core's tools are wired in.
-  const FIXER_PROMPT_TOOLS = ["open_job"];
-
-  it("names only real Cleaner Core or Supply Core tools, or the account's own", async () => {
-    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name)), ...SUPPLY_TOOL_NAMES, CHOOSE, ...FIXER_PROMPT_TOOLS];
+  it("names only real Cleaner Core, Supply Core or Fixer Core tools, or the account's own", async () => {
+    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name)), ...SUPPLY_TOOL_NAMES, CHOOSE, ...FIXER_TOOL_NAMES];
     for (const file of filesUnder(TEMPLATE)) {
       for (const m of read(file).matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) expect(tools, `${file}: ${m[1]}`).toContain(m[1]);
     }

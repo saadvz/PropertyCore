@@ -13,10 +13,9 @@ import { fakeConversations } from "./fakeConversations";
 import { BUSINESS, CALENDAR_ICS, CALENDAR_URL, CLEANER_LINE, DOOR_CODE, FROZEN, HOST, TEST_PIN_KEY, fakeSms } from "./wiringProof";
 
 /**
- * With Fixer Core chosen by the host, the DONE text also asks "Anything broken?" and the next reply is a
- * repair-report. Only 555 numbers and the Scratch Lane made-up code. (Old header follows.)
- * With Supply Core on, the cleaner's DONE gets one text that also asks what's running low, and the
- * next reply is saved as the supplies answer. Only 555 numbers and the Scratch Lane made-up code.
+ * With Fixer Core chosen by the host, the DONE text also asks "Anything broken?" (with Supply Core on,
+ * "Anything running low or broken?") and the next reply is a repair-report. Only 555 numbers and the
+ * Scratch Lane made-up code.
  */
 
 const ADDRESS = "12 Scratch Lane, Teaneck, NJ 07666";

@@ -28,6 +28,7 @@ import { isPropertyId, propertyFolder, type Property } from "./properties";
 import { isTenantId, tenantFolder, type Tenant, type TenantRegistry } from "./registry";
 import { screenText } from "../../hosted/crossService";
 import { handleTenantMcp } from "../../hosted/frontMcp";
+import { tickFixer } from "../../hosted/fixer";
 import { handleLineText } from "../../hosted/lineRouter";
 import type { TouringFront } from "../../hosted/serviceTools";
 import { handleTouringAlertUpload, refreshTouringAlerts, touringAlertFormReply, touringAlertPage, touringAlertUploadCode } from "../../hosted/touringAlerts";
@@ -446,6 +447,25 @@ export async function drainAllTenants(h: HostedCleaner): Promise<void> {
         await drainCleanerAlerts(ctx.root, ctx.env, () => h.now());
       } catch {
         h.log(`Cleaner Core couldn't deliver ${tenant.id}/${property.id}'s alerts this round.`);
+      }
+    }
+  }
+}
+
+/**
+ * Fixer Core's clock: one pass for each property with Fixer Core on, on the same tick as the alerts.
+ * One property's failure never stops the rest, and the log line names only the property.
+ */
+export async function tickAllFixers(h: HostedCleaner): Promise<void> {
+  for (const listed of h.registry.list()) {
+    const tenant = h.registry.get(listed.id);
+    if (!tenant || tenant.disabled) continue;
+    for (const property of tenant.properties) {
+      if (!property.flows.fixer.on) continue;
+      try {
+        await tickFixer(h, tenant, property);
+      } catch {
+        h.log(`Fixer Core couldn't run ${tenant.id}/${property.id}'s clock this round.`);
       }
     }
   }

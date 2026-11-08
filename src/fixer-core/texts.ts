@@ -215,3 +215,10 @@ export const PRO_DONE_ACK = "Thanks, marked done.";
 export function proTextFailed(f: { proName: string }): string {
   return `A text from ${f.proName} couldn't be handled. Check with them.`;
 }
+
+/** set_flows fixer: false with a visit booked (design pass). Each job is what needs fixing, with the booked pro's name when there is one. */
+export function fixerOffQuestion(f: { label: string; jobs: { what: string; proName?: string }[] }): string {
+  const list = f.jobs.map((job) => (job.proName ? `${job.what} (${job.proName})` : job.what)).join("; ");
+  const count = f.jobs.length === 1 ? "This repair job is cancelled" : `These ${f.jobs.length} repair jobs are cancelled`;
+  return `Turn off Fixer Core for ${f.label}? ${count}: ${list}. I'll tell each booked pro, and their visit links end. The pros and upkeep are kept. Reply yes to turn it off.`;
+}

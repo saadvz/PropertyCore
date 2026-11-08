@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { runsSupplies, type CleanerAssistant } from "../cleaner-core/assistant";
+import { runsFixer, runsSupplies, type CleanerAssistant } from "../cleaner-core/assistant";
 import { findProperty, propertyFolder, type FlowName, type Property } from "../cleaner-core/hosted/properties";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
@@ -7,18 +7,18 @@ import type { FrontReply } from "./serviceTools";
 
 /**
  * The account's own tools on the shared address, and how a property tool call names its property.
- * Every Cleaner Core and Supply Core tool takes a `property`; it's required once the account has two
+ * Every Cleaner Core, Supply Core and Fixer Core tool takes a `property`; it's required once the account has two
  * or more properties, and is taken out before the call reaches the property's desk.
  */
 
 export const LABEL_MAX = 120;
 export const FIXER_NOT_YET = "Fixer Core isn't available yet.";
 export const FIRST_PROPERTY = "Ask the host for the property's address, then call add_property with it.";
-export const TURN_A_FLOW_ON = "No flow is on for this property yet. Ask the host what they want here, then call set_flows to turn Cleaner Core or Supply Core on.";
+export const TURN_A_FLOW_ON = "No flow is on for this property yet. Ask the host what they want here, then call set_flows to turn Cleaner Core, Supply Core or Fixer Core on.";
 
-const FLOW_NAMES: Record<Exclude<FlowName, "fixer">, string> = { cleaning: "Cleaner Core", supplies: "Supply Core" };
+const FLOW_NAMES: Record<FlowName, string> = { cleaning: "Cleaner Core", supplies: "Supply Core", fixer: "Fixer Core" };
 
-export const flowOff = (flow: Exclude<FlowName, "fixer">, label: string) => `${FLOW_NAMES[flow]} isn't on for ${label}.`;
+export const flowOff = (flow: FlowName, label: string) => `${FLOW_NAMES[flow]} isn't on for ${label}.`;
 export const nameProperty = (tenant: Tenant) => `Which property? Pass property as one of: ${tenant.properties.map((p) => `${p.id} (${p.label})`).join(", ")}.`;
 
 const PROPERTY_ARG = { type: "string", maxLength: 200, description: "The property's id from get_state, like prp_abc123defg. Its exact label works too." };
@@ -56,14 +56,14 @@ const GET_STATE = {
   name: "get_state",
   title: "What's next",
   description:
-    "Call this first. Lists the account's properties, which flows each one has on, and each one's next step. With property, gives that property's own Cleaner Core state and next step (or Supply Core's, when only Supply Core is on there). With one property, it gives that property's state directly. Setup starts with a draft for each property: pass drafted: true with the property once the host corrected its summary.",
+    "Call this first. Lists the account's properties, which flows each one has on, and each one's next step. With property, gives that property's own Cleaner Core state and next step (or Supply Core's, when only Supply Core is on there, or Fixer Core's, when only Fixer Core is). With one property, it gives that property's state directly. Setup starts with a draft for each property: pass drafted: true with the property once the host corrected its summary.",
   inputSchema: { type: "object", properties: { property: PROPERTY_ARG, choice: { type: "string", maxLength: 40 }, drafted: { type: "boolean" } }, additionalProperties: false },
 };
 
 const ADD_PROPERTY = {
   name: "add_property",
   title: "Add a property",
-  description: "Adds a property to the account, with every flow off. Use the address as the label. It texts nobody. Then call set_flows to turn Cleaner Core or Supply Core on for it.",
+  description: "Adds a property to the account, with every flow off. Use the address as the label. It texts nobody. Then call set_flows to turn Cleaner Core, Supply Core or Fixer Core on for it.",
   inputSchema: { type: "object", properties: { label: { type: "string", maxLength: LABEL_MAX } }, required: ["label"], additionalProperties: false },
 };
 
@@ -108,7 +108,8 @@ export function addProperty(h: HostedCleaner, tenant: Tenant, args: unknown): Fr
 export interface PropertyStates {
   cleaning(property: Property, args: Record<string, unknown>): Promise<FrontReply>;
   supplies(property: Property): Promise<FrontReply>;
-  /** The next step of one property, for the overview: its Cleaner Core ask, else Supply Core's. */
+  fixer(property: Property): Promise<FrontReply>;
+  /** The next step of one property, for the overview: its Cleaner Core ask, else Supply Core's, else Fixer Core's. */
   next(property: Property): Promise<string | undefined>;
 }
 
@@ -127,7 +128,9 @@ export async function accountState(tenant: Tenant, args: unknown, states: Proper
       ? await states.cleaning(property, resolved.args)
       : property.flows.supplies.on && runsSupplies(assistant)
         ? await states.supplies(property)
-        : done({ next: TURN_A_FLOW_ON });
+        : property.flows.fixer.on && runsFixer(assistant)
+          ? await states.fixer(property)
+          : done({ next: TURN_A_FLOW_ON });
     if (reply.isError || !reply.structured) return reply;
     const structured = { ...reply.structured, properties: list };
     return { ...reply, text: JSON.stringify(structured), structured };

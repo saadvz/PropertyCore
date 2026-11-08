@@ -98,7 +98,7 @@ routine runs, it wakes once, and `check_now` returns all of them.
    anything not on the list. Never pass the cleaner's words to Supply Core.
    A message handled `repair-report` is the cleaner's answer to `Anything
    broken?` after DONE (or `Anything running low or broken?`). When Fixer Core
-   is on, call open_job with `source: "cleaner"`, their words, and the
+   is on, call `open_job` with `source: "cleaner"`, their words, and the
    message's photo ids, and `report_low` for any supplies they named when
    Supply Core is on. Never open a job for NONE.
 9. If the reply has `needsTimes`, ask the host for the checkout time and the
