@@ -1,14 +1,21 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { localDateOf } from "../core/timezone";
+import { copyPhotos, messagePhotoId, photoCount } from "../cleaner-core/photos";
 import { askNext } from "../hub/ask";
+import { addCalendarDays } from "../hub/calendar";
+import { joinSplitDigits } from "../hub/digits";
+import type { GoogleEventList } from "../hub/sources";
 import { refuseCards } from "../hub/cards";
 import { hubFor, type Hub } from "../hub/hub";
 import type { People } from "../hub/people";
 import { ConfirmationBook } from "../operator/confirmations";
 import { nextDates, scheduleProblem, type Schedule } from "../supply-core/schedule";
 import { supplyAskOn } from "../supply-core/store";
+import { contactAllowed, liveBooking } from "./gate";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
+import { hostGoQuestion } from "./texts";
+import { latestYmd, visitWindows, type VisitWindow } from "./window";
 import { TRADES, isTrade, newId, readFixer, writeFixer, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
 /**
@@ -96,6 +103,30 @@ export interface UpkeepInput {
   confirmation?: string;
 }
 
+export interface JobInput {
+  trade?: Trade;
+  what?: string;
+  urgency?: Job["urgency"];
+  byDate?: string;
+  source?: Job["source"];
+  sourceRef?: string;
+  /** The cleaner's texts whose photos belong to the job. */
+  photoMessageIds?: string[];
+  cleanerName?: string;
+  doorLock?: true;
+}
+
+export interface ApproveJobInput {
+  jobId?: string;
+  no?: true;
+  confirmation?: string;
+}
+
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const URGENCIES = ["now", "soon", "by-date", "flexible"] as const;
+/** A job is still going until it is done or cancelled; these states are before any contact. */
+const NOT_BOOKED = new Set<Job["state"]>(["requested", "shortlisted", "contacted"]);
+
 /** The record couldn't be read: the desk answers with a plain refusal and leaves the file alone. */
 class DamagedRecord extends Error {}
 
@@ -113,6 +144,11 @@ function localYmd(at: Date, timeZone: string): string {
 
 /** Jobs still going: not done and not cancelled. */
 const isOpen = (job: Job): boolean => job.state !== "done" && job.state !== "cancelled";
+
+/** Digit runs of 4 or more (after split digits are joined) become a note, so a door code or account number never lands in a job. */
+export function redactDigits(text: string): string {
+  return joinSplitDigits(text).replace(/\d{4,}/g, "[number removed]");
+}
 
 /** The cleaned-up reach, or the plain reason it is refused. */
 function reachOf(raw: ReachInput | undefined): ProReach | string {
@@ -529,6 +565,205 @@ export class FixerDesk {
     }
     if (file.offAt) return "Repairs: off.";
     return file.settings.activatedAt ? this.line(file) : "Repairs: setup not finished.";
+  }
+
+  /** The saved pro the host ranks first for a trade, if any. */
+  private topPro(file: FixerFile, trade: Trade, skip: readonly string[] = []): { pro: Pro; rank: number } | undefined {
+    const ranked = file.pros
+      .filter((pro) => pro.status === "saved" && !skip.includes(pro.id))
+      .flatMap((pro) => pro.preferredFor.filter((entry) => entry.trade === trade).map((entry) => ({ pro, rank: entry.rank })))
+      .sort((a, b) => a.rank - b.rank);
+    return ranked[0];
+  }
+
+  /** The host's go question for a job still waiting on it. */
+  private goQuestion(file: FixerFile, job: Job): string {
+    const top = this.topPro(file, job.trade);
+    return hostGoQuestion({ what: job.what, ...(job.source === "cleaner" ? { cleanerName: job.cleanerName ?? "your cleaner" } : {}), ...(top ? { proName: top.pro.name } : {}) });
+  }
+
+  /** Starts a repair job: the host's own starts at once, the cleaner's and upkeep's wait for the host's go. */
+  openJob(input: JobInput): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      if (!file.settings.activatedAt || file.offAt) return fail("Repairs aren't active yet. Call get_fixer_state.");
+      if (!isTrade(input.trade)) return fail(`Pick a trade: ${TRADES.join(", ")}.`);
+      if (!isText(input.what, 299)) return fail("Say what needs fixing, in under 300 characters.");
+      if (!URGENCIES.includes(input.urgency as never)) return fail("Say how soon: now, soon, by-date or flexible.");
+      if (input.source !== "host" && input.source !== "cleaner" && input.source !== "upkeep") return fail("Say where it came from: host, cleaner or upkeep.");
+      if ((input.urgency === "by-date") !== (input.byDate !== undefined)) return fail("A by-date job needs a date, and only a by-date job has one.");
+      if (input.byDate !== undefined && (typeof input.byDate !== "string" || !YMD.test(input.byDate) || input.byDate < this.today())) return fail("The date has to be YYYY-MM-DD, today or later.");
+      if (input.sourceRef !== undefined && !isText(input.sourceRef, 80)) return fail("That source reference is too long.");
+      if (input.cleanerName !== undefined && !isText(input.cleanerName, 80)) return fail("The cleaner's name is too long.");
+      if (input.doorLock !== undefined && input.doorLock !== true) return fail("doorLock is only ever true.");
+      const photoIds = input.photoMessageIds ?? [];
+      if (!Array.isArray(photoIds) || photoIds.length > 10 || !photoIds.every((id) => isText(id, 120))) return fail("Pass up to 10 message ids for the photos.");
+      if (photoIds.length > 0 && input.source !== "cleaner") return fail("Only a cleaner's report carries photos.");
+      if (input.source === "upkeep") {
+        if (!input.sourceRef || !file.upkeep.some((item) => item.id === input.sourceRef)) return fail("An upkeep job names an upkeep item. Call get_fixer_state for the list.");
+        if (file.jobs.some((job) => isOpen(job) && job.sourceRef === input.sourceRef)) return fail("That upkeep item already has a job open.");
+      }
+      const now = this.deps.now().toISOString();
+      const job: Job = {
+        id: newId("job_", 10),
+        trade: input.trade,
+        what: redactDigits(input.what).trim(),
+        source: input.source,
+        photos: [],
+        urgency: input.urgency!,
+        state: "requested",
+        candidates: [],
+        picked: [],
+        contacts: [],
+        news: [],
+        createdAt: now,
+      };
+      if (input.byDate) job.byDate = input.byDate;
+      if (input.sourceRef) job.sourceRef = input.sourceRef;
+      if (input.cleanerName) job.cleanerName = input.cleanerName.trim();
+      if (input.doorLock) job.doorLock = true;
+      if (input.source === "host") job.hostGo = { at: now };
+      const key = `fixer:${job.id}`;
+      for (const id of photoIds) {
+        const before = photoCount(this.root, key);
+        const copied = copyPhotos(this.root, messagePhotoId(id), key);
+        for (let n = before + 1; n <= before + copied; n++) job.photos.push({ id: String(n), from: "cleaner", at: now });
+      }
+      file.jobs.push(job);
+      this.write(file);
+      return ok({ jobId: job.id, state: job.state, ...(job.hostGo ? { next: "Call check_fixes for who to contact." } : { question: this.goQuestion(file, job), next: "Ask the host this question, then call approve_job." }) });
+    });
+  }
+
+  /** The host's go (two calls, the second with the code) or no (cancels) for a job waiting on them. */
+  approveJob(input: ApproveJobInput): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const job = file.jobs.find((entry) => entry.id === input.jobId);
+      if (!job) return fail("There's no job with that id. Call get_fixer_state for the list.");
+      if (!isOpen(job) || job.hostGo || !NOT_BOOKED.has(job.state)) return fail("That job isn't waiting for a go.");
+      if (input.no !== undefined && input.no !== true) return fail("no is only ever true.");
+      if (input.no) {
+        job.state = "cancelled";
+        job.cancelledAt = this.deps.now().toISOString();
+        job.cancelReason = "host-said-no";
+        this.write(file);
+        return ok({ cancelled: true, jobId: job.id });
+      }
+      const gate = this.approved(file, "fixer-job-go", job.id, input, this.goQuestion(file, job));
+      if (gate !== "go") return gate;
+      job.hostGo = { at: this.deps.now().toISOString() };
+      this.write(file);
+      return ok({ approved: true, jobId: job.id, next: "Call check_fixes for who to contact." });
+    });
+  }
+
+  /** The times a pro can visit for this job, between the stays, with the cleaning applied. */
+  async windowsFor(job: Job): Promise<VisitWindow[]> {
+    const file = this.read();
+    const hub = this.hub();
+    const property = hub.property();
+    const timeZone = this.timeZone();
+    const today = this.today();
+    const stays = hub.stays() ?? [];
+    const cleanings = new Map<string, { doneAt?: string }>();
+    if (this.deps.cleanings) {
+      for (const day of new Set(stays.map((stay) => stay.checkout))) {
+        const entry = await this.deps.cleanings(day);
+        if (entry) cleanings.set(day, entry.doneAt ? { doneAt: entry.doneAt } : {});
+      }
+    }
+    return visitWindows({
+      stays,
+      timeZone,
+      ...(property.checkoutTime ? { checkoutTime: property.checkoutTime } : {}),
+      ...(property.checkInTime ? { checkInTime: property.checkInTime } : {}),
+      checkInBufferMinutes: file.settings.checkInBufferMinutes,
+      cleaningMinutes: file.settings.cleaningMinutes,
+      cleanings,
+      ...(job.cleaningOrder ? { cleaningOrder: job.cleaningOrder } : {}),
+      now: this.deps.now(),
+      lastYmd: latestYmd(job, today),
+    });
+  }
+
+  /** Task 7 fills this: the follow-ups, expiries and holds the check goes through before it answers. */
+  private sweep(_file: FixerFile): void {}
+
+  /** Upkeep items whose date is within `leadDays` and that have no job open or already started for that date. */
+  private upkeepDue(file: FixerFile): Record<string, unknown>[] {
+    const today = this.today();
+    const tz = this.timeZone();
+    const due: Record<string, unknown>[] = [];
+    for (const item of file.upkeep) {
+      const jobs = file.jobs.filter((job) => job.sourceRef === item.id);
+      if (jobs.some(isOpen)) continue;
+      const start = localYmd(new Date(item.lastDoneAt ?? item.savedAt), tz);
+      const nextDate = nextDates(item.schedule, start, start, 1)[0];
+      if (!nextDate) continue;
+      const leadStart = addCalendarDays(nextDate, -item.leadDays);
+      if (today < leadStart) continue;
+      // A job already made for this date (even a cancelled one) means the date was dealt with.
+      if (jobs.some((job) => localYmd(new Date(job.createdAt), tz) >= leadStart)) continue;
+      due.push({ upkeepId: item.id, trade: item.trade, what: item.what, nextDate, ...(item.proId ? { proId: item.proId } : {}) });
+    }
+    return due;
+  }
+
+  /** The next saved pro to contact for each job the host said go to, the best ranked one not yet tried. */
+  private contactNext(file: FixerFile): Record<string, unknown>[] {
+    const out: Record<string, unknown>[] = [];
+    for (const job of file.jobs) {
+      if (!isOpen(job) || !job.hostGo || !NOT_BOOKED.has(job.state) || liveBooking(job)) continue;
+      if (job.contacts.some((contact) => !contact.cancelled && (contact.outcome === undefined || contact.outcome === "waiting"))) continue;
+      const next = this.topPro(file, job.trade, job.contacts.map((contact) => contact.to));
+      if (!next || !contactAllowed(job, next.pro.id, file.pros).ok) continue;
+      out.push({ jobId: job.id, proId: next.pro.id, name: next.pro.name, reach: next.pro.reach, rank: next.rank });
+    }
+    return out;
+  }
+
+  /** The morning pass: what needs the host's go, what upkeep is due, who to contact next, and when pros can visit. */
+  checkFixes(input: { googleEvents?: GoogleEventList }): Promise<FixerReply> {
+    // Event text can hold long booking numbers. Only their dates are read, so they skip the card check.
+    const { googleEvents: _events, ...rest } = input;
+    return this.guarded(rest, async () => {
+      const file = this.read();
+      if (!file.settings.activatedAt || file.offAt) return fail("Repairs aren't active yet. Call get_fixer_state.");
+      this.sweep(file);
+      const hub = this.hub();
+      // Cleaner Core or Supply Core read the calendars when they run; otherwise this check does.
+      if (!this.deps.cleaningOn?.() && !supplyAskOn(this.root) && (hub.calendars().length > 0 || hub.google())) {
+        await hub.readCalendars({ ...(input.googleEvents ? { googleEvents: input.googleEvents } : {}), tenantId: "fixer" });
+      }
+      const windows: Record<string, VisitWindow[]> = {};
+      for (const job of file.jobs) {
+        if (isOpen(job) && job.hostGo && !liveBooking(job)) windows[job.id] = await this.windowsFor(job);
+      }
+      const at = this.deps.now().toISOString();
+      const news: { jobId: string; kind: string; at: string }[] = [];
+      for (const job of file.jobs) {
+        for (const item of job.news) {
+          if (item.toldAt) continue;
+          news.push({ jobId: job.id, kind: item.kind, at: item.at });
+          item.toldAt = at;
+        }
+      }
+      this.write(file);
+      return ok({
+        needsGo: file.jobs.filter((job) => isOpen(job) && !job.hostGo && job.state === "requested").map((job) => ({ jobId: job.id, question: this.goQuestion(file, job) })),
+        upkeepDue: this.upkeepDue(file),
+        contactNext: this.contactNext(file),
+        windows,
+        unconfirmed: [],
+        followUps: [],
+        held: [],
+        delays: [],
+        preferredAsk: [],
+        rotationAsk: [],
+        news,
+      });
+    });
   }
 
   /** Turned back on: setup and the lists are as they were. */

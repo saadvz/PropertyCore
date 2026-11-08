@@ -2,7 +2,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { fixerDeskFor, resetFixerDesks, type FixerDeps } from "../src/fixer-core/desk";
+import { FixerDesk, fixerDeskFor, resetFixerDesks, type FixerDeps } from "../src/fixer-core/desk";
+import { storePhoto, messagePhotoId, photoCount } from "../src/cleaner-core/photos";
+import { setCalendarFetch } from "../src/hub/calendarFetch";
 import { fixerSetupAsk } from "../src/fixer-core/setupAsk";
 import { FIXER_FILE, emptyFixer, readFixer, writeFixer } from "../src/fixer-core/store";
 import { cleanerAskQuestion } from "../src/fixer-core/texts";
@@ -15,6 +17,7 @@ const PROPERTY = { nickname: "Scratch Lane", address: "12 Scratch Lane, Teaneck,
 
 const dirs: string[] = [];
 afterEach(() => {
+  setCalendarFetch(undefined);
   resetFixerDesks();
   resetHubs();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -446,5 +449,226 @@ describe("cards and a damaged file", () => {
     await desk.state();
     writeFileSync(join(root, FIXER_FILE), JSON.stringify(emptyFixer()));
     expect((await desk.state()).isError).toBe(false);
+  });
+});
+
+/** Jobs: what starts them, the host's go, and the check. */
+
+const LANE = "https://calendar.example/lane.ics";
+const ics = (...stays: [string, string][]) =>
+  ["BEGIN:VCALENDAR", ...stays.flatMap(([a, b], i) => ["BEGIN:VEVENT", `UID:s${i}`, `DTSTART;VALUE=DATE:${a}`, `DTEND;VALUE=DATE:${b}`, "SUMMARY:Guest", "END:VEVENT"]), "END:VCALENDAR"].join("\r\n");
+const serve = (body: string) => setCalendarFetch(async (url) => ({ status: 200, url, async text() { return body; } }));
+
+/** An activated desk whose plumber is ranked first. */
+async function withPlumber(extra: Partial<FixerDeps> = {}) {
+  const m = made(extra);
+  await m.desk.savePro({ ...joe, preferredFor: [{ trade: "plumbing", rank: 1 }] });
+  await m.desk.saveSettings({ prosDone: true });
+  await m.desk.saveSettings({ costLineCents: null });
+  await m.desk.saveSettings({ upkeepDone: true });
+  await m.desk.activate();
+  serve(ics());
+  return m;
+}
+
+type Check = {
+  needsGo: { jobId: string; question: string }[];
+  upkeepDue: { upkeepId: string; nextDate: string; proId?: string }[];
+  contactNext: { jobId: string; proId: string; name: string; rank: number }[];
+  windows: Record<string, { from: string; until: string }[]>;
+  news: { jobId: string }[];
+  unconfirmed: unknown[];
+};
+const check = async (desk: Desk) => (await desk.checkFixes({})).structured as unknown as Check;
+
+describe("jobs", () => {
+  it("starts a host job at once with the go, and names the rank 1 pro", async () => {
+    const { root, desk } = await withPlumber();
+    const reply = await desk.openJob({ trade: "plumbing", what: "Kitchen sink leaks", urgency: "now", source: "host" });
+    expect(reply.isError).toBe(false);
+    const job = readFixer(root).jobs[0]!;
+    expect(job).toMatchObject({ state: "requested", source: "host", hostGo: { at: NOW.toISOString() } });
+    const seen = await check(desk);
+    expect(seen.needsGo).toEqual([]);
+    expect(seen.contactNext).toEqual([expect.objectContaining({ jobId: job.id, name: "Joe's Plumbing", rank: 1 })]);
+  });
+
+  it("makes a cleaner job that waits for the go, with the exact question and the photo copied", async () => {
+    const { root, desk } = await withPlumber();
+    storePhoto(root, messagePhotoId("m1"), { bytes: Buffer.from("jpg"), ext: "jpg" });
+    const reply = await desk.openJob({ trade: "plumbing", what: "Sink leaks", urgency: "soon", source: "cleaner", sourceRef: "m1", photoMessageIds: ["m1"], cleanerName: "Maria" });
+    const job = readFixer(root).jobs[0]!;
+    expect(job.hostGo).toBeUndefined();
+    expect(job.photos).toEqual([{ id: "1", from: "cleaner", at: NOW.toISOString() }]);
+    expect(photoCount(root, `fixer:${job.id}`)).toBe(1);
+    expect(reply.structured!.question).toBe("Sink leaks (photo from Maria). Want me to call Joe's Plumbing?");
+    const seen = await check(desk);
+    expect(seen.needsGo).toEqual([{ jobId: job.id, question: "Sink leaks (photo from Maria). Want me to call Joe's Plumbing?" }]);
+    expect(seen.contactNext).toEqual([]);
+    expect(seen.windows).toEqual({});
+  });
+
+  it("asks to find someone when no pro is preferred", async () => {
+    const { desk } = await activated();
+    const reply = await desk.openJob({ trade: "hvac", what: "No heat", urgency: "now", source: "cleaner", cleanerName: "Maria" });
+    expect(reply.structured!.question).toBe("No heat (photo from Maria). Want me to find someone?");
+  });
+
+  it("saves a cleaner's digits redacted, including split ones", async () => {
+    const { root, desk } = await withPlumber();
+    await desk.openJob({ trade: "plumbing", what: "Lock box is 4812 and the gate is 9 9 3 1 7", urgency: "soon", source: "cleaner" });
+    const what = readFixer(root).jobs[0]!.what;
+    expect(what).toBe("Lock box is [number removed] and the gate is [number removed]");
+    expect(what).not.toContain("4812");
+  });
+
+  it("refuses bad jobs and card numbers", async () => {
+    const { root, desk } = await withPlumber();
+    const base = { trade: "plumbing" as const, what: "Leak", urgency: "now" as const, source: "host" as const };
+    for (const bad of [{ trade: "roofing" as never }, { what: "" }, { what: "x".repeat(300) }, { urgency: "later" as never }, { urgency: "by-date" as const }, { byDate: "2026-12-01" }, { source: "pro" as never }, { source: "upkeep" as const }, { source: "host" as const, photoMessageIds: ["m1"] }]) {
+      expect((await desk.openJob({ ...base, ...bad })).isError).toBe(true);
+    }
+    expect((await desk.openJob({ ...base, what: "pay with 4111 1111 1111 1111" })).isError).toBe(true);
+    expect((await desk.openJob({ ...base, urgency: "by-date", byDate: "2026-11-07" })).isError).toBe(true);
+    expect(readFixer(root).jobs).toEqual([]);
+    expect((await desk.openJob({ ...base, what: "x".repeat(299) })).isError).toBe(false);
+  });
+
+  it("refuses a job before activation or while repairs are off", async () => {
+    const { desk } = made();
+    expect((await desk.openJob({ trade: "plumbing", what: "Leak", urgency: "now", source: "host" })).isError).toBe(true);
+    const on = await withPlumber();
+    await on.desk.turnOff(false);
+    expect((await on.desk.openJob({ trade: "plumbing", what: "Leak", urgency: "now", source: "host" })).isError).toBe(true);
+  });
+});
+
+describe("the host's go", () => {
+  async function waiting() {
+    const m = await withPlumber();
+    const opened = await m.desk.openJob({ trade: "plumbing", what: "Sink leaks", urgency: "soon", source: "cleaner", cleanerName: "Maria" });
+    return { ...m, jobId: opened.structured!.jobId as string };
+  }
+
+  it("takes two calls, then names the pro to contact", async () => {
+    const { root, desk, jobId } = await waiting();
+    const first = await desk.approveJob({ jobId });
+    expect((first.structured!.question as string)).toContain("Want me to call Joe's Plumbing?");
+    expect(readFixer(root).jobs[0]!.hostGo).toBeUndefined();
+    expect((await desk.approveJob({ jobId, confirmation: "wrong" })).isError).toBe(true);
+    expect((await desk.approveJob({ jobId, confirmation: codeOf(first) })).isError).toBe(false);
+    expect(readFixer(root).jobs[0]!.hostGo).toEqual({ at: NOW.toISOString() });
+    expect((await check(desk)).contactNext).toEqual([expect.objectContaining({ jobId, name: "Joe's Plumbing" })]);
+    expect((await desk.approveJob({ jobId })).isError).toBe(true);
+  });
+
+  it("cancels on no", async () => {
+    const { root, desk, jobId } = await waiting();
+    expect((await desk.approveJob({ jobId, no: true })).isError).toBe(false);
+    expect(readFixer(root).jobs[0]).toMatchObject({ state: "cancelled", cancelReason: "host-said-no" });
+    expect((await check(desk)).needsGo).toEqual([]);
+    expect((await desk.approveJob({ jobId: "job_missing000" })).isError).toBe(true);
+  });
+});
+
+describe("upkeep jobs", () => {
+  async function withUpkeep() {
+    const m = await withPlumber();
+    const item = { trade: "hvac" as const, what: "Change the filters", schedule: { kind: "every" as const, days: 30 }, leadDays: 7 };
+    await m.desk.saveUpkeep({ ...item, confirmation: codeOf(await m.desk.saveUpkeep(item)) });
+    return { ...m, upkeepId: readFixer(m.root).upkeep[0]!.id };
+  }
+
+  it("is due leadDays before the date, and not while its job is open", async () => {
+    const m = made({});
+    await m.desk.savePro({ ...joe, preferredFor: [{ trade: "plumbing", rank: 1 }] });
+    await m.desk.saveSettings({ prosDone: true });
+    await m.desk.saveSettings({ costLineCents: null });
+    await m.desk.saveUpkeep({ trade: "hvac", what: "Change the filters", schedule: { kind: "every", days: 30 }, leadDays: 7, proId: readFixer(m.root).pros[0]!.id });
+    await m.desk.saveSettings({ upkeepDone: true });
+    await m.desk.activate();
+    serve(ics());
+    const upkeepId = readFixer(m.root).upkeep[0]!.id;
+    expect((await check(m.desk)).upkeepDue).toEqual([]);
+    // Saved 2026-11-08, so the next date is 2026-12-08 and it is due from 2026-12-01.
+    let clock = new Date("2026-12-01T15:00:00.000Z");
+    const desk = new FixerDesk(m.root, { now: () => clock });
+    const due = (await check(desk)).upkeepDue;
+    expect(due).toEqual([{ upkeepId, trade: "hvac", what: "Change the filters", nextDate: "2026-12-08", proId: readFixer(m.root).pros[0]!.id }]);
+    expect((await desk.openJob({ trade: "hvac", what: "Change the filters", urgency: "flexible", source: "upkeep", sourceRef: upkeepId })).isError).toBe(false);
+    expect((await check(desk)).upkeepDue).toEqual([]);
+    clock = new Date("2026-12-05T15:00:00.000Z");
+    expect((await check(desk)).upkeepDue).toEqual([]);
+    expect((await desk.openJob({ trade: "hvac", what: "Again", urgency: "flexible", source: "upkeep", sourceRef: upkeepId })).isError).toBe(true);
+  });
+
+  it("needs an existing upkeep id, and waits for the go like a cleaner job", async () => {
+    const { root, desk, upkeepId } = await withUpkeep();
+    expect((await desk.openJob({ trade: "hvac", what: "Filters", urgency: "flexible", source: "upkeep" })).isError).toBe(true);
+    expect((await desk.openJob({ trade: "hvac", what: "Filters", urgency: "flexible", source: "upkeep", sourceRef: "upk_nothere0" })).isError).toBe(true);
+    const reply = await desk.openJob({ trade: "hvac", what: "Filters", urgency: "flexible", source: "upkeep", sourceRef: upkeepId });
+    expect(reply.structured!.question).toBe("Filters. Want me to find someone?");
+    expect(readFixer(root).jobs[0]!.hostGo).toBeUndefined();
+    expect((await check(desk)).needsGo).toHaveLength(1);
+  });
+});
+
+describe("check_fixes", () => {
+  it("returns every list, empty when nothing, and refuses before activation", async () => {
+    expect((await made().desk.checkFixes({})).isError).toBe(true);
+    const { desk } = await withPlumber();
+    expect((await desk.checkFixes({})).structured).toEqual({ needsGo: [], upkeepDue: [], contactNext: [], windows: {}, unconfirmed: [], followUps: [], held: [], delays: [], preferredAsk: [], rotationAsk: [], news: [] });
+  });
+
+  it("windows respect the next check-in and its buffer", async () => {
+    const { desk } = await withPlumber();
+    serve(ics(["20261110", "20261113"]));
+    const opened = await desk.openJob({ trade: "plumbing", what: "Leak", urgency: "now", source: "host" });
+    const windows = (await check(desk)).windows[opened.structured!.jobId as string]!;
+    // Now is 10:00 on Nov 8 in New York; check-in is 16:00 on Nov 10, less the 60 minute buffer.
+    expect(windows[0]).toEqual({ from: NOW.toISOString(), until: "2026-11-10T20:00:00.000Z" });
+    expect(windows[1]!.from).toBe("2026-11-13T16:00:00.000Z");
+  });
+
+  it("applies the cleaner's cleaning through deps.cleanings", async () => {
+    const asked: string[] = [];
+    const { desk } = await withPlumber({ cleanings: async (day) => (asked.push(day), { cleared: true }) });
+    serve(ics(["20261104", "20261109"], ["20261112", "20261114"]));
+    const opened = await desk.openJob({ trade: "plumbing", what: "Leak", urgency: "now", source: "host", });
+    const job = readFixer(desk.root).jobs.find((j) => j.id === opened.structured!.jobId)!;
+    await check(desk);
+    expect(asked).toContain("2026-11-09");
+    expect((await desk.windowsFor({ ...job, cleaningOrder: "after" })).every((w) => Date.parse(w.from) >= NOW.getTime())).toBe(true);
+  });
+
+  it("does not read calendars while Cleaner Core runs, or Supply Core asks", async () => {
+    let reads = 0;
+    const count = async (url: string) => (reads++, { status: 200, url, async text() { return ics(); } });
+    const cleaning = await withPlumber({ cleaningOn: () => true });
+    setCalendarFetch(count);
+    await check(cleaning.desk);
+    expect(reads).toBe(0);
+    const plain = await withPlumber();
+    setCalendarFetch(count);
+    await check(plain.desk);
+    expect(reads).toBe(1);
+  });
+
+  it("tells the news once", async () => {
+    const { root, desk } = await withPlumber();
+    const opened = await desk.openJob({ trade: "plumbing", what: "Leak", urgency: "now", source: "host" });
+    const file = readFixer(root);
+    file.jobs[0]!.news.push({ kind: "revealed", at: NOW.toISOString() }, { kind: "old", at: NOW.toISOString(), toldAt: NOW.toISOString() });
+    writeFixer(root, file);
+    expect((await check(desk)).news).toEqual([{ jobId: opened.structured!.jobId, kind: "revealed", at: NOW.toISOString() }]);
+    expect((await check(desk)).news).toEqual([]);
+    expect(readFixer(root).jobs[0]!.news.every((n) => n.toldAt)).toBe(true);
+  });
+
+  it("names no pro for a draft or an unranked one", async () => {
+    const { desk } = await activated();
+    serve(ics());
+    await desk.openJob({ trade: "plumbing", what: "Leak", urgency: "now", source: "host" });
+    expect((await check(desk)).contactNext).toEqual([]);
   });
 });

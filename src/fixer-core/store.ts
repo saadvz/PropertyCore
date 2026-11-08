@@ -119,6 +119,8 @@ export interface Job {
   doorLock?: true;
   source: "host" | "cleaner" | "upkeep";
   sourceRef?: string;
+  /** The cleaner who reported it, as the host go question names them. */
+  cleanerName?: string;
   photos: PhotoRef[];
   urgency: "now" | "soon" | "by-date" | "flexible";
   cleaningOrder?: "before" | "after";

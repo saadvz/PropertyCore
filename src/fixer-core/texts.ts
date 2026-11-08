@@ -33,9 +33,10 @@ export function firstName(name: string): string {
   return name.trim().split(/\s+/)[0] ?? "";
 }
 
-export function hostGoQuestion(f: { what: string; cleanerName: string; proName?: string }): string {
+/** `cleanerName` is left out for a job with no cleaner's photo, like upkeep coming due. */
+export function hostGoQuestion(f: { what: string; cleanerName?: string; proName?: string }): string {
   const tail = f.proName ? `Want me to call ${f.proName}?` : "Want me to find someone?";
-  return `${f.what} (photo from ${f.cleanerName}). ${tail}`;
+  return `${f.what}${f.cleanerName ? ` (photo from ${f.cleanerName})` : ""}. ${tail}`;
 }
 
 export function bookingQuestion(f: {
