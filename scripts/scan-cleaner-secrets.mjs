@@ -45,27 +45,26 @@ function openSeal(sealed) {
   }
 }
 
-function collectSeals(value, propertyId, into) {
+function collectSeals(value, into) {
   if (!value || typeof value !== "object") return;
-  const nextId = typeof value.propertyId === "string" ? value.propertyId : propertyId;
   if (value.pinSeal) {
     const pin = openSeal(value.pinSeal);
     if (pin) into.add(pin);
   }
   if (Array.isArray(value)) {
-    for (const item of value) collectSeals(item, nextId, into);
+    for (const item of value) collectSeals(item, into);
     return;
   }
-  for (const child of Object.values(value)) collectSeals(child, nextId, into);
+  for (const child of Object.values(value)) collectSeals(child, into);
 }
 
-/** Plaintext door-code fields and sealed codes saved with a property id. */
+/** Plaintext door-code fields and codes sealed with the test key. */
 function savedDoorCodes(text) {
   const found = new Set();
   for (const match of text.matchAll(/"(?:pin|doorCode|door_code)"\s*:\s*"(\d{4,8})"/g)) found.add(match[1]);
   if (text.includes("pinSeal")) {
     try {
-      collectSeals(JSON.parse(text), undefined, found);
+      collectSeals(JSON.parse(text), found);
     } catch {
       // Not JSON. The plaintext field scan above still applies.
     }
