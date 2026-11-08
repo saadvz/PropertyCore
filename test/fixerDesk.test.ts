@@ -375,6 +375,17 @@ describe("two-call approvals after Activate", () => {
     expect(readFixer(root).pros.find((p) => p.id === id)!.status).toBe("saved");
   });
 
+  it("refuses the code once a draft is edited after the question", async () => {
+    const { root, desk } = await activated();
+    const id = (await desk.savePro({ ...ana, draft: true })).structured!.proId as string;
+    const asked = await desk.savePro({ confirm: [id] });
+    await desk.savePro({ ...ana, id, reach: { phone: "+15555550199" }, draft: true });
+    expect((await desk.savePro({ confirm: [id], confirmation: codeOf(asked) })).isError).toBe(true);
+    expect(readFixer(root).pros.find((p) => p.id === id)!.status).toBe("draft");
+    const again = await desk.savePro({ confirm: [id] });
+    expect((await desk.savePro({ confirm: [id], confirmation: codeOf(again) })).isError).toBe(false);
+  });
+
   it("lets a done job's pro be saved by job id", async () => {
     const { root, desk } = await activated();
     expect((await desk.savePro({ ...ana, jobId: "job_nothere00" })).isError).toBe(true);
@@ -412,6 +423,17 @@ describe("cards and a damaged file", () => {
     const { root, desk } = made();
     writeFileSync(join(root, FIXER_FILE), "{ not json");
     for (const reply of [await desk.state(), await desk.savePro(joe), await desk.saveSettings({ costLineCents: null }), await desk.activate(), await desk.saveUpkeep({ trade: "hvac", what: "x", schedule: { kind: "every", days: 90 } })]) {
+      expect(reply.isError).toBe(true);
+      expect(reply.text).toContain("fixer.json");
+    }
+    expect(readFileSync(join(root, FIXER_FILE), "utf8")).toBe("{ not json");
+  });
+
+  it("says the record is unreadable in the summary line, and turn on and off answer plainly", async () => {
+    const { root, desk } = made();
+    writeFileSync(join(root, FIXER_FILE), "{ not json");
+    expect(desk.summaryLine()).toBe("Repairs: record unreadable.");
+    for (const reply of [await desk.turnOn(), await desk.turnOff(false), await desk.turnOff(true)]) {
       expect(reply.isError).toBe(true);
       expect(reply.text).toContain("fixer.json");
     }

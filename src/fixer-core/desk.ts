@@ -413,7 +413,9 @@ export class FixerDesk {
       if (problem) return fail(`${pro.name}: ${problem}`);
     }
     const names = (drafts as Pro[]).map((pro) => pro.name).join(", ");
-    const gate = this.approved(file, "fixer-pro", "confirm", input, `Save ${names} to your pros?`);
+    // The code is bound to what each draft says now, so an edit after the host's yes needs a new question.
+    const contents = (drafts as Pro[]).map(({ id, name, trades, preferredFor, reach, prefersText }) => ({ id, name, trades, preferredFor, reach, prefersText: prefersText ?? false }));
+    const gate = this.approved(file, "fixer-pro", "confirm", { ...input, drafts: contents } as ProInput, `Save ${names} to your pros?`);
     if (gate !== "go") return gate;
     for (const pro of drafts as Pro[]) pro.status = "saved";
     this.write(file);
@@ -518,24 +520,32 @@ export class FixerDesk {
 
   /** The host's one-line summary, or the setup line while setup is open. */
   summaryLine(): string {
-    const file = this.read();
+    let file: FixerFile;
+    try {
+      file = this.read();
+    } catch (error) {
+      if (error instanceof DamagedRecord) return "Repairs: record unreadable.";
+      throw error;
+    }
     if (file.offAt) return "Repairs: off.";
     return file.settings.activatedAt ? this.line(file) : "Repairs: setup not finished.";
   }
 
   /** Turned back on: setup and the lists are as they were. */
-  turnOn(): Promise<void> {
-    return this.serial(() => {
+  turnOn(): Promise<FixerReply> {
+    return this.guarded({}, () => {
       const file = this.read();
-      if (!file.offAt) return;
-      delete file.offAt;
-      this.write(file);
+      if (file.offAt) {
+        delete file.offAt;
+        this.write(file);
+      }
+      return ok({ on: true });
     });
   }
 
   /** Turned off: no new work. With `cancel`, every job still going is cancelled too. */
-  turnOff(cancel: boolean): Promise<void> {
-    return this.serial(() => {
+  turnOff(cancel: boolean): Promise<FixerReply> {
+    return this.guarded({}, () => {
       const file = this.read();
       const at = this.deps.now().toISOString();
       file.offAt = at;
@@ -547,6 +557,7 @@ export class FixerDesk {
         }
       }
       this.write(file);
+      return ok({ off: true });
     });
   }
 }
