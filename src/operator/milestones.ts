@@ -668,7 +668,7 @@ export const MILESTONE_TOOLS: OperatorTool[] = [
       const { config, state } = saved!;
       const texting = visitorTexting(services, id, config.messagingMode);
       const local = usesLocalMessaging(config, services.installedMessaging?.());
-      const accessDemo = config.accessMode === "durin-mock";
+      const accessDemo = config.accessMode === "door-demo";
       const sentence = local ? localTestModeSentence(accessDemo) : modeSentence(texting.state === "connected", accessDemo);
       if (state.status === "PUBLISHED_FOR_DEMO") {
         return envelope(ctx, id, "done", `${config.property.name} is already published for demo. ${sentence}`, { propertyId: id, published: true });
