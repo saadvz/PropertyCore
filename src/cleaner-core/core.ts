@@ -367,7 +367,7 @@ export interface CleanerCoreOptions {
   cleanerConsent?: "pending" | "in" | "out";
   /**
    * True when this phone's invite is already out from another property of the account
-   * (saadvz/TourCore#190): this engine sends none of its own until the person answers there.
+   * (saadvz/PropertyCore#190): this engine sends none of its own until the person answers there.
    */
   optInElsewhere?: (phone: string) => boolean;
   /**
