@@ -7,7 +7,7 @@ import { fixedCodePort } from "../src/cleaner-core/doorPort";
 import { SCRATCH_TENANTS } from "../src/cleaner-core/tenants";
 
 /**
- * The engine's hooks for account-level opt-in and STOP (saadvz/TourCore#190): an invite held while
+ * The engine's hooks for account-level opt-in and STOP (saadvz/PropertyCore#190): an invite held while
  * another property's is out, the YES and STOP reported, and an account change applied with no text.
  * Only 555 numbers; the door code is the made-up Scratch pin.
  */
