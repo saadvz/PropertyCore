@@ -4,6 +4,11 @@
   "metadata": { "description": "Claude plugins for Property Core's hosted services." },
   "plugins": [
     {
+      "name": "property-core",
+      "source": "./property-core-template/claude/plugin",
+      "description": "Set up and run Property Core for a short-term rental through its Property Core connector. Start here."
+    },
+    {
       "name": "cleaner-core",
       "source": "./claude-template/plugin",
       "description": "Set up and run Cleaner Core, the cleaning scheduler for a short-term rental, through its Cleaner Core connector."
