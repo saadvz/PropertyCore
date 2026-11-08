@@ -189,13 +189,6 @@ export class Hub {
     return (this.file.calendarsSetAside ?? []).map((calendar) => calendar.name);
   }
 
-  clearSetAside(): void {
-    if (!this.file.calendarsSetAside) return;
-    const { calendarsSetAside: _gone, ...rest } = this.file;
-    this.file = rest;
-    this.save();
-  }
-
   /**
    * Saves the calendar list, Google, and done. Never asks wouldCancel: Cleaner Core asks it itself
    * before saving, from inside its own queue. Any save clears the set-aside list.

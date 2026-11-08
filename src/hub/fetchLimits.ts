@@ -39,14 +39,13 @@ export interface CalendarFetch {
 }
 
 /** HTTPS only, no private host, no redirect, and a size and time limit. The URL is not returned. */
-export async function readPublicCalendar(raw: string, fetchImpl: CalendarFetch, now = Date.now()): Promise<{ ok: true; body: string } | { ok: false; reason: string }> {
+export async function readPublicCalendar(raw: string, fetchImpl: CalendarFetch): Promise<{ ok: true; body: string } | { ok: false; reason: string }> {
   if (!calendarUrlAllowed(raw)) return { ok: false, reason: CALENDAR_URL_REFUSAL };
-  const started = now;
+  const started = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MAX_MS);
   try {
     const response = await fetchImpl(raw, { redirect: "manual", signal: controller.signal });
-    if (response.status >= 300 && response.status < 400) return { ok: false, reason: CALENDAR_URL_REFUSAL };
     if (response.status !== 200) return { ok: false, reason: CALENDAR_URL_REFUSAL };
     if (!calendarUrlAllowed(response.url)) return { ok: false, reason: CALENDAR_URL_REFUSAL };
     const body = await response.text();

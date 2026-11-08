@@ -125,22 +125,7 @@ export function readGoogleCalendarFixture(body: string): SourceSnapshot {
   const blocks: FeedBlock[] = [];
   for (const item of items) {
     const event = readGoogleEvent(item, timeZone);
-    if (!event) continue;
-    if (event.block) {
-      blocks.push({ uid: event.uid, summary: event.summary });
-      continue;
-    }
-    stays.push({
-      id: event.uid,
-      departingUid: event.uid,
-      arrivingUid: null,
-      checkInDate: event.checkInDate,
-      checkoutDate: event.checkOutDate,
-      nextCheckInDate: null,
-      sameDay: false,
-      sequence: event.sequence,
-      contentHash: "",
-    });
+    if (event) addEvent(event, stays, blocks);
   }
   return {
     kind: "google-calendar",
@@ -233,22 +218,7 @@ export function readNotionFixture(body: string): SourceSnapshot {
   const blocks: FeedBlock[] = [];
   for (const row of rows) {
     const event = readNotionRow(row, columns, timeZone);
-    if (!event || event.drop) continue;
-    if (event.block) {
-      blocks.push({ uid: event.uid, summary: event.summary });
-      continue;
-    }
-    stays.push({
-      id: event.uid,
-      departingUid: event.uid,
-      arrivingUid: null,
-      checkInDate: event.checkInDate,
-      checkoutDate: event.checkOutDate,
-      nextCheckInDate: null,
-      sameDay: false,
-      sequence: event.sequence,
-      contentHash: "",
-    });
+    if (event && !event.drop) addEvent(event, stays, blocks);
   }
   return {
     kind: "notion",
@@ -290,6 +260,25 @@ interface GoogleEvent {
   checkOutDate: string;
   sequence: number;
   block: boolean;
+}
+
+/** Files one read event as a block, or as a stay whose next guest linkStays fills in. */
+function addEvent(event: GoogleEvent, stays: Turnover[], blocks: FeedBlock[]): void {
+  if (event.block) {
+    blocks.push({ uid: event.uid, summary: event.summary });
+    return;
+  }
+  stays.push({
+    id: event.uid,
+    departingUid: event.uid,
+    arrivingUid: null,
+    checkInDate: event.checkInDate,
+    checkoutDate: event.checkOutDate,
+    nextCheckInDate: null,
+    sameDay: false,
+    sequence: event.sequence,
+    contentHash: "",
+  });
 }
 
 function readGoogleEvent(item: unknown, timeZone: string): GoogleEvent | undefined {
