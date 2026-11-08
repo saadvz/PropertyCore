@@ -2115,7 +2115,7 @@ export class TourCore {
         result = { ok: false as const, reason: err instanceof Error ? err.message : "Door access request failed" };
       }
       if (!result.ok) continue;
-      await this.deps.store.put("accessGrants", { ...grant, validUntil: newEnd.toISOString(), durinGrantRef: result.grantRef });
+      await this.deps.store.put("accessGrants", { ...grant, validUntil: newEnd.toISOString(), doorGrantRef: result.grantRef });
       await this.record("ACCESS_ALLOWED", {
         reservationId: reservation.id,
         prospectId: reservation.prospectId,
@@ -2175,7 +2175,7 @@ export class TourCore {
       (g) => g.reservationId === approved.id && g.doorId === request.doorId && g.status === "ACTIVE" && Date.parse(g.validUntil) > now.getTime(),
     );
     if (existing) {
-      await this.record("ACCESS_ALLOWED", { ...base, code: decision.code, detail: `duplicate request; reused grant ${existing.durinGrantRef}, door access not asked again` });
+      await this.record("ACCESS_ALLOWED", { ...base, code: decision.code, detail: `duplicate request; reused grant ${existing.doorGrantRef}, door access not asked again` });
       return { decision, durinCalled: false, grant: existing, reusedGrant: true };
     }
 
@@ -2225,7 +2225,7 @@ export class TourCore {
       reservationId: approved.id,
       prospectId: approved.prospectId,
       doorId: request.doorId,
-      durinGrantRef: result.grantRef,
+      doorGrantRef: result.grantRef,
       status: "ACTIVE",
       validFrom: now.toISOString(),
       validUntil: approved.windowEnd!,
@@ -2316,7 +2316,7 @@ export class TourCore {
     const active = (await this.listGrants(reservation.id)).filter((g) => g.status === "ACTIVE");
     for (const grant of active) {
       try {
-        await this.deps.durin.revokeAccess({ reservationId: reservation.id, doorId: grant.doorId, grantRef: grant.durinGrantRef });
+        await this.deps.durin.revokeAccess({ reservationId: reservation.id, doorId: grant.doorId, grantRef: grant.doorGrantRef });
       } catch (err) {
         await this.notifyOperator(reservation, `Couldn't revoke access on ${grant.doorId} (${err instanceof Error ? err.message : "unknown error"}). Please check the door.`);
         continue;
@@ -2326,7 +2326,7 @@ export class TourCore {
         reservationId: reservation.id,
         prospectId: reservation.prospectId,
         doorId: grant.doorId,
-        detail: `${grant.durinGrantRef}: ${reason}`,
+        detail: `${grant.doorGrantRef}: ${reason}`,
       });
     }
   }
@@ -2339,7 +2339,7 @@ export class TourCore {
   ): Promise<void> {
     const team = this.teamName();
     const help = this.visitorHelpNumber();
-    const needsOperator: AccessDecisionCode[] = ["DENY_WRONG_ROUTE", "DENY_DURIN_UNHEALTHY", "DENY_PROVIDER_FAILURE", "DENY_STORAGE_FAILURE", "DENY_UNKNOWN", "DENY_PROSPECT_MISMATCH", "DENY_NO_RESERVATION"];
+    const needsOperator: AccessDecisionCode[] = ["DENY_WRONG_ROUTE", "DENY_DOOR_UNHEALTHY", "DENY_PROVIDER_FAILURE", "DENY_STORAGE_FAILURE", "DENY_UNKNOWN", "DENY_PROSPECT_MISMATCH", "DENY_NO_RESERVATION"];
 
     if (reservation && prospect && prospect.id === reservation.prospectId) {
       const unit = this.unitFor(reservation);
@@ -2362,7 +2362,7 @@ export class TourCore {
             : VisitorDenialCopy.tooEarly(),
           DENY_EXPIRED: (await this.tourHadStarted(reservation)) ? DOOR_AFTER_T : LATE_ARRIVAL_EXPIRED,
           DENY_WRONG_ROUTE: `That door isn't part of your tour, so I can't open it. You're here to see ${visitorSubject(this.deps.config.property, unit.name)}. I've let the ${team} know in case you need a hand.`,
-          DENY_DURIN_UNHEALTHY: VisitorDenialCopy.doorsNotResponding(team, help),
+          DENY_DOOR_UNHEALTHY: VisitorDenialCopy.doorsNotResponding(team, help),
           DENY_PROVIDER_FAILURE: VisitorDenialCopy.doorsNotResponding(team, help),
           DENY_STORAGE_FAILURE: VisitorDenialCopy.doorsNotResponding(team, help),
           DENY_TOUR_COMPLETED: "Your tour is finished, so the doors are locked again. Want to book another visit?",
@@ -2391,7 +2391,7 @@ export class TourCore {
             ? reservation?.status === "PROVIDER_FAILURE"
               ? "Tour Core couldn't save the visit record, so the tour was paused."
               : `Tour Core couldn't save the visit record, so ${door} stayed locked.`
-            : code === "DENY_DURIN_UNHEALTHY" || code === "DENY_PROVIDER_FAILURE"
+            : code === "DENY_DOOR_UNHEALTHY" || code === "DENY_PROVIDER_FAILURE"
             ? `The doors aren't responding for ${who}'s tour. They're waiting at ${door}.`
             : `${who} couldn't get into ${door}. They may need a hand.`;
       await this.notifyOperator(reservation, alert);
