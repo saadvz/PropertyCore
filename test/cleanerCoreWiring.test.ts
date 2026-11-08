@@ -689,6 +689,37 @@ describe("Cleaner Core live wiring", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("ignores a door code that only shows up in test timings or inside a longer number", () => {
+    const code = ["7", "3", "9", "1"].join("");
+    const dir = mkdtempSync(join(tmpdir(), "cleaner-secret-timing-"));
+    try {
+      writeFileSync(join(dir, "saved.json"), `${JSON.stringify({ pin: code })}\n`);
+      const chance = [
+        ` ✓ test/hostTexts.test.ts (11 tests) ${code}ms`,
+        `   ✓ answers a visitor ${code}ms`,
+        `      Tests  ${code} passed (${code})`,
+        `   Start at  20:47:30`,
+        `   Duration  ${code}.05s (tests 96%, transform 2%)`,
+        `listening on 127.0.0.1:4${code}`,
+        `worker 1${code}2 exited`,
+      ].join("\n");
+      writeFileSync(join(dir, "test-default.log"), `${chance}\n`);
+      const byChance = spawnSync(process.execPath, ["scripts/scan-cleaner-secrets.mjs", dir], { encoding: "utf8" });
+      expect(byChance.stderr).toBe("");
+      expect(byChance.status).toBe(0);
+
+      for (const line of [`texted +15555550100: code ${code}`, `door code:${code}.`, `enter ${code}# at the keypad`]) {
+        writeFileSync(join(dir, "test-default.log"), `${chance}\n${line}\n`);
+        const leaked = spawnSync(process.execPath, ["scripts/scan-cleaner-secrets.mjs", dir], { encoding: "utf8" });
+        expect(leaked.status, line).not.toBe(0);
+        expect(leaked.stderr).toMatch(/secret scan found a saved door code in:[\s\S]*test-default\.log/);
+        expect(leaked.stderr).not.toContain(code);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 async function throughSchedule(wired: WiredApp, tag: string): Promise<void> {
