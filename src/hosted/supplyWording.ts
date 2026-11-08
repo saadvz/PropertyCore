@@ -1,6 +1,6 @@
 import type { CleanerAssistant } from "../cleaner-core/assistant";
 import type { AskQuestion } from "../hub/ask";
-import type { SupplyReply } from "../supply-core/desk";
+import { CARD_REFUSAL, type SupplyReply } from "../supply-core/desk";
 import { CARDS, type SupplyAsk } from "../supply-core/setupAsk";
 import { listedSupplyTools, NO_CARDS, SUPPLY_TOOLS, type SupplyTool } from "../supply-core/tools";
 
@@ -19,6 +19,9 @@ export const MUSE_SUPPLY_TASK_NAME = "Supply Core";
 export const MUSE_SUPPLY_SKILL = "muse-template/skills/supply-core";
 
 const MUSE_NO_CARDS = "Never pass a card number, expiry, or security code: each store keeps its own saved payment method.";
+
+/** The card refusal on Muse: no Vault there, since each store keeps its own payment method. */
+export const MUSE_CARD_REFUSAL = "That looks like a card number. Supply Core never takes card details: each store keeps its own saved payment method.";
 
 const MUSE_CARDS =
   "Search only the plan's stores, in your browser. Show 3 to 4 products from them as product cards if you can show them, each with its short name, pack size, price, and store. Then show a choice card with one option per product, by its short name, so the host can tap their pick. Never list products as plain text.";
@@ -79,7 +82,9 @@ export function museSupplyAsk(ask: SupplyAsk): SupplyAsk {
 
 /** A Supply Core reply in this agent's words. Grok's is unchanged. */
 export function supplyReplyFor(assistant: CleanerAssistant, name: string, reply: SupplyReply): SupplyReply {
-  if (assistant !== "muse" || reply.isError || !reply.structured) return reply;
+  if (assistant !== "muse") return reply;
+  if (reply.isError && reply.text === CARD_REFUSAL) return { ...reply, text: MUSE_CARD_REFUSAL };
+  if (reply.isError || !reply.structured) return reply;
   let structured = reply.structured;
   const ask = structured.ask as SupplyAsk | undefined;
   if (ask && Array.isArray(ask.questions)) structured = { ...structured, ask: museSupplyAsk(ask) };
