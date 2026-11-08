@@ -8,7 +8,7 @@
   "readme": "README.md",
   "hostedCleanerCoreUrl": "https://tourcore-production-8b80.up.railway.app",
   "repository": {
-    "url": "https://github.com/saadvz/TourCore",
+    "url": "https://github.com/saadvz/PropertyCore",
     "bootstrap": "CLEANER_CORE_BOOTSTRAP.md",
     "note": "The public repository. Grok clones it only to read CLEANER_CORE_BOOTSTRAP.md and these files. It never runs Cleaner Core from the clone."
   },
