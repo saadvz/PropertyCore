@@ -1,5 +1,11 @@
 # Cleaner Core for ChatGPT (v0.1.0)
 
+> **To start, use [`property-core-template/chatgpt/SETUP_GUIDE.md`](../property-core-template/chatgpt/SETUP_GUIDE.md).**
+> It adds one Property Core connector and then follows this folder's Cleaner
+> Core guide. This folder holds that guide, the task, and the manifest. Its
+> own connector steps below, for a Cleaner Core connector, still work for a
+> host who set up that way.
+
 Everything ChatGPT needs to set up and run Cleaner Core. ChatGPT is the host's
 chat. Cleaner Core is the hosted service that keeps the records and sends the
 texts. The Grok Bot version in [`cleaner-template/`](../cleaner-template/) and

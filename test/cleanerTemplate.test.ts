@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,25 +54,14 @@ interface Manifest {
 
 const manifest = (): Manifest => JSON.parse(read(join(TEMPLATE, "template.json"))) as Manifest;
 
-/** SHA-256 of cleaner-template/SETUP_PROMPT.md with LF line endings. Change the prompt only on purpose. */
-const SETUP_PROMPT_SHA256 = "6c23392e133f6ffe7cb11d949477a3d06337df64784e0ac936832fd062b23ead";
-
 describe("Cleaner Core paste-in prompt", () => {
-  it("is pinned, names the repository and the bootstrap, and uses the secure card", () => {
-    const prompt = read(join(TEMPLATE, "SETUP_PROMPT.md"));
-    expect(createHash("sha256").update(prompt).digest("hex")).toBe(SETUP_PROMPT_SHA256);
-    expect(prompt).toContain(REPO);
-    expect(prompt).toContain("CLEANER_CORE_BOOTSTRAP.md");
-    expect(prompt).toContain("secure");
-    expect(prompt).toMatch(/hosted Cleaner Core service/);
-    expect(prompt).toMatch(/Never ask me to paste API keys, passwords, tokens, or door codes into chat/);
-    expect(prompt).toMatch(/Allow/);
-    // The multi-tenant service: the host types Saad's invite code on the Allow page, never in chat.
-    expect(prompt).toMatch(/invite code/);
-    expect(prompt).toMatch(/Never ask me for the invite code in chat\./);
-    expect(prompt).not.toMatch(/ask me only to click Allow/);
-    expect(prompt).toContain("get_state");
-    expect(prompt).toMatch(/Start now\./);
+  // #178: the one Grok prompt is property-core-template/SETUP_PROMPT.md, pinned in test/setupEntryPoint.test.ts.
+  it("moved to the Property Core prompt, and the guide it pointed to is still here", () => {
+    const moved = read(join(TEMPLATE, "SETUP_PROMPT.md"));
+    expect(moved).toContain("](../property-core-template/SETUP_PROMPT.md)");
+    expect(moved).not.toContain("```");
+    expect(moved).toContain("](../CLEANER_CORE_BOOTSTRAP.md)");
+    expect(existsSync(BOOTSTRAP)).toBe(true);
   });
 });
 

@@ -1,8 +1,9 @@
 # Set up Property Core with Claude
 
-Property Core runs Tour Core (self-guided tours) or Cleaner Core (cleaner
-turnovers) on your one number. In Claude you add one connector and, for tour
-updates, make one scheduled task.
+Property Core runs your short-term rental's flows from one connector. In
+Claude, as a plain chat, that's Cleaner Core (cleaner turnovers) at a basic
+level. Supply Core needs an always-on agent: use Grok Bot or Muse for it, from
+[`../README.md`](../README.md).
 
 ## Before you start
 
@@ -16,30 +17,36 @@ updates, make one scheduled task.
 
 In **Settings → Connectors → Add custom connector**, name it **Property Core**
 with the address `https://tourcore-production-8b80.up.railway.app/mcp`. When
-the approval page opens, type your invite code, pick **Tour Core** or
-**Cleaner Core**, and click Allow. Picking there means your first chat already
-has the right tools. This one connector serves both services; don't add a
-second.
+the approval page opens, sign in or type your invite code, and click Allow.
+This one connector serves every flow; don't add a second.
 
 ## Step 2: Add the skill
 
 Install the plugin in [`plugin/`](plugin/). It carries the **property-core**
-skill, which tells Claude how to run setup.
+skill, which tells Claude how to run setup. Add the **cleaner-core** skill
+too: it's Cleaner Core's full guide.
+
+- **Claude Code:** run `/plugin marketplace add saadvz/TourCore`, then
+  `/plugin install property-core@tour-core` and
+  `/plugin install cleaner-core@tour-core`.
+- **claude.ai, desktop, Cowork:** zip the
+  `property-core-template/claude/plugin/skills/property-core` and
+  `claude-template/plugin/skills/cleaner-core` folders from
+  [the repository](https://github.com/saadvz/TourCore), one zip each, and
+  upload both in **Settings → Capabilities → Skills**.
 
 ## Step 3: Add your property
 
 In a new chat, say "Set up Property Core". Claude asks for your property's
 address, adds it, and turns on Cleaner Core for it. Have more than one
-property? Add each one the same way. Tour Core is paused for new accounts:
-ask Saad to make your account a touring account first.
+property? Add each one the same way.
 
-- **Tour Core:** Claude walks you through your property, hours, the
-  property facts visitors ask about (how to apply, fees, lease, and more; each
-  can be skipped), and tour updates. For tour updates, make the scheduled task in
-  [`routines/tour-core-task.md`](routines/tour-core-task.md).
-- **Cleaner Core:** Claude follows the Cleaner Core guide in
-  [`claude-template/SETUP_GUIDE.md`](../../claude-template/SETUP_GUIDE.md)
-  from its step on calendars. Skip its connector step: you already have one.
+Claude then follows the Cleaner Core guide in
+[`claude-template/SETUP_GUIDE.md`](../../claude-template/SETUP_GUIDE.md) from
+its setup chat step. Skip its connector and skill steps: you already have
+both. Where it says **Cleaner Core** for the connector, yours is **Property
+Core**.
 
-Your number runs one service at a time. To change it later, ask Claude to
-switch.
+Tour Core is parked. Only an account Saad has made a touring account gets it,
+and then the tour updates task is in
+[`routines/tour-core-task.md`](routines/tour-core-task.md).

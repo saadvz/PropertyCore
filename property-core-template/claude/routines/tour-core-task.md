@@ -1,5 +1,9 @@
 # Scheduled task: Tour Core Updates (Claude)
 
+> **Parked.** Tour Core isn't offered to new accounts. Make this task only for
+> an account Saad has made a touring account on `/admin`, where `get_state`
+> shows Tour Core.
+
 Tour Core wakes this task the moment something happens on a tour: a visitor
 asks for a time, a tour is booked, starts, or finishes, or something needs the
 host. It uses the task's **API trigger**, so nothing waits for a schedule.

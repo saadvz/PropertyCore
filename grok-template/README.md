@@ -1,5 +1,12 @@
 # Tour Core Grok Bot template (v0.5.0)
 
+> **Tour Core is parked.** New hosts start from
+> [`property-core-template/`](../property-core-template/README.md), which sets
+> up Cleaner Core and Supply Core. This folder stays for touring accounts,
+> which only Saad makes, and for the files `GROK_BOOTSTRAP.md` and the
+> installer read. Touring's guide is
+> [`docs/tour-core/README.md`](../docs/tour-core/README.md).
+
 Everything that belongs in the **Tour Core** Grok Bot team template, versioned
 with the code. Grok Bot is the installer and operator console; Tour Core stays
 the system of record and policy authority. A door access provider carries out

@@ -1,6 +1,7 @@
 {
   "name": "Cleaner Core and Supply Core for Muse",
   "version": "0.1.0",
+  "startHere": "../property-core-template/README.md",
   "status": "beta: built for Cleaner Core and Supply Core; the live checks in README.md are the last step before a host uses it",
   "readme": "README.md",
   "setupPrompt": "SETUP_PROMPT.md",

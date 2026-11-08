@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { CLAUDE_TASK_PROMPT } from "../src/hosted/serviceTools";
 
-/** The Property Core Grok Bot template: one bot for both services, consistent with the service and free of secrets. */
+/** The Property Core Grok Bot template: one bot for every flow, consistent with the service and free of secrets. */
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TEMPLATE = join(ROOT, "property-core-template");
@@ -62,7 +62,7 @@ describe("Property Core template", () => {
 
   it("starts from get_state, adds properties, and turns flows on with set_flows, never picking a service", () => {
     expect(propertyFlow(profile())).toBe(true);
-    expect(manifest().services.map((s) => s.service).sort()).toEqual(["cleaning", "touring"]);
+    expect(manifest().services.map((s) => s.service).sort()).toEqual(["cleaning", "supplies", "touring"]);
   });
 
   it("carries each service's routines, the same ones its own template defines", () => {
@@ -70,6 +70,7 @@ describe("Property Core template", () => {
     const routines = manifest().routines;
     expect(routines.filter((r) => r.service === "touring").map((r) => r.name)).toEqual(names("grok-template/template.json"));
     expect(routines.filter((r) => r.service === "cleaning").map((r) => r.name)).toEqual(names("cleaner-template/template.json"));
+    expect(routines.filter((r) => r.service === "supplies").map((r) => r.name)).toEqual(names("supply-template/template.json"));
   });
 
   it("holds no phone number, key, token, or door code", () => {

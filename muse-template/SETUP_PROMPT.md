@@ -1,9 +1,10 @@
-Paste this into a new Muse chat to set up Cleaner Core.
+# This prompt moved
 
-```text
-Set up Cleaner Core, my cleaning scheduler, using the open-source repository at https://github.com/saadvz/TourCore.
-Use your cloud computer to clone the repository only so you can read its setup instructions. Save the folder muse-template/skills/cleaner-core as a skill named Cleaner Core, then follow its SKILL.md as the authoritative setup instructions. Use the hosted Cleaner Core service it names. Do not start Cleaner Core on your computer.
-Do as much of the setup yourself as possible, here in this chat: create the Cleaner Core connector, show me choice cards, and fill Cleaner Core's private pages with your own browser. Never ask me to paste API keys, passwords, tokens, calendar links, or door codes into chat or a card. When a secret is needed, open Cleaner Core's private page in your browser and hand the browser to me, so I type it there myself. When the connection asks for approval, hand me the Cleaner Core page so I can type my invite code from Saad and click Allow. Never ask me for the invite code in chat, and never click Allow yourself.
-After you're connected, call get_state and follow its next step, one question at a time.
-Start now.
-```
+To set up Cleaner Core or Supply Core in Muse, paste the Property Core prompt
+in [`property-core-template/muse/SETUP_PROMPT.md`](../property-core-template/muse/SETUP_PROMPT.md)
+into a new Muse chat instead. It saves the Property Core skill, which loads the
+Cleaner Core and Supply Core skills in this folder for each flow the host
+turns on.
+
+A Muse chat that already saved the Cleaner Core skill doesn't need to change
+anything. The skills in [`skills/`](skills/) stay where they are.

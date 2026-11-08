@@ -1,5 +1,10 @@
 # Cleaner Core and Supply Core for Muse (v0.1.0, beta)
 
+> **To start, use [`property-core-template/muse/`](../property-core-template/muse/SETUP_PROMPT.md).**
+> Its prompt saves the Property Core skill, which loads the Cleaner Core and
+> Supply Core skills in this folder for each flow the host turns on. This
+> folder holds those skills, their recurring tasks, and the open live checks.
+
 Everything Meta's Muse needs to set up and run Cleaner Core and Supply Core.
 Muse is the host's agent. Cleaner Core is the hosted service that keeps the
 records and sends the texts. Supply Core, on the same connector, keeps the
@@ -28,17 +33,22 @@ host uses it. See [Before a host uses this](#before-a-host-uses-this).
 ## How a host starts
 
 1. Open a new Muse chat and paste the prompt in
-   [`SETUP_PROMPT.md`](SETUP_PROMPT.md).
-2. When the Cleaner Core page opens, type the invite code from Saad and click
-   **Allow**.
-3. In **Settings → Connectors → Cleaner Core**, let Muse use it without asking
-   each time, so the recurring task can run.
+   [`property-core-template/muse/SETUP_PROMPT.md`](../property-core-template/muse/SETUP_PROMPT.md).
+2. When the approval page opens, sign in or type the invite code from Saad and
+   click **Allow**.
+3. In **Settings → Connectors → Property Core**, let Muse use it without
+   asking each time, so the recurring tasks can run.
+4. Give Muse the property's address, and pick Cleaner Core, Supply Core, or
+   both.
 
 Muse has no shareable bot templates like Grok's, so the paste-in prompt is the
-way in. Muse clones the repository on its cloud computer only to save
-[`skills/cleaner-core`](skills/cleaner-core/SKILL.md) as a skill, so later
-chats and the recurring task already know the guide. Everything else happens in
-the chat.
+way in. Muse clones the repository on its cloud computer only to save the
+Property Core skill, then saves
+[`skills/cleaner-core`](skills/cleaner-core/SKILL.md) and
+[`skills/supply-core`](skills/supply-core/SKILL.md) as skills for the flows
+the host turns on, so later chats and the recurring tasks already know the
+guides. Everything else happens in the chat. The older prompt in this folder's
+[`SETUP_PROMPT.md`](SETUP_PROMPT.md) moved there.
 
 ## What's different from the other chats
 
@@ -286,7 +296,7 @@ outside the 555 test range, or a door code shows up here.
 
 | File | What it is |
 | --- | --- |
-| [`SETUP_PROMPT.md`](SETUP_PROMPT.md) | The paste-in prompt, pinned by `test/cleanerMuse.test.ts` |
+| [`SETUP_PROMPT.md`](SETUP_PROMPT.md) | Points to the one Muse prompt, in `property-core-template/muse/` |
 | [`skills/cleaner-core/SKILL.md`](skills/cleaner-core/SKILL.md) | The guide Muse saves as a skill: connect, private pages, calendar links, setup order, every booking, messages, the browser's limits, and rules |
 | [`skills/cleaner-core/references/cleaner-core-task.md`](skills/cleaner-core/references/cleaner-core-task.md) | The recurring task: how Muse makes it and its prompt |
 | [`skills/supply-core/SKILL.md`](skills/supply-core/SKILL.md) | The Supply Core guide Muse saves when the host turns it on: setup, the store checks, every run, and the browser's limits |

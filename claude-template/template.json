@@ -1,6 +1,7 @@
 {
   "name": "Cleaner Core for Claude",
   "version": "0.1.0",
+  "startHere": "../property-core-template/claude/SETUP_GUIDE.md",
   "readme": "README.md",
   "skill": "plugin/skills/cleaner-core/SKILL.md",
   "plugin": "plugin",

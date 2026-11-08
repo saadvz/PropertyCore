@@ -1,6 +1,7 @@
 {
   "name": "Supply Core",
   "version": "0.1.0",
+  "startHere": "../property-core-template/README.md",
   "distribution": "team",
   "profile": "bot-profile.md",
   "setupPrompt": "SETUP_PROMPT.md",

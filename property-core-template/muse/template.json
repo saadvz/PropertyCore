@@ -1,7 +1,7 @@
 {
   "name": "Property Core for Muse",
-  "version": "0.1.0",
-  "status": "draft: needs a live run on Muse before a host uses it",
+  "version": "0.2.0",
+  "status": "beta: the Cleaner Core and Supply Core skills it loads have the open live checks in muse-template/README.md#before-a-host-uses-this, and this entry needs one live run on Muse",
   "setupPrompt": "SETUP_PROMPT.md",
   "instructions": "skills/property-core/SKILL.md",
   "skill": "skills/property-core/SKILL.md",
@@ -17,7 +17,7 @@
       "type": "custom-connector",
       "url": "hostedPropertyCoreUrl/mcp",
       "transport": "remote streamable HTTP",
-      "auth": "OAuth 2.1 discovered from the hosted service. The host types the invite code from Saad on the approval page and clicks Allow. Muse cannot approve itself. One connector serves both services.",
+      "auth": "OAuth 2.1 discovered from the hosted service. The host signs in or types the invite code from Saad on the approval page and clicks Allow. Muse cannot approve itself. One connector serves every flow.",
       "where": "Muse creates it from the chat. Fallback: Settings → Connectors → Add custom connector."
     }
   ],
@@ -27,7 +27,8 @@
       "service": "touring",
       "doc": "skills/property-core/references/tour-core-task.md",
       "schedule": "as often as the host sets",
-      "credentialsTravelWithTemplate": false
+      "credentialsTravelWithTemplate": false,
+      "parked": true
     },
     {
       "name": "Cleaner Core",
@@ -38,19 +39,18 @@
     },
     {
       "name": "Supply Core",
-      "service": "cleaning",
-      "flow": "supplies",
+      "service": "supplies",
       "doc": "../../muse-template/skills/supply-core/references/supply-core-task.md",
       "schedule": "daily at the host's check time",
       "credentialsTravelWithTemplate": false
     }
   ],
-  "suggestedPrompts": ["Set up Property Core", "Set up tours for a rental unit", "Set up a cleaner for my property", "What's next?"],
+  "suggestedPrompts": ["Set up Property Core", "Set up a cleaner for my property", "Set up Supply Core", "What's next?"],
   "neverIncluded": [
     "connector or OAuth tokens",
     "Twilio account details or keys",
     "host, cleaner, visitor, or contact phone numbers",
     "a door code",
-    "live tour, booking, cleaning, message, or photo records"
+    "live booking, cleaning, message, photo, or tour records"
   ]
 }

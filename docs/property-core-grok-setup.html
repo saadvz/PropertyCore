@@ -214,14 +214,16 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
 .tip b { color: var(--accent); }
 .stuck { background: var(--surface); border: 2px solid var(--accent); border-radius: 14px; padding: 18px 20px; display: grid; gap: 6px; }
 .stuck h3 { font-family: var(--f-body); font-size: 1.08rem; }
-
+.pcards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.pcard { border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: var(--bg); font-size: 0.74rem; line-height: 1.3; }
+.pcard i { display: block; height: 26px; border-radius: 5px; background: var(--line); margin-bottom: 4px; }
 
 .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-/* Service switch: the page's one deliberate flourish. Tour Core is blue, Cleaner Core teal. */
-:root { --tour: #2d4fb0; --tour-soft: #e2e8f8; --clean: #0d6e6e; --clean-soft: #dcefee; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --tour: #9db2f2; --tour-soft: #1d2747; --clean: #5cc8c3; --clean-soft: #163634; } }
-:root[data-theme="dark"] { --tour: #9db2f2; --tour-soft: #1d2747; --clean: #5cc8c3; --clean-soft: #163634; }
-:root.svc-tour body { --accent: var(--tour); --accent-soft: var(--tour-soft); }
+/* Flow switch: the page's one deliberate flourish. Cleaner Core is teal, Supply Core blue. */
+:root { --supply: #2d4fb0; --supply-soft: #e2e8f8; --clean: #0d6e6e; --clean-soft: #dcefee; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --supply: #9db2f2; --supply-soft: #1d2747; --clean: #5cc8c3; --clean-soft: #163634; } }
+:root[data-theme="dark"] { --supply: #9db2f2; --supply-soft: #1d2747; --clean: #5cc8c3; --clean-soft: #163634; }
+:root.svc-supply body { --accent: var(--supply); --accent-soft: var(--supply-soft); }
 :root.svc-clean body { --accent: var(--clean); --accent-soft: var(--clean-soft); }
 .picker { display: grid; gap: 12px; }
 .picker h2 { font-size: 1.3rem; }
@@ -231,33 +233,34 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
 .switch button span { color: var(--muted); font-size: 0.95rem; }
 .switch button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 3px var(--accent-soft); }
 .switch button[aria-pressed="true"] b::after { content: "  ✓"; color: var(--accent); }
-.svc-tour [data-svc="clean"], .svc-clean [data-svc="tour"] { display: none !important; }
+.svc-clean [data-svc="supply"], .svc-supply [data-svc="clean"] { display: none !important; }
 </style>
-<script>document.documentElement.classList.add("svc-tour")</script>
+<script>document.documentElement.classList.add("svc-clean")</script>
 
 <div class="wrap">
 
 <header>
   <div class="eyebrow">Property Core · Grok guide</div>
   <h1>Set up Property Core in Grok</h1>
-  <p class="lede">Property Core runs one of two helpers on your phone number. <b>Tour Core</b> lets people text to book a self-guided tour of your rental. <b>Cleaner Core</b> texts your cleaner about each turnover and hands over the door code once the guests have left.</p>
-  <p class="lede">You don't need any technical skills. Pick the one you're setting up, then follow the steps in order.</p>
-  <div class="facts"><span class="fact"><b>About 20 minutes</b></span><span class="fact" data-svc="tour"><b>4 steps</b></span><span class="fact" data-svc="clean"><b>5 steps</b></span><span class="fact">A ready-made <b>bot</b></span></div>
+  <p class="lede">Property Core runs your rental's jobs from one chat, property by property. <b>Cleaner Core</b> texts your cleaner about each turnover and hands over the door code once the guests have left. <b>Supply Core</b> keeps the place stocked: you pick each product once, the bot shops, and every cart is checked before checkout.</p>
+  <p class="lede">You don't need any technical skills. Pick a flow to see its steps, then follow them in order.</p>
+  <div class="facts"><span class="fact" data-svc="clean"><b>About 20 minutes</b></span><span class="fact" data-svc="clean"><b>5 steps</b></span><span class="fact" data-svc="supply"><b>About 20 minutes</b>, more for a long list</span><span class="fact" data-svc="supply"><b>5 steps</b></span><span class="fact">A ready-made <b>bot</b></span></div>
 </header>
 
 <section class="picker" aria-labelledby="pick-h">
-  <h2 id="pick-h">Which are you setting up?</h2>
+  <h2 id="pick-h">Which flow are you setting up?</h2>
   <div class="switch" role="group" aria-labelledby="pick-h">
-    <button type="button" data-pick="tour" aria-pressed="true"><b>Tour Core</b><span>Self-guided tours for a rental unit</span></button>
-    <button type="button" data-pick="clean" aria-pressed="false"><b>Cleaner Core</b><span>A cleaner for a property</span></button>
+    <button type="button" data-pick="clean" aria-pressed="true"><b>Cleaner Core</b><span>Your cleaner, on schedule for each turnover</span></button>
+    <button type="button" data-pick="supply" aria-pressed="false"><b>Supply Core</b><span>Supplies reordered for your property</span></button>
   </div>
-  <p class="map-note">Your number runs one at a time. You can switch later by asking the bot.</p>
+  <p class="map-note">A property can run both. Set up one now, and turn the other on later by asking the bot.</p>
+  <p class="map-note">Fixer Core, for repairs, comes next. Tour Core (self-guided tours) is parked: only touring accounts Saad sets up get it. Its guide is <a href="tour-core/README.md">here</a>.</p>
 </section>
 
 <div class="stuck" role="note">
   <h3>Stuck at any point? That's normal. Two easy ways out:</h3>
   <p>1. In your bot's chat, type <b>"I'm stuck on step 2"</b> (or whichever step) and describe what you see. The bot will walk you through it.</p>
-  <p>2. Or text Saad the step number and what the screen says. A screenshot helps, as long as it doesn't show a door code or a secret code.</p>
+  <p>2. Or text Saad the step number and what the screen says. A screenshot helps, as long as it doesn't show a door code, a card, or a secret code.</p>
 </div>
 
 <section aria-labelledby="need-h">
@@ -267,10 +270,11 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
   </div>
   <div class="need">
     <div class="need-item"><span class="from">Your Grok account</span><h3>Access to Grok Bots</h3><p>You need a Grok account that can add bots. If you're not sure yours can, ask Saad.</p></div>
-    <div class="need-item"><span class="from">From Saad</span><h3>Your invite code</h3><p>Saad sends it, and sets up the phone number your helper texts from. The code only works once, and only for 7 days.</p></div>
-    <div class="need-item" data-svc="tour"><span class="from">Your own details</span><h3>Your property basics</h3><p>The address, which units people can tour, the door visitors come in through, and when tours can happen.</p></div>
-    <div class="need-item" data-svc="tour"><span class="from">Optional</span><h3>Answers visitors ask for</h3><p>How to apply, fees, lease lengths, what's due at move-in. Handy, but you can skip any of them.</p></div><div class="need-item" data-svc="clean"><span class="from">You type these during setup</span><h3>Two phone numbers</h3><p>Your mobile number and your cleaner's. With both, you get a group chat with your cleaner. Only have one number? Enter it as the cleaner's number too, and you get a chat with the assistant instead.</p></div>
+    <div class="need-item"><span class="from">Your phone, or Saad</span><h3>A way to sign in</h3><p>Where sign-up is open, you create an account with a code texted to your phone. Otherwise Saad sends an invite code. It only works once, and only for 7 days.</p></div>
+    <div class="need-item" data-svc="clean"><span class="from">You type these during setup</span><h3>Two phone numbers</h3><p>Your mobile number and your cleaner's. With both, you get a group chat with your cleaner. Only have one number? Enter it as the cleaner's number too, and you get a chat with the assistant instead.</p></div>
     <div class="need-item" data-svc="clean"><span class="from">Your own details</span><h3>Property basics at hand</h3><p>Your property's address, usual checkout and check-in times, your cleaner's name, and your door code.</p></div>
+    <div class="need-item" data-svc="supply"><span class="from">Grok's Vault</span><h3>A way to pay</h3><p>A card, Shop Pay, Link, or X Money saved in Grok's Vault. The bot pays from there. Supply Core never sees your card.</p></div>
+    <div class="need-item" data-svc="supply"><span class="from">Your own details</span><h3>Your shopping list</h3><p>The property's address and everything you want restocked, up to 30 items. Store logins help too: the bot can save them in your Vault with you.</p></div>
   </div>
 </section>
 
@@ -279,102 +283,13 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
     <h2 id="words-h">A few words you'll see</h2>
     <p>Here's what they mean. You don't need to understand more than this.</p>
   </div>
-  <dl class="words"><div class="word"><dt>Bot</dt><dd>Your own copy of Grok, set up to run your tours or cleanings. It has its own chat.</dd></div><div class="word"><dt>Property Core</dt><dd>The bot's name. It runs Tour Core or Cleaner Core on your number.</dd></div><div class="word"><dt>Secure card</dt><dd>A special box in the chat for anything secret, like a door code. What you type there stays private.</dd></div><div class="word"><dt>Routines</dt><dd>Little helpers the bot makes for itself, so it hears about news while you're away.</dd></div><div class="word" data-svc="tour"><dt>Practice tour</dt><dd>A pretend tour run to check everything works. Nobody gets a text.</dd></div><div class="word" data-svc="tour"><dt>Publish</dt><dd>Turning tours on, so visitors can book by text.</dd></div></dl>
+  <dl class="words"><div class="word"><dt>Bot</dt><dd>Your own copy of Grok, set up to run your property. It has its own chat.</dd></div><div class="word"><dt>Flow</dt><dd>One job the bot runs at a property: Cleaner Core or Supply Core. A property can run both.</dd></div><div class="word"><dt>Choice card</dt><dd>Buttons the bot shows for a question. Tap one to answer.</dd></div><div class="word"><dt>Secure card</dt><dd>A special box in the chat for anything secret, like a door code. What you type there stays private.</dd></div><div class="word"><dt>Routines</dt><dd>Little helpers the bot makes for itself, so it keeps working while you're away.</dd></div><div class="word" data-svc="supply"><dt>Vault</dt><dd>Where Grok keeps your cards and store logins. They never go to Supply Core.</dd></div><div class="word" data-svc="supply"><dt>Held cart</dt><dd>A cart Supply Core stopped before checkout, like a price jump or a cart over your cap. Nothing is bought until you say yes.</dd></div></dl>
 </section>
 
 <section aria-labelledby="steps-h">
   <div class="sec-head">
-    <h2 id="steps-h">The steps for <span data-svc="tour">Tour Core</span><span data-svc="clean">Cleaner Core</span></h2>
+    <h2 id="steps-h">The steps for <span data-svc="clean">Cleaner Core</span><span data-svc="supply">Supply Core</span></h2>
     <p>Tick "Done" as you finish each step. The ticks are remembered in this browser, so you can take a break and come back.</p>
-  </div>
-  <div class="steps" data-svc="tour">
-    <article class="step" id="tour-step-1">
-      <div class="step-head">
-        <span class="num">1</span>
-        <h3>Add the Property Core bot</h3>
-        <span class="place pl-settings">Grok</span>
-        <label class="done-toggle"><input type="checkbox" id="done-tour-1" data-step="tour-1"> Done</label>
-      </div>
-      <div class="step-body">
-        <div class="do">
-          <ol class="todo">
-            <li><div>Sign in to Grok, then open the Property Core bot link:<div class="copy"><code id="bot-tour">https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ</code><button type="button" data-copy="bot-tour">Copy</button></div><p style="margin-top:6px"><a href="https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ" target="_blank" rel="noopener">Open the bot link</a></p></div></li>
-            <li><div>Click <span class="btn-label">Add to Grok Bot</span>, then <span class="btn-label">Add Bot</span>. A chat with your Property Core bot opens.</div></li>
-          </ol>
-          <p class="note warn">Only add the bot once. If you're not sure whether it worked, ask Saad before you try again.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Bot template</span></div><div class="mock-body"><div class="mock-title">Property Core</div><span class="caption">Tours and cleanings for your rentals</span><div class="mock-btns"><span class="mbtn primary">Add to Grok Bot</span></div></div></div></div>
-      </div>
-    </article>
-    <article class="step" id="tour-step-2">
-      <div class="step-head">
-        <span class="num">2</span>
-        <h3>Connect with your invite code</h3>
-        <span class="place pl-chat">Bot chat</span><span class="place pl-private">Approval page</span>
-        <label class="done-toggle"><input type="checkbox" id="done-tour-2" data-step="tour-2"> Done</label>
-      </div>
-      <div class="step-body">
-        <div class="do">
-          <ol class="todo">
-            <li><div>In the bot's chat, type <b>Set up Property Core</b> and press Enter. The bot gets ready, which can take a minute or two.</div></li>
-            <li><div>A page titled <b>Connect Grok to Tour Core and Cleaner Core</b> opens. Type the invite code Saad sent you.</div></li>
-            <li><div>Under <b>What do you want to set up?</b>, pick <b>Tour Core: self-guided tours for a rental unit</b>.</div></li>
-            <li><div>Click <span class="btn-label">Allow</span>.</div></li>
-            <li><div>Tour Core is paused for new accounts. Ask Saad to make your account a touring account, then go back to the bot's chat.</div></li>
-          </ol>
-          <p class="note warn">Never type your invite code in the chat. It only goes on the approval page.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Approval page</span></div><div class="mock-body"><div class="mock-title">Connect Grok to Tour Core and Cleaner Core</div>
-      <div class="field"><label>Invite code from Saad</label><div class="val hl secret">••••••••</div></div>
-      <div class="field"><label>What do you want to set up?</label><div class="radio"><b></b> Tour Core: self-guided tours for a rental unit</div><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> Cleaner Core: a cleaner for a property</div></div>
-      <div class="mock-btns"><span class="mbtn">Deny</span><span class="mbtn primary">Allow</span></div></div></div></div>
-      </div>
-    </article>
-    <article class="step" id="tour-step-3">
-      <div class="step-head">
-        <span class="num">3</span>
-        <h3>Answer the bot's questions</h3>
-        <span class="place pl-chat">Bot chat</span>
-        <label class="done-toggle"><input type="checkbox" id="done-tour-3" data-step="tour-3"> Done</label>
-      </div>
-      <div class="step-body">
-        <div class="do"><ol class="todo">
-            <li><div>The bot asks one question at a time. When it shows buttons, pick one. Otherwise answer in your own words. It will ask about:
-              <ol class="qs">
-                <li>Maybe: whether to keep a private copy of your records in a folder you own. Skipping is fine.</li><li>The street address, and then checks it with you.</li>
-                <li>The kind of place: a single-family home, a multifamily home, or one apartment or condo.</li>
-                <li>Which places people can tour, and what to call them (like Unit A, or the street name).</li>
-                <li>How someone walks in: the door they come in through, then the way to the door they tour.</li>
-                <li>A phone number stuck visitors can call during tour hours. You can skip this.</li>
-                <li>What days and times people can tour. Different days can have different hours.</li>
-                <li>Questions visitors often ask: how to apply, fees, lease lengths, what's due at move-in, bringing someone, building rules, the area. Skip any you like.</li>
-                <li>Whether visitors fill out a short identity form first. It's recommended.</li>
-              </ol>
-            </div></li>
-            <li><div>The bot asks <b>"Want me to tell you when someone books, starts, or finishes a tour, and when something needs you?"</b> Say <b>yes</b>. The bot sets up the updates by itself. You don't copy anything.</div></li>
-            <li><div>It asks <b>"Want tour updates texted to your phone too?"</b> Most people pick <b>No texts</b>, since the bot already posts right away.</div></li>
-          </ol><p class="tip"><b>Not sure how to answer?</b> Just say so. "I don't know, what do most people pick?" works fine.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Property Core bot</span></div><div class="mock-body"><div class="bubble ai">Want me to tell you when someone books, starts, or finishes a tour, and when something needs you?</div><div class="bubble me">Yes</div><div class="bubble ai">Done. Tour updates are connected.</div></div></div><span class="caption">Example wording. Grok's exact words will differ.</span></div>
-      </div>
-    </article>
-    <article class="step" id="tour-step-4">
-      <div class="step-head">
-        <span class="num">4</span>
-        <h3>Check it and go live</h3>
-        <span class="place pl-chat">Bot chat</span>
-        <label class="done-toggle"><input type="checkbox" id="done-tour-4" data-step="tour-4"> Done</label>
-      </div>
-      <div class="step-body">
-        <div class="do">
-          <ol class="todo">
-            <li><div>The bot reads your setup back as a short list. If something's wrong, just say what to change.</div></li>
-            <li><div>The bot runs a <b>readiness check</b> and a <b>practice tour</b>. Nobody gets a text and no real door opens.</div></li>
-            <li><div>If something needs fixing, The bot tells you in plain words and fixes it with you.</div></li>
-            <li><div>When both pass, The bot asks <b>"Everything passed. Want me to publish this for a demo?"</b> Say <b>yes</b>.</div></li>
-            <li><div>The bot tells you the number visitors text to book a tour. Share that number in your listing.</div></li>
-          </ol>
-          <p class="tip"><b>You're done!</b> 🎉 That's the whole setup.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>The bot chat</span></div><div class="mock-body"><div class="bubble ai">I'm running a practice tour. Nobody is texted, and no real door opens.</div><div class="bubble ai">Everything passed. Want me to publish this for a demo?</div><div class="bubble me">Yes</div></div></div><span class="caption">Example wording. The bot's exact words will differ.</span></div>
-      </div>
-    </article>
   </div>
   <div class="steps" data-svc="clean">
     <article class="step" id="clean-step-1">
@@ -390,14 +305,14 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
             <li><div>Sign in to Grok, then open the Property Core bot link:<div class="copy"><code id="bot-clean">https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ</code><button type="button" data-copy="bot-clean">Copy</button></div><p style="margin-top:6px"><a href="https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ" target="_blank" rel="noopener">Open the bot link</a></p></div></li>
             <li><div>Click <span class="btn-label">Add to Grok Bot</span>, then <span class="btn-label">Add Bot</span>. A chat with your Property Core bot opens.</div></li>
           </ol>
-          <p class="note warn">Only add the bot once. If you're not sure whether it worked, ask Saad before you try again.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Bot template</span></div><div class="mock-body"><div class="mock-title">Property Core</div><span class="caption">Tours and cleanings for your rentals</span><div class="mock-btns"><span class="mbtn primary">Add to Grok Bot</span></div></div></div></div>
+          <p class="note warn">Only add the bot once. If you're not sure whether it worked, ask Saad before you try again. No bot link? See <a href="#no-link">the fix below</a>.</p></div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Bot template</span></div><div class="mock-body"><div class="mock-title">Property Core</div><span class="caption">Cleanings and supplies for your rental</span><div class="mock-btns"><span class="mbtn primary">Add to Grok Bot</span></div></div></div></div>
       </div>
     </article>
     <article class="step" id="clean-step-2">
       <div class="step-head">
         <span class="num">2</span>
-        <h3>Connect with your invite code</h3>
+        <h3>Connect and add your property</h3>
         <span class="place pl-chat">Bot chat</span><span class="place pl-private">Approval page</span>
         <label class="done-toggle"><input type="checkbox" id="done-clean-2" data-step="clean-2"> Done</label>
       </div>
@@ -405,16 +320,15 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
         <div class="do">
           <ol class="todo">
             <li><div>In the bot's chat, type <b>Set up Property Core</b> and press Enter. The bot gets ready, which can take a minute or two.</div></li>
-            <li><div>A page titled <b>Connect Grok to Tour Core and Cleaner Core</b> opens. Type the invite code Saad sent you.</div></li>
-            <li><div>Under <b>What do you want to set up?</b>, pick <b>Cleaner Core: a cleaner for a property</b>.</div></li>
+            <li><div>A page titled <b>Connect your Grok Bot to Tour Core and Cleaner Core</b> opens. That old name is expected. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you.</div></li>
             <li><div>Click <span class="btn-label">Allow</span>.</div></li>
-            <li><div>Go back to the bot's chat. When it asks for your property's address, give it. The bot adds the property and turns on Cleaner Core for it. Have more than one property? Add each one the same way.</div></li>
+            <li><div>Back in the chat, give the bot your property's address. It asks which flows to turn on there. Tap <b>Cleaner Core</b>, or both. Have more than one property? Add each one the same way.</div></li>
           </ol>
           <p class="note warn">Never type your invite code in the chat. It only goes on the approval page.</p></div>
         <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Approval page</span></div><div class="mock-body"><div class="mock-title">Connect Grok to Tour Core and Cleaner Core</div>
-      <div class="field"><label>Invite code from Saad</label><div class="val hl secret">••••••••</div></div>
-      <div class="field"><label>What do you want to set up?</label><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> Tour Core: self-guided tours for a rental unit</div><div class="radio"><b></b> Cleaner Core: a cleaner for a property</div></div>
-      <div class="mock-btns"><span class="mbtn">Deny</span><span class="mbtn primary">Allow</span></div></div></div></div>
+      <div class="field"><label>Your Property Core account</label><div class="radio"><b></b> Sign in</div><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> Create account</div><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> I have an invite code</div></div>
+      <div class="field"><label>Code from the text</label><div class="val hl secret">••••••</div></div>
+      <div class="mock-btns"><span class="mbtn">Deny</span><span class="mbtn primary">Allow</span></div></div></div><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Property Core bot</span></div><div class="mock-body"><div class="bubble ai">Which flows do you want at 12 Example St?</div><div class="chips"><span class="chip on">Cleaner Core</span><span class="chip">Supply Core</span><span class="chip">Both</span></div></div></div><span class="caption">Example wording. Grok's exact words will differ.</span></div>
       </div>
     </article>
     <article class="step" id="clean-step-3">
@@ -431,7 +345,7 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
                 <li>Where your bookings are (Guesty, Google Calendar, Airbnb and so on).</li>
                 <li>Who's involved: your mobile number and your cleaner's number. Two numbers set up a group chat with your cleaner. If you only have one number, give it as the cleaner's number too, and you'll get a chat with the assistant.</li>
                 <li>Timing: how early to offer each cleaning, when to remind, and hours not to text.</li>
-                <li>Your lock, then your door code.</li>
+                <li>Your door system, then your door code.</li>
                 <li>Your cleaning checklist and anything else you prefer.</li>
               </ol>
             </div></li><li><div>For your door code (and a calendar link, if it asks), the bot shows a <b>secure card</b> in the chat. Type it in the card and submit it, not as a normal message.</div></li><li><div>If your bookings are on a Google calendar, the bot may ask you to connect Google Calendar. Follow its link and sign in.</div></li></ol><p class="tip"><b>Not sure how to answer?</b> Just say so. "I don't know, what do most people pick?" works fine.</p></div>
@@ -476,16 +390,111 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
       </div>
     </article>
   </div>
+  <div class="steps" data-svc="supply">
+    <article class="step" id="supply-step-1">
+      <div class="step-head">
+        <span class="num">1</span>
+        <h3>Add the Property Core bot</h3>
+        <span class="place pl-settings">Grok</span>
+        <label class="done-toggle"><input type="checkbox" id="done-supply-1" data-step="supply-1"> Done</label>
+      </div>
+      <div class="step-body">
+        <div class="do">
+          <p class="tip"><b>Already running Cleaner Core?</b> Skip to step 3. Just tell the bot <b>"Set up Supply Core"</b>.</p>
+          <ol class="todo">
+            <li><div>Sign in to Grok, then open the Property Core bot link:<div class="copy"><code id="bot-supply">https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ</code><button type="button" data-copy="bot-supply">Copy</button></div><p style="margin-top:6px"><a href="https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ" target="_blank" rel="noopener">Open the bot link</a></p></div></li>
+            <li><div>Click <span class="btn-label">Add to Grok Bot</span>, then <span class="btn-label">Add Bot</span>. A chat with your Property Core bot opens.</div></li>
+          </ol>
+          <p class="note warn">Only add the bot once. If you're not sure whether it worked, ask Saad before you try again. No bot link? See <a href="#no-link">the fix below</a>.</p></div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Bot template</span></div><div class="mock-body"><div class="mock-title">Property Core</div><span class="caption">Cleanings and supplies for your rental</span><div class="mock-btns"><span class="mbtn primary">Add to Grok Bot</span></div></div></div></div>
+      </div>
+    </article>
+    <article class="step" id="supply-step-2">
+      <div class="step-head">
+        <span class="num">2</span>
+        <h3>Connect and add your property</h3>
+        <span class="place pl-chat">Bot chat</span><span class="place pl-private">Approval page</span>
+        <label class="done-toggle"><input type="checkbox" id="done-supply-2" data-step="supply-2"> Done</label>
+      </div>
+      <div class="step-body">
+        <div class="do">
+          <ol class="todo">
+            <li><div>In the bot's chat, type <b>Set up Property Core</b> and press Enter.</div></li>
+            <li><div>A page titled <b>Connect your Grok Bot to Tour Core and Cleaner Core</b> opens. That old name is expected. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you. Then click <span class="btn-label">Allow</span>.</div></li>
+            <li><div>Back in the chat, give the bot the property's address. Supplies are delivered there. When it asks which flows to turn on, tap <b>Supply Core</b>, or both. If the bot says Cleaner Core has to be on first, pick both.</div></li>
+          </ol>
+          <p class="note warn">Never type your invite code in the chat. It only goes on the approval page.</p></div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Property Core bot</span></div><div class="mock-body"><div class="bubble ai">Which flows do you want at 12 Example St?</div><div class="chips"><span class="chip">Cleaner Core</span><span class="chip on">Supply Core</span><span class="chip">Both</span></div></div></div><span class="caption">Example wording. Grok's exact words will differ.</span></div>
+      </div>
+    </article>
+    <article class="step" id="supply-step-3">
+      <div class="step-head">
+        <span class="num">3</span>
+        <h3>Answer the bot's questions</h3>
+        <span class="place pl-chat">Bot chat</span>
+        <label class="done-toggle"><input type="checkbox" id="done-supply-3" data-step="supply-3"> Done</label>
+      </div>
+      <div class="step-body">
+        <div class="do"><ol class="todo"><li><div>The bot asks one question at a time. It will ask about:
+              <ol class="qs">
+                <li>Your list: everything you want restocked, up to 30 items. It reads the list back once.</li>
+                <li>Where to buy: stores that deliver to the door, like Walmart, Target, or Costco. Maybe also a same-day service, like Instacart, for rush orders.</li>
+                <li>Schedules: one for everything, or one per item. Every so many days, a day of the month, or once every so many stays.</li>
+                <li>A product for each item. Tap your pick from the product cards. Then a backup if you want one, and how many to buy each time.</li>
+                <li>Your booking calendar, only if an item goes by stays and none is saved yet. Use the secure card for the link.</li>
+                <li>Hands-off ordering, or stop at checkout for your yes.</li>
+                <li>Spending caps: per order, per month, both, or none.</li>
+                <li>The check time for the daily check. 10:00 unless you pick another.</li>
+              </ol>
+            </div></li></ol><p class="tip"><b>Not sure how to answer?</b> Just say so. "I don't know, what do most people pick?" works fine.</p></div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Property Core bot</span></div><div class="mock-body"><div class="bubble ai">Which paper towels?</div><div class="pcards"><div class="pcard"><i></i>Brand A · 12 rolls</div><div class="pcard"><i></i>Brand B · 8 rolls</div><div class="pcard"><i></i>Store brand · 15 rolls</div></div><div class="chips"><span class="chip on">Brand A</span><span class="chip">Brand B</span><span class="chip">Store brand</span></div></div></div><span class="caption">Example products. Grok shows real ones from your stores.</span></div>
+      </div>
+    </article>
+    <article class="step" id="supply-step-4">
+      <div class="step-head">
+        <span class="num">4</span>
+        <h3>The daily check and your stores</h3>
+        <span class="place pl-task">Routine</span><span class="place pl-chat">Bot chat</span>
+        <label class="done-toggle"><input type="checkbox" id="done-supply-4" data-step="supply-4"> Done</label>
+      </div>
+      <div class="step-body">
+        <div class="do">
+          <ol class="todo">
+            <li><div>The bot makes a routine called <b>Supply Core Check</b> by itself. It runs every day at your check time. You don't copy anything.</div></li>
+            <li><div>It checks each store, without ordering: it's signed in (a login saved in your Vault, or the store's connector), the delivery address is your property's, and a payment method is ready.</div></li>
+            <li><div>If something's missing, the bot tells you and helps you add it to your Vault.</div></li>
+          </ol>
+          <p class="note warn">Never type a password or card number in the chat. Cards and logins go in your Vault.</p></div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Property Core bot</span></div><div class="mock-body"><span class="success">✓ Supply Core Check · every day at 10:00</span><div class="bubble ai">Walmart is ready: signed in, delivering to 12 Example St, and a card is saved in your Vault.</div></div></div><span class="caption">Example wording. Grok's exact words will differ.</span></div>
+      </div>
+    </article>
+    <article class="step" id="supply-step-5">
+      <div class="step-head">
+        <span class="num">5</span>
+        <h3>Turn it on</h3>
+        <span class="place pl-chat">Bot chat</span>
+        <label class="done-toggle"><input type="checkbox" id="done-supply-5" data-step="supply-5"> Done</label>
+      </div>
+      <div class="step-body">
+        <div class="do">
+          <ol class="todo">
+            <li><div>The bot sums up your list, mode, caps, and check time. If it all looks right, type <b>Activate</b>.</div></li>
+            <li><div>After that, every change (an item, the mode, a cap, the check time) asks for your yes first.</div></li>
+          </ol>
+          <p class="tip"><b>You're done!</b> 🎉 That's the whole setup.</p></div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>The bot chat</span></div><div class="mock-body"><div class="bubble ai">12 items from Walmart, hands-off, $150 a month cap, checks at 10:00. Reply <b>Activate</b> to turn it on.</div><div class="bubble me">Activate</div></div></div><span class="caption">Example wording. The bot's exact words will differ.</span></div>
+      </div>
+    </article>
+  </div>
 </section>
 
 <section aria-labelledby="after-h">
   <div class="sec-head">
     <h2 id="after-h">What happens from now on</h2>
-    <p data-svc="tour">Visitors text your number, and Tour Core handles the booking and the tour.</p>
-    <p data-svc="clean">Most days you don't need to do anything. You hear when something needs you.</p>
+    <p>Most days you don't need to do anything. You hear when something needs you.</p>
   </div>
-  <div class="after" data-svc="tour"><div><span class="place pl-chat">Visitors</span><h3>People text to book</h3><p>Someone texts your number, picks a time, and fills out the identity form if you turned it on.</p></div><div><span class="place pl-chat">Tour time</span><h3>Tour Core guides them</h3><p>It texts them the way in and checks in near the end of the tour. You don't have to be there.</p></div><div><span class="place pl-chat">Bot chat</span><h3>The bot tells you</h3><p>When a tour is booked or something needs you, the bot posts right away. Reply to it in plain words.</p></div><div><span class="place pl-chat">Any time</span><h3>Ask the bot</h3><p>Try "what tours are booked today?", "pause tours", or "change the tour hours".</p></div></div>
   <div class="after" data-svc="clean"><div><span class="place pl-chat">Bot chat</span><h3>Your cleaner texts back</h3><p>The bot posts a short summary right away. Reply to it in plain words, like "yes, the guests have left".</p></div><div><span class="place pl-private">Door code</span><h3>The code waits for your yes</h3><p>Your cleaner only gets the door code after you've said the guests have left.</p></div><div><span class="place pl-chat">Summary</span><h3>Cleaning finished</h3><p>Your assistant looks at the cleaner's photos, checks them against your checklist, and sends you a short report.</p></div></div>
+  <div class="after" data-svc="supply"><div><span class="place pl-task">Every day</span><h3>The bot checks what's due</h3><p>At your check time, Supply Core Check finds what's due and shops for it. With nothing to do, it posts nothing.</p></div><div><span class="place pl-chat">Checkout</span><h3>Every cart is checked</h3><p>Before any order, the bot checks the cart with Supply Core (<code>check_cart</code>). On go, it orders and tells you. A held cart waits for your yes: buy anyway, use the backup, or skip.</p></div><div><span class="place pl-private">Your Vault</span><h3>Your cards stay yours</h3><p>Card details never reach Supply Core. Grok pays from your Vault. If Grok shows its own pay card, tap Pay.</p></div><div><span class="place pl-chat">Any time</span><h3>Running low?</h3><p>Say "we're low on paper towels". With Cleaner Core too, your cleaner's "running low" answer after a cleaning turns into an order.</p></div></div>
 </section>
 
 <section aria-labelledby="tr-h">
@@ -495,16 +504,21 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
   </div>
   <div class="trouble">
     <details><summary>It says my invite code "isn't right", "has expired", or "was already used"</summary><div><p>Each invite code works only once, and only for 7 days.</p><p><b>What to do:</b> text Saad for a new code, then connect again.</p></div></details>
-    <details><summary>Grok set up the wrong one (tours instead of cleanings, or the other way)</summary><div><p>The other choice was picked on the approval page.</p><p><b>What to do:</b> tell the bot "switch to Tour Core" or "switch to Cleaner Core". If nothing is live yet, it switches right away.</p></div></details>
-    <details><summary>Grok says to start a new chat, or can't find the right tools</summary><div><p>New tools only show up in a fresh chat.</p><p><b>What to do:</b> start a new chat and say "Set up Tour Core" or "Set up Cleaner Core". Your answers so far are saved.</p></div></details>
-    <div data-svc="tour" style="display:grid;gap:10px"><details><summary>The practice tour didn't pass</summary><div><p>Something needs fixing, like a missing door or tour hours.</p><p><b>What to do:</b> the bot says what's wrong. Answer its question, and it checks again.</p></div></details></div>
+    <details><summary>I picked the wrong flow, or want to add the other one</summary><div><p>You can change it any time.</p><p><b>What to do:</b> tell the bot "turn on Supply Core" or "turn off Cleaner Core". If anything is live, it shows what stops and waits for your yes. Your setup is kept.</p></div></details>
+    <details><summary>Grok says to start a new chat, or can't find the right tools</summary><div><p>New tools only show up in a fresh chat.</p><p><b>What to do:</b> start a new chat and say "Set up Property Core". Your answers so far are saved.</p></div></details>
     <div data-svc="clean" style="display:grid;gap:10px"><details><summary>Setup is finished but my cleaner never got a text</summary><div><p>Usually the next booking's times aren't confirmed yet.</p><p><b>What to do:</b> tell the bot "confirm the times for the next booking". If it says nothing was sent, text Saad.</p></div></details><details><summary>I can't find the Webhook URL</summary><div><p>It only shows from the link the bot sent. <b>What to do:</b> type "Send me the webhook links again".</p></div></details></div>
-    <details><summary>The bot link doesn't open, or there's no "Add to Grok Bot" button</summary><div><p><b>What to do:</b> sign in to Grok and open the link again. If the button still isn't there, text Saad.</p></div></details>
+    <div data-svc="supply" style="display:grid;gap:10px"><details><summary>The bot won't activate Supply Core</summary><div><p>Every store in your plan has to be ready first: signed in, delivering to the property, with a way to pay.</p><p><b>What to do:</b> ask the bot "which store isn't ready?" and add what's missing to your Vault with it.</p></div></details><details><summary>The bot says a cart is held</summary><div><p>Something changed, like a price jump or a cart over your cap. Nothing was bought.</p><p><b>What to do:</b> answer in the chat: buy anyway, switch to the backup, or skip.</p></div></details></div>
+    <details id="no-link"><summary>The bot link doesn't open, or there's no "Add to Grok Bot" button</summary><div><p><b>What to do:</b> sign in to Grok and open the link again. Still no button? Open a new Grok Bot and paste this message instead. Then go on from step 2, after its first line.</p><div class="mock-btns" style="justify-content:flex-start"><button type="button" class="mbtn primary" data-copy="paste-grok" style="cursor:pointer;font:inherit;font-weight:700">Copy message</button></div><pre class="prompt" id="paste-grok">Set up Property Core for my short-term rental using the open-source repository at https://github.com/saadvz/TourCore.
+Use your cloud computer to clone the repository only so you can read its setup instructions. Read property-core-template/bot-profile.md and follow its standing instructions. Connect to the hosted service it names at /mcp. Do not start anything on your computer.
+When the connection asks for approval, ask me to sign in or type my invite code from Saad on the approval page and click Allow. Never ask me for the invite code in chat.
+As soon as you're connected, call get_state. Add my property, then ask which flows I want there, Cleaner Core, Supply Core, or both, as a choice card. Then follow each flow's guide one question at a time.
+Never ask me to paste API keys, passwords, tokens, webhook addresses, calendar links, card details, or door codes into chat. Use your secure card. My cards stay in my Vault.
+Start now.</pre></div></details>
     <details><summary>Anything else</summary><div><p><b>What to do:</b> type "I'm stuck" in the chat and describe what you see, or text Saad the step number and what the screen says.</p></div></details>
   </div>
 </section>
 
-<footer>When you ask Saad or anyone else for help, never send a door code, your invite code, or any secret code from setup.</footer>
+<footer>When you ask Saad or anyone else for help, never send a door code, your invite code, a card number, or any secret code from setup.</footer>
 
 </div>
 
@@ -523,6 +537,7 @@ document.querySelectorAll("[data-copy]").forEach(function (btn) {
     try { navigator.clipboard.writeText(el.textContent).then(function () { done("Copied"); }, fallback); } catch (e) { fallback(); }
   });
 });
+document.querySelectorAll('a[href="#no-link"]').forEach(function (a) { a.addEventListener("click", function () { var d = document.getElementById("no-link"); if (d) d.open = true; }); });
 var PFX = "pc-grok-";
 function load(k, d) { try { var v = localStorage.getItem(PFX + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }
 function save(k, v) { try { localStorage.setItem(PFX + k, JSON.stringify(v)); } catch (e) {} }
@@ -536,9 +551,10 @@ document.querySelectorAll("input[data-step]").forEach(function (box) {
     saved[n] = box.checked; card.classList.toggle("is-done", box.checked); save("done", saved);
   });
 });
-var HASH = { tour: "tour-core", clean: "cleaner-core" };
+var HASH = { clean: "cleaner-core", supply: "supply-core" };
 function pick(svc, fromHash) {
-  document.documentElement.classList.remove("svc-tour", "svc-clean");
+  if (!HASH.hasOwnProperty(svc)) svc = "clean";
+  document.documentElement.classList.remove("svc-clean", "svc-supply");
   document.documentElement.classList.add("svc-" + svc);
   document.querySelectorAll("[data-pick]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-pick") === svc)); });
   save("svc", svc);
@@ -546,10 +562,10 @@ function pick(svc, fromHash) {
 }
 function fromHash() {
   if (location.hash === "#cleaner-core") return "clean";
-  if (location.hash === "#tour-core") return "tour";
+  if (location.hash === "#supply-core") return "supply";
   return null;
 }
 document.querySelectorAll("[data-pick]").forEach(function (b) { b.addEventListener("click", function () { pick(b.getAttribute("data-pick")); }); });
 window.addEventListener("hashchange", function () { var h = fromHash(); if (h) pick(h, true); });
-pick(fromHash() || load("svc", "tour"), true);
+pick(fromHash() || load("svc", "clean"), true);
 </script>
