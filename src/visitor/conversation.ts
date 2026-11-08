@@ -32,7 +32,6 @@ import {
   isMedicalEmergency,
   isUnbookedCancelAsk,
   isConfident,
-  keywordOf,
   messagingKeyword,
   onTourDoorIntent,
   LayeredIntentInterpreter,
@@ -1472,7 +1471,7 @@ async function acceptShownBookingChange(turn: Turn): Promise<boolean> {
 
 /** A booked visitor can still move the time. This does not ask a second consent question. */
 async function offerBookedTimeChange(turn: Turn): Promise<boolean> {
-  const { session, intent } = turn;
+  const { intent } = turn;
   const text = turn.said.text ?? "";
   if (!hasExplicitChangeAsk(text)) return false;
   const named = requestedChangeDay(text);
