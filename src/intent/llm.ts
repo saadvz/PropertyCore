@@ -4,7 +4,7 @@ import { isoDate, parseIsoDate } from "../core/schedule";
 import { formatDay, formatTime } from "../core/timezone";
 import { addInboundModelMs, intentModelTimeoutMs } from "../messaging/inboundTiming";
 import { renderSms, visitorTeamName } from "../sms/templates";
-import { pickFact, redactForModel } from "./factPick";
+import { jsonBlock, pickFact, redactForModel } from "./factPick";
 import { normalize } from "./normalize";
 import { openTimesDay } from "./ruleBased";
 import { HelpProblemSchema, type StepAwaiting, type ConversationStep, type IntentInterpretation, type IntentInterpreter, type InterpretContext, type TourIntent } from "./model";
@@ -177,18 +177,6 @@ function toIntent(reply: z.infer<typeof ModelReplySchema>, ctx: InterpretContext
       return reply.problem ? { type: "REQUEST_HELP", problem: reply.problem } : { type: "REQUEST_HELP" };
     default:
       return { type: reply.intent };
-  }
-}
-
-/** The first {...} block in a reply, so a model that wraps JSON in prose or a code fence still parses. */
-function jsonBlock(text: string): unknown {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start < 0 || end <= start) return undefined;
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return undefined;
   }
 }
 

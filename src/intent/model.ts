@@ -9,7 +9,6 @@ import type { LocalDate } from "../core/timezone";
  */
 
 export const HelpProblemSchema = z.enum(["DOOR_WONT_OPEN", "LOST", "CANT_FIND_UNIT", "GENERAL"]);
-export type HelpProblem = z.infer<typeof HelpProblemSchema>;
 
 const Name = z.string().trim().min(1).max(80);
 const CalendarDate = z.object({
