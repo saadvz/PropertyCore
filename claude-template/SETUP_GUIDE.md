@@ -53,8 +53,8 @@ Add it only once. If you also want Grok or ChatGPT on the same Cleaner Core acco
 
 The connector already carries Cleaner Core's instructions, so setup works without this. The skill adds the full guide for edge cases.
 
-- **claude.ai, desktop, Cowork:** zip the `claude-template/plugin/skills/cleaner-core` folder from [the repository](https://github.com/saadvz/TourCore) and upload it in **Settings → Capabilities → Skills**.
-- **Claude Code:** run `/plugin marketplace add saadvz/TourCore`, then `/plugin install cleaner-core@tour-core`.
+- **claude.ai, desktop, Cowork:** zip the `claude-template/plugin/skills/cleaner-core` folder from [the repository](https://github.com/saadvz/PropertyCore) and upload it in **Settings → Capabilities → Skills**.
+- **Claude Code:** run `/plugin marketplace add saadvz/PropertyCore`, then `/plugin install cleaner-core@property-core`.
 
 Skip this if your org blocks uploaded skills or plugins.
 
