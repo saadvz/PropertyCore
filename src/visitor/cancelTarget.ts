@@ -1,15 +1,13 @@
 import type { Reservation } from "../domain/model";
-import { dayReference, spokenTimes } from "../core/spokenTime";
-import { addDays, localDateOf, weekdayOf, zonedParts, type LocalDate, type Weekday } from "../core/timezone";
-import { isCancelableReservation, isRunningReservation, RUNNING } from "../domain/stateMachine";
+import { dayReference, spokenTimes, WEEKDAY_WORD } from "../core/spokenTime";
+import { addDays, localDateOf, sameLocalDate as sameDate, weekdayOf, zonedParts, type LocalDate } from "../core/timezone";
+import { isCancelableReservation, isRunningReservation } from "../domain/stateMachine";
 import { normalize } from "../intent/normalize";
 
 export type VisitorCancelTarget = {
   reservation: Reservation;
   laterWhileTouring: boolean;
 };
-
-export const TOURING_NOW = RUNNING;
 
 /**
  * The running tour is never cancelled by visitor text.
@@ -18,16 +16,6 @@ export const TOURING_NOW = RUNNING;
  */
 
 export type NamedCancelFocus = "running" | "later" | "unspecified";
-
-const WEEKDAY_WORD: Record<string, Weekday> = {
-  monday: "MON",
-  tuesday: "TUE",
-  wednesday: "WED",
-  thursday: "THU",
-  friday: "FRI",
-  saturday: "SAT",
-  sunday: "SUN",
-};
 
 /** Pick which booking cancel-by-text acts on. */
 export function visitorCancelTarget(input: { current?: Reservation; later?: Reservation }): VisitorCancelTarget | undefined {
@@ -96,8 +84,4 @@ function slotMatchesNamedTime(
     if (spoken.meridiem && spoken.meridiem !== meridiem) return false;
     return true;
   });
-}
-
-function sameDate(a: LocalDate, b: LocalDate): boolean {
-  return a.year === b.year && a.month === b.month && a.day === b.day;
 }
