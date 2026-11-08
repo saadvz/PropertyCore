@@ -95,9 +95,24 @@ function walk(dir, out) {
 }
 
 // Node prints warnings as "(node:<pid>) ...". A random pid can contain a code by chance,
-// so only that prefix is blanked. A code anywhere else in the text still counts.
+// so that prefix is blanked.
 function withoutNodePid(text) {
   return text.replace(/\(node:\d+\)/g, "(node:pid)");
+}
+
+// Vitest prints run timings ("2211ms") and a summary ("Tests  3296 passed (3296)",
+// "Start at  20:47:30", "Duration  134.05s"). Those numbers change every run, so a code
+// could match one by chance. Only those timing and summary numbers are blanked.
+function withoutTestTimings(text) {
+  return text
+    .replace(/(?<![\d.])\d+ms\b/g, "Nms")
+    .replace(/^(\s*(?:Test Files|Tests|Start at|Duration)\s{2}).*$/gm, (_line, label) => `${label}N`);
+}
+
+// A code counts when it stands alone. A run of digits that only contains it, such as
+// a port, a pid, or a longer id, is a different number.
+function hasCode(text, code) {
+  return new RegExp(`(?<!\\d)${code}(?!\\d)`).test(text);
 }
 
 function leak(path, values) {
@@ -107,8 +122,8 @@ function leak(path, values) {
   } catch {
     return false;
   }
-  const text = withoutNodePid(buf.toString(buf.includes(0) ? "latin1" : "utf8"));
-  return values.some((value) => text.includes(value));
+  const text = withoutTestTimings(withoutNodePid(buf.toString(buf.includes(0) ? "latin1" : "utf8")));
+  return values.some((value) => hasCode(text, value));
 }
 
 let scratch;
