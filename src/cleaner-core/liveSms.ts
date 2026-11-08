@@ -48,14 +48,14 @@ export function isAllowlisted(env: NodeJS.ProcessEnv, phone: string): boolean {
 /**
  * The deny list: any real phone number except this service's own lines. Who of those may be texted
  * is consent, held per account: the landlord's phone confirmed at sign-up, and each person's YES
- * and STOP (saadvz/TourCore#164). The desk and the engine check that before a text reaches here.
+ * and STOP (saadvz/PropertyCore#164). The desk and the engine check that before a text reaches here.
  */
 export function mayText(env: NodeJS.ProcessEnv, phone: string): boolean {
   const parsed = parsePhone(phone);
   return Boolean(parsed) && !ownLine(env, parsed!);
 }
 
-/** The landlord's phone, confirmed with a code when they signed up (saadvz/TourCore#162). Each tenant's desk gets its own. */
+/** The landlord's phone, confirmed with a code when they signed up (saadvz/PropertyCore#162). Each tenant's desk gets its own. */
 export function verifiedLandlordPhone(env: NodeJS.ProcessEnv): string | undefined {
   return parsePhone(env.CLEANER_CORE_LANDLORD_PHONE?.trim() ?? "");
 }
