@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { accountTools } from "../src/hosted/propertyTools";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -21,8 +20,6 @@ const REPO = "https://github.com/saadvz/TourCore";
 /** LF bytes, so the pin matches on a Windows (CRLF) checkout and on CI. */
 const read = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 
-/** SHA-256 of muse-template/SETUP_PROMPT.md with LF line endings, in base64. Change the prompt only on purpose. */
-const SETUP_PROMPT_SHA256 = "vvrY3aR8bgYtwn/O7N5TiyxrgxdXkL4HE5Tyx2tRR9o=";
 
 async function toolNames(): Promise<string[]> {
   // tools/list never touches the desk.
@@ -38,17 +35,21 @@ function taskPrompt(doc = TASK): string {
 }
 
 describe("Muse paste-in prompt", () => {
-  it("is pinned, saves the skill from the repository, and keeps secrets out of chat and cards", () => {
-    const prompt = read(join(TEMPLATE, "SETUP_PROMPT.md"));
-    expect(createHash("sha256").update(prompt).digest("base64")).toBe(SETUP_PROMPT_SHA256);
+  // #178: the one Muse prompt is property-core-template/muse/SETUP_PROMPT.md, pinned in test/setupEntryPoint.test.ts.
+  it("moved to the Property Core prompt, which saves the skills from the repository and keeps secrets out of chat and cards", () => {
+    const moved = read(join(TEMPLATE, "SETUP_PROMPT.md"));
+    expect(moved).toContain("](../property-core-template/muse/SETUP_PROMPT.md)");
+    expect(moved).not.toContain("```");
+    const prompt = read(join(REPO_ROOT, "property-core-template/muse/SETUP_PROMPT.md"));
     expect(prompt).toContain(REPO);
-    expect(prompt).toContain("muse-template/skills/cleaner-core");
-    expect(prompt).toMatch(/Do not start Cleaner Core on your computer\./);
-    expect(prompt).toMatch(/Never ask me to paste API keys, passwords, tokens, calendar links, or door codes into chat or a card\./);
-    expect(prompt).toMatch(/open Cleaner Core's private page in your browser and hand the browser to me, so I type it there myself\./);
+    expect(prompt).toMatch(/Do not start anything on your computer\./);
+    expect(prompt).toMatch(/Never ask me to paste API keys, passwords, tokens, calendar links, card details, or door codes into chat or a card\./);
+    expect(prompt).toMatch(/open the service's private page in your browser and hand the browser to me, so I type it there myself\./);
     expect(prompt).toMatch(/Never ask me for the invite code in chat, and never click Allow yourself\./);
     expect(prompt).toContain("get_state");
     expect(prompt).toMatch(/Start now\./);
+    // The Property Core skill saves the Cleaner Core skill this folder holds.
+    expect(read(join(REPO_ROOT, "property-core-template/muse/skills/property-core/SKILL.md")).replace(/\s+/g, " ")).toContain("save the folder `muse-template/skills/cleaner-core` as a skill named Cleaner Core");
   });
 });
 
