@@ -46,7 +46,7 @@ create it yourself from this chat:
 - Name: **Cleaner Core**
 - Transport: remote streamable HTTP
 - URL: `https://tourcore-production-8b80.up.railway.app/mcp/cleaner-core`. If
-  `muse-template/template.json` in https://github.com/saadvz/TourCore names a
+  `muse-template/template.json` in https://github.com/saadvz/PropertyCore names a
   different `hostedCleanerCoreUrl`, use that one.
 - Auth: OAuth, with no client secret (`token_endpoint_auth_method: none`)
   and scope `cleanercore.operator`
