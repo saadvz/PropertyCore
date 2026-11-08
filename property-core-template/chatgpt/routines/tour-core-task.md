@@ -1,5 +1,9 @@
 # Scheduled task: Tour Core (ChatGPT)
 
+> **Parked.** Tour Core isn't offered to new accounts. Make this task only for
+> an account Saad has made a touring account on `/admin`, where `get_state`
+> shows Tour Core.
+
 ChatGPT runs a scheduled task at most once an hour, and nothing outside
 ChatGPT can start one. So Tour Core can't wake ChatGPT when a visitor asks for
 a tour time. Each run reads what's new with `get_updates` instead.
