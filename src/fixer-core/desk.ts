@@ -579,7 +579,7 @@ export class FixerDesk {
   /** The host's go question for a job still waiting on it. */
   private goQuestion(file: FixerFile, job: Job): string {
     const top = this.topPro(file, job.trade);
-    return hostGoQuestion({ what: job.what, ...(job.source === "cleaner" ? { cleanerName: job.cleanerName ?? "your cleaner" } : {}), ...(top ? { proName: top.pro.name } : {}) });
+    return hostGoQuestion({ what: job.what, ...(job.source === "cleaner" && job.photos.length > 0 ? { cleanerName: job.cleanerName ?? "your cleaner" } : {}), ...(top ? { proName: top.pro.name } : {}) });
   }
 
   /** Starts a repair job: the host's own starts at once, the cleaner's and upkeep's wait for the host's go. */
@@ -603,11 +603,14 @@ export class FixerDesk {
         if (!input.sourceRef || !file.upkeep.some((item) => item.id === input.sourceRef)) return fail("An upkeep job names an upkeep item. Call get_fixer_state for the list.");
         if (file.jobs.some((job) => isOpen(job) && job.sourceRef === input.sourceRef)) return fail("That upkeep item already has a job open.");
       }
+      const what = redactDigits(input.what).trim();
+      // Redaction can make the text longer, so the bound applies to what is saved.
+      if (what.length > 299) return fail("Say what needs fixing, in under 300 characters.");
       const now = this.deps.now().toISOString();
       const job: Job = {
         id: newId("job_", 10),
         trade: input.trade,
-        what: redactDigits(input.what).trim(),
+        what,
         source: input.source,
         photos: [],
         urgency: input.urgency!,
@@ -749,8 +752,8 @@ export class FixerDesk {
           item.toldAt = at;
         }
       }
-      this.write(file);
-      return ok({
+      // The whole reply is built before the news is marked told and saved.
+      const body = {
         needsGo: file.jobs.filter((job) => isOpen(job) && !job.hostGo && job.state === "requested").map((job) => ({ jobId: job.id, question: this.goQuestion(file, job) })),
         upkeepDue: this.upkeepDue(file),
         contactNext: this.contactNext(file),
@@ -762,7 +765,9 @@ export class FixerDesk {
         preferredAsk: [],
         rotationAsk: [],
         news,
-      });
+      };
+      this.write(file);
+      return ok(body);
     });
   }
 

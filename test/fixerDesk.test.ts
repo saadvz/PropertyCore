@@ -510,8 +510,25 @@ describe("jobs", () => {
 
   it("asks to find someone when no pro is preferred", async () => {
     const { desk } = await activated();
-    const reply = await desk.openJob({ trade: "hvac", what: "No heat", urgency: "now", source: "cleaner", cleanerName: "Maria" });
+    storePhoto(desk.root, messagePhotoId("m2"), { bytes: Buffer.from("jpg"), ext: "jpg" });
+    const reply = await desk.openJob({ trade: "hvac", what: "No heat", urgency: "now", source: "cleaner", cleanerName: "Maria", photoMessageIds: ["m2"] });
     expect(reply.structured!.question).toBe("No heat (photo from Maria). Want me to find someone?");
+  });
+
+  it("claims no photo when the cleaner job has none", async () => {
+    const { desk } = await activated();
+    const reply = await desk.openJob({ trade: "hvac", what: "No heat", urgency: "now", source: "cleaner", cleanerName: "Maria", photoMessageIds: ["nothing"] });
+    expect(reply.structured!.question).toBe("No heat. Want me to find someone?");
+    expect((await check(desk)).needsGo[0]!.question).toBe("No heat. Want me to find someone?");
+  });
+
+  it("holds the length bound after redaction", async () => {
+    const { root, desk } = await activated();
+    // 40 four-digit runs are 239 characters raw but 40 x 16 once redacted.
+    const what = Array.from({ length: 40 }, () => "1234a").join(" ");
+    expect(what.length).toBeLessThan(300);
+    expect((await desk.openJob({ trade: "hvac", what, urgency: "now", source: "cleaner" })).isError).toBe(true);
+    expect(readFixer(root).jobs).toEqual([]);
   });
 
   it("saves a cleaner's digits redacted, including split ones", async () => {
@@ -668,6 +685,8 @@ describe("check_fixes", () => {
   it("names no pro for a draft or an unranked one", async () => {
     const { desk } = await activated();
     serve(ics());
+    await desk.savePro({ name: "Draft Plumbing", trades: ["plumbing"], preferredFor: [{ trade: "plumbing", rank: 1 }], reach: { phone: "+15555550177" }, draft: true });
+    await desk.savePro({ ...ana, preferredFor: [{ trade: "electrical", rank: 1 }] }).then(async (r) => desk.savePro({ ...ana, preferredFor: [{ trade: "electrical", rank: 1 }], confirmation: codeOf(r) }));
     await desk.openJob({ trade: "plumbing", what: "Leak", urgency: "now", source: "host" });
     expect((await check(desk)).contactNext).toEqual([]);
   });
