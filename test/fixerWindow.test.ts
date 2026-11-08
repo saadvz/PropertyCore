@@ -86,14 +86,12 @@ describe("visitWindows", () => {
   });
 
   it("follows the zone through the November DST change", () => {
-    const stays = [stay("2026-10-29", "2026-10-31"), stay("2026-10-31", "2026-11-01"), stay("2026-11-01", "2026-11-02")];
     const windows = run({
       stays: [stay("2026-10-29", "2026-10-31"), stay("2026-11-01", "2026-11-02"), stay("2026-11-02", "2026-11-04")],
       timeZone: "America/New_York",
       now: new Date("2026-10-30T00:00:00Z"),
       lastYmd: "2026-11-03",
     });
-    expect(stays).toHaveLength(3);
     // Oct 31 11:00 EDT is 15:00Z; Nov 1 check-in 16:00 EST minus 60 is 15:00 EST = 20:00Z.
     expect(windows[0]).toEqual({ from: "2026-10-31T15:00:00.000Z", until: "2026-11-01T20:00:00.000Z" });
     // Nov 2 11:00 EST is 16:00Z, an hour later than the EDT equivalent.
