@@ -80,3 +80,10 @@ export function proInvite(f: { proName: string; business: string; street: string
 
 export const PLAIN_CHAT =
   "Fixer Core works with Grok Bot and Muse for now: they find, call and book pros themselves. In this chat, Cleaner Core works without Fixer Core.";
+
+/** Setup, ask-cleaner step (Decision 8): the wording differs when Supply Core already asks "Anything running low?". */
+export function cleanerAskQuestion(supplyOn: boolean): string {
+  return supplyOn
+    ? 'After each cleaning, your cleaner is already asked "Anything running low?". Should that become "Anything running low or broken?", so they can report repairs too?'
+    : 'Should your cleaner be asked "Anything broken?" after every cleaning? What they report opens a repair for you to approve.';
+}
