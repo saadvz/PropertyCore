@@ -195,8 +195,9 @@ Touring on every chat:
 - **Texts to the host.** On any chat the host can have urgent tour updates, or
   all of them, texted to their own phone with `save_host_texts`. A text never
   names a visitor. The host's own texts to the number never reach touring.
-- **Templates.** `property-core-template/` holds the Grok bot and its
-  `claude/`, `chatgpt/`, and `muse/` versions.
+- **Templates.** `property-core-template/` is the one way to start: the Grok
+  bot and its `claude/`, `chatgpt/`, and `muse/` versions. Touring's task in
+  each is marked parked.
 
 Touring open tasks:
 

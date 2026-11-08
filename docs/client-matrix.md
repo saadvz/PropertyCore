@@ -18,7 +18,7 @@ that skips a gate.
 | | Grok Bot | Muse | Claude (plain chat) | ChatGPT (plain chat) |
 | --- | --- | --- | --- | --- |
 | Support | Full | Full, beta: last live checks in [`muse-template/README.md`](../muse-template/README.md#before-a-host-uses-this) | Basic | Basic |
-| Connect | Team template, or a paste-in prompt | A paste-in prompt; Muse creates the connector | Add the connector in settings | Add the connector in settings |
+| Start with | [`property-core-template/`](../property-core-template/README.md): the team template, or its [prompt](../property-core-template/SETUP_PROMPT.md) | [`property-core-template/muse/SETUP_PROMPT.md`](../property-core-template/muse/SETUP_PROMPT.md); Muse creates the connector | [`property-core-template/claude/`](../property-core-template/claude/SETUP_GUIDE.md): add the connector in settings | [`property-core-template/chatgpt/`](../property-core-template/chatgpt/SETUP_GUIDE.md): add the connector in settings |
 | Sign-in host | Any other host | `agent.meta.ai` | `claude.ai` | `chatgpt.com` |
 | Guide | [`CLEANER_CORE_BOOTSTRAP.md`](../CLEANER_CORE_BOOTSTRAP.md), [`SUPPLY_CORE_BOOTSTRAP.md`](../SUPPLY_CORE_BOOTSTRAP.md) | The `cleaner-core` and `supply-core` skills in [`muse-template/skills/`](../muse-template/skills/) | The connector's instructions and Claude's skill | The connector's instructions |
 | Questions with options | Choice cards | Choice cards | A short list | A short list |
