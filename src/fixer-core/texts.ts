@@ -194,3 +194,16 @@ export function visitTextPath(f: { proName: string }): string {
 export function rescheduleQuestion(f: { proName: string }): string {
   return `Move the repair visit with ${f.proName} to a new time? I'll tell them this time is off.`;
 }
+
+/** The reply to a pro who texts that someone is hurt. It names no property and no host detail. */
+export const PRO_HURT = "If someone is hurt, call 911 now. I've let the host know.";
+
+/** Told to the host when a pro texts that someone is hurt. */
+export function proHurtNews(f: { proName: string; street: string }): string {
+  return `${f.proName} says someone is hurt at ${f.street}. They've been told to call 911.`;
+}
+
+/** Told to the host when a pro texts something Fixer Core does not act on. `text` has its digit runs removed. */
+export function proTextNews(f: { proName: string; text: string }): string {
+  return `${f.proName} texted: "${f.text}"`;
+}

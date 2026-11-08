@@ -38,6 +38,8 @@ export interface Pro {
   source: "host" | "drafted" | "job";
   addedAt: string;
   lastJobAt?: string;
+  /** The phone the text invite went to, so each number is invited once. */
+  invitedPhone?: string;
 }
 
 export interface Upkeep {

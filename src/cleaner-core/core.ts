@@ -4010,7 +4010,7 @@ function clockMinutes(text: string): number | undefined {
   return hour * 60 + time.minute;
 }
 
-function isYes(text: string): boolean {
+export function isYes(text: string): boolean {
   return /^(yes|yep|yeah|y|ok|okay|sure)( please)?$/.test(stripFiller(normalize(text)));
 }
 
@@ -4045,7 +4045,7 @@ function outcomeOf(result: ReceiveResult): MessageHandled {
   }
 }
 
-function isDone(text: string): boolean {
+export function isDone(text: string): boolean {
   return stripFiller(normalize(text)) === "done";
 }
 

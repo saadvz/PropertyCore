@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { localDateOf } from "../core/timezone";
-import { copyPhotos, MAX_JOB_PHOTOS, messagePhotoId, photoCount, photoLinks, prunePhotos, storePhoto } from "../cleaner-core/photos";
+import { isDone, isYes } from "../cleaner-core/core";
+import { isInjuryReport } from "../cleaner-core/injury";
+import { cleanerPhotoFetch, copyPhotos, downloadPhotos, MAX_JOB_PHOTOS, messagePhotoId, photoCount, photoLinks, prunePhotos, storePhoto, type InboundMedia } from "../cleaner-core/photos";
+import { isPlainLanguageStop, keywordOf } from "../intent";
 import { askNext } from "../hub/ask";
 import { addCalendarDays } from "../hub/calendar";
 import { joinSplitDigits } from "../hub/digits";
@@ -15,8 +18,9 @@ import { ConfirmationBook } from "../operator/confirmations";
 import { nextDates, scheduleProblem, type Schedule } from "../supply-core/schedule";
 import { supplyAskOn } from "../supply-core/store";
 import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
+import { priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
-import { bookingQuestion, cancelQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
+import { bookingQuestion, cancelQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_HURT, proHurtNews, proInvite, proTextNews, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type Candidate, type Contact, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
@@ -462,8 +466,28 @@ export class FixerDesk {
     people.saveRolePeople(this.deps.propertyId, "pro", wanted);
   }
 
-  /** Task 10 sends the pro their invite once. Until then this does nothing. */
-  private inviteIfAsked(_pro: Pro): void {}
+  /**
+   * The text invite, once per phone: only a saved pro who prefers text, with a phone, after the host is confirmed,
+   * and only if `claimInvite` allows it. A pro who also holds another role here is reached by the visit page only.
+   * The mark is saved before the send, so a failed send is not retried.
+   */
+  private async inviteIfAsked(file: FixerFile, pro: Pro): Promise<void> {
+    const phone = pro.reach.phone;
+    const people = this.deps.people?.();
+    const here = this.deps.propertyId;
+    if (pro.status !== "saved" || !pro.prefersText || !phone || pro.invitedPhone === phone || !people || !here || !this.deps.send) return;
+    if (people.rolesOn(phone, here).some((role) => role !== "pro")) return;
+    try {
+      if ((await this.deps.textsAllowed?.()) !== true) return;
+      const business = await this.deps.business?.();
+      if (!business || !people.claimInvite(phone, here)) return;
+      pro.invitedPhone = phone;
+      this.write(file);
+      await this.deps.send(phone, proInvite({ proName: pro.name, business, street: streetOf(this.hub().property().address ?? "") }));
+    } catch {
+      // The invite is best effort; the host can still call or email the pro.
+    }
+  }
 
   /** Refuses a number that is the host's, or already on another of the account's properties without the host's yes. */
   private phoneProblem(pro: Pro, shared: boolean | undefined): string | undefined {
@@ -478,7 +502,7 @@ export class FixerDesk {
   }
 
   savePro(input: ProInput): Promise<FixerReply> {
-    return this.guarded(input, () => {
+    return this.guarded(input, async () => {
       const file = this.read();
       if (input.confirm !== undefined) return this.confirmPros(file, input);
       const existing = input.id ? file.pros.find((pro) => pro.id === input.id) : undefined;
@@ -530,14 +554,14 @@ export class FixerDesk {
       this.write(file);
       if (pro.status === "saved") {
         this.syncPros(file);
-        if (existing?.status !== "saved") this.inviteIfAsked(pro);
+        await this.inviteIfAsked(file, pro);
       }
       return ok({ saved: true, proId: pro.id, status: pro.status, ...(rotationAsk ? { rotationAsk: [rotationAsk] } : {}), ...(file.settings.activatedAt ? {} : { next: "Ask whether there's anyone else they call." }) });
     });
   }
 
   /** The host's yes to drafted pros: each one becomes saved. */
-  private confirmPros(file: FixerFile, input: ProInput): FixerReply {
+  private async confirmPros(file: FixerFile, input: ProInput): Promise<FixerReply> {
     const ids = input.confirm;
     if (!Array.isArray(ids) || ids.length === 0 || !ids.every((id) => typeof id === "string")) return fail("Pass the ids of the drafted pros the host confirmed.");
     if (input.name !== undefined || input.trades !== undefined || input.reach !== undefined) return fail("Confirm drafts in one call, and change a pro in another.");
@@ -557,7 +581,7 @@ export class FixerDesk {
     for (const pro of drafts as Pro[]) pro.status = "saved";
     this.write(file);
     this.syncPros(file);
-    for (const pro of drafts as Pro[]) this.inviteIfAsked(pro);
+    for (const pro of drafts as Pro[]) await this.inviteIfAsked(file, pro);
     return ok({ saved: true, confirmed: (drafts as Pro[]).map((pro) => pro.id) });
   }
 
@@ -1702,37 +1726,39 @@ export class FixerDesk {
    * From the visit page, `visitHash` must still be this job's live link, inside the visit.
    */
   raisePrice(jobId: string, cents: number, by: "pro" | "agent" | "host", visitHash?: string): Promise<FixerReply> {
-    return this.guarded({ jobId, cents, by }, async () => {
-      const file = this.read();
-      const off = this.inactive(file);
-      if (off) return off;
-      if (visitHash !== undefined) {
-        const page = this.pageJob(file, visitHash);
-        if ("isError" in page) return page;
-        if (page.id !== jobId) return fail(VISIT_ENDED);
-      }
-      const job = this.jobOf(file, jobId);
-      const booking = job?.booking;
-      if (!job || !booking?.hostYes || !liveBooking(job)) return fail("Only a booked visit can have a raised price.");
-      if (!isInt(cents, 0, 2_000_000)) return fail("A price is 0 to 2,000,000 cents.");
-      if (!COST_BYS.includes(by)) return fail("Say who raised it: pro, agent or host.");
-      const old = booking.estimateCents;
-      if (old !== undefined && cents <= old) return fail(`That isn't more than the ${dollars(old)} estimate. Log what was charged with record_cost when the work is done.`);
-      const at = this.deps.now().toISOString();
-      booking.revisedQuote = { cents, at, by };
-      const proName = this.bookedName(file, job);
-      const prices = { proName, newCents: cents, ...(old !== undefined ? { oldCents: old } : {}) };
-      if (raisedPriceHeld(file.settings.costLineCents, old, cents)) {
-        const question = raisedPrice(prices);
-        this.write(file);
-        await this.tell([{ id: `fixer:${job.id}:raised:${at}`, text: question }]);
-        return ok({ held: true, jobId: job.id, question, next: `Tell ${proName} to wait for the host's answer. Ask the host this question, then call approve_booking with revised: true.` });
-      }
-      const note = this.news(job, "raised-price", raisedPriceNews(prices), `fixer:${job.id}:raised:${at}`);
+    return this.guarded({ jobId, cents, by }, () => this.raisePriceUnlocked(jobId, cents, by, visitHash));
+  }
+
+  private async raisePriceUnlocked(jobId: string, cents: number, by: "pro" | "agent" | "host", visitHash?: string): Promise<FixerReply> {
+    const file = this.read();
+    const off = this.inactive(file);
+    if (off) return off;
+    if (visitHash !== undefined) {
+      const page = this.pageJob(file, visitHash);
+      if ("isError" in page) return page;
+      if (page.id !== jobId) return fail(VISIT_ENDED);
+    }
+    const job = this.jobOf(file, jobId);
+    const booking = job?.booking;
+    if (!job || !booking?.hostYes || !liveBooking(job)) return fail("Only a booked visit can have a raised price.");
+    if (!isInt(cents, 0, 2_000_000)) return fail("A price is 0 to 2,000,000 cents.");
+    if (!COST_BYS.includes(by)) return fail("Say who raised it: pro, agent or host.");
+    const old = booking.estimateCents;
+    if (old !== undefined && cents <= old) return fail(`That isn't more than the ${dollars(old)} estimate. Log what was charged with record_cost when the work is done.`);
+    const at = this.deps.now().toISOString();
+    booking.revisedQuote = { cents, at, by };
+    const proName = this.bookedName(file, job);
+    const prices = { proName, newCents: cents, ...(old !== undefined ? { oldCents: old } : {}) };
+    if (raisedPriceHeld(file.settings.costLineCents, old, cents)) {
+      const question = raisedPrice(prices);
       this.write(file);
-      await this.tell([note]);
-      return ok({ held: false, jobId: job.id, next: `${proName} can go ahead. The host is told.` });
-    });
+      await this.tell([{ id: `fixer:${job.id}:raised:${at}`, text: question }]);
+      return ok({ held: true, jobId: job.id, question, next: `Tell ${proName} to wait for the host's answer. Ask the host this question, then call approve_booking with revised: true.` });
+    }
+    const note = this.news(job, "raised-price", raisedPriceNews(prices), `fixer:${job.id}:raised:${at}`);
+    this.write(file);
+    await this.tell([note]);
+    return ok({ held: false, jobId: job.id, next: `${proName} can go ahead. The host is told.` });
   }
 
   /** More time for a visit (two calls, bound to the job and the new end), never into the next check-in's buffer. The visit link changes. */
@@ -1990,6 +2016,93 @@ export class FixerDesk {
       await this.tell(notes);
       return ok({ done: true, jobId: job.id });
     });
+  }
+
+  /**
+   * A text from a pro on the shared line. STOP, START, YES and an injury report come first. DONE finishes their own
+   * visit (with any photos), a price raises their own job's price, and anything else is news for the host with digit
+   * runs removed. It never approves, books or changes anything else, and nothing it sends names another property.
+   */
+  async proInbound(input: { id: string; from: string; text: string; media?: readonly InboundMedia[] }): Promise<void> {
+    await this.serial(async () => {
+      const people = this.deps.people?.();
+      const here = this.deps.propertyId;
+      if (!people || !here || !input.from) return;
+      const roles = people.rolesOn(input.from, here);
+      if (!roles.includes("pro") || roles.some((role) => role !== "pro")) return;
+      const text = input.text.trim();
+      let file: FixerFile;
+      try {
+        file = this.read();
+      } catch {
+        return;
+      }
+      const pro = file.pros.find((entry) => entry.status === "saved" && entry.reach.phone === input.from);
+      const proName = pro?.name ?? "A pro";
+      const street = streetOf(this.hub().property().address ?? "");
+      if (isInjuryReport(text)) {
+        try {
+          await this.deps.send?.(input.from, PRO_HURT);
+        } catch {
+          // The host note below still goes.
+        }
+        await this.tell([{ id: `fixer:pro-hurt:${input.id}`, text: proHurtNews({ proName, street }) }]);
+        return;
+      }
+      const keyword = keywordOf(text);
+      if (keyword === "stop" || isPlainLanguageStop(text)) return people.relay(people.stop(input.from));
+      if (keyword === "help") return;
+      if (keyword === "start") return people.relay(people.start(input.from));
+      if (isYes(text)) return people.relay(people.optIn(input.from, here));
+      const now = this.deps.now().getTime();
+      const mine = pro && !this.inactive(file) ? file.jobs.filter((job) => job.booking?.proId === pro.id && job.booking.hostYes && liveBooking(job)) : [];
+      const started = mine.filter((job) => job.state === "in-progress" || (job.state === "booked" && now >= Date.parse(job.booking!.from)));
+      if (isDone(text) && started.length > 0) {
+        const job = started.find((entry) => entry.state === "in-progress") ?? started[0]!;
+        await this.photosFromText(job, input.media);
+        const notes: HostNote[] = [];
+        this.finishJob(file, job, "pro-text", undefined, notes);
+        this.write(file);
+        await this.tell(notes);
+        return;
+      }
+      const cents = priceCents(text);
+      const live = mine.find((job) => job.state === "in-progress");
+      if (cents !== undefined && live && cents <= 2_000_000) {
+        const reply = await this.raisePriceNow(live.id, cents);
+        if (!reply.isError) return;
+      }
+      const news = proTextNews({ proName, text: redactDigits(text).slice(0, 300).trim() });
+      const job = live ?? started[0];
+      if (job) {
+        const fresh = this.read();
+        const target = fresh.jobs.find((entry) => entry.id === job.id);
+        if (target) {
+          const note = this.news(target, "pro-text", news, `fixer:${target.id}:pro-text:${input.id}`);
+          this.write(fresh);
+          await this.tell([note]);
+          return;
+        }
+      }
+      await this.tell([{ id: `fixer:pro-text:${input.id}`, text: news }]);
+    }).catch(() => undefined);
+  }
+
+  /** raisePrice for a text, already inside the desk's one-at-a-time turn. */
+  private raisePriceNow(jobId: string, cents: number): Promise<FixerReply> {
+    return this.raisePriceUnlocked(jobId, cents, "pro");
+  }
+
+  /** The photos on a DONE text, kept as the job's pro photos while there is room (10 of theirs). */
+  private async photosFromText(job: Job, media: readonly InboundMedia[] | undefined): Promise<void> {
+    if (!media || media.length === 0) return;
+    const photos = await downloadPhotos(media, cleanerPhotoFetch(), this.deps.env?.() ?? process.env);
+    const key = `fixer:${job.id}`;
+    for (const photo of photos) {
+      if (job.photos.filter((entry) => entry.from === "pro").length >= MAX_JOB_PHOTOS) break;
+      if (!storePhoto(this.root, key, photo, 2 * MAX_JOB_PHOTOS)) break;
+      job.photos.push({ id: String(photoCount(this.root, key)), from: "pro", at: this.deps.now().toISOString() });
+    }
   }
 
   /** One photo from the visit page, already stripped of its location data, kept as the job's next number. */
