@@ -3,14 +3,14 @@ import { withCaller, type CleanerCaller } from "./callerContext";
 import { authorized } from "../mcp/mcpBridge";
 import { cleanerAssistant } from "./assistant";
 import { cleanerCoreEnabled } from "./flag";
-import { ALERT_UPLOAD_PREFIX, CALENDAR_UPLOAD_PREFIX, DOOR_CODE_UPLOAD_PREFIX, liveDeskFor } from "./liveDesk";
+import { ALERT_UPLOAD_PREFIX, liveDeskFor, type LiveDesk } from "./liveDesk";
 import { CLEANER_MCP_PATH, handleCleanerMcpMessage, type DeleteSecrets, type SaveSecrets } from "./mcp";
 import { pinKeyFromHeader, serverPinKey } from "../hub/doorAccess";
 import { scratchToolsOn } from "./scratchQa";
 import type { UploadPageKind } from "./uploadPage";
 import { CLEANER_TWILIO_GROUP_PATH, CLEANER_TWILIO_PATH, CLEANER_TWILIO_STATUS_PATH, handleCleanerGroupWebhook, handleCleanerTwilioStatus, handleCleanerTwilioWebhook, textAddressedTo } from "./twilioHook";
 
-export { ALERT_UPLOAD_PREFIX, CALENDAR_UPLOAD_PREFIX, DOOR_CODE_UPLOAD_PREFIX, CLEANER_MCP_PATH, CLEANER_TWILIO_GROUP_PATH, CLEANER_TWILIO_PATH, CLEANER_TWILIO_STATUS_PATH, handleCleanerGroupWebhook, handleCleanerTwilioStatus, handleCleanerTwilioWebhook, textAddressedTo };
+export { CLEANER_MCP_PATH, CLEANER_TWILIO_GROUP_PATH, CLEANER_TWILIO_PATH, CLEANER_TWILIO_STATUS_PATH, handleCleanerGroupWebhook, handleCleanerTwilioStatus, handleCleanerTwilioWebhook, textAddressedTo };
 
 /** The response was already written (an OAuth 401/403/503). The caller sends nothing more. */
 export const ANSWERED = { answered: true } as const;
@@ -122,7 +122,7 @@ export function uploadPageOf(pathname: string): { kind: UploadPageKind; code: st
  * Grok's own computer posts the door code from its secure card here, to the link save_door_code
  * made. Public: the one-time code is the credential. The door code is never repeated or logged.
  */
-export async function handleCleanerDoorCodeUpload(input: {
+export function handleCleanerDoorCodeUpload(input: {
   code: string;
   contentType: string;
   /** Undefined when the body is over ALERT_UPLOAD_MAX_BYTES. */
@@ -131,16 +131,9 @@ export async function handleCleanerDoorCodeUpload(input: {
   root: string;
   now: () => Date;
 }): Promise<{ status: number; body: string }> {
-  const reply = (status: number, body: Record<string, unknown>) => ({ status, body: JSON.stringify(body) });
-  if (!cleanerCoreEnabled(input.env())) return reply(404, { ok: false, error: "Not found." });
-  const read = await uploadBody(input.contentType, input.readBody);
-  if ("error" in read) return reply(read.status, { ok: false, error: read.error });
-  const desk = liveDeskFor(input.root, input.env, input.now);
-  const result = await desk.uploadDoorCode(input.code, read.parsed);
-  return reply(result.status, result.body);
+  return jsonUpload(input, (desk, body) => desk.uploadDoorCode(input.code, body));
 }
 
-/** A JSON object body, or the refusal to send. */
 /** A JSON upload body, capped by `readBody`. Shared with the touring alert link on the multi-tenant service. */
 export async function uploadBody(contentType: string, readBody: () => Promise<Buffer | undefined>): Promise<{ parsed: Record<string, unknown> } | { status: number; error: string }> {
   if (!contentType.toLowerCase().startsWith("application/json")) return { status: 415, error: "Send JSON with Content-Type: application/json." };
@@ -156,11 +149,25 @@ export async function uploadBody(contentType: string, readBody: () => Promise<Bu
   return { parsed: parsed as Record<string, unknown> };
 }
 
+/** The steps every upload link shares: cleaning texts on, a JSON body, then the desk's own save. */
+async function jsonUpload(
+  input: { contentType: string; readBody: () => Promise<Buffer | undefined>; env: () => NodeJS.ProcessEnv; root: string; now: () => Date },
+  save: (desk: LiveDesk, body: Record<string, unknown>) => Promise<{ status: number; body: Record<string, unknown> }>,
+): Promise<{ status: number; body: string }> {
+  const reply = (status: number, body: Record<string, unknown>) => ({ status, body: JSON.stringify(body) });
+  if (!cleanerCoreEnabled(input.env())) return reply(404, { ok: false, error: "Not found." });
+  const read = await uploadBody(input.contentType, input.readBody);
+  if ("error" in read) return reply(read.status, { ok: false, error: read.error });
+  const desk = liveDeskFor(input.root, input.env, input.now);
+  const result = await save(desk, read.parsed);
+  return reply(result.status, result.body);
+}
+
 /**
  * Grok's own computer posts a calendar link from its secure card here, to the link save_sources
  * made. Public: the one-time code is the credential. The link is never repeated or logged.
  */
-export async function handleCleanerCalendarUpload(input: {
+export function handleCleanerCalendarUpload(input: {
   code: string;
   contentType: string;
   /** Undefined when the body is over ALERT_UPLOAD_MAX_BYTES. */
@@ -169,13 +176,7 @@ export async function handleCleanerCalendarUpload(input: {
   root: string;
   now: () => Date;
 }): Promise<{ status: number; body: string }> {
-  const reply = (status: number, body: Record<string, unknown>) => ({ status, body: JSON.stringify(body) });
-  if (!cleanerCoreEnabled(input.env())) return reply(404, { ok: false, error: "Not found." });
-  const read = await uploadBody(input.contentType, input.readBody);
-  if ("error" in read) return reply(read.status, { ok: false, error: read.error });
-  const desk = liveDeskFor(input.root, input.env, input.now);
-  const result = await desk.uploadCalendarLink(input.code, read.parsed);
-  return reply(result.status, result.body);
+  return jsonUpload(input, (desk, body) => desk.uploadCalendarLink(input.code, body));
 }
 
 /**
@@ -183,7 +184,7 @@ export async function handleCleanerCalendarUpload(input: {
  * `save_alert_routine` made. Public: the one-time code is the credential. Nothing posted, and not
  * the code, is repeated, logged, or kept outside the secret store.
  */
-export async function handleCleanerAlertUpload(input: {
+export function handleCleanerAlertUpload(input: {
   code: string;
   contentType: string;
   /** Undefined when the body is over ALERT_UPLOAD_MAX_BYTES. */
@@ -193,11 +194,5 @@ export async function handleCleanerAlertUpload(input: {
   now: () => Date;
   saveSecrets: SaveSecrets;
 }): Promise<{ status: number; body: string }> {
-  const reply = (status: number, body: Record<string, unknown>) => ({ status, body: JSON.stringify(body) });
-  if (!cleanerCoreEnabled(input.env())) return reply(404, { ok: false, error: "Not found." });
-  const read = await uploadBody(input.contentType, input.readBody);
-  if ("error" in read) return reply(read.status, { ok: false, error: read.error });
-  const desk = liveDeskFor(input.root, input.env, input.now);
-  const result = await desk.uploadAlertRoutine(input.code, read.parsed, input.saveSecrets);
-  return reply(result.status, result.body);
+  return jsonUpload(input, (desk, body) => desk.uploadAlertRoutine(input.code, body, input.saveSecrets));
 }

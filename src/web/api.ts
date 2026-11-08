@@ -1,31 +1,10 @@
-import {
-  applySetupCommand,
-  COMMON_TIME_ZONES,
-  createPropertySetup,
-  describeHistory,
-  draftView,
-  dryTourView,
-  formatDay,
-  formatTime,
-  friendlyZone,
-  inferTimeZone,
-  liveTourView,
-  propertySummary,
-  PropertyWorkspace,
-  readinessView,
-  SETUP_STEPS,
-  SetupInputError,
-  tourDetailView,
-  tourListView,
-  VisitorDemoRegistry,
-  VisitorDemoSession,
-  visitorView,
-} from "./setupFacade";
+import { applySetupCommand, COMMON_TIME_ZONES, createPropertySetup, describeHistory, draftView, dryTourView, inferTimeZone, propertySummary, PropertyWorkspace, readinessView, SETUP_STEPS, SetupInputError, tourDetailView, tourListView } from "../setup";
+import { liveTourView, VisitorDemoRegistry, VisitorDemoSession, visitorView } from "../visitor";
 import { z } from "zod";
 import { visitorTeamName } from "../sms/templates";
 import { checkMessaging } from "../createTourCore";
 import { TourCoreError } from "../core/TourCore";
-import { zonedParts, zonedTimeToUtc } from "../core/timezone";
+import { formatDay, formatTime, friendlyTimeZone as friendlyZone, zonedParts, zonedTimeToUtc } from "../core/timezone";
 import { toE164 } from "../messaging/Messenger";
 import { auditExportFile } from "../operator/auditExport";
 import { defaultMessagingMode, persistSession, type OperatorServices } from "../operator/services";
@@ -47,8 +26,6 @@ export interface ApiContext extends OperatorServices {
   links?: VerificationLinks;
   dev: boolean;
 }
-
-const persist = (ctx: ApiContext, session: VisitorDemoSession) => persistSession(ctx, session);
 
 const IdentityForm = z.object({
   firstName: z.string().trim().min(1, "Please enter your first name.").max(80),
@@ -146,7 +123,7 @@ async function route(ctx: ApiContext, method: string, path: string, body: Record
       // Used before acting, so a crash mid-submit can never let the same link be used twice.
       links!.markUsed(parts[1]);
       await session.act("submitIdentity", form.data, { text: "Submitted the identity form." });
-      await persist(ctx, session);
+      await persistSession(ctx, session);
       const after = await session.reservation();
       const latest = after?.verificationId ? await session.store.get("verifications", after.verificationId) : undefined;
       const passed = !!latest && latest.status === "PASSED" && Date.parse(latest.validUntil) > (ctx.now?.() ?? new Date()).getTime();
@@ -172,7 +149,7 @@ async function route(ctx: ApiContext, method: string, path: string, body: Record
       return ok({ times, anyTime: { now: `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}` } });
     }
     const saveAndShowLive = async () => {
-      await persist(ctx, session);
+      await persistSession(ctx, session);
       return ok({ live: await liveTourView(session) });
     };
     if (method === "POST" && parts[2] === "reschedule") {
@@ -196,7 +173,7 @@ async function route(ctx: ApiContext, method: string, path: string, body: Record
     }
     if (method === "POST" && parts[2] === "actions" && parts[3]) {
       await session.act(parts[3], body.input);
-      await persist(ctx, session);
+      await persistSession(ctx, session);
       return ok({ visitor: await visitorView(session) });
     }
   }

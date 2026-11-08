@@ -158,6 +158,15 @@ export class InstallationFiles {
     return parsed.data;
   }
 
+  /** The manifest, or undefined when it is missing or can't be read. */
+  readableManifest(): InstallationManifest | undefined {
+    try {
+      return this.manifest();
+    } catch {
+      return undefined;
+    }
+  }
+
   private writeManifest(manifest: InstallationManifest): InstallationManifest {
     const valid = ManifestSchema.parse(manifest);
     assertNoSecrets(valid, this.secretValues());

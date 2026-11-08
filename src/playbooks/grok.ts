@@ -1,7 +1,6 @@
 /** Grok-only differences. Shared steps live in shared.ts. */
 
 export const GROK_VERSION = "grok@2026-10-08";
-export const GROK_TOOLS_VERSION = "grok@2026-10-08.tools";
 
 export const GROK_FULL = [
   "You can keep notes about this landlord in your own memory, and you can draft a note for them to approve.",

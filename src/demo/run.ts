@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { auditToCsv, formatAudit } from "../audit/audit";
+import { style } from "../cli/prompter";
 import { loadConfig } from "../config/tourCoreConfig";
 import { SimulatedClock } from "../core/clock";
 import { nextTourDay } from "../core/schedule";
@@ -11,14 +12,7 @@ import { MockDurinAccessAdapter } from "../durin/MockDurinAccessAdapter";
 import { ConsoleMessenger } from "../messaging/Messenger";
 
 const AUTO = process.argv.includes("--auto") || !process.stdin.isTTY;
-const COLOR = process.stdout.isTTY && !process.env.NO_COLOR;
-const paint = (code: string) => (s: string) => (COLOR ? `\x1b[${code}m${s}\x1b[0m` : s);
-const bold = paint("1");
-const dim = paint("2");
-const green = paint("32");
-const red = paint("31");
-const cyan = paint("36");
-const yellow = paint("33");
+const { bold, dim, green, red, cyan, yellow } = style;
 
 const rl = AUTO ? undefined : createInterface({ input: process.stdin, output: process.stdout });
 

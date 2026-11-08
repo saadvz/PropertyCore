@@ -1,11 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { hostedResetToolVisible, HOSTED_ADMIN_TOOLS } from "../install/hostedAdminTools";
 import { annotationsFor } from "./annotations";
 import { mcpInstructions } from "../playbooks/instructions";
 import { reportedClientFromInitialize } from "../playbooks/select";
-import { callOperatorTool, OPERATOR_TOOLS, UnknownToolError, type ToolContext } from "../operator/tools";
-import { connectorRefusal, knownOperatorTool, toolsForConnector } from "./scopes";
+import { callOperatorTool, UnknownToolError, type ToolContext } from "../operator/tools";
+import { catalog, connectorRefusal, knownOperatorTool, toolsForConnector } from "./scopes";
 
 /**
  * A thin MCP bridge (Streamable HTTP, stateless, JSON responses) over Tour
@@ -37,11 +36,7 @@ const rpcError = (id: JsonRpcId, code: number, message: string): Reply => ({ sta
 const rpcResult = (id: JsonRpcId, result: unknown): Reply => ({ status: 200, body: { jsonrpc: "2.0", id, result } });
 
 export function mcpToolList(ctx?: ToolContext) {
-  const tools = ctx?.connector
-    ? toolsForConnector(ctx.connector, ctx)
-    : hostedResetToolVisible(ctx)
-      ? [...OPERATOR_TOOLS, ...HOSTED_ADMIN_TOOLS]
-      : OPERATOR_TOOLS;
+  const tools = ctx?.connector ? toolsForConnector(ctx.connector, ctx) : catalog(ctx);
   return tools.map((t) => {
     const { $schema: _s, ...inputSchema } = z.toJSONSchema(t.input) as Record<string, unknown>;
     return { name: t.name, title: t.title, description: t.description, inputSchema, annotations: { title: t.title, ...annotationsFor(t) } };

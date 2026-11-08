@@ -3,7 +3,7 @@ import { normalize } from "../intent/normalize";
 import { slotsOn } from "./schedule";
 import { windowOn } from "./tourWindows";
 import { spokenTimes, type SpokenTime } from "./spokenTime";
-import { addDays, formatClockTime, formatDay, formatTime, formatWeekday, localDateOf, spokenClockTime, weekdayOf, zonedParts, zonedTimeToUtc, type LocalDate } from "./timezone";
+import { addDays, formatClockTime, formatDay, formatTime, formatWeekday, localDateOf, sameLocalDate as sameDay, spokenClockTime, weekdayOf, zonedParts, zonedTimeToUtc, type LocalDate } from "./timezone";
 
 /** Where a start sits relative to the recurring schedule. The schedule itself is never edited. */
 export type SlotPlacement = "ON_GRID" | "INSIDE_HOURS" | "OUTSIDE_HOURS";
@@ -86,10 +86,6 @@ export type SpokenTimeCode = "TIME_PASSED" | "TIME_UNCLEAR";
 export type ResolvedTime =
   | { ok: true; start: Date; placement: SlotPlacement; label: string }
   | { ok: false; ask: string; code?: SpokenTimeCode };
-
-function sameDay(a: LocalDate, b: LocalDate): boolean {
-  return a.year === b.year && a.month === b.month && a.day === b.day;
-}
 
 function clockLabel(hour: number, minute: number): string {
   return `${hour}:${String(minute).padStart(2, "0")}`;

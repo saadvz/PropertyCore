@@ -59,6 +59,8 @@ export async function setFlows(ctx: FlowContext, input: FlowInput): Promise<Fron
   const resolved = resolveProperty(tenant, { property: input.property });
   if ("refusal" in resolved) return fail(resolved.refusal);
   const { property } = resolved;
+  // Read again each time: turning a flow on or off saves the property.
+  const latest = () => (h.registry.get(tenant.id) ?? tenant).properties.find((p) => p.id === property.id) ?? property;
   const wanted = (["cleaning", "supplies", "fixer"] as const).filter((flow) => typeof input[flow] === "boolean");
   if (wanted.length === 0) return fail("Say which flow to turn on or off: cleaning, supplies, or fixer, each true or false.");
   if (input.fixer === true) return fail(FIXER_NOT_YET);
@@ -68,14 +70,14 @@ export async function setFlows(ctx: FlowContext, input: FlowInput): Promise<Fron
   // Every flow turning on is checked before any changes, so a refusal never leaves a half-made change.
   for (const flow of wanted) {
     if (input[flow] !== true) continue;
-    const current = (h.registry.get(tenant.id) ?? tenant).properties.find((p) => p.id === property.id) ?? property;
+    const current = latest();
     const refusal = turnOnRefusal(ctx, current, flow, wanted.includes("cleaning") && input.cleaning === true);
     if (refusal) return fail(refusal);
   }
   const done: string[] = [];
   for (const flow of wanted) {
     const on = input[flow] as boolean;
-    const current = (h.registry.get(tenant.id) ?? tenant).properties.find((p) => p.id === property.id) ?? property;
+    const current = latest();
     if (current.flows[flow].on === on) {
       done.push(`${NAMES[flow]} was already ${on ? "on" : "off"} for ${current.label}.`);
       continue;
@@ -87,7 +89,7 @@ export async function setFlows(ctx: FlowContext, input: FlowInput): Promise<Fron
     done.push(`${NAMES[flow]} is ${on ? "on" : "off"} for ${current.label}.${on ? "" : " Its setup is kept."}`);
   }
   ctx.noteToolsChanged();
-  const after = (h.registry.get(tenant.id) ?? tenant).properties.find((p) => p.id === property.id) ?? property;
+  const after = latest();
   const structured = { property: after.id, flows: { cleaning: after.flows.cleaning.on, supplies: after.flows.supplies.on, fixer: after.flows.fixer.on } };
   return { text: `${done.join(" ")} Call get_state with property ${after.id} for the next step. If the tools don't change, start a new chat.`, structured, isError: false };
 }

@@ -461,7 +461,7 @@ export function readState(input: StateReadInput, propertyId?: string): Record<st
   const alertsDegraded = !zoneBlock && next.component === "OPERATOR_ALERTS" && alerts?.state === "DEGRADED";
   const alertsReconnect = !zoneBlock && next.component === "OPERATOR_ALERTS" && alerts?.state === "ERROR" && addressSaved;
   const step = alertsDegraded ? "alerts-degraded" : alertsReconnect ? "alerts-error" : focusStep(milestones, next.action, picture);
-  const say = zoneBlock ? UNSET_ZONE_LINE : (inst && step === "backups" && driveNotSetUpLine(inst)) || sayFor(input.client, step, picture.draft);
+  const say = zoneBlock ? UNSET_ZONE_LINE : (step === "backups" && driveNotSetUpLine(inst)) || sayFor(input.client, step, picture.draft);
   const playbook = renderPlaybook(input.client, step, say, { sharedService: isTenantWorker(inst.deploymentMode()), platform: sharedPlatformOf(input.client) });
   const copy = SHARED_STEPS[step];
   const setup = setupOf(input.services, inst, picture, status);

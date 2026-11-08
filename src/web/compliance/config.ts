@@ -88,12 +88,6 @@ export function complianceLinkPair(publicBaseUrl: string | undefined): { privacy
   };
 }
 
-/** A real public contact address, or nothing. An invalid value is not displayed. */
-export function publicContactEmail(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const raw = env.TOURCORE_PUBLIC_CONTACT_EMAIL?.trim();
-  return raw && EMAIL.test(raw) ? raw : undefined;
-}
-
 /** Public brand. An empty setting stays the product name rather than a blank title. */
 export function publicBrandName(env: NodeJS.ProcessEnv = process.env): string {
   return oneLine(env.TOURCORE_PUBLIC_BRAND_NAME) || DEFAULT_PUBLIC_BRAND_NAME;
@@ -118,6 +112,9 @@ export function buildComplianceConfig(env: NodeJS.ProcessEnv = process.env, publ
   const contactEmail = rawEmail && EMAIL.test(rawEmail) ? rawEmail : undefined;
   const legalName = publicLegalName(env);
   const base = publicBaseUrl?.replace(/\/+$/, "") || undefined;
+  const privacyUrl = absoluteComplianceUrl(base, COMPLIANCE_PATHS.privacy);
+  const termsUrl = absoluteComplianceUrl(base, COMPLIANCE_PATHS.terms);
+  const smsUrl = absoluteComplianceUrl(base, COMPLIANCE_PATHS.sms);
   return {
     development: isDevelopmentPublicConfig(env),
     brandName: publicBrandName(env),
@@ -125,8 +122,8 @@ export function buildComplianceConfig(env: NodeJS.ProcessEnv = process.env, publ
     ...(canonical ? { smsNumber: { canonical, display: formatPublicSmsNumber(canonical) } } : { smsNumberProblem: rawNumber ? "invalid" : "missing" }),
     ...(contactEmail ? { contactEmail } : { contactEmailProblem: rawEmail ? "invalid" : "missing" }),
     ...(base ? { publicBaseUrl: base } : {}),
-    ...(absoluteComplianceUrl(base, COMPLIANCE_PATHS.privacy) ? { privacyUrl: absoluteComplianceUrl(base, COMPLIANCE_PATHS.privacy) } : {}),
-    ...(absoluteComplianceUrl(base, COMPLIANCE_PATHS.terms) ? { termsUrl: absoluteComplianceUrl(base, COMPLIANCE_PATHS.terms) } : {}),
-    ...(absoluteComplianceUrl(base, COMPLIANCE_PATHS.sms) ? { smsUrl: absoluteComplianceUrl(base, COMPLIANCE_PATHS.sms) } : {}),
+    ...(privacyUrl ? { privacyUrl } : {}),
+    ...(termsUrl ? { termsUrl } : {}),
+    ...(smsUrl ? { smsUrl } : {}),
   };
 }

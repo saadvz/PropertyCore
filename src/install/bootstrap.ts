@@ -39,8 +39,6 @@ export function checkDependencies(repoDir: string): { ok: boolean; message: stri
 
 export interface BootstrapOptions {
   mode: DeploymentMode;
-  /** Use this https address instead of starting a tunnel. */
-  publicUrl?: string;
   /** P0: accept Grok's current legacy OAuth callback. */
   legacyOAuthCompat?: boolean;
 }
@@ -103,7 +101,7 @@ export async function runBootstrap(deps: BootstrapDeps, options: BootstrapOption
   };
 
   // 1. What's already here.
-  const before = safe(() => inst.files.manifest());
+  const before = inst.files.readableManifest();
   add("detect", true, before ? `Found installation ${before.installationId} (${DEPLOYMENT_MODE_LABELS[before.deploymentMode]}).` : "No Tour Core installation here yet; creating one.");
 
   // Never start an unexpected repository.
@@ -232,17 +230,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       dependencies: () => checkDependencies(repoDir),
       repository: () => checkRepositorySource({ canonical: canonicalRepoUrl(repoDir), actual: originUrl(repoDir) }),
     },
-    { mode, publicUrl, legacyOAuthCompat },
+    { mode, legacyOAuthCompat },
   );
   if (args.includes("--json")) console.log(JSON.stringify({ ...report, status: { summary: report.status.summary, lines: report.status.lines, nextStep: report.status.nextStep } }, null, 2));
   else printReport(report);
   process.exit(report.ok ? 0 : 1);
-}
-
-function safe<T>(read: () => T): T | undefined {
-  try {
-    return read();
-  } catch {
-    return undefined;
-  }
 }

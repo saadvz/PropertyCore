@@ -5,6 +5,7 @@ import { UPLOAD_BACKUP_FIRST } from "../backup/handoff";
 import { CHECKSUM_COVERS, CHECKSUM_COVERS_RESULT, PortableBackupError } from "../backup/portable";
 import { revokeConfirmQuestion } from "../core/availabilityCopy";
 import { TourCoreError } from "../core/TourCore";
+import { MONTH_NUMBER } from "../core/spokenTime";
 import { addDays, formatDay, formatTime, isValidTimeZone, localDateOf, timeOnDay, type LocalDate } from "../core/timezone";
 import { UNSET_ZONE_LINE } from "../setup/storedTimeZone";
 import { UnavailableModeError } from "../createTourCore";
@@ -46,23 +47,14 @@ import {
   scheduleOneOffTour,
 } from "./tourTimes";
 import { currentReservation, findTour, inspectTourSummary, inspectTourView, isFutureBooking, midSentence, tourSnapshots, tourSummary, visitorNameOf } from "./tours";
-import type { OperatorTool, ToolContext, ToolKind } from "./tools";
+import { joinList as joinNames } from "./tourDayWords";
+import type { OperatorTool, ToolContext } from "./tools";
+import { tool } from "./defineTool";
 
 /**
  * Day-to-day tools. Each one calls the same engine functions as the older
  * tool it replaces. Writes report done, blocked, or next.
  */
-
-function tool<S extends z.ZodObject>(def: {
-  name: string;
-  title: string;
-  description: string;
-  kind: ToolKind;
-  input: S;
-  run: (ctx: ToolContext, input: z.infer<S>) => Promise<Record<string, unknown>>;
-}): OperatorTool {
-  return def as unknown as OperatorTool;
-}
 
 const Property = z.string().max(200).optional().describe("Which property: its name, address or propertyId. Leave out when there's only one.");
 const TourRef = z.string().min(3).max(200).describe("The tourRef from get_tours or get_inbox. Never show it to the landlord.");
@@ -111,11 +103,12 @@ function propertyIdOf(ctx: ToolContext, property: string | undefined): string | 
   return resolvePropertyId(ctx.services.workspace, property);
 }
 
-function reservationFingerprint(reservation: { id: string; status: string; updatedAt: string }): string {
+export function reservationFingerprint(reservation: { id: string; status: string; updatedAt: string }): string {
   return `${reservation.id}|${reservation.status}|${reservation.updatedAt}`;
 }
 
-function auditExportFileLink(ctx: ToolContext, propertyId: string, exportId: string, file: string): { openOnTourCoreComputer?: string } {
+/** Local computer link when that's all we have; hosted public URL with a short-lived token. */
+export function auditExportFileLink(ctx: ToolContext, propertyId: string, exportId: string, file: string): { openOnTourCoreComputer?: string } {
   const inst = ctx.installation;
   const hosted = inst && isHostedRailway(inst.deploymentMode());
   const publicBase = hosted ? inst.publicBaseUrl() : undefined;
@@ -154,9 +147,8 @@ function inboxKind(item: OperatorException): "flagged-question" | "help" | "door
   return "issue";
 }
 
-function exceptionItem(item: OperatorException) {
+export function exceptionLine(item: OperatorException) {
   return {
-    kind: inboxKind(item),
     exceptionId: item.exceptionId,
     tourRef: item.tourRef,
     property: item.property,
@@ -174,37 +166,14 @@ function exceptionItem(item: OperatorException) {
   };
 }
 
+function exceptionItem(item: OperatorException) {
+  return { kind: inboxKind(item), ...exceptionLine(item) };
+}
+
 function installationOf(ctx: ToolContext) {
   if (!ctx.installation) throw new SetupInputError("INSTALLATION_UNAVAILABLE", "Installation tools aren't available on this Tour Core.");
   return ctx.installation;
 }
-
-const MONTH_INDEX: Record<string, number> = {
-  january: 1,
-  jan: 1,
-  february: 2,
-  feb: 2,
-  march: 3,
-  mar: 3,
-  april: 4,
-  apr: 4,
-  may: 5,
-  june: 6,
-  jun: 6,
-  july: 7,
-  jul: 7,
-  august: 8,
-  aug: 8,
-  september: 9,
-  sept: 9,
-  sep: 9,
-  october: 10,
-  oct: 10,
-  november: 11,
-  nov: 11,
-  december: 12,
-  dec: 12,
-};
 
 const MONTH_AND_DAY =
   /^(january|february|march|april|june|july|august|september|october|november|december|sept|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec|may)\.?\s+(\d{1,2})$/i;
@@ -229,7 +198,7 @@ export function parseExportDay(input: string, today: LocalDate): { ok: true; day
   if (iso) return realCalendarDay(iso) ? { ok: true, day: iso } : { ok: false };
   const named = MONTH_AND_DAY.exec(text);
   const numeric = named ? undefined : /^(\d{1,2})\/(\d{1,2})$/.exec(text);
-  const month = named ? MONTH_INDEX[named[1]!.toLowerCase()] : numeric ? Number(numeric[1]) : undefined;
+  const month = named ? MONTH_NUMBER[named[1]!.toLowerCase()] : numeric ? Number(numeric[1]) : undefined;
   const day = named ? Number(named[2]) : numeric ? Number(numeric[2]) : undefined;
   if (!month || !day) return { ok: false };
   const thisYear = { year: today.year, month, day };
@@ -237,12 +206,6 @@ export function parseExportDay(input: string, today: LocalDate): { ok: true; day
   if (thisYear.month < today.month || (thisYear.month === today.month && thisYear.day <= today.day)) return { ok: true, day: thisYear };
   const lastYear = { year: today.year - 1, month, day };
   return realCalendarDay(lastYear) ? { ok: true, day: lastYear } : { ok: false };
-}
-
-function joinNames(parts: string[]): string {
-  if (parts.length <= 1) return parts[0] ?? "";
-  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
-  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
 /** Landlord line for get_tours. Texting with no booking is not a tour. */

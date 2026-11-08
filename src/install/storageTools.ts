@@ -1,12 +1,9 @@
 import { z } from "zod";
-import type { OperatorTool, ToolKind } from "../operator/tools";
+import type { OperatorTool } from "../operator/tools";
+import { tool } from "../operator/defineTool";
 import { SetupInputError } from "../setup/setupActions";
 import { StoreBusyError, StorageConflictError, StorageUnavailableError } from "../storage/errors";
 import type { Installation } from "./installation";
-
-function tool<S extends z.ZodObject>(def: { name: string; title: string; description: string; kind: ToolKind; input: S; run: (ctx: { installation?: Installation; confirmations: { issue: (action: string, target: string, fingerprint: string, question: string) => { code: string; question: string }; redeem: (code: string, action: string, target: string, fingerprint: string) => void }; services: { workspace: { list: () => { state: { status: string }; config: { property: { name: string } } }[] } } }, input: z.infer<S>) => Promise<Record<string, unknown>> }): OperatorTool {
-  return def as unknown as OperatorTool;
-}
 
 function installation(ctx: { installation?: Installation }): Installation {
   if (!ctx.installation) throw new SetupInputError("INSTALLATION_UNAVAILABLE", "Installation tools aren't available on this Tour Core.");

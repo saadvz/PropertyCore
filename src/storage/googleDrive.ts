@@ -22,7 +22,6 @@ export interface DriveClient {
   updateContent(id: string, content: string, ifMatch: string): Promise<DriveFileMeta>;
   trash(id: string): Promise<void>;
   listByAppProperty(key: string, value: string): Promise<DriveFileMeta[]>;
-  getMeta(id: string): Promise<DriveFileMeta | undefined>;
 }
 
 export class DriveStatusError extends Error {
@@ -35,7 +34,6 @@ export class DriveStatusError extends Error {
 }
 
 const FOLDER = "application/vnd.google-apps.folder";
-const TRANSIENT = new Set([408, 429, 500, 502, 503]);
 
 /**
  * In-memory Drive. Files are private. Conditional updates use etags.
@@ -79,7 +77,7 @@ export class FakeGoogleDrive implements DriveClient {
     this.creates.push(input.appProperties.tourCoreRequest ?? input.name);
     if (this.loseCreateResponse) {
       this.loseCreateResponse = false;
-      const meta = this.insertFile(input);
+      this.insertFile(input);
       throw new DriveStatusError(503, "response lost");
     }
     if (this.failCreates > 0) {
@@ -136,11 +134,6 @@ export class FakeGoogleDrive implements DriveClient {
   async listByAppProperty(key: string, value: string): Promise<DriveFileMeta[]> {
     return [...this.files.values()].filter((f) => !f.meta.trashed && f.meta.appProperties[key] === value).map((f) => structuredClone(f.meta));
   }
-
-  async getMeta(id: string): Promise<DriveFileMeta | undefined> {
-    const file = this.files.get(id);
-    return file && !file.meta.trashed ? structuredClone(file.meta) : undefined;
-  }
 }
 
 async function retryIdempotent<T>(run: () => Promise<T>, attempts = 3): Promise<T> {
@@ -151,7 +144,7 @@ async function retryIdempotent<T>(run: () => Promise<T>, attempts = 3): Promise<
     } catch (err) {
       last = err;
       const status = err instanceof DriveStatusError ? err.status : 0;
-      if (!isTransientStatus(status) && !(err instanceof DriveStatusError && TRANSIENT.has(err.status))) throw err;
+      if (!isTransientStatus(status)) throw err;
       if (i === attempts - 1) break;
     }
   }
@@ -275,6 +268,8 @@ export class GoogleDriveStore implements DocumentStore {
       if (!current && doc.ifRevision) throw new StorageConflictError("That record is no longer there.");
     }
     const created: { path: string; fileId: string; sha256: string; kind: string; schemaVersion: number; body: unknown }[] = [];
+    const stored = (gen: number): StoredDocument[] =>
+      created.map((file) => ({ path: file.path, schemaVersion: file.schemaVersion, kind: file.kind, body: file.body, revision: `${gen}:${file.sha256}`, sha256: file.sha256 }));
     try {
       for (const doc of docs) {
         const sha256 = sha256Json(doc.body);
@@ -294,14 +289,7 @@ export class GoogleDriveStore implements DocumentStore {
       this.catalog = next;
       this.catalogEtag = updated.etag;
       for (const id of previousIds) await this.client.trash(id).catch(() => undefined);
-      return created.map((file) => ({
-        path: file.path,
-        schemaVersion: file.schemaVersion,
-        kind: file.kind,
-        body: file.body,
-        revision: `${next.generation}:${file.sha256}`,
-        sha256: file.sha256,
-      }));
+      return stored(next.generation);
     } catch (err) {
       // A lost response can still have committed. Trust the catalog if it already names these checksums.
       try {
@@ -311,16 +299,7 @@ export class GoogleDriveStore implements DocumentStore {
         throw new StorageUnavailableError("Google Drive didn't save the records.");
       }
       const committed = created.every((file) => this.catalog.entries[file.path]?.sha256 === file.sha256 && this.catalog.entries[file.path]?.fileId === file.fileId);
-      if (committed) {
-        return created.map((file) => ({
-          path: file.path,
-          schemaVersion: file.schemaVersion,
-          kind: file.kind,
-          body: file.body,
-          revision: `${this.catalog.generation}:${file.sha256}`,
-          sha256: file.sha256,
-        }));
-      }
+      if (committed) return stored(this.catalog.generation);
       for (const file of created) await this.client.trash(file.fileId).catch(() => undefined);
       if (err instanceof StorageConflictError) throw err;
       if (err instanceof DriveStatusError && err.status === 412) throw new StorageConflictError();

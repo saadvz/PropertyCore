@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 
 interface SqliteDb {
   exec(sql: string): void;
-  prepare(sql: string): { run(...args: (string | null)[]): unknown; get(...args: string[]): unknown; all(): unknown[] };
+  prepare(sql: string): { run(...args: (string | null)[]): unknown; get(...args: string[]): unknown };
   close(): void;
 }
 
@@ -54,16 +54,6 @@ export function readSlice(backupPath: string, tenantId: string): string | undefi
   try {
     const row = db.prepare("SELECT body FROM tenant_slice WHERE tenant_id = ?").get(tenantId) as { body?: string } | undefined;
     return typeof row?.body === "string" ? row.body : undefined;
-  } finally {
-    db.close();
-  }
-}
-
-export function listSlices(backupPath: string): string[] {
-  const db = openDb(backupPath, true);
-  try {
-    const rows = db.prepare("SELECT tenant_id FROM tenant_slice").all() as { tenant_id?: string }[];
-    return rows.flatMap((row) => (typeof row.tenant_id === "string" ? [row.tenant_id] : []));
   } finally {
     db.close();
   }

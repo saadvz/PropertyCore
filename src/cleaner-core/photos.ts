@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { calendarUrlAllowed } from "../hub/fetchLimits";
+import { basicAuth, cleanerTwilioLogin } from "./liveSms";
 
 /**
  * The cleaner's photos from MMS, so Grok can look at them. Each photo is downloaded once from Twilio
@@ -176,10 +177,9 @@ export async function downloadPhoto(media: InboundMedia, fetchImpl: PhotoFetch, 
   if (!ext) return undefined;
   const grouped = media.url.startsWith(CONVERSATION_MEDIA);
   if (!grouped && !media.url.startsWith(TWILIO_MEDIA)) return undefined;
-  const accountSid = env.CLEANER_CORE_TWILIO_ACCOUNT_SID?.trim();
-  const authToken = env.CLEANER_CORE_TWILIO_AUTH_TOKEN?.trim();
-  if (!accountSid || !authToken) return undefined;
-  const basic = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`;
+  const login = cleanerTwilioLogin(env);
+  if (!login) return undefined;
+  const basic = basicAuth(login);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MAX_PHOTO_MS);
   try {
@@ -253,23 +253,6 @@ export function dropPhotos(root: string, id: string): void {
   if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 }
 
-/** Downloads and keeps one MMS photo for a job. True when it was saved. */
-export async function savePhoto(root: string, jobId: string, media: InboundMedia, fetchImpl: PhotoFetch, env: NodeJS.ProcessEnv): Promise<boolean> {
-  if (photoCount(root, jobId) >= MAX_JOB_PHOTOS) return false;
-  const photo = await downloadPhoto(media, fetchImpl, env);
-  return photo ? storePhoto(root, jobId, photo) : false;
-}
-
-/** Downloads one MMS's photos side by side, then keeps them in order. Returns how many were saved. */
-export async function savePhotos(root: string, jobId: string, media: readonly InboundMedia[], fetchImpl: PhotoFetch, env: NodeJS.ProcessEnv): Promise<number> {
-  const room = MAX_JOB_PHOTOS - photoCount(root, jobId);
-  if (room <= 0) return 0;
-  const downloads = await Promise.all(media.slice(0, room).map((item) => downloadPhoto(item, fetchImpl, env)));
-  let saved = 0;
-  for (const photo of downloads) if (photo && storePhoto(root, jobId, photo)) saved += 1;
-  return saved;
-}
-
 function sign(key: Buffer, folder: string, n: number, expiry: number): Buffer {
   return createHmac("sha256", key).update(`${folder}|${n}|${expiry}`).digest();
 }
@@ -323,7 +306,6 @@ export function servePhoto(root: string, token: string, key: Buffer | undefined,
 export function prunePhotos(root: string, jobs: readonly { id: string; doneAt?: string }[], now: Date): void {
   for (const job of jobs) {
     if (!job.doneAt || now.getTime() - Date.parse(job.doneAt) < PHOTO_KEEP_MS) continue;
-    const dir = join(photosDir(root), photoFolder(job.id));
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    dropPhotos(root, job.id);
   }
 }

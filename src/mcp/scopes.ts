@@ -95,7 +95,7 @@ export function knownOperatorTool(name: string): boolean {
 
 type ScopeContext = { installation?: Installation; caller?: { clientId?: string } } | undefined;
 
-function catalog(ctx: ScopeContext): OperatorTool[] {
+export function catalog(ctx: ScopeContext): OperatorTool[] {
   return hostedResetToolVisible(ctx) ? [...OPERATOR_TOOLS, ...HOSTED_ADMIN_TOOLS] : [...OPERATOR_TOOLS];
 }
 

@@ -4,15 +4,11 @@ import { join } from "node:path";
 import { cleaningUpdateEvent } from "../alerts/operatorEvents";
 import { parsePhone } from "../core/phone";
 import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
-
-/** The two services a parked touring account has run: touring now, and cleaning before the move to properties. */
-type ServiceName = "touring" | "cleaning";
 import { touringAccountContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { isMedicalEmergency, isPlainLanguageStop, keywordOf } from "../intent/ruleBased";
 import { isInjuryReport } from "../cleaner-core/injury";
 import { normalize } from "../intent/normalize";
-import { PropertyWorkspace } from "../setup/workspace";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { touringSinkFor } from "./touringAlerts";
 import { readHostTexts, textHost, writeHostTexts } from "./hostTexts";
@@ -20,9 +16,12 @@ import { readHostTexts, textHost, writeHostTexts } from "./hostTexts";
 /**
  * Rules that hold for a number whatever service it runs. A phone that texted STOP stays opted out of
  * both services until it texts START; each service still handles the STOP itself. A phone the
- * inactive service knows (its host, cleaner, or past visitors) gets no reply from the active one, and
+ * inactive service knows (its host or cleaner) gets no reply from the active one, and
  * the host is told once.
  */
+
+/** The two services a parked touring account has run: touring now, and cleaning before the move to properties. */
+type ServiceName = "touring" | "cleaning";
 
 /** STOP, as both services read it, except a bare "cancel": on touring that cancels a tour. */
 export function isStopText(text: string): boolean {
@@ -86,18 +85,6 @@ function knownToCleaning(h: HostedCleaner, tenant: Tenant, phone: string): Promi
   return liveDeskFor(ctx.root, ctx.env, () => h.now()).knownPhones().then((phones) => phones.includes(phone));
 }
 
-/** Visitors in the tenant's touring records. Read from its folder: its process doesn't run while touring is off. */
-function knownToTouring(h: HostedCleaner, tenant: Tenant, phone: string): boolean {
-  const root = join(tenantFolder(h.dataRoot, tenant.id), "tour-core");
-  if (!existsSync(root)) return false;
-  try {
-    const ws = new PropertyWorkspace(root);
-    return ws.list().some(({ config }) => ws.listTours(config.property.id).some((tour) => parsePhone(tour.visitorPhone ?? "") === phone));
-  } catch {
-    return false;
-  }
-}
-
 const NOTICE = (inactive: ServiceName, active: ServiceName) => `Someone from your ${inactive} setup texted this number, which is set up for ${active} now. They didn't get a reply.`;
 
 /** Notes for a touring tenant's host that the shared service keeps and adds to touring's get_state. */
@@ -120,7 +107,7 @@ export class ServiceNotices {
   }
 
   /** True the first time `key` is told; false after. */
-  tellOnce(tenantId: string, key: string, notice?: string): boolean {
+  tellOnce(tenantId: string, key: string, notice: string): boolean {
     const doc = this.read(tenantId);
     if (doc.told.includes(key)) return false;
     writeJsonAtomic(this.file(tenantId), { notices: notice ? [...doc.notices, notice] : doc.notices, told: [...doc.told, key] });
@@ -151,7 +138,7 @@ export async function screenText(h: HostedCleaner, tenant: Tenant, fields: Recor
   // each service answers those itself, including the 911 path.
   if (keywordOf(body) === "help" || isInjuryReport(body) || isMedicalEmergency(body)) return "route";
   // The touring host's own phone is never a visitor. STOP and START from it switch host texts.
-  const host = active === "touring" && readHostTexts(h, tenant.id).phone === from;
+  const host = readHostTexts(h, tenant.id).phone === from;
   if (isStopText(body)) {
     optOuts.stop(tenant.id, from);
     return host ? "drop" : "route";
@@ -170,7 +157,7 @@ export async function screenText(h: HostedCleaner, tenant: Tenant, fields: Recor
     return "drop";
   }
   const inactive: ServiceName = "cleaning";
-  const known = inactive === "cleaning" ? await knownToCleaning(h, tenant, from) : knownToTouring(h, tenant, from);
+  const known = await knownToCleaning(h, tenant, from);
   if (!known) return "route";
   h.log(`A text reached ${tenant.id} from someone in its ${inactive} setup. Nothing was sent.`);
   await tellHost(h, tenant, inactive, active, from);

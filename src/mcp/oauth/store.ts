@@ -72,6 +72,9 @@ function wordingFromRegistration(info: { software_id?: string; redirect_uris?: s
   return undefined;
 }
 
+/** Not past its hard end at `t`, and its access or refresh token still works then. */
+const liveAt = (g: Grant, t: number) => g.expiresAt > t && (g.accessExpiresAt > t || (g.refreshExpiresAt ?? 0) > t);
+
 export class OAuthGrantStore {
   constructor(
     private readonly runtime: RuntimeStore,
@@ -86,7 +89,7 @@ export class OAuthGrantStore {
 
   private write(doc: Doc): void {
     const t = this.now();
-    doc.grants = doc.grants.filter((g) => g.expiresAt > t && (g.accessExpiresAt > t || (g.refreshExpiresAt ?? 0) > t));
+    doc.grants = doc.grants.filter((g) => liveAt(g, t));
     this.runtime.put("oauth", KEY, doc);
   }
 
@@ -109,7 +112,7 @@ export class OAuthGrantStore {
     const doc = this.read();
     const t = this.now();
     const live = doc.grants
-      .filter((g) => g.clientId === clientId && g.expiresAt > t && (g.accessExpiresAt > t || (g.refreshExpiresAt ?? 0) > t))
+      .filter((g) => g.clientId === clientId && liveAt(g, t))
       .sort((a, b) => (b.refreshedAt ?? b.createdAt) - (a.refreshedAt ?? a.createdAt));
     for (const grant of live) {
       const name = usableClientName(grant.clientName);
@@ -139,8 +142,7 @@ export class OAuthGrantStore {
 
   /** Not past its hard end, and its access or refresh token still works. Expired grants stay in the file until the next write. */
   isLive(grant: Grant): boolean {
-    const t = this.now();
-    return grant.expiresAt > t && (grant.accessExpiresAt > t || (grant.refreshExpiresAt ?? 0) > t);
+    return liveAt(grant, this.now());
   }
 
   get(grantId: string): Grant | undefined {
@@ -183,28 +185,6 @@ export class OAuthGrantStore {
     return true;
   }
 
-  /**
-   * Ends every grant for one MCP path (any origin), access and refresh
-   * tokens alike. Other paths' grants and every registered client stay.
-   * Returns how many were revoked.
-   */
-  revokeForPath(path: string): number {
-    const doc = this.read();
-    const forPath = (g: Grant) => {
-      try {
-        return new URL(g.resource).pathname.replace(/\/+$/, "") === path;
-      } catch {
-        return false;
-      }
-    };
-    const kept = doc.grants.filter((g) => !forPath(g));
-    const revoked = doc.grants.length - kept.length;
-    if (!revoked) return 0;
-    doc.grants = kept;
-    this.write(doc);
-    return revoked;
-  }
-
   /** "Disconnect Grok": every grant and every registered client goes; tokens stop working immediately. */
   revokeAll(): { grants: number; clients: number } {
     const doc = this.read();
@@ -218,7 +198,7 @@ export class OAuthGrantStore {
     const doc = this.read();
     const t = this.now();
     return doc.grants
-      .filter((g) => g.expiresAt > t && (g.accessExpiresAt > t || (g.refreshExpiresAt ?? 0) > t))
+      .filter((g) => liveAt(g, t))
       .map((g) => ({ clientName: g.clientName ?? "An MCP client", connectedAt: g.createdAt, refreshedAt: g.refreshedAt, approvalEndsAt: g.expiresAt, address: g.resource }));
   }
 }

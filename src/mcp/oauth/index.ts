@@ -9,11 +9,10 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 import { createOAuthMetadata } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { RuntimeStore } from "../../storage/runtimeStore";
-import { checkClientMetadata, ClientMetadataError, GROK_LEGACY_REDIRECT_URIS, type RedirectPolicy } from "./clients";
+import { AUTH_METHODS, checkClientMetadata, ClientMetadataError, GROK_LEGACY_REDIRECT_URIS, type RedirectPolicy } from "./clients";
 import { PAGE_HEADERS, problemPage } from "./pages";
-import { TourCoreOAuthProvider, type ApprovalRequestView, type InviteBook, type OAuthEndpoints, type OAuthResource, type ResourceEndpoints } from "./provider";
+import { TourCoreOAuthProvider, type OAuthEndpoints, type OAuthResource, type ProviderOptions, type ResourceEndpoints } from "./provider";
 import { hashSecret, OAuthGrantStore } from "./store";
-import type { CleanerAssistant } from "../../cleaner-core/assistant";
 
 export { CLEANER_SCOPE, endpointsFor, OPERATOR_SCOPE, type OAuthEndpoints, type OAuthResource, type ResourceEndpoints } from "./provider";
 export { OAuthGrantStore } from "./store";
@@ -30,7 +29,6 @@ export { OAuthGrantStore } from "./store";
  * disconnecting Grok.
  */
 
-const AUTH_METHODS = ["none", "client_secret_post", "client_secret_basic"];
 export const OAUTH_PUBLIC_PATHS = [
   "/.well-known/oauth-protected-resource",
   "/.well-known/oauth-authorization-server",
@@ -44,28 +42,18 @@ export const isOAuthPublicPath = (path: string, paths: string[]) =>
   OAUTH_PUBLIC_PATHS.includes(path) || paths.some((p) => path === `/.well-known/oauth-protected-resource${p}`) || REQUEST_PATH.test(path);
 export const isOAuthLocalPath = (path: string) => path === "/api/grok" || path.startsWith("/api/grok/");
 
-export interface McpOAuthOptions {
+/**
+ * The provider's options, less the two this class builds, plus its own. The constructor passes on
+ * every option it doesn't take out by name, so a new option only this class reads goes in that list.
+ */
+export interface McpOAuthOptions extends Omit<ProviderOptions, "store" | "endpoints"> {
   runtime: RuntimeStore;
   /** Every protected MCP path. The first is the default: the bare origin and the root metadata name it. */
   resources: OAuthResource[];
   /** One resource path's addresses. Undefined without a public address. */
   endpoints: (path: string) => OAuthEndpoints | undefined;
-  redirectPolicy: () => RedirectPolicy;
-  now?: () => number;
-  fetchClientMetadata?: (clientId: string) => Promise<unknown>;
-  onApprovalRequest?: (request: ApprovalRequestView) => void;
-  tenantPolicy?: (clientId: string, resourcePath: string) => { allowed: true } | { allowed: false; message: string };
-  onOwnerApproved?: (clientId: string, resourcePath: string) => void;
-  approvalPlace?: () => "computer" | "hosted";
-  publicApproval?: (clientId: string, resourcePath: string) => boolean;
-  hostedClaimed?: (resourcePath: string) => boolean;
-  /** Which chat Cleaner Core's approval page names. Unset is Grok. */
-  cleanerAssistant?: () => CleanerAssistant;
-  /** Multi-tenant Cleaner Core: Cleaner Core approvals need an invite code. */
-  invites?: InviteBook;
   /** Extra line when a known legacy callback is refused. Undefined keeps the local-testing hint. */
   legacyCompatNote?: () => string | undefined;
-  log?: (line: string) => void;
   /** Passed to the SDK handlers' express-rate-limit. False turns it off (tests only). */
   rateLimit?: false;
 }
@@ -75,6 +63,10 @@ type GateRequest = Request & { [AUTH_DONE]?: (auth: AuthInfo | undefined) => voi
 
 const oauthError = (res: Response, status: number, error: string, description: string) =>
   res.status(status).set("Cache-Control", "no-store").json({ error, error_description: description });
+
+/** The connect page's answer to a phone code or an approval: { ok: true }, or 403 with the refusal. */
+const approvalAnswer = (res: Response, result: { ok: true } | { ok: false; message: string }) =>
+  res.status(result.ok ? 200 : 403).set("Cache-Control", "no-store").json(result.ok ? { ok: true } : { ok: false, error: { message: result.message } });
 
 /** RFC 6749 §2.3.1: form-encoded credentials in the Basic header. */
 const formDecode = (s: string) => decodeURIComponent(s.replace(/\+/g, " "));
@@ -124,22 +116,9 @@ export class McpOAuth {
     this.log = options.log ?? (() => {});
     this.store = new OAuthGrantStore(options.runtime, options.now);
     if (!options.resources.length) throw new Error("McpOAuth needs at least one protected resource.");
-    this.provider = new TourCoreOAuthProvider({
-      store: this.store,
-      endpoints: () => this.endpoints(),
-      redirectPolicy: options.redirectPolicy,
-      now: options.now,
-      fetchClientMetadata: options.fetchClientMetadata,
-      onApprovalRequest: options.onApprovalRequest,
-      tenantPolicy: options.tenantPolicy,
-      onOwnerApproved: options.onOwnerApproved,
-      approvalPlace: options.approvalPlace,
-      publicApproval: options.publicApproval,
-      hostedClaimed: options.hostedClaimed,
-      ...(options.cleanerAssistant ? { cleanerAssistant: options.cleanerAssistant } : {}),
-      ...(options.invites ? { invites: options.invites } : {}),
-      log: this.log,
-    });
+    // The provider takes everything but this class's own options.
+    const { runtime: _runtime, resources: _resources, endpoints: _endpoints, legacyCompatNote: _legacyCompatNote, rateLimit: _rateLimit, ...shared } = options;
+    this.provider = new TourCoreOAuthProvider({ ...shared, store: this.store, endpoints: () => this.endpoints(), log: this.log });
     this.local = this.buildLocal();
   }
 
@@ -175,8 +154,8 @@ export class McpOAuth {
       ...sdkMetadata,
       // No trailing slash: this exact string is the issuer clients compare `iss` against.
       issuer: ep.issuer,
-      token_endpoint_auth_methods_supported: AUTH_METHODS,
-      revocation_endpoint_auth_methods_supported: AUTH_METHODS,
+      token_endpoint_auth_methods_supported: [...AUTH_METHODS],
+      revocation_endpoint_auth_methods_supported: [...AUTH_METHODS],
       client_id_metadata_document_supported: true,
       authorization_response_iss_parameter_supported: true,
     };
@@ -236,8 +215,7 @@ export class McpOAuth {
     });
     app.post("/oauth/requests/:id/phone-code", express.json({ limit: "4kb" }), async (req, res) => {
       const matchCode = typeof req.body?.matchCode === "string" ? req.body.matchCode : "";
-      const result = await provider.sendPhoneCode(String(req.params.id), matchCode, req.body?.phone);
-      res.status(result.ok ? 200 : 403).set("Cache-Control", "no-store").json(result.ok ? { ok: true } : { ok: false, error: { message: result.message } });
+      approvalAnswer(res, await provider.sendPhoneCode(String(req.params.id), matchCode, req.body?.phone));
     });
     app.post("/oauth/requests/:id/approve", express.json({ limit: "4kb" }), async (req, res) => {
       if (req.headers.authorization) {
@@ -249,24 +227,14 @@ export class McpOAuth {
       const accountMode = req.body?.signIn && typeof req.body.signIn === "object" ? "sign-in" : req.body?.signUp && typeof req.body.signUp === "object" ? "sign-up" : undefined;
       if (accountMode) {
         const fields = (accountMode === "sign-in" ? req.body.signIn : req.body.signUp) as Record<string, unknown>;
-        const result = await provider.approveWithAccount(String(req.params.id), matchCode, accountMode, fields, req.body.service);
-        res.status(result.ok ? 200 : 403).set("Cache-Control", "no-store").json(result.ok ? { ok: true } : { ok: false, error: { message: result.message } });
+        approvalAnswer(res, await provider.approveWithAccount(String(req.params.id), matchCode, accountMode, fields));
         return;
       }
       if (typeof req.body?.inviteCode === "string") {
-        const result = provider.approveWithInvite(String(req.params.id), matchCode, req.body.inviteCode, req.body.service);
-        if (!result.ok) {
-          res.status(403).set("Cache-Control", "no-store").json({ ok: false, error: { message: result.message } });
-          return;
-        }
-        res.set("Cache-Control", "no-store").json({ ok: true });
+        approvalAnswer(res, provider.approveWithInvite(String(req.params.id), matchCode, req.body.inviteCode));
         return;
       }
-      if (!provider.approveFromBrowser(String(req.params.id), matchCode)) {
-        res.status(403).set("Cache-Control", "no-store").json({ ok: false, error: { message: "That connection can't be approved from here." } });
-        return;
-      }
-      res.set("Cache-Control", "no-store").json({ ok: true });
+      approvalAnswer(res, provider.approveFromBrowser(String(req.params.id), matchCode) ? { ok: true } : { ok: false, message: "That connection can't be approved from here." });
     });
     app.get("/oauth/requests/:id/continue", (req, res) => {
       const id = String(req.params.id);

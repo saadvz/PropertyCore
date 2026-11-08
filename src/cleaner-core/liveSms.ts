@@ -2,11 +2,11 @@ import { parsePhone } from "../core/phone";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { twilioHttpClient, type TwilioClient } from "../messaging/twilio/client";
 import { GroupNotConfirmed, type RefusedPhone } from "./groupThread";
+import { isOn } from "./flag";
 
 /** Off unless CLEANER_CORE_LIVE_SMS is exactly "1" or "true". */
 export function liveSmsOn(env: NodeJS.ProcessEnv): boolean {
-  const raw = env.CLEANER_CORE_LIVE_SMS?.trim().toLowerCase();
-  return raw === "1" || raw === "true";
+  return isOn(env.CLEANER_CORE_LIVE_SMS);
 }
 
 /**
@@ -80,12 +80,24 @@ export function setCleanerTwilioClient(client: TwilioClient | undefined): void {
   clientOverride = client;
 }
 
-export function cleanerTwilioClient(env: NodeJS.ProcessEnv): TwilioClient {
-  if (clientOverride) return clientOverride;
+/** Cleaner Core's own Twilio login, trimmed. Undefined unless both parts are set. */
+export function cleanerTwilioLogin(env: NodeJS.ProcessEnv): { accountSid: string; authToken: string } | undefined {
   const accountSid = env.CLEANER_CORE_TWILIO_ACCOUNT_SID?.trim();
   const authToken = env.CLEANER_CORE_TWILIO_AUTH_TOKEN?.trim();
-  if (!accountSid || !authToken) throw new Error("not sent");
-  return twilioHttpClient({ accountSid, authToken });
+  if (!accountSid || !authToken) return undefined;
+  return { accountSid, authToken };
+}
+
+/** The Basic Authorization header for a Twilio login. */
+export function basicAuth(login: { accountSid: string; authToken: string }): string {
+  return `Basic ${Buffer.from(`${login.accountSid}:${login.authToken}`).toString("base64")}`;
+}
+
+export function cleanerTwilioClient(env: NodeJS.ProcessEnv): TwilioClient {
+  if (clientOverride) return clientOverride;
+  const login = cleanerTwilioLogin(env);
+  if (!login) throw new Error("not sent");
+  return twilioHttpClient(login);
 }
 
 export const CLEANER_PIN_STATUS_PATH = "/webhooks/twilio/cleaner-core/status";
@@ -206,7 +218,7 @@ export async function sendLiveGroup(
   }
   // The group is confirmed now. A failed post may still have reached everyone, so it is a plain
   // failure for review, never a group that falls back to one-to-one texts.
-  const message = await call(api, "POST", conversationPath(conversationSid, "Messages"), { Body: input.body, Author: CLEANER_GROUP_IDENTITY });
+  const message = await call(api, conversationPath(conversationSid, "Messages"), { Body: input.body, Author: CLEANER_GROUP_IDENTITY });
   if (!message.sid) throw new Error("not sent");
   // The first text in a new group takes longer to reach phones, so the next one waits for it.
   const pause = made ? newGroupPauseMs() : 0;
@@ -215,16 +227,15 @@ export async function sendLiveGroup(
 }
 
 function groupApi(env: NodeJS.ProcessEnv): GroupApi | undefined {
-  const accountSid = env.CLEANER_CORE_TWILIO_ACCOUNT_SID?.trim();
-  const authToken = env.CLEANER_CORE_TWILIO_AUTH_TOKEN?.trim();
-  if (!accountSid || !authToken) return undefined;
-  return { fetchImpl: groupFetch ?? fetch, auth: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}` };
+  const login = cleanerTwilioLogin(env);
+  if (!login) return undefined;
+  return { fetchImpl: groupFetch ?? fetch, auth: basicAuth(login) };
 }
 
 /** True when the conversation is our group texting conversation with exactly these phones. Missing reads as false. */
 async function sameGroup(api: GroupApi, conversationSid: string, audience: string[], from: string): Promise<boolean> {
   // A closed or inactive conversation takes no posts, so it is never reused.
-  const res = await request(api, "GET", `${CONVERSATIONS_ROOT}/Conversations/${encodeURIComponent(conversationSid)}`);
+  const res = await request(api, "GET", conversationUrl(conversationSid));
   if (res?.status === 404) return false;
   if (!res?.ok) throw new GroupNotConfirmed(conversationSid);
   const conversation = (await res.json().catch(() => undefined)) as { state?: string } | undefined;
@@ -246,7 +257,7 @@ async function sameGroup(api: GroupApi, conversationSid: string, audience: strin
 async function makeGroup(api: GroupApi, audience: string[], from: string, hookUrl: string): Promise<string> {
   let created: { sid?: string };
   try {
-    created = await call(api, "POST", `${CONVERSATIONS_ROOT}/Conversations`, { FriendlyName: "Cleaning group" });
+    created = await call(api, `${CONVERSATIONS_ROOT}/Conversations`, { FriendlyName: "Cleaning group" });
   } catch {
     throw new GroupNotConfirmed();
   }
@@ -254,16 +265,16 @@ async function makeGroup(api: GroupApi, audience: string[], from: string, hookUr
   if (!sid) throw new GroupNotConfirmed();
   let refused: RefusedPhone | undefined;
   try {
-    await call(api, "POST", conversationPath(sid, "Webhooks"), {
+    await call(api, conversationPath(sid, "Webhooks"), {
       Target: "webhook",
       "Configuration.Url": hookUrl,
       "Configuration.Method": "POST",
       "Configuration.Filters": "onMessageAdded",
     });
-    await call(api, "POST", conversationPath(sid, "Participants"), { Identity: CLEANER_GROUP_IDENTITY, "MessagingBinding.ProjectedAddress": from });
+    await call(api, conversationPath(sid, "Participants"), { Identity: CLEANER_GROUP_IDENTITY, "MessagingBinding.ProjectedAddress": from });
     for (const phone of audience) {
       try {
-        await call(api, "POST", conversationPath(sid, "Participants"), { "MessagingBinding.Address": phone });
+        await call(api, conversationPath(sid, "Participants"), { "MessagingBinding.Address": phone });
       } catch (err) {
         // Twilio answered and said no, so the host can be told which number and why.
         if (err instanceof TwilioRefusal) refused = { phone, ...(err.code !== undefined ? { code: err.code } : {}), ...(err.detail ? { message: err.detail } : {}) };
@@ -292,7 +303,7 @@ export async function deleteLiveGroup(env: NodeJS.ProcessEnv, conversationSid: s
   if (!liveSmsOn(env)) return false;
   const api = groupApi(env);
   if (!api) return false;
-  const res = await request(api, "DELETE", `${CONVERSATIONS_ROOT}/Conversations/${encodeURIComponent(conversationSid)}`);
+  const res = await request(api, "DELETE", conversationUrl(conversationSid));
   if (res && (res.ok || res.status === 404)) return true;
   return emptyConversation(api, conversationSid).then(
     () => true,
@@ -345,8 +356,12 @@ async function listMembers(api: GroupApi, conversationSid: string): Promise<Memb
   return found;
 }
 
+function conversationUrl(conversationSid: string): string {
+  return `${CONVERSATIONS_ROOT}/Conversations/${encodeURIComponent(conversationSid)}`;
+}
+
 function conversationPath(conversationSid: string, tail: string): string {
-  return `${CONVERSATIONS_ROOT}/Conversations/${encodeURIComponent(conversationSid)}/${tail}`;
+  return `${conversationUrl(conversationSid)}/${tail}`;
 }
 
 /** One API call. Undefined when Twilio couldn't be reached. */
@@ -382,8 +397,8 @@ async function refusal(res: Response): Promise<TwilioRefusal> {
 }
 
 /** A POST whose reply carries a sid. Any failure throws, a TwilioRefusal when Twilio answered. */
-async function call(api: GroupApi, method: string, url: string, fields: Record<string, string>): Promise<{ sid?: string }> {
-  const res = await request(api, method, url, fields);
+async function call(api: GroupApi, url: string, fields: Record<string, string>): Promise<{ sid?: string }> {
+  const res = await request(api, "POST", url, fields);
   if (!res) throw new Error("not sent");
   if (!res.ok) throw await refusal(res);
   return ((await res.json().catch(() => ({}))) ?? {}) as { sid?: string };

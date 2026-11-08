@@ -83,7 +83,7 @@ function poolLines(pool: PoolSummary, link = true): string {
   return `${alert}<p>Number pool: ${pool.ready} ready, ${pool.resting} resting, ${pool.inUse} in use.${link ? ' <a href="/admin/pool">Manage the pool</a>' : ""}</p>`;
 }
 
-export function tenantsPage(tenants: Tenant[], csrf: string, error?: string, healthOf: (t: Tenant) => TenantHealth = () => NO_HEALTH, pool?: PoolSummary): string {
+export function tenantsPage(tenants: Tenant[], csrf: string, error: string | undefined, healthOf: (t: Tenant) => TenantHealth = () => NO_HEALTH, pool: PoolSummary): string {
   const rows = tenants
     .map((t) => {
       const primary = t.connections.find((c) => c.grantId === t.primaryGrantId);
@@ -95,7 +95,7 @@ export function tenantsPage(tenants: Tenant[], csrf: string, error?: string, hea
     "Cleaner Core tenants",
     `      <h1>Cleaner Core tenants</h1>
       ${errorLine(error)}
-      ${pool ? poolLines(pool) : ""}
+      ${poolLines(pool)}
       <table>
         <tr><th>Host</th><th>Number</th><th>Properties</th><th>Touring process</th><th>Alerts</th><th>Primary</th><th>Connections</th><th>Last activity</th><th>Status</th></tr>
         ${rows || '<tr><td colspan="9">No tenants yet.</td></tr>'}
@@ -140,7 +140,7 @@ function propertiesSection(t: Tenant, base: string, csrf: string, health: Tenant
       </table>`;
 }
 
-export function tenantPage(t: Tenant, csrf: string, error?: string, health: TenantHealth = NO_HEALTH, touringOffered = false): string {
+export function tenantPage(t: Tenant, csrf: string, error: string | undefined, health: TenantHealth, touringOffered: boolean): string {
   const base = `/admin/tenants/${t.id}`;
   const connections = t.connections
     .map((c) => {

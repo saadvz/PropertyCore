@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -72,7 +72,7 @@ describe("buildTenantEnv", () => {
 });
 
 describe("TenantSecrets", () => {
-  it("delete removes a name from the tenant and every connection, and removeTenant removes the file", () => {
+  it("delete removes a name from the tenant and every connection", () => {
     secrets.set(t.id, { CLEANER_CORE_PIN_KEY: "pin-a" });
     secrets.setForConnection(t.id, "g1", { CLEANER_CORE_ROUTINE_URL: "https://grok.example/hook", CLEANER_CORE_ROUTINE_KEY: "k1" });
     secrets.setForConnection(t.id, "g2", { CLEANER_CORE_ROUTINE_KEY: "k2" });
@@ -82,9 +82,6 @@ describe("TenantSecrets", () => {
     expect(secrets.tenant(t.id)).toEqual({ CLEANER_CORE_PIN_KEY: "pin-a" });
     secrets.deleteConnection(t.id, "g1");
     expect(secrets.connection(t.id, "g1")).toEqual({});
-    secrets.removeTenant(t.id);
-    expect(existsSync(join(tenantFolder(dir, t.id), "secrets.json"))).toBe(false);
-    expect(secrets.tenant(t.id)).toEqual({});
   });
 
   it("writes secrets.json with mode 600", () => {

@@ -165,7 +165,7 @@ export class PortableBackups {
     const due = this.due();
     const failed = !!meta?.lastFailureAt && (!meta.lastBackupConfirmedInDriveAt || meta.lastFailureAt > meta.lastBackupConfirmedInDriveAt);
     const connected = !!meta?.destination;
-    const portable = connected ? "Google Drive connected" : meta?.declinedAt ? "not connected" : "not connected";
+    const portable = connected ? "Google Drive connected" : "not connected";
     return {
       summary: `Operational records: Stored by hosted Tour Core. Portable backup: ${portable}.`,
       operationalStore: "HOSTED_P0_VOLUME",

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { assertNoSecrets, type InstallationManifest } from "./manifest";
+import { assertNoSecrets } from "./manifest";
 import { releaseHostedOwner } from "./hostedOwner";
 import type { Installation } from "./installation";
 import { SETTING_NAMES, type SettingName } from "./secretStore";
@@ -85,7 +85,7 @@ export function hostedDemoResetHistoryPath(root: string): string {
 
 /** Bound to the confirmation code. Secret values are not part of it. */
 export function hostedDemoFingerprint(inst: Installation): string {
-  const manifest = safeManifest(inst);
+  const manifest = inst.files.readableManifest();
   const state = inst.files.state();
   const files = collectCanonical(inst.root)
     .map((file) => `${file.path}:${file.sha256}`)
@@ -138,14 +138,6 @@ export async function removeOwnedSendblueWebhook(env: SendblueEnv, ownedUrls: st
   }
 }
 
-function safeManifest(inst: Installation): InstallationManifest | undefined {
-  try {
-    return inst.files.manifest();
-  } catch {
-    return undefined;
-  }
-}
-
 function clearBusinessFiles(root: string): void {
   rmSync(join(root, "properties"), { recursive: true, force: true });
   rmSync(join(root, "install", "storage-audit.json"), { force: true });
@@ -194,7 +186,6 @@ export async function performHostedDemoReset(inst: Installation, options: { forg
   inst.secrets.delete(INSTALLATION_SETTINGS, new Date(inst.now()));
   releaseHostedOwner(inst);
   inst.grants.revokeAll();
-  inst.approvals.discard();
 
   const now = new Date(inst.now());
   const { previousId, manifest: next } = inst.files.freshHostedIdentity(now);

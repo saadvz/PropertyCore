@@ -1,5 +1,6 @@
 import { isScratchTestNumber } from "./scratch";
-import { SCRATCH_TENANTS } from "./tenants";
+import { isTenantPhone, SCRATCH_TENANTS } from "./tenants";
+import { schedulerOptInBody } from "./cleanerTexts";
 
 export const PROPERTY_PROMPT =
   "What should I call this property? Send the nickname, the street address, the time zone, the usual checkout time, the usual check-in time, and the host phone, separated by |.";
@@ -161,7 +162,7 @@ export function activatedPrompt(session: OnboardingSession): string {
 }
 
 export function optInBody(session: OnboardingSession): string {
-  return `Hi, this is ${session.nickname}'s cleaning scheduler for ${session.address}. Reply YES to get cleaning texts, or STOP to opt out.`;
+  return schedulerOptInBody(session.nickname, session.address);
 }
 
 function answerProperty(session: OnboardingSession, text: string): OnboardingEffect {
@@ -318,5 +319,5 @@ function clockOf(text: string): string | undefined {
 }
 
 function belongsToKnownTenant(phone: string): boolean {
-  return SCRATCH_TENANTS.some((tenant) => phone === tenant.ownerPhone || phone === tenant.cleanerPhone || phone === tenant.unapprovedPhone);
+  return SCRATCH_TENANTS.some((tenant) => isTenantPhone(tenant, phone));
 }

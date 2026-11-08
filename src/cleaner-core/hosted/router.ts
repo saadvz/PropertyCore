@@ -1,4 +1,4 @@
-import { hubFor } from "../../hub/hub";
+import { hubFor, type Hub } from "../../hub/hub";
 import { hubCalendarCode } from "../../hub/paths";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
@@ -14,20 +14,16 @@ import {
   CLEANER_TWILIO_STATUS_PATH,
   doorCodeUploadCode,
   handleCleanerAlertUpload,
-  handleCleanerCalendarUpload,
   handleCleanerDoorCodeUpload,
   handleCleanerGroupWebhook,
-  handleCleanerMcpHttp,
   handleCleanerTwilioStatus,
-  handleCleanerTwilioWebhook,
   uploadBody,
   uploadPageOf,
 } from "../http";
-import { drainCleanerAlerts, liveDeskFor } from "../liveDesk";
-import { supplyDesk } from "../../hosted/supplies";
+import { drainCleanerAlerts, liveDeskFor, type LiveDesk } from "../liveDesk";
 import type { DeleteSecrets, SaveSecrets } from "../mcp";
 import { CLEANER_PHOTO_PREFIX, photoKey, servePhoto } from "../photos";
-import { handleCleanerUploadPage, isFormPost } from "../uploadPage";
+import { handleCleanerUploadPage, isFormPost, type UploadPageKind } from "../uploadPage";
 import { isPropertyId, propertyFolder, type Property } from "./properties";
 import { isTenantId, tenantFolder, type Tenant, type TenantRegistry } from "./registry";
 import { screenText } from "../../hosted/crossService";
@@ -270,7 +266,6 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
     h.registry.touch(tenant.id);
     return true;
   }
-  if (tenant.service === "touring") return notFound();
   // The migrated property answers the old /t/<id>/ links; every other property its /t/<id>/p/<pid>/ ones.
   const property = scoped.propertyId ? tenant.properties.find((p) => p.id === scoped.propertyId) : tenant.properties.find((p) => p.legacyPaths);
   if (!property) return notFound();
@@ -281,16 +276,16 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
   return true;
 }
 
-/**
- * A text or Twilio callback for a touring tenant. The signature is checked here, over the address
- * Twilio used. The text is saved first and removed once the touring process took it; while the
- * process is down it waits, and Twilio gets an empty reply either way.
- */
 function signedByTwilio(h: HostedCleaner, r: HostedRequest, rawBody: Buffer, signedUrl: string | undefined): boolean {
   const signature = r.req.headers["x-twilio-signature"];
   return verifyTwilioSignature(h.touring?.authToken(), signedUrl, formParams(rawBody), Array.isArray(signature) ? signature[0] : signature).ok;
 }
 
+/**
+ * A text or Twilio callback for a touring tenant. The signature is checked here, over the address
+ * Twilio used. The text is saved first and removed once the touring process took it; while the
+ * process is down it waits, and Twilio gets an empty reply either way.
+ */
 async function touringText(h: HostedCleaner, r: HostedRequest, tenant: Tenant, rawBody: Buffer, signedUrl: string | undefined): Promise<boolean> {
   const touring = h.touring;
   const authToken = touring?.authToken();
@@ -339,18 +334,7 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
   }
   const page = uploadPageOf(rest);
   if (page && (method === "GET" || (method === "POST" && isFormPost(contentType)))) {
-    const result = await handleCleanerUploadPage({
-      ...page,
-      method,
-      contentType,
-      readBody: () => r.readCapped(ALERT_UPLOAD_MAX_BYTES),
-      env: ctx.env,
-      root: ctx.root,
-      now,
-      saveSecrets: ctx.saveSecrets,
-      multiTenant: { fallback: pageAssistant(h, tenant) },
-    });
-    r.send(result.status, result.headers["Content-Type"] ?? "text/html; charset=utf-8", result.body, { ...result.headers, ...(result.status === 413 ? { Connection: "close" } : {}) });
+    await sendUploadPage(h, r, tenant, ctx, page, contentType, now);
     return true;
   }
   if (method !== "POST") return false;
@@ -367,6 +351,23 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
   return true;
 }
 
+/** A private upload page, or its form post, for one property. A calendar link's page saves through `hub`. */
+async function sendUploadPage(h: HostedCleaner, r: HostedRequest, tenant: Tenant, ctx: TenantContext, link: { kind: UploadPageKind; code: string }, contentType: string, now: () => Date, hub?: Hub): Promise<void> {
+  const result = await handleCleanerUploadPage({
+    ...link,
+    method: r.method,
+    contentType,
+    readBody: () => r.readCapped(ALERT_UPLOAD_MAX_BYTES),
+    env: ctx.env,
+    root: ctx.root,
+    now,
+    saveSecrets: ctx.saveSecrets,
+    multiTenant: { fallback: pageAssistant(h, tenant) },
+    ...(hub ? { hub } : {}),
+  });
+  r.send(result.status, result.headers["Content-Type"] ?? "text/html; charset=utf-8", result.body, { ...result.headers, ...(result.status === 413 ? { Connection: "close" } : {}) });
+}
+
 /**
  * A calendar upload link: Grok's own computer posts JSON, and other chats use the private page. Both
  * save through the property's hub. With cleaning on, Cleaner Core's desk opens first, so its checks
@@ -377,20 +378,7 @@ async function handleHubCalendar(h: HostedCleaner, r: HostedRequest, tenant: Ten
   const hub = hubFor(ctx.root, { now });
   const { method } = r;
   if (method === "GET" || (method === "POST" && isFormPost(contentType))) {
-    const result = await handleCleanerUploadPage({
-      kind: "calendar-link",
-      code,
-      method,
-      contentType,
-      readBody: () => r.readCapped(ALERT_UPLOAD_MAX_BYTES),
-      env: ctx.env,
-      root: ctx.root,
-      now,
-      saveSecrets: ctx.saveSecrets,
-      multiTenant: { fallback: pageAssistant(h, tenant) },
-      hub,
-    });
-    r.send(result.status, result.headers["Content-Type"] ?? "text/html; charset=utf-8", result.body, { ...result.headers, ...(result.status === 413 ? { Connection: "close" } : {}) });
+    await sendUploadPage(h, r, tenant, ctx, { kind: "calendar-link", code }, contentType, now, hub);
     return true;
   }
   if (method !== "POST") return false;
@@ -411,12 +399,7 @@ export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
   if (!tenant || tenant.disabled) return;
   const live = (grantId: string) => h.grantLive(grantId) && tenant.connections.some((c) => c.grantId === grantId);
   // A routine connected through any of the account's properties counts, in the order they were connected.
-  const ids = tenant.properties
-    .filter((p) => p.flows.cleaning.on)
-    .flatMap((p) => {
-      const ctx = propertyContext(h, tenant, p);
-      return liveDeskFor(ctx.root, ctx.env, () => h.now()).routineConnectionIds();
-    });
+  const ids = cleaningDesks(h, tenant).flatMap((desk) => desk.routineConnectionIds());
   const connected = [...new Set(ids)].filter(live);
   const primary = h.registry.primary(tenantId, (grantId) => h.grantLive(grantId));
   if (connected.length === 0 || (primary && connected.includes(primary.grantId))) return;
@@ -432,15 +415,20 @@ export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
 export async function shareRoutine(h: HostedCleaner, tenantId: string): Promise<void> {
   const tenant = h.registry.get(tenantId);
   if (!tenant || tenant.disabled) return;
-  const desks = tenant.properties
+  const desks = cleaningDesks(h, tenant);
+  const ids = [...new Set(desks.flatMap((desk) => desk.routineConnectionIds()))];
+  if (ids.length === 0) return;
+  for (const desk of desks) if (ids.some((id) => !desk.routineConnectionIds().includes(id))) await desk.markRoutineConnected(ids);
+}
+
+/** The desk of each of the account's properties with Cleaner Core on, in the account's order. */
+function cleaningDesks(h: HostedCleaner, tenant: Tenant): LiveDesk[] {
+  return tenant.properties
     .filter((p) => p.flows.cleaning.on)
     .map((p) => {
       const ctx = propertyContext(h, tenant, p);
       return liveDeskFor(ctx.root, ctx.env, () => h.now());
     });
-  const ids = [...new Set(desks.flatMap((desk) => desk.routineConnectionIds()))];
-  if (ids.length === 0) return;
-  for (const desk of desks) if (ids.some((id) => !desk.routineConnectionIds().includes(id))) await desk.markRoutineConnected(ids);
 }
 
 /** Delivers every enabled tenant's waiting wake-ups. One tenant's failure never stops the rest. */

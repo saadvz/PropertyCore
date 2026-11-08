@@ -1,7 +1,7 @@
 import { isFairHousingQuestion, isTourPartyNote, suitabilityBlocksBooking } from "../core/fairHousing";
 import { firstInboundMatch, isSchedulingMenuAnswer } from "../visitor/inboundTextPipeline";
 import { isMoreTimeAsk } from "../core/overstayCopy";
-import { dayReference, namesTourDay, spokenTimes, vagueTimeRequest, type SpokenTime } from "../core/spokenTime";
+import { dayReference, namesTourDay, spokenTimes, vagueTimeRequest, WEEKDAY_WORD as WEEKDAY_TOKEN, type SpokenTime } from "../core/spokenTime";
 import { isGeneralTourHoursQuestion } from "./tourHoursAsk";
 import type { IntentInterpretation, IntentInterpreter, IntentType, InterpretContext, StepAwaiting, StopRef, TourIntent } from "./model";
 import { normalize, numberWord, ordinalWord, stripFiller } from "./normalize";
@@ -475,26 +475,6 @@ const FUNCTION_WORDS = new Set([
   "hmm",
   "next",
 ]);
-
-const WEEKDAY_TOKEN: Record<string, "SUN" | "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT"> = {
-  sunday: "SUN",
-  sun: "SUN",
-  monday: "MON",
-  mon: "MON",
-  tuesday: "TUE",
-  tues: "TUE",
-  tue: "TUE",
-  wednesday: "WED",
-  wed: "WED",
-  thursday: "THU",
-  thurs: "THU",
-  thur: "THU",
-  thu: "THU",
-  friday: "FRI",
-  fri: "FRI",
-  saturday: "SAT",
-  sat: "SAT",
-};
 
 /** A clock, month, ordinal, or number beside a weekday ("Friday at 2", "Fri 3:30", "Friday Oct 2", "the 2nd"). */
 function stripScheduleTokens(t: string): string {

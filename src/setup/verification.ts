@@ -11,15 +11,8 @@ export const NO_FORM_QUESTION =
   "Without a form, anyone who texts can book a tour and get in without telling you who they are. Want to go ahead with no form?";
 
 export const BASIC_FORM_CHOICE = "Basic identity form (recommended)";
-export const NO_FORM_CHOICE = "No form";
-
-export const NO_FORM_WARNING =
-  "Without a form, anyone who texts can book a tour and get in without telling you who they are.";
 
 export const NO_FORM_SUMMARY = "No identity form.";
-
-export const NO_FORM_YES = "Yes, no form";
-export const NO_FORM_KEEP = "Keep the form";
 
 export const WEB_VERIFICATION_HEADING = "Should visitors fill out a short identity form before their tour?";
 export const WEB_VERIFICATION_LEAD = "We recommend it, so you know who's coming in.";
@@ -44,9 +37,7 @@ export function verificationSummaryRows(mode: string | undefined, days: number):
   return [BASIC_FORM_CHOICE, verificationReuseSentence(days)];
 }
 
-/** Older stored modes. Read as the basic identity form. Not a writable choice. */
-export const LEGACY_VERIFICATION_MODES = ["mock", "document-check"] as const;
-
+/** True for the older stored modes (mock, document-check), which are read as the basic identity form. Neither is a writable choice. */
 export function isLegacyVerification(mode: string | undefined): boolean {
   return mode === "mock" || mode === "document-check";
 }
@@ -55,8 +46,4 @@ export function isLegacyVerification(mode: string | undefined): boolean {
 export function presentVerification<T extends { verificationMode: string }>(config: T): T {
   if (!isLegacyVerification(config.verificationMode)) return config;
   return { ...config, verificationMode: "basic-form" };
-}
-
-export function verificationChoiceLabel(mode: string | undefined): string {
-  return mode === "none" ? NO_FORM_CHOICE : BASIC_FORM_CHOICE;
 }

@@ -17,7 +17,6 @@ import { appendUpdate, lastCheckAt, UpdateFeedSink } from "./touringUpdates";
  * events go to the primary chat's routine, or the most recent chat that has one.
  */
 
-export const TOURING_ROUTINE_NAMES = ["TOURING_ROUTINE_URL", "TOURING_ROUTINE_KEY"] as const;
 /** A ChatGPT or Muse connection's "1": its recurring task is connected. Nothing secret. */
 export const TOURING_TASK_NAME = "TOURING_ROUTINE_TASK";
 export const TOURING_ALERT_UPLOAD_PREFIX = "/touring/alert-routine/";
@@ -195,9 +194,9 @@ export function handleTouringAlertUpload(h: HostedCleaner, tenant: Tenant, code:
   return { status: 200, body: { ok: true, message: "Touring alerts are connected." } };
 }
 
-/** The chat whose routine gets the wake: the primary when it has one, else the most recent chat that does. */
 type Routine = { kind: "webhook"; url: string; key: string } | { kind: "task" };
 
+/** The chat whose routine gets the wake: the primary when it has one, else the most recent chat that does. */
 function routineConnection(h: HostedCleaner, tenant: Tenant): ({ grantId: string; assistant: Tenant["connections"][number]["assistant"] } & Routine) | undefined {
   const routine = (grantId: string, assistant: CleanerAssistant): Routine | undefined => {
     const saved = h.secrets.connection(tenant.id, grantId);

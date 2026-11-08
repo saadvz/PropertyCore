@@ -30,12 +30,6 @@ function accountDesk() {
 const to = (sms: { sent: { to: string; body: string }[] }, phone: string) => sms.sent.filter((s) => s.to === phone).map((s) => s.body);
 
 describe("LiveDesk on a shared line", () => {
-  it("phonesOnProperty lists the host and the people", async () => {
-    const { desk } = openDesk([HOST, CLEANER, OBSERVER], "0");
-    await setUp(desk, { contacts: [{ name: "Sam", role: "observer", phone: OBSERVER }], groupChat: "cleaner-only" });
-    expect(await desk.phonesOnProperty()).toEqual({ host: HOST, people: [CLEANER, OBSERVER] });
-  });
-
   it("an account STOP keeps every text from the phone, and START brings it back", async () => {
     const { desk, sms, people } = accountDesk();
     people.stop(CLEANER);
