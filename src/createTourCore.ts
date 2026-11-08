@@ -10,7 +10,6 @@ import type { MessagingCheck } from "./messaging/provider";
 import { usesLocalMessaging } from "./messaging/propertyScope";
 import { createMessagingProvider, currentMessagingInput, resolveMessagingSelection, selectionFromInstallation } from "./messaging/registry";
 import { sendblueConfigured } from "./messaging/sendblue/provider";
-import { sendblueRuntime } from "./messaging/sendblue/runtime";
 import { InMemoryStore, type TourCoreStore } from "./storage/Store";
 import { presentVerification } from "./setup/verification";
 import { BasicFormVerification, NoFormVerification, type VerificationProvider } from "./verification/basicForm";
