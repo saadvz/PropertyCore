@@ -17,8 +17,8 @@ import { type ConfigIssue, type ConfigSection } from "../config/validateConfig";
 import { formatPhone, parsePhone } from "../core/phone";
 import { formatClockTime, friendlyTimeZone, spokenClockTime, WEEKDAYS, type Weekday } from "../core/timezone";
 import { mergeTourWindow, tourWindows, withTourWindows } from "../core/tourWindows";
-import { describeTourDays } from "../operator/tourDayWords";
-import { isApartmentOrCondo, isSingleTourPlace, streetAndUnit, streetLine, unitLabel, visitorSubject } from "../visitor/identity";
+import { DAY_NAME as DAY_LABEL, describeTourDays } from "../operator/tourDayWords";
+import { isApartmentOrCondo, streetAndUnit, streetLine, unitLabel } from "../visitor/identity";
 import { resolveTimeZone, SAME_DAY_HOURS, slugify, tourHoursEndSameDay, zoneForState } from "./parse";
 import { isLegacyVerification, verificationSummaryRows } from "./verification";
 import {
@@ -34,7 +34,7 @@ import {
   type CanonicalAddress,
 } from "./address";
 import { stateForZip, zipStateMismatchQuestion } from "./zipState";
-import { canonicalDoor, canonicalUnitName } from "./normalizeDraft";
+import { canonicalDoor, canonicalUnitName, defaultDoorName as defaultUnitDoorName, guidanceFor } from "./normalizeDraft";
 
 /**
  * Setup actions. Each takes the current draft and returns a new one; nothing
@@ -146,11 +146,6 @@ function requireTimeZone(input: string): string {
 }
 
 // ------------------------------------------------------------------ property
-
-/** How the property is named to visitors and the operator: their own name for it, otherwise the canonical address. */
-export function propertyLabel(property: { address: string; displayName?: string; name?: string }): string {
-  return property.displayName?.trim() || property.address.trim() || property.name?.trim() || "";
-}
 
 const INTERNAL_SPACE_NAME = /^main home$/i;
 
@@ -507,11 +502,6 @@ function cleanFacts(facts: string[]): string[] {
   return [...new Set(cleaned)];
 }
 
-/** The door label setup suggests for a unit, e.g. "Unit 101" -> "Unit 101 Door". */
-export function defaultUnitDoorName(unitName: string): string {
-  return `${unitName.trim()} Door`;
-}
-
 export const VISITOR_HELP_NUMBER_QUESTION =
   "What number can stuck visitors call? Pick one someone answers during tour hours.";
 export const VISITOR_HELP_QUESTION = VISITOR_HELP_NUMBER_QUESTION;
@@ -751,10 +741,6 @@ export function removeUnit(draft: SetupDraft, unitId: string): SetupDraft {
   return next;
 }
 
-export function setUnitSummary(draft: SetupDraft, unitId: string, summary: string): SetupDraft {
-  return setUnitDetails(draft, unitId, { summary });
-}
-
 // -------------------------------------------------------------------- routes
 
 /** Door ids in the order the visitor walks through them. Replaces any existing route for the unit. */
@@ -775,16 +761,6 @@ export function setRoute(draft: SetupDraft, unitId: string, doorIds: string[], o
     stops: doorIds.map((doorId, i) => ({ doorId, guidance: guidanceFor(draft, unit, doorId, i === doorIds.length - 1, directions) })),
   });
   return next;
-}
-
-function guidanceFor(draft: SetupDraft, unit: Unit, doorId: string, isLast: boolean, directions?: string): string {
-  const place = isSingleTourPlace(draft.property) ? visitorSubject(draft.property, unit.name) : unit.name;
-  if (isLast) return `Welcome to ${place}! Take your time, and text me any questions.`;
-  const door = draft.doors.find((d) => d.id === doorId);
-  if (door?.kind === "ENTRANCE") {
-    return `Come on in. ${directions ? `To get to ${place}: ${directions.replace(/[.!]?$/, ".")}` : `Head to ${place}.`}`;
-  }
-  return `Keep going toward ${place}.`;
 }
 
 // ---------------------------------------------------------- hours, policies
@@ -987,9 +963,6 @@ export function reviewSetup(draft: SetupDraft): SetupReview {
   return { sections, issues, canSave: issues.length === 0 };
 }
 
-const DAY_LABEL: Record<Weekday, string> = {
-  MON: "Monday", TUE: "Tuesday", WED: "Wednesday", THU: "Thursday", FRI: "Friday", SAT: "Saturday", SUN: "Sunday",
-};
 const WEEK_ORDER: Weekday[] = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 
 export function describeDays(days: readonly Weekday[]): string {

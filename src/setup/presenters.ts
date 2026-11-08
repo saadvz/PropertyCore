@@ -304,7 +304,6 @@ export function draftView(draft: SetupDraft) {
     dev: { propertyId: draft.property.id, modes: { verification: draft.verificationMode, messaging: draft.messagingMode, storage: draft.storageMode, access: draft.accessMode } },
   };
 }
-export type DraftView = ReturnType<typeof draftView>;
 
 export function readinessView(result: ReadinessResult) {
   return {
