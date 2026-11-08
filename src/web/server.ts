@@ -21,7 +21,6 @@ import { cleanerCoreEnabled, cleanerMultiTenant, supplyCoreOn, tourCoreTenants }
 import type { TouringFront } from "../hosted/serviceTools";
 import type { OperatorServices } from "../operator/services";
 import { DeliveryError } from "../alerts/operatorEvents";
-import { serviceChoices, type ServicePick } from "../hosted/serviceChoice";
 import { deliverTouringEvent, refreshTouringAlerts } from "../hosted/touringAlerts";
 import { buildTouringEnv, touringScratch } from "../hosted/touringEnv";
 import { standDownTouring, TOURING_LIVE_PATH, TOURING_STAND_DOWN_PATH, touringLiveWork } from "../hosted/touringLive";
