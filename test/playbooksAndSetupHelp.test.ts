@@ -609,7 +609,7 @@ describe("setup help", () => {
     }
     for (const phrase of contactPhrases()) expect(page.toLowerCase()).not.toContain(phrase.toLowerCase());
     expect(page).not.toMatch(/sendblue|twilio|photon|durin|main home/i);
-    expect(SETUP_HELP_URL).toBe("https://github.com/saadvz/TourCore/blob/master/docs/setup-help.md");
+    expect(SETUP_HELP_URL).toBe("https://github.com/saadvz/PropertyCore/blob/master/docs/setup-help.md");
     const files = ["src/visitor", "src/core"].flatMap((root) => filesUnder(root)).filter((file) => file.endsWith(".ts"));
     expect(files.length).toBeGreaterThan(0);
     for (const file of files) expect(readFileSync(file, "utf8"), file).not.toContain(SETUP_HELP_URL);
