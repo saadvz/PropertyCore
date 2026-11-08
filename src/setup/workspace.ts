@@ -602,10 +602,6 @@ export class PropertyWorkspace {
     return { json: JSON.stringify(tour.bundle, null, 2) + "\n", csv: auditToCsv(tour.bundle.auditEvents) };
   }
 
-  exportLatest(propertyId: string): { json: string; csv: string } | undefined {
-    return this.exportTour(propertyId);
-  }
-
   /** Folder name for a new visitor conversation's records ("visitor" = browser phone, "text" = real phone). */
   newVisitorTourId(propertyId: string, startedAt: Date, suffix: "visitor" | "text" = "visitor"): string {
     return uniqueTourId(this.toursDir(propertyId), `${stamp(startedAt.toISOString())}_${suffix}`);

@@ -1,5 +1,5 @@
 import type { Door, PropertyType, TourCoreConfig, Unit } from "../config/tourCoreConfig";
-import { isSingleTourPlace, unitLabel, visitorSubject } from "../visitor/identity";
+import { isShortUnitCode, isSingleTourPlace, unitLabel, visitorSubject } from "../visitor/identity";
 import { canonicalizeStreet, formatCanonical, parseUsAddress, titleCasePlace } from "./address";
 
 /**
@@ -30,18 +30,13 @@ function cleanSpace(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
 
-function shortUnitCode(token: string): boolean {
-  if (!/^[a-z0-9]+$/i.test(token)) return false;
-  return /\d/.test(token) || token.length <= 2;
-}
-
 /** "unit a" / "Unit A" / "A" / "4b" → "Unit A" / "Unit 4B". Spelled names stay trimmed. */
 export function canonicalUnitName(name: string, propertyType?: PropertyType): string {
   const trimmed = cleanSpace(name);
   if (!trimmed || propertyType === "SINGLE_FAMILY") return trimmed;
   if (propertyType === "APARTMENT_OR_CONDO") return unitLabel(trimmed);
   const rest = trimmed.replace(/^(unit|apt\.?|apartment|suite)\s+/i, "").replace(/^#\s*/, "").trim();
-  if (rest && !/\s/.test(rest) && shortUnitCode(rest)) return unitLabel(trimmed);
+  if (rest && !/\s/.test(rest) && isShortUnitCode(rest)) return unitLabel(trimmed);
   return trimmed;
 }
 
@@ -80,11 +75,12 @@ export function canonicalDoor(input: { name: string; kind: Door["kind"]; unitNam
   return { name, kind: input.kind };
 }
 
-function defaultDoorName(unitName: string): string {
+/** The door label setup suggests for a unit, e.g. "Unit 101" -> "Unit 101 Door". */
+export function defaultDoorName(unitName: string): string {
   return `${unitName.trim()} Door`;
 }
 
-function guidanceFor(draft: TourCoreConfig, unit: Unit, doorId: string, isLast: boolean, directions?: string): string {
+export function guidanceFor(draft: TourCoreConfig, unit: Unit, doorId: string, isLast: boolean, directions?: string): string {
   const place = isSingleTourPlace(draft.property) ? visitorSubject(draft.property, unit.name) : unit.name;
   if (isLast) return `Welcome to ${place}! Take your time, and text me any questions.`;
   const door = draft.doors.find((item) => item.id === doorId);
