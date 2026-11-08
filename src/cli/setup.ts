@@ -405,7 +405,7 @@ async function editServices(draft: SetupDraft): Promise<SetupDraft> {
   ]);
   io.say("");
   const accessMode = await io.choose("How should doors be opened?", [
-    { label: "Door access demo mode", hint: "no real doors open. Tour Core only asks the door system to unlock a door after its own safety checks pass", value: "durin-mock" as const },
+    { label: "Door access demo mode", hint: "no real doors open. Tour Core only asks the door system to unlock a door after its own safety checks pass", value: "door-demo" as const },
   ]);
   return setServices(draft, { storageMode, messagingMode, accessMode });
 }
