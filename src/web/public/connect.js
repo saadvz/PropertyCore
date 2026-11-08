@@ -48,9 +48,8 @@ async function render() {
   }
   const loaded = await api("GET", `/api/connect?request=${encodeURIComponent(requestId)}`);
   if (loaded.status === 401) {
-    body.append(h("p", { text: loaded.data.error?.message || "Tour Core needs you to confirm ownership of this hosted installation before you can approve connections." }));
-    const claim = h("a", { class: "button primary", href: `/claim?request=${encodeURIComponent(requestId)}`, text: "Confirm ownership" });
-    body.append(claim);
+    // There is no owner-claim page any more: a connection is approved on the page the chat opens.
+    body.append(h("p", { text: "Approve this connection on the page your chat opened, where the pairing code and Allow are. Go back to the chat and connect again." }));
     root.replaceChildren(body);
     return;
   }
