@@ -54,6 +54,11 @@ function matches(stored: string, token: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/** The record id from a handoff record path, e.g. `.../portable-handoff/<id>.json`. */
+export function handoffIdFromPath(path: string): string {
+  return path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1, -".json".length);
+}
+
 /**
  * Artifacts live beside the data folder, outside install/properties/runtime,
  * so a portable snapshot never includes the handoff itself.
@@ -210,7 +215,7 @@ export class HandoffStore {
 
   /** Drops the file and keeps a small expired record so the timed-out line still shows. */
   private writeTombstone(path: string, record: HandoffRecord): void {
-    const id = path.slice(path.lastIndexOf("/") + 1, -".json".length);
+    const id = handoffIdFromPath(path);
     rmSync(this.bodyPath(id), { force: true });
     const now = this.now();
     writeJsonAtomic(path, {
