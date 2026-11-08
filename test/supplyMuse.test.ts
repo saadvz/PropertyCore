@@ -150,6 +150,7 @@ describe("Muse's words for one Supply Core reply", () => {
     expect(muse.isError).toBe(true);
     expect(muse.text).toContain("card number");
     expect(muse.text).toContain("store");
+    expect(muse.text).toContain("Don't repeat the number.");
     for (const word of GROK_ONLY_WORDS) expect(muse.text).not.toMatch(word);
     expect(readSupply(root).items).toHaveLength(0);
   });
