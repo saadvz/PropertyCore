@@ -70,12 +70,16 @@ describe("the README", () => {
 });
 
 describe("the parked Tour Core docs", () => {
-  it("keep the Tour Core README, marked parked, with the brochure beside it", () => {
+  it("keep the Tour Core README, marked parked", () => {
     const parked = read(PARKED);
     expect(parked.split("\n")[0]).toBe("# Tour Core (parked)");
     expect(parked.slice(0, 600)).toMatch(/parked/i);
-    expect(existsSync(join(REPO_ROOT, "docs/tour-core/tour_core.pdf"))).toBe(true);
+  });
+
+  it("no longer carry the Tour Core brochure, which named the lock provider and had no source to fix it from", () => {
+    expect(existsSync(join(REPO_ROOT, "docs/tour-core/tour_core.pdf"))).toBe(false);
     expect(existsSync(join(REPO_ROOT, "tour_core.pdf"))).toBe(false);
+    expect(read(PARKED)).not.toContain("tour_core.pdf");
   });
 });
 

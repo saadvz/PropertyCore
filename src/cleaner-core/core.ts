@@ -489,8 +489,10 @@ export interface CleanerCore {
   accountOptIn(phone: string): Promise<CleanerText[]>;
   /** The person's STOP on the account: out, with today's holds and the host note. No text to the person. */
   accountStop(phone: string): Promise<void>;
-  /** The person's START on the account: what START does in this engine today, with no text to the person. */
+  /** The person's START on the account: what START does in this engine, with no text to the person. A contact goes back to pending. */
   accountStart(phone: string): Promise<void>;
+  /** The host's STOP or START, heard while no engine was open: what that text does here, with no reply. */
+  ownerKeyword(keyword: "stop" | "start"): void;
   runReminders(): Promise<ReminderResult>;
   jobs(): JobView[];
   outbox(): OutboxView[];
@@ -567,6 +569,8 @@ export interface CleanerCore {
 }
 
 const START_ACK = "You're opted back in. Reply YES if you still want this turnover. Reply STOP to opt out.";
+/** A contact's START after their STOP: they're asked again, and their YES puts them back in. */
+const contactStartAck = (address: string) => `You're opted back in to cleaning texts for ${address}. Reply YES to join, or STOP to opt out.`;
 const DECLINED = "Okay, that turnover is not scheduled.";
 const HOST_INJURY = "If someone is hurt, call 911 now.";
 const CLEANER_HURT = "If someone is hurt, call 911 now. I've let the host know.";
@@ -1059,6 +1063,8 @@ class Engine implements CleanerCore {
     if (progress) this.noteProgress(progress, input);
 
     const keyword = keywordOf(input.text);
+    // Each HELP that comes in counts once: a duplicate never reaches here.
+    if (keyword === "help") this.counters.help += 1;
     const grouped = Boolean(this.groupChat && input.channel === "group");
     if (isInjuryReport(input.text)) return this.safety(input.id, () => this.emergency(from, input.id));
     if (keyword === "stop" || isPlainLanguageStop(input.text)) return this.safety(input.id, () => this.stop(from, input.id));
@@ -1089,7 +1095,7 @@ class Engine implements CleanerCore {
     const asked = this.pin && from === this.cleanerPhone && this.cleanerConsent === "in" ? this.progressJob() : undefined;
     if (asked && this.checklistWaiting(asked) && (isYes(input.text) || isNo(input.text))) return this.answerChecklist(asked, from, input.id, isYes(input.text));
     if (this.pin && from === this.cleanerPhone && isYes(input.text) && this.awaitingOptIn()) return this.optInCleaner(input.id);
-    if (from && isYes(input.text) && this.participantConsent.get(from) === "pending" && this.delivery(`opt-in:${from}`) === "sent") {
+    if (from && isYes(input.text) && this.participantConsent.get(from) === "pending" && (this.delivery(`opt-in:${from}`) === "sent" || this.askedToRejoin(from))) {
       return this.optInParticipant(from, input.id);
     }
     if (this.owner && from === this.owner && isYes(input.text) && this.hostInviteOpen()) return this.optInHost(input.id);
@@ -1483,8 +1489,15 @@ class Engine implements CleanerCore {
 
   async accountStart(raw: string): Promise<void> {
     const phone = parsePhone(raw);
-    // Only a one-to-one cleaner comes back in. A contact's START, and a group cleaner's, change nothing today.
-    if (!phone || phone !== this.cleanerPhone || this.groupChat || this.cleanerConsent !== "out") return;
+    if (!phone) return;
+    // A contact is asked again: pending, so their YES to the invite puts them back in.
+    if (this.isOutContact(phone)) {
+      this.participantConsent.set(phone, "pending");
+      this.save();
+      return;
+    }
+    // A one-to-one cleaner comes back in. A group cleaner's START changes nothing today.
+    if (phone !== this.cleanerPhone || this.groupChat || this.cleanerConsent !== "out") return;
     this.cleanerConsent = "in";
     this.save();
   }
@@ -2953,12 +2966,7 @@ class Engine implements CleanerCore {
     if (from !== this.owner && from !== this.cleanerPhone && this.participantConsent.get(from) === "out") {
       return { handled: true, reason: "stop", sent: [], seen: true };
     }
-    if (from === this.owner) {
-      this.hostGroup = "out";
-      this.ownerOptedOut = true;
-      this.problemHold = true;
-      this.rememberOwnerHold();
-    }
+    if (from === this.owner) this.markOwnerStopped();
     if (from === this.cleanerPhone) {
       this.cleanerConsent = "out";
       this.problemHold = true;
@@ -3116,10 +3124,7 @@ class Engine implements CleanerCore {
       return { handled: true, reason: "stop", sent: [...result.sent, ...note], seen: this.replySeen("stop", inboundId, result.sent.length) };
     }
     if (from === this.owner) {
-      this.ownerOptedOut = true;
-      if (this.pin) this.problemHold = true;
-      else this.optedOut = true;
-      this.rememberOwnerHold();
+      this.markOwnerStopped();
       const result = await this.reply(from, hostStopReply(this.options.property.address, this.problemHold), "stop", "stop", inboundId);
       return { ...result, seen: this.replySeen("stop", inboundId, result.sent.length) };
     }
@@ -3131,6 +3136,55 @@ class Engine implements CleanerCore {
 
   private replySeen(kind: string, inboundId: string, sentNow: number): boolean {
     return sentNow > 0 || this.delivery(`${kind}:${inboundId}`) === "sent";
+  }
+
+  /** What the host's STOP changes here: in a group they leave it, and one-to-one they get nothing but safety texts. */
+  private markOwnerStopped(): void {
+    if (this.groupChat) {
+      this.hostGroup = "out";
+      this.ownerOptedOut = true;
+      this.problemHold = true;
+      if (this.owner) this.participantConsent.set(this.owner, "out");
+    } else {
+      this.ownerOptedOut = true;
+      if (this.pin) this.problemHold = true;
+      else this.optedOut = true;
+    }
+    this.rememberOwnerHold();
+  }
+
+  private ownerStillOut(): boolean {
+    return this.ownerOptedOut || (Boolean(this.groupChat) && this.hostGroup === "out") || (!this.pin && this.optedOut);
+  }
+
+  /** What the host's START changes here. A hold stays until the host clears it. */
+  private markOwnerStarted(): void {
+    this.ownerOptedOut = false;
+    if (!this.pin) this.optedOut = false;
+    if (this.groupChat && this.hostGroup === "out") this.hostGroup = "in";
+  }
+
+  ownerKeyword(keyword: "stop" | "start"): void {
+    if (!this.owner) return;
+    if (keyword === "stop") {
+      if (this.ownerOptedOut || (this.groupChat && this.hostGroup === "out")) return;
+      this.markOwnerStopped();
+    } else {
+      if (!this.ownerStillOut()) return;
+      this.markOwnerStarted();
+    }
+    this.save();
+  }
+
+  /** True once a contact's START got the reply that asks for their YES, which counts as their invite. */
+  private askedToRejoin(phone: string): boolean {
+    const body = contactStartAck(this.options.property.address);
+    return this.outboxState.some((item) => item.to === phone && item.kind === "start" && item.status === "sent" && item.body === body);
+  }
+
+  /** A saved contact, not the host or the cleaner, who opted out here. */
+  private isOutContact(phone: string): boolean {
+    return phone !== this.owner && phone !== this.cleanerPhone && this.participantConsent.get(phone) === "out";
   }
 
   private rememberOwnerHold(): void {
@@ -3152,11 +3206,8 @@ class Engine implements CleanerCore {
   private async start(from: string, inboundId: string): Promise<ReceiveResult & { seen?: boolean }> {
     if (from === this.owner) {
       if (this.delivery(`start:${inboundId}`) === "sent") return { handled: true, reason: "start", sent: [], seen: true };
-      const stillOut = this.ownerOptedOut || (this.groupChat && this.hostGroup === "out") || (!this.pin && this.optedOut);
-      if (!stillOut) return { handled: true, reason: "start", sent: [], seen: true };
-      this.ownerOptedOut = false;
-      if (!this.pin) this.optedOut = false;
-      if (this.groupChat && this.hostGroup === "out") this.hostGroup = "in";
+      if (!this.ownerStillOut()) return { handled: true, reason: "start", sent: [], seen: true };
+      this.markOwnerStarted();
       const result = await this.reply(from, hostStartReply(this.options.property.address, this.problemHold, this.helper()), "start", "start", inboundId);
       return { ...result, seen: this.replySeen("start", inboundId, result.sent.length) };
     }
@@ -3199,6 +3250,11 @@ class Engine implements CleanerCore {
         job.startedAt ??= this.now().toISOString();
       }
       return { ...result, seen: result.sent.length > 0 };
+    }
+    if (this.isOutContact(from)) {
+      this.participantConsent.set(from, "pending");
+      const result = await this.reply(from, contactStartAck(this.options.property.address), "start", "start", inboundId);
+      return { ...result, seen: this.replySeen("start", inboundId, result.sent.length) };
     }
     if (!this.everConsented) return { handled: true, reason: "ignored", sent: [], seen: true };
     this.optedOut = false;

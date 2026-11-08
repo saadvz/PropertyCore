@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
+import { negotiatedProtocolVersion } from "./protocol";
 import { annotationsFor } from "./annotations";
 import { mcpInstructions } from "../playbooks/instructions";
 import { reportedClientFromInitialize } from "../playbooks/select";
@@ -16,7 +17,7 @@ import { catalog, connectorRefusal, knownOperatorTool, toolsForConnector } from 
  */
 
 export { MCP_PATH } from "./paths";
-export const SUPPORTED_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+export { SUPPORTED_PROTOCOL_VERSIONS } from "./protocol";
 const SERVER_INFO = { name: "tour-core", title: "Tour Core", version: "0.2.0" };
 
 type JsonRpcId = string | number | null;
@@ -55,8 +56,7 @@ export async function handleMcpMessage(ctx: ToolContext, message: unknown): Prom
 
   switch (method) {
     case "initialize": {
-      const asked = typeof params?.protocolVersion === "string" ? params.protocolVersion : undefined;
-      const protocolVersion = asked && SUPPORTED_PROTOCOL_VERSIONS.includes(asked) ? asked : SUPPORTED_PROTOCOL_VERSIONS[0];
+      const protocolVersion = negotiatedProtocolVersion(params?.protocolVersion);
       return rpcResult(id, { protocolVersion, capabilities: { tools: { listChanged: true } }, serverInfo: SERVER_INFO, instructions: mcpInstructions(ctx.connector) });
     }
     case "ping":

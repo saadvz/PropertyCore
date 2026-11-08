@@ -51,7 +51,7 @@ These files are what `scripts/ci-check.sh` executes, or the configs those comman
 
 Preconditions:
 
-- Node 22, `npm ci` already done, and doctor on before the flag-off smoke.
+- Node 22.13 or newer, `npm ci` already done, and doctor on before the flag-off smoke.
 - `CLEANER_CORE_ENABLED=1 npm run --silent cleaner:doctor` exits 0 with `sends` false.
 
 - **Related tests.** When the diff matches none of the paths above, run `npx vitest related --run` on the changed files. Exit code 0. Vitest exits 0 when no changed file has a related test.
@@ -63,7 +63,7 @@ Preconditions:
 
 ## Gotchas
 
-- Node 20 cannot open the SQLite backup store. CI uses Node 22.
+- Node before 22.13 cannot open the SQLite backup store, and bootstrap refuses it. CI uses Node 22.
 - The secret scan allowlists the historical tenant store and the step D through F proofs. A new file that contains a configured scratch code fails the scan.
 - `prove-step-g.sh` runs this gate after the step D, E, and F proofs.
 - A related-test failure exits before typecheck. A typecheck failure exits before the flag-off smoke.
