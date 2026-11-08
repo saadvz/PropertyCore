@@ -3,7 +3,7 @@
 > **Touring is parked.** This repository is now [Property Core](../../README.md), for remote
 > short-term rental hosts. Tour Core stays here, and its tests keep running, but new accounts get
 > properties, not touring. Only Saad makes an account a touring account, on `/admin`. Everything below
-> is the Tour Core guide as it was. The brochure is [`tour_core.pdf`](tour_core.pdf).
+> is the Tour Core guide as it was.
 
 Tour Core is an open-source self-touring tool. A prospect books a tour by text, gives consent, fills out a
 basic identity form, and then tours a unit on their own. Tour Core opens only the doors on their reserved

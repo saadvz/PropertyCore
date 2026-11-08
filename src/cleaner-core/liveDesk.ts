@@ -452,6 +452,11 @@ interface LiveFile {
   timedJobs?: string[];
   cleanerOut?: boolean;
   hostOut?: boolean;
+  /**
+   * The host's last STOP or START while no engine was open, for the next engine to apply. hostOut
+   * covers an engine's first open; this covers one that reopens from its own saved store.
+   */
+  hostKeyword?: "stop" | "start";
   seenInbound?: string[];
   conversationSid?: string;
   deliveries?: { id: string; status: DeliveryReport }[];
@@ -2836,6 +2841,7 @@ export class LiveDesk {
     this.file.released = false;
     delete this.file.pinSend;
     delete this.file.hostOut;
+    delete this.file.hostKeyword;
     if (groupGone) delete this.file.conversationSid;
     delete this.file.deliveries;
     delete this.file.localSends;
@@ -3217,6 +3223,7 @@ export class LiveDesk {
     }
     if (from === this.file.host && keyword === "stop") this.file.hostOut = true;
     if (from === this.file.host && keyword === "start") this.file.hostOut = false;
+    if (from === this.file.host) this.file.hostKeyword = keyword;
     // A saved contact's STOP goes on the desk's opt-out list, which the engine's sends check and a
     // START or YES clears. On an account the line already kept it in the account's people list.
     const contact = from !== this.file.host && from !== this.file.cleaner && contactsOf(this.file).some((item) => item.phone === from);
@@ -3655,6 +3662,18 @@ export class LiveDesk {
     }
   }
 
+  /**
+   * The host's STOP or START taken while no engine was open counts in the engine that opens next,
+   * even one that reopens from its own store, as if it had heard it. No reply: the desk sent it.
+   */
+  private applyHostKeyword(engine: CleanerCore): void {
+    const keyword = this.file.hostKeyword;
+    if (!keyword) return;
+    engine.ownerKeyword(keyword);
+    delete this.file.hostKeyword;
+    this.persist();
+  }
+
   private noteSeen(id: string): void {
     const seen = this.file.seenInbound ?? [];
     if (seen.includes(id)) return;
@@ -3777,6 +3796,7 @@ export class LiveDesk {
       dataDir,
     });
     this.applyLineStops(engine);
+    this.applyHostKeyword(engine);
     return engine;
   }
 

@@ -1,5 +1,6 @@
 import { REPLY_INSTRUCTIONS } from "./replyWording";
 import { z } from "zod";
+import { negotiatedProtocolVersion } from "../mcp/protocol";
 import type { SettingName } from "../install/secretStore";
 import { ASSISTANT_PROFILES, CHATGPT_INSTRUCTIONS, CLAUDE_INSTRUCTIONS, MUSE_INSTRUCTIONS, type CleanerAssistant } from "./assistant";
 import { DOOR_CODE_IN_CHAT, type LiveDesk, type ToolReply } from "./liveDesk";
@@ -345,7 +346,7 @@ export async function handleCleanerMcpMessage(
   if (id === undefined) return { status: 202 };
   if (method === "initialize") {
     return rpcResult(id, {
-      protocolVersion: "2025-03-26",
+      protocolVersion: negotiatedProtocolVersion(params?.protocolVersion),
       capabilities: { tools: { listChanged: false } },
       serverInfo: SERVER_INFO,
       // A Claude deployment has its own words. A Grok deployment's stay exactly as they were.

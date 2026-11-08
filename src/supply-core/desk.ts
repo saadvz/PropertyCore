@@ -279,7 +279,9 @@ export class SupplyDesk {
       if (input.bufferDays !== undefined && !isInt(input.bufferDays, 0, 14)) return fail("The delivery buffer has to be from 0 to 14 days.");
       if (input.checkTime !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.checkTime)) return fail("The check time has to be 24-hour HH:MM, like 10:00.");
       if (input.sharedSchedule) {
-        const problem = scheduleProblem(input.sharedSchedule, this.today());
+        // A property saved in the same call brings its time zone, so the rule is checked on its date.
+        const today = input.property ? localYmd(this.deps.now(), input.property.timeZone) : this.today();
+        const problem = scheduleProblem(input.sharedSchedule, today);
         if (problem) return fail(problem);
       }
       const plan = planStores(file);
