@@ -2,7 +2,7 @@ import { describeHistory, type HistoryEntry } from "../audit/describe";
 import type { TourCoreConfig } from "../config/tourCoreConfig";
 import { formatPhone } from "../core/phone";
 import { formatDay, formatTime } from "../core/timezone";
-import type { AccessGrant, AuditEvent, Message, Prospect, Reservation } from "../domain/model";
+import type { AccessGrant, Message, Prospect, Reservation } from "../domain/model";
 import { UNNAMED_VISITOR } from "../domain/model";
 import { isRunningReservation, PAUSED, TERMINAL } from "../domain/stateMachine";
 import type { ExportBundle } from "../export/exportBundle";
@@ -250,8 +250,8 @@ export function tourSummary(tour: TourSnapshot) {
   };
 }
 
-export function history(tour: TourSnapshot, events: AuditEvent[] = tour.bundle.auditEvents): HistoryEntry[] {
-  return describeHistory(events, { ...tour.bundle, operatorName: tour.config.operator.name }, tour.config.property.timezone);
+export function history(tour: TourSnapshot): HistoryEntry[] {
+  return describeHistory(tour.bundle.auditEvents, { ...tour.bundle, operatorName: tour.config.operator.name }, tour.config.property.timezone);
 }
 
 /** Active visitor tours this Tour Core is running now. */

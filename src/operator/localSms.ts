@@ -11,8 +11,6 @@ import { SetupInputError } from "../setup/setupActions";
 import { resolvePropertyId } from "./resolve";
 import type { ToolContext } from "./tools";
 
-export { LOCAL_PROVIDER_REQUIRED };
-
 function installationProvider(ctx: ToolContext): string | undefined {
   if (ctx.installation) return selectionFromInstallation(ctx.installation).provider;
   return ctx.services.installedMessaging?.()?.provider;

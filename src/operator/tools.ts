@@ -5,13 +5,12 @@ import { secretValues } from "../install/settings";
 import { HOSTED_ADMIN_TOOLS } from "../install/hostedAdminTools";
 import type { ReportedClient } from "../playbooks/select";
 import { INSTALLATION_TOOLS } from "../install/tools";
-import { hoursAlreadyChosen, MILESTONE_TOOLS, settingsSentence } from "./milestones";
-import { installedMessaging } from "../install/status";
+import { hoursAlreadyChosen, MILESTONE_TOOLS, open as openDraft, parseHours, servicesOf, settingsSentence } from "./milestones";
 import { addressConfirmQuestion, nextAddressPartQuestion, savedFullAddress } from "../setup/address";
 import { PROPERTY_TYPE_LABELS, PROPERTY_TYPES, SETUP_PROPERTY_TYPES, validateConfig } from "../config/tourCoreConfig";
 import { extractValues, FIELD_WORDS, missingProfileFields, nextProfileQuestion, parseBulkUnitDetails, profileSummaryLine } from "../config/unitProfile";
 import { formatPhone } from "../core/phone";
-import { formatDay, formatTime, spokenTimeZone, UnsetTimeZoneError } from "../core/timezone";
+import { formatDay, formatTime, UnsetTimeZoneError } from "../core/timezone";
 import { UNSET_ZONE_LINE } from "../setup/storedTimeZone";
 import { applyZoneSwitchAnswer, commitZoneAnswer, fieldsToHold, guessedZoneName, heldZoneFields, holdZoneSwitchFields, mergedZoneDetails, rememberZoneSwitch, switchHoldReply, switchQuestionForOffer, zoneReply, zoneSwitchAnswer, zoneSwitchQuestion } from "./zoneCopy";
 import { revokeConfirmQuestion } from "../core/availabilityCopy";
@@ -23,7 +22,6 @@ import type { MessagingLedger } from "../messaging/ledger";
 import { applySetupCommand } from "../setup/commands";
 import { draftView, readinessView, saveStateView } from "../setup/presenters";
 import { reuseDaysRefusal } from "../config/validateConfig";
-import { parseDays, parseMinutes, parseTimeOfDay } from "../setup/parse";
 import { planTourHours } from "./hoursPlan";
 import type { DryTourCheck, DryTourResult } from "../setup/dryTour";
 import type { ReadinessResult } from "../setup/readiness";
@@ -31,20 +29,19 @@ import { condoNextQuestion, createPropertySetup, localTestModeSentence, modeSent
 import { NO_FORM_QUESTION } from "../setup/verification";
 import { usesLocalMessaging } from "../messaging/propertyScope";
 import { operatorUnitName } from "../visitor/identity";
-import { isHostedRailway } from "../install/deployment";
 import { statusLabel, type PublishBlocker } from "../setup/workspace";
 import { rememberCanonical, revertCanonical } from "../storage/canonical";
 import { StorageConflictError, StorageUnavailableError, StoreBusyError } from "../storage/errors";
-import { pauseTours, removeProperty, resumeTours, unitPausedFlag } from "./availability";
+import { ask as needsConfirmation, pauseTours, removeProperty, resumeTours } from "./availability";
+import { isUnitPaused } from "../setup/availability";
 import { exportAudit, formatAuditDaySummary, parseLocalDate } from "./auditExport";
-import { AuditExportLinks } from "./auditExportLinks";
 import type { ConfirmationBook } from "./confirmations";
+import { tool } from "./defineTool";
 import {
   answerFlaggedQuestion,
   planFlaggedAnswer,
   clearHold,
   describeChangeTarget,
-  findException,
   inspectException,
   ISSUE_ALREADY_HANDLED,
   listExceptions,
@@ -55,14 +52,13 @@ import {
   saveSendUnreachableLine,
   sendThisQuestion,
   visitorAnswerText,
-  type OperatorException,
 } from "./exceptions";
 import { matchDoor, requireUnit, resolvePropertyId } from "./resolve";
 import { defaultMessagingMode, type OperatorServices } from "./services";
 import { publishGuards, publishProperty, readinessForProperty, runPracticeTour, visitorTexting } from "./setupFlow";
 import { findTour, inspectTourSummary, inspectTourView, listActiveTours, midSentence } from "./tours";
 import { approveTourTimeRequest, declineTourTimeRequest, inspectTourTimeRequest, listTourTimeRequests, proposeTourTime, rescheduleTour, scheduleOneOffTour } from "./tourTimes";
-import { attemptWrite, DAY_TO_DAY_TOOLS } from "./dayToDay";
+import { attemptWrite, auditExportFileLink, DAY_TO_DAY_TOOLS, exceptionLine, reservationFingerprint } from "./dayToDay";
 import { injectLocalSms, readLocalOutbox } from "./localSms";
 
 /**
@@ -113,17 +109,6 @@ export interface OperatorTool {
   run: (ctx: ToolContext, input: never) => Promise<Record<string, unknown>>;
 }
 
-function tool<S extends z.ZodObject>(def: {
-  name: string;
-  title: string;
-  description: string;
-  kind: ToolKind;
-  input: S;
-  run: (ctx: ToolContext, input: z.infer<S>) => Promise<Record<string, unknown>>;
-}): OperatorTool {
-  return def as unknown as OperatorTool;
-}
-
 // ------------------------------------------------------------------ inputs
 
 const Property = z.string().max(200).optional().describe("Which property: its name, address or propertyId. Leave out when there's only one.");
@@ -136,13 +121,6 @@ const UnitValue = z.union([z.string().max(300), z.number(), z.boolean()]).option
 const Duration = z.union([z.number().int(), z.string().max(40)]);
 
 // ----------------------------------------------------------------- helpers
-
-/** The shared services, with this installation's texting (when there is one) visible to setup and publishing. */
-function servicesOf(ctx: ToolContext): OperatorServices {
-  const installation = ctx.installation;
-  if (!installation) return ctx.services;
-  return { ...ctx.services, installedMessaging: () => installedMessaging(installation) };
-}
 
 const PROPERTY_TYPE_CHOICES = SETUP_PROPERTY_TYPES.map((t) => ({ choice: t, label: PROPERTY_TYPE_LABELS[t] }));
 
@@ -188,24 +166,6 @@ function subsystemLines(ctx: ToolContext, id: string, draft: SetupDraft) {
   };
 }
 
-/** Local computer link when that's all we have; hosted public URL with a short-lived token. */
-function auditExportFileLink(ctx: ToolContext, propertyId: string, exportId: string, file: string): { openOnTourCoreComputer?: string } {
-  const inst = ctx.installation;
-  const hosted = inst && isHostedRailway(inst.deploymentMode());
-  const publicBase = hosted ? inst.publicBaseUrl() : undefined;
-  if (hosted && publicBase) {
-    const minted = new AuditExportLinks(inst.runtime, () => inst.now()).issue(propertyId, exportId, file);
-    return { openOnTourCoreComputer: AuditExportLinks.downloadUrl(publicBase, propertyId, exportId, file, minted.token) };
-  }
-  const local = ctx.localUrl?.();
-  return local ? { openOnTourCoreComputer: AuditExportLinks.localUrl(local, propertyId, exportId, file) } : {};
-}
-
-function openDraft(ctx: ToolContext, property: string | undefined): { id: string; draft: SetupDraft } {
-  const id = resolvePropertyId(ctx.services.workspace, property);
-  return { id, draft: ctx.services.workspace.openDraft(id).draft };
-}
-
 /** Runs one setup edit through the same command table the browser uses, then saves (or keeps a draft). */
 function edit(ctx: ToolContext, id: string, draft: SetupDraft, command: string, input: unknown) {
   const next = applySetupCommand(draft, command, input);
@@ -228,7 +188,7 @@ function setupSnapshot(ctx: ToolContext, id: string) {
   const { draft } = ctx.services.workspace.openDraft(id);
   const view = draftView(draft);
   const saved = ctx.services.workspace.has(id) ? ctx.services.workspace.load(id) : undefined;
-  const pausedUnits = saved ? saved.config.units.filter((unit) => unitPausedFlag(saved.state, unit.id)).map((unit) => operatorUnitName(draft.property, unit.name)) : [];
+  const pausedUnits = saved ? saved.config.units.filter((unit) => isUnitPaused(saved.state, unit.id)).map((unit) => operatorUnitName(draft.property, unit.name)) : [];
   return {
     propertyId: id,
     name: operatorFacingPropertyName(draft),
@@ -248,7 +208,7 @@ function setupSnapshot(ctx: ToolContext, id: string) {
       route: u.route ? u.route.doorNames.join(" \u2192 ") : undefined,
       directions: u.route?.directions || undefined,
       ...(draft.units.find((unit) => unit.id === u.id)?.entryInstructions ? { entryInstructions: draft.units.find((unit) => unit.id === u.id)!.entryInstructions } : {}),
-      ...(saved ? { paused: unitPausedFlag(saved.state, u.id) } : {}),
+      ...(saved ? { paused: isUnitPaused(saved.state, u.id) } : {}),
     })),
     doors: view.doors.map((d) => ({ doorId: d.id, name: d.name, kind: d.kindLabel, ...(d.unitName ? { forUnit: d.unitName } : {}) })),
     tourHours: view.tourHours.summary ?? view.tourHours.label,
@@ -345,67 +305,6 @@ function proofPoints(result: DryTourResult): string[] {
     if (c.skipped) return [`\u2013 ${text}: ${c.detail ?? "Skipped."}`];
     return [`\u2713 ${text}`];
   });
-}
-
-function exceptionLine(x: OperatorException) {
-  return {
-    exceptionId: x.exceptionId,
-    tourRef: x.tourRef,
-    property: x.property,
-    visitorName: x.visitorName,
-    unitName: x.unitName,
-    what: x.title,
-    summary: x.summary,
-    tourStatus: x.tourStatus,
-    accessBlocked: x.accessBlocked,
-    when: x.when,
-    status: x.status,
-    ...(x.proposeDraft === false ? { proposeDraft: false as const } : {}),
-    ...(x.resolution ? { resolution: x.resolution.note, ...(x.resolution.approvedFact ? { approvedFact: x.resolution.approvedFact } : {}) } : {}),
-    nextSteps: x.nextSteps,
-  };
-}
-
-function needsConfirmation(ctx: ToolContext, action: string, target: string, fingerprint: string, question: string, details: Record<string, unknown> = {}) {
-  const request = ctx.confirmations.issue(action, target, fingerprint, question);
-  return {
-    status: "needs-confirmation",
-    summary: question,
-    confirmation: request,
-    instructions: "Ask the operator exactly this question. Call this tool again with confirmationCode only if they clearly say yes.",
-    ...details,
-  };
-}
-
-const reservationFingerprint = (r: { id: string; status: string; updatedAt: string }) => `${r.id}|${r.status}|${r.updatedAt}`;
-
-function parseHours(input: { days?: string | string[]; start?: string; end?: string; tourLength?: string | number; newTourEvery?: string | number; earlyArrival?: string | number }) {
-  const out: Record<string, unknown> = {};
-  if (input.days !== undefined) {
-    const text = Array.isArray(input.days) ? input.days.join(", ") : input.days;
-    const days = parseDays(text);
-    if (!days) throw new SetupInputError("TOUR_DAYS_UNREADABLE", `I didn't understand the days "${text}". Try "weekdays", "every day" or "Mon-Sat".`);
-    out.days = days;
-  }
-  for (const key of ["start", "end"] as const) {
-    if (input[key] === undefined) continue;
-    const t = parseTimeOfDay(input[key]!);
-    if (!t) throw new SetupInputError("TOUR_TIME_UNREADABLE", `I didn't understand the time "${input[key]}". Try something like "9am" or "5:30 PM".`);
-    out[key] = t;
-  }
-  const minutes = (v: string | number | undefined, label: string) => {
-    if (v === undefined) return undefined;
-    const n = typeof v === "number" ? v : parseMinutes(v);
-    if (n === undefined) throw new SetupInputError("TOUR_MINUTES_UNREADABLE", `I didn't understand ${label} "${v}". Try "45 minutes" or "an hour".`);
-    return n;
-  };
-  const length = minutes(input.tourLength, "the tour length");
-  const spacing = minutes(input.newTourEvery, "how often tours start");
-  const early = minutes(input.earlyArrival, "the early-arrival time");
-  if (length !== undefined) out.tourLengthMinutes = length;
-  if (spacing !== undefined) out.slotEveryMinutes = spacing;
-  if (early !== undefined) out.earlyArrivalMinutes = early;
-  return out;
 }
 
 // ------------------------------------------------------------------- tools
