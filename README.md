@@ -18,26 +18,32 @@ works from their agent, and the text line is for the cleaner and the other peopl
 
 ## Connect your agent
 
-Grok Bot and Muse are the supported agents. Both are always on and run Cleaner Core and Supply Core end to
-end. Your agent clones this repository only to read its setup guide, then connects to the hosted service.
-Nothing runs on your computer.
+Every agent starts in one place: [`property-core-template/`](property-core-template/README.md). Grok Bot
+and Muse are the supported agents. Both are always on and run Cleaner Core and Supply Core end to end. Your
+agent clones this repository only to read its setup guide, then connects to the hosted service. Nothing runs
+on your computer.
 
 When the connection asks for approval, the connect page opens. Where sign-up is open, sign in or create an
 account there with a code texted to your phone. Otherwise, type the invite code from Saad. Then click Allow.
 Your agent never asks for the code, a password, or a door code in chat.
 
-- **Grok Bot:** add the Cleaner Core team template from its shared link, or paste the prompt in
-  [`cleaner-template/SETUP_PROMPT.md`](cleaner-template/SETUP_PROMPT.md) into a new Grok Bot (more in
-  [`cleaner-template/`](cleaner-template/)). Then say "Set up Cleaner Core". The bot follows
-  [`CLEANER_CORE_BOOTSTRAP.md`](CLEANER_CORE_BOOTSTRAP.md), and turns Supply Core on for a property when you
-  ask. For Supply Core on its own, use [`supply-template/`](supply-template/), which follows
-  [`SUPPLY_CORE_BOOTSTRAP.md`](SUPPLY_CORE_BOOTSTRAP.md).
-- **Muse (beta):** paste the prompt from [`muse-template/`](muse-template/) into a new Muse chat. Muse saves
-  the Cleaner Core and Supply Core skills from this repository and follows them.
+- **Grok Bot:** add the Property Core team template from https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ, or paste
+  the prompt in [`property-core-template/SETUP_PROMPT.md`](property-core-template/SETUP_PROMPT.md) into a
+  new Grok Bot. Then say "Set up Property Core". The bot adds your property and asks whether you want
+  Cleaner Core, Supply Core, or both there.
+- **Muse (beta):** paste the prompt in
+  [`property-core-template/muse/SETUP_PROMPT.md`](property-core-template/muse/SETUP_PROMPT.md) into a new
+  Muse chat. It works the same way.
 
-Claude and ChatGPT, as plain chats, run Cleaner Core at a basic level, without Supply Core. Their guides are in
-[`claude-template/`](claude-template/) and [`chatgpt-template/`](chatgpt-template/).
+Claude and ChatGPT, as plain chats, run Cleaner Core at a basic level, without Supply Core: start with
+[`property-core-template/claude/`](property-core-template/claude/SETUP_GUIDE.md) or
+[`property-core-template/chatgpt/`](property-core-template/chatgpt/SETUP_GUIDE.md).
 [`docs/client-matrix.md`](docs/client-matrix.md) shows what each agent does differently.
+
+For each flow, the agent then follows that flow's guide: [`CLEANER_CORE_BOOTSTRAP.md`](CLEANER_CORE_BOOTSTRAP.md)
+with [`cleaner-template/`](cleaner-template/), and [`SUPPLY_CORE_BOOTSTRAP.md`](SUPPLY_CORE_BOOTSTRAP.md)
+with [`supply-template/`](supply-template/). On Muse, those are the skills in
+[`muse-template/`](muse-template/). These are guides the agent reads, not separate ways to start.
 
 ## Safety gates
 
@@ -81,9 +87,9 @@ settings are in [`docs/environment-variables.md`](docs/environment-variables.md)
 | `src/cleaner-core/` | Cleaner Core: turnovers, texts to the cleaner, door codes, photos, and pay |
 | `src/supply-core/` | Supply Core: the list, schedules, the cart check, and the order log |
 | `src/hosted/`, `src/cleaner-core/hosted/`, `src/mcp/` | The hosted multi-tenant service: accounts, text lines, the connect page, and the connector |
-| `cleaner-template/`, `supply-template/`, `muse-template/` | The Grok Bot and Muse setup guides |
-| `claude-template/`, `chatgpt-template/` | Cleaner Core for Claude and ChatGPT as plain chats |
-| `property-core-template/` | One bot for every flow, being updated to become the single way to start |
+| `property-core-template/` | The one way to start: the Grok bot, and its Muse, Claude, and ChatGPT versions |
+| `cleaner-template/`, `supply-template/`, `muse-template/` | The Cleaner Core and Supply Core guides and routines that Grok Bot and Muse read |
+| `claude-template/`, `chatgpt-template/` | The Cleaner Core guides that Claude and ChatGPT read as plain chats |
 
 ## Tour Core is parked
 
