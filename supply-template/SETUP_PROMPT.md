@@ -1,9 +1,12 @@
-Paste this into a new Grok Bot to set up Supply Core.
+# This prompt moved
 
-```text
-Set up Supply Core, my rental supply reorderer, using the open-source repository at https://github.com/saadvz/TourCore.
-Use your cloud computer to clone the repository only so you can read its setup instructions. Read SUPPLY_CORE_BOOTSTRAP.md and follow it as the authoritative setup instructions. Use the hosted service it names. Do not start anything on your computer.
-Never ask me to paste API keys, passwords, tokens, calendar links, or card details into chat. My cards stay in my Vault. When the connection asks for approval, ask me to type my invite code from Saad on the page, pick Supply Core, and click Allow. Never ask me for the invite code in chat.
-After you're connected, call get_state and follow its next step, one question at a time.
-Start now.
-```
+To set up Supply Core in a new Grok Bot, paste the Property Core prompt in
+[`property-core-template/SETUP_PROMPT.md`](../property-core-template/SETUP_PROMPT.md)
+instead, or add the Property Core team template from
+[`property-core-template/`](../property-core-template/README.md), and pick
+Supply Core for the property. The same bot sets up Cleaner Core too, if the
+host wants it.
+
+A bot that already runs Supply Core doesn't need to change anything. It keeps
+reading [`SUPPLY_CORE_BOOTSTRAP.md`](../SUPPLY_CORE_BOOTSTRAP.md) and the
+routine doc in this folder, which stay where they are.
