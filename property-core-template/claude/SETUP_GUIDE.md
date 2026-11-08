@@ -26,13 +26,13 @@ Install the plugin in [`plugin/`](plugin/). It carries the **property-core**
 skill, which tells Claude how to run setup. Add the **cleaner-core** skill
 too: it's Cleaner Core's full guide.
 
-- **Claude Code:** run `/plugin marketplace add saadvz/TourCore`, then
-  `/plugin install property-core@tour-core` and
-  `/plugin install cleaner-core@tour-core`.
+- **Claude Code:** run `/plugin marketplace add saadvz/PropertyCore`, then
+  `/plugin install property-core@property-core` and
+  `/plugin install cleaner-core@property-core`.
 - **claude.ai, desktop, Cowork:** zip the
   `property-core-template/claude/plugin/skills/property-core` and
   `claude-template/plugin/skills/cleaner-core` folders from
-  [the repository](https://github.com/saadvz/TourCore), one zip each, and
+  [the repository](https://github.com/saadvz/PropertyCore), one zip each, and
   upload both in **Settings → Capabilities → Skills**.
 
 ## Step 3: Add your property
