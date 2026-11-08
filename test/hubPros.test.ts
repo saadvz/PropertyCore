@@ -73,6 +73,15 @@ describe("pros in people.json", () => {
     expect(people.stop(JOE)?.properties).toEqual([A, B]);
   });
 
+  it("STOP, YES and START list a property once for a cleaner who is also a pro there", () => {
+    const people = peopleFor(account(), { now });
+    people.savePropertyPeople(A, HOST, [{ phone: JOE, role: "cleaner" }]);
+    people.saveRolePeople(A, "pro", [{ phone: JOE }]);
+    expect(people.stop(JOE)?.properties).toEqual([A]);
+    expect(people.start(JOE)?.properties).toEqual([A]);
+    expect(people.optIn(JOE, A)?.properties).toEqual([A]);
+  });
+
   it("a pro who is only a pro is not on the line's properties", () => {
     const people = peopleFor(account(), { now });
     people.saveRolePeople(A, "pro", [{ phone: JOE }]);

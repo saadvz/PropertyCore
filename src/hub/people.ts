@@ -190,7 +190,8 @@ export class People {
 
   /**
    * Sets who is on this property in the non-pro roles. Anyone not in `people` loses those roles here; their
-   * entry stays. Every pro entry is left alone: pros are Fixer Core's (see saveRolePeople).
+   * entry stays. Every pro entry is left alone, and a pro passed in `people` is ignored: pros are saved
+   * through saveRolePeople.
    */
   savePropertyPeople(propertyId: string, host: string | undefined, people: { phone: string; role: Role; name?: string }[]): void {
     if (host) this.file.hosts[propertyId] = host;
@@ -259,7 +260,7 @@ export class People {
     person.optedIn = { at: this.at(), propertyId };
     delete person.invitedFrom;
     this.save();
-    return { phone, kind: "opted-in", from: propertyId, properties: person.where.map((w) => w.propertyId) };
+    return { phone, kind: "opted-in", from: propertyId, properties: [...new Set(person.where.map((w) => w.propertyId))] };
   }
 
   stop(phone: string): PersonChange | undefined {
@@ -267,7 +268,7 @@ export class People {
     if (person.stopped) return undefined;
     person.stopped = { at: this.at() };
     this.save();
-    return { phone, kind: "stopped", properties: person.where.map((w) => w.propertyId) };
+    return { phone, kind: "stopped", properties: [...new Set(person.where.map((w) => w.propertyId))] };
   }
 
   start(phone: string): PersonChange | undefined {
@@ -275,7 +276,7 @@ export class People {
     if (!person?.stopped) return undefined;
     delete person.stopped;
     this.save();
-    return { phone, kind: "started", properties: person.where.map((w) => w.propertyId) };
+    return { phone, kind: "started", properties: [...new Set(person.where.map((w) => w.propertyId))] };
   }
 
   /** The hosted layer's relay, which tells every property's desk about a change. The last one set wins. */
