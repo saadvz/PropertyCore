@@ -1,10 +1,10 @@
 {
   "name": "property-core",
-  "version": "0.1.0",
-  "description": "Set up and run Property Core, self-guided tours (Tour Core) or cleaner turnovers (Cleaner Core) for a rental, through the Property Core connector.",
-  "author": { "name": "Tour Core" },
+  "version": "0.2.0",
+  "description": "Set up and run Property Core for a short-term rental, starting with Cleaner Core (cleaner turnovers), through the Property Core connector.",
+  "author": { "name": "Property Core" },
   "homepage": "https://github.com/saadvz/TourCore/tree/master/property-core-template/claude",
   "repository": "https://github.com/saadvz/TourCore",
   "license": "Apache-2.0",
-  "keywords": ["touring", "self-guided tours", "cleaning", "short-term rental", "rental"]
+  "keywords": ["cleaning", "short-term rental", "rental", "property management"]
 }
