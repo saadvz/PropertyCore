@@ -1,7 +1,6 @@
 import { MessagingError, toE164, type DeliveryReceipt, type DeliveryStatus, type OutgoingMessage } from "../Messenger";
 import type { MessagingLedger } from "../ledger";
 import { publicBase } from "../publicUrl";
-import { providerConsentRecommendation } from "../consentPolicy";
 import type { MessagingCapabilities, MessagingCheck, MessagingConfigField, MessagingProvider, ProviderConnectContext, ProviderConnectResult, WebhookHttpRequest } from "../provider";
 import { twilioHttpClient, type TwilioClient } from "./client";
 import { formParams, verifyTwilioSignature } from "./signature";
@@ -149,10 +148,6 @@ export class TwilioMessagingProvider implements MessagingProvider {
     return this.settingNames();
   }
 
-  defaultConsentMode(): "keyword_confirm" | "disabled" {
-    return providerConsentRecommendation("twilio").mode;
-  }
-
   webhookPath(): string {
     return TWILIO_WEBHOOK_PATH;
   }
@@ -222,11 +217,7 @@ export class TwilioMessagingProvider implements MessagingProvider {
     return this.deliver(message);
   }
 
-  async sendMedia(message: OutgoingMessage & { mediaUrls: string[] }): Promise<DeliveryReceipt> {
-    return this.deliver(message, message.mediaUrls);
-  }
-
-  private async deliver(message: OutgoingMessage, mediaUrls?: string[]): Promise<DeliveryReceipt> {
+  private async deliver(message: OutgoingMessage): Promise<DeliveryReceipt> {
     const sentAt = (this.options.now?.() ?? new Date()).toISOString();
     if (message.audience === "OPERATOR") return { provider: this.provider, channel: "UNKNOWN", status: "SKIPPED", sentAt };
     const to = toE164(message.to);
@@ -247,7 +238,7 @@ export class TwilioMessagingProvider implements MessagingProvider {
     const url = twilioWebhookUrl(env);
     let response: Awaited<ReturnType<TwilioClient["sendSms"]>>;
     try {
-      response = await client.sendSms({ to, from, body: message.body, ...(url ? { statusCallback: url } : {}), ...(mediaUrls?.length ? { mediaUrls } : {}) });
+      response = await client.sendSms({ to, from, body: message.body, ...(url ? { statusCallback: url } : {}) });
     } catch (err) {
       throw scrub(err, [env.authToken, env.accountSid], "TWILIO_FAILED", "Sending through Twilio failed.");
     }
@@ -270,7 +261,6 @@ export class TwilioMessagingProvider implements MessagingProvider {
   private async inspect(register: boolean): Promise<{ checks: MessagingCheck[]; webhook: ProviderConnectResult["webhook"]; webhookUrl?: string; problem?: string }> {
     const env = this.env();
     const checks: MessagingCheck[] = [];
-    const validation = this.validateConfiguration();
     if (!env.accountSid || !env.authToken) {
       checks.push({ id: "account", label: "Twilio account", ok: false, code: "TWILIO_KEYS_MISSING", message: "Visitor messaging isn't connected yet: the Twilio account details aren't set up." });
     }
@@ -343,7 +333,6 @@ export class TwilioMessagingProvider implements MessagingProvider {
         ? { id: "verify-link", label: "Identity form link", ok: true, message: "Visitors can open the identity form from their phone" }
         : { id: "verify-link", label: "Identity form link", ok: false, code: "VERIFY_LINK_UNAVAILABLE", message: "Visitors can't open the identity form from their phone until a public https web address is set." },
     );
-    if (!validation.ok && checks.length === 0) checks.push({ id: "account", label: "Twilio account", ok: false, message: validation.problems[0] ?? "Twilio isn't set up." });
     return { checks, webhook, ...(url ? { webhookUrl: url } : {}), ...(checks.some((c) => !c.ok) ? { problem: checks.find((c) => !c.ok)?.message } : {}) };
   }
 }

@@ -96,8 +96,6 @@ export interface MessagingProvider extends MessagingAdapter {
   settingNames(): string[];
   /** Names whose change means the last connection test no longer applies. */
   credentialNames(): string[];
-  /** Provider-default SMS consent when TOURCORE_SMS_CONSENT_MODE=provider_default. */
-  defaultConsentMode(): "keyword_confirm" | "disabled";
   validateConfiguration(): { ok: boolean; problems: string[] };
   /** Read-only health. Does not send a message and does not register a webhook. */
   check(): Promise<MessagingCheck[]>;
@@ -109,8 +107,6 @@ export interface MessagingProvider extends MessagingAdapter {
   /** Drops Tour Core's webhook for this installation when the provider allows it. */
   disconnect?(ownedWebhookUrls: string[]): Promise<void>;
   send(message: OutgoingMessage): Promise<DeliveryReceipt>;
-  /** Present only when this provider can send media. Tour Core's text flow does not require it. */
-  sendMedia?(message: OutgoingMessage & { mediaUrls: string[] }): Promise<DeliveryReceipt>;
   /** Learns the channel a visitor just used, when the provider reports one. */
   noteChannel?(number: string, channel: InboundMessage["channel"]): void;
 }

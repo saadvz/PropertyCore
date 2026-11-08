@@ -17,7 +17,7 @@ export interface TwilioClient {
   getAccount(): Promise<{ sid: string; status?: string }>;
   findNumber(e164: string): Promise<TwilioNumber | undefined>;
   setSmsUrl(phoneSid: string, smsUrl: string): Promise<void>;
-  sendSms(input: { to: string; from: string; body: string; statusCallback?: string; mediaUrls?: string[] }): Promise<TwilioSendResult>;
+  sendSms(input: { to: string; from: string; body: string; statusCallback?: string }): Promise<TwilioSendResult>;
 }
 
 export interface TwilioCredentials {
@@ -71,7 +71,6 @@ export function twilioHttpClient(credentials: TwilioCredentials, fetchImpl: Fetc
     async sendSms(input) {
       const body = new URLSearchParams({ To: input.to, From: input.from, Body: input.body });
       if (input.statusCallback) body.set("StatusCallback", input.statusCallback);
-      input.mediaUrls?.forEach((url, i) => body.set(`MediaUrl${i}`, url));
       const sent = (await call(`${root}/Messages.json`, { method: "POST", body: body.toString() })) as { sid?: string; status?: string; error_code?: number | null };
       if (!sent.sid) throw new MessagingError("TWILIO_REJECTED", "Twilio didn't accept the message.");
       return { sid: sent.sid, status: sent.status, errorCode: sent.error_code };

@@ -113,6 +113,22 @@ describe("check_cart and record_order", () => {
     expect(readSupply(root).orders[0]!.approvedBy).toBe("landlord");
   });
 
+  it("approve_cart refuses a made-up code, another cart's code, and a code already tried; the carts stay held", async () => {
+    const { desk, root, ids } = await activated({ mode: "checkout" });
+    const STALE = "That approval has expired or doesn't match this change. Ask the host again.";
+    const towelsCart = (await desk.checkCart(cartOf([{ itemId: ids.towels, qty: 2, unitCents: 2400 }]))).structured!.cartToken as string;
+    const soapCart = (await desk.checkCart(cartOf([{ itemId: ids.soap, qty: 1, unitCents: 429 }]))).structured!.cartToken as string;
+    const towelsCode = code(await desk.approveCart({ cartToken: towelsCart }));
+    const soapCode = code(await desk.approveCart({ cartToken: soapCart }));
+    expect(await desk.approveCart({ cartToken: towelsCart, confirmation: "nope" })).toMatchObject({ isError: true, text: STALE });
+    // A code only answers for its own cart, and trying it anywhere uses it up.
+    expect(await desk.approveCart({ cartToken: towelsCart, confirmation: soapCode })).toMatchObject({ isError: true, text: STALE });
+    expect(await desk.approveCart({ cartToken: soapCart, confirmation: soapCode })).toMatchObject({ isError: true, text: STALE });
+    expect(readSupply(root).carts.map((cart) => cart.status)).toEqual(["held", "held"]);
+    expect((await desk.approveCart({ cartToken: towelsCart, confirmation: towelsCode })).isError).toBe(false);
+    expect(readSupply(root).carts.map((cart) => cart.status)).toEqual(["approved", "held"]);
+  });
+
   it("a price jump asks buy anyway, backup, or skip", async () => {
     const { desk, ids } = await activated();
     const held = await desk.checkCart(cartOf([{ itemId: ids.towels, qty: 1, unitCents: 3100 }]));

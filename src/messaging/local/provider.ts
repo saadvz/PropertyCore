@@ -112,10 +112,6 @@ export class LocalMessagingProvider implements MessagingProvider {
     return ["TOURCORE_LOCAL_FROM_NUMBER"];
   }
 
-  defaultConsentMode(): "keyword_confirm" | "disabled" {
-    return "keyword_confirm";
-  }
-
   webhookPath(): string {
     return LOCAL_WEBHOOK_PATH;
   }
