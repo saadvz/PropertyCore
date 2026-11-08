@@ -8,7 +8,7 @@ import { filesUnder } from "./files";
 import { ADDRESS, BUSINESS, CALENDAR_URL, CLEANER, CLEANER_TOKEN, DOOR_CODE, HOST, OBSERVER, startWiredApp, type WiredApp } from "./wiringProof";
 
 /**
- * Draft-and-confirm setup (saadvz/TourCore#166): the agent drafts what it already knows, saves it in
+ * Draft-and-confirm setup (saadvz/PropertyCore#166): the agent drafts what it already knows, saves it in
  * any order, shows the host one summary with the gaps marked "needs you", and then asks only what's
  * still missing. The host always confirms the door code (through its secure upload), who gets it,
  * any spending, and anyone new who will be texted. Only 555 numbers and made-up codes.
