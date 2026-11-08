@@ -138,8 +138,8 @@ function cartOrder(cart: Cart, at: string, chargedCents: number, approvedBy: Ord
   };
 }
 
-/** Counts one more store-blocked run for each item. True when any of them is now blocked two runs or more in a row. */
-function blockedAgain(items: readonly Item[]): boolean {
+/** Adds one store-blocked run to each item's count, which is saved with the file. True when any of them is now blocked two runs or more in a row. */
+function countBlockedRun(items: readonly Item[]): boolean {
   let twice = false;
   for (const item of items) {
     item.blockedRuns = (item.blockedRuns ?? 0) + 1;
@@ -819,7 +819,8 @@ export class SupplyDesk {
           this.write(file);
           return fail(NO_GO);
         }
-        order = cartOrder(cart, this.deps.now().toISOString(), input.chargedCents, cart.status === "approved" ? "landlord" : input.approvedBy === "grok-card" || input.approvedBy === "host-browser" ? input.approvedBy : "rules", "placed");
+        const approvedBy = cart.status === "approved" ? "landlord" : input.approvedBy === "grok-card" || input.approvedBy === "host-browser" ? input.approvedBy : "rules";
+        order = cartOrder(cart, this.deps.now().toISOString(), input.chargedCents, approvedBy, "placed");
         file.carts = file.carts.filter((entry) => entry !== cart);
         file.orders.push(order);
       }
@@ -843,7 +844,7 @@ export class SupplyDesk {
         const cart = file.carts.find((entry) => entry.token === input.cartToken);
         if (!cart) return fail(CART_EXPIRED);
         file.carts = file.carts.filter((entry) => entry !== cart);
-        const suggestOtherStore = input.reason === "store-blocked" && blockedAgain(cart.cart.items.map((line) => file.items.find((entry) => entry.id === line.itemId)).filter((item): item is Item => item !== undefined));
+        const suggestOtherStore = input.reason === "store-blocked" && countBlockedRun(cart.cart.items.map((line) => file.items.find((entry) => entry.id === line.itemId)).filter((item): item is Item => item !== undefined));
         this.write(file);
         return ok({ noted: input.reason, closed: cart.token, tellHost: true, ...(suggestOtherStore ? { suggestOtherStore: true } : {}), next: "Tell the host what happened, then try the backup or another store." });
       }
@@ -857,7 +858,8 @@ export class SupplyDesk {
       const ids = input.itemIds ?? [];
       const items = ids.map((id) => file.items.find((item) => item.id === id));
       if (ids.length === 0 || items.some((item) => !item)) return fail("Pass the ids of the items on the list that hit the problem.");
-      const suggestOtherStore = input.reason === "store-blocked" && blockedAgain(items.filter((item): item is Item => item !== undefined));
+      // Every id was found just above; the filter only narrows the type.
+      const suggestOtherStore = input.reason === "store-blocked" && countBlockedRun(items.filter((item): item is Item => item !== undefined));
       this.write(file);
       const next =
         input.reason === "listing-changed"
