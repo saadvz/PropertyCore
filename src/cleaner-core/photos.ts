@@ -239,6 +239,21 @@ export function storePhotos(root: string, jobId: string, photos: readonly { byte
   return saved;
 }
 
+/** Copies the photos kept under one id into another id's folder, numbered after what is there, while there is room. Returns how many were copied. */
+export function copyPhotos(root: string, fromId: string, toId: string): number {
+  const from = join(photosDir(root), photoFolder(fromId));
+  const to = join(photosDir(root), photoFolder(toId));
+  let copied = 0;
+  for (const photo of photoFiles(from)) {
+    const have = photoFiles(to);
+    if (have.length >= MAX_JOB_PHOTOS) break;
+    mkdirSync(to, { recursive: true });
+    writeFileSync(join(to, `${(have.at(-1)?.n ?? 0) + 1}.${photo.ext}`), readFileSync(join(from, photo.file)));
+    copied += 1;
+  }
+  return copied;
+}
+
 /**
  * The folder key for the photos that came with one kept message. It goes through photoFolder like a
  * job id, so its folder and links are letters only, and photoLinks and servePhoto work unchanged.

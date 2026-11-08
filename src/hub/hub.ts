@@ -15,7 +15,7 @@ import {
   type SavedCalendar,
   type StoredCalendar,
 } from "./calendars";
-import { interpretFeed } from "./calendar";
+import { interpretFeed, type FeedBlock, type Turnover } from "./calendar";
 import { calendarFetch } from "./calendarFetch";
 import { calendarUrlAllowed, readPublicCalendar } from "./fetchLimits";
 import { googleCalendarSource, type GoogleEventList, type SourceSnapshot } from "./sources";
@@ -23,7 +23,7 @@ import { DoorAccess } from "./doorAccess";
 import { sameHash, UPLOAD_GONE, UPLOAD_MINUTES, uploadHash } from "./uploadCode";
 import { folderNeedsMove, migrateFolder } from "./migrate";
 import { HUB_CALENDAR_PREFIX } from "./paths";
-import { emptyHub, hubPath, readHubFile, type HubCaller, type HubFile, type HubProperty } from "./store";
+import { emptyHub, hubPath, readHubFile, type HubCaller, type HubFile, type HubProperty, type Stay } from "./store";
 
 /**
  * One property's hub: its details and booking calendars, kept in hub.json in the property's folder.
@@ -315,7 +315,16 @@ export class Hub {
       const dates = new Set<string>();
       for (const link of links) if (link.read.ok) for (const turn of interpretFeed(link.read.body).turnovers) dates.add(turn.checkoutDate);
       for (const turn of google?.turnovers ?? []) dates.add(turn.checkoutDate);
-      this.file = { ...this.file, checkouts: { dates: [...dates].sort(), at } };
+      const stays = new Map<string, Stay>();
+      const addStay = (checkIn: string, checkout: string, kind: Stay["kind"]) => stays.set(`${checkIn}|${checkout}|${kind}`, { checkIn, checkout, kind });
+      const addFeed = (feed: { turnovers: Turnover[]; blocks: FeedBlock[] }) => {
+        for (const turn of feed.turnovers) addStay(turn.checkInDate, turn.checkoutDate, "stay");
+        for (const block of feed.blocks) if (block.checkInDate && block.checkoutDate) addStay(block.checkInDate, block.checkoutDate, "block");
+      };
+      for (const link of links) if (link.read.ok) addFeed(interpretFeed(link.read.body));
+      if (google) addFeed(google);
+      const sorted = [...stays.values()].sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.checkout.localeCompare(b.checkout) || a.kind.localeCompare(b.kind));
+      this.file = { ...this.file, checkouts: { dates: [...dates].sort(), at }, stays: sorted };
     } else {
       this.file = { ...this.file, checkouts: { dates: last?.dates ?? [], ...(last?.at ? { at: last.at } : {}), failedAt: at } };
     }
@@ -327,6 +336,11 @@ export class Hub {
   checkouts(): { dates: string[]; at?: string; failedAt?: string } | undefined {
     const checkouts = this.file.checkouts;
     return checkouts ? { ...checkouts, dates: [...checkouts.dates] } : undefined;
+  }
+
+  /** Stays and blocks from the last read where every calendar read cleanly; kept after a failed read. */
+  stays(): Stay[] | undefined {
+    return this.file.stays?.map((stay) => ({ ...stay }));
   }
 
   /** The saved list with this upload's link: replacing the calendar of the same name, else added last. */

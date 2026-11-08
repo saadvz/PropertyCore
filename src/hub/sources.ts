@@ -265,7 +265,7 @@ interface GoogleEvent {
 /** Files one read event as a block, or as a stay whose next guest linkStays fills in. */
 function addEvent(event: GoogleEvent, stays: Turnover[], blocks: FeedBlock[]): void {
   if (event.block) {
-    blocks.push({ uid: event.uid, summary: event.summary });
+    blocks.push({ uid: event.uid, summary: event.summary, checkInDate: event.checkInDate, checkoutDate: event.checkOutDate });
     return;
   }
   stays.push({

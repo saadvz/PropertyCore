@@ -25,6 +25,11 @@ export function supplyCoreOn(env: NodeJS.ProcessEnv = process.env): boolean {
   return isOn(env.SUPPLY_CORE);
 }
 
+/** Fixer Core as a service choice on the multi-tenant service. Off unless FIXER_CORE is exactly "1" or "true". */
+export function fixerCoreOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isOn(env.FIXER_CORE);
+}
+
 /** Touring tenants on the multi-tenant service. Off unless TOUR_CORE_TENANTS is exactly "1" or "true". */
 export function tourCoreTenants(env: NodeJS.ProcessEnv = process.env): boolean {
   return isOn(env.TOUR_CORE_TENANTS);

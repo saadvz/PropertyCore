@@ -134,7 +134,7 @@ describe("Guesty Lite feed", () => {
     const box = sink();
     const job = core(box);
     const read = await job.pollFeed(feed("guesty-lite-scratch.ics"));
-    expect(read.blocks).toEqual([
+    expect(read.blocks.map(({ uid, summary }) => ({ uid, summary }))).toEqual([
       { uid: "block-owner@guesty.com", summary: "Blocked" },
       { uid: "block-date@guesty.com", summary: "Not available" },
     ]);
@@ -1384,7 +1384,7 @@ describe("step E second source and second tenant", () => {
     const box = sink();
     const job = core(box, { tenantId: "scratch-lane" });
     const read = await job.readSource(google("google-lane-block.json"), { conversation: "closed" });
-    expect(read.blocks).toEqual([{ uid: "google:evt-block", summary: "Owner block" }]);
+    expect(read.blocks.map(({ uid, summary }) => ({ uid, summary }))).toEqual([{ uid: "google:evt-block", summary: "Owner block" }]);
     expect(read.jobs.map((item) => ({ id: item.id, checkoutDate: item.checkoutDate }))).toEqual([
       { id: "google:evt-stay", checkoutDate: "2026-10-18" },
     ]);
@@ -1659,7 +1659,7 @@ describe("step F Notion, onboarding, and group delivery", () => {
     const job = core(box, { tenantId: "scratch-lane" });
     const read = await job.readSource(notion("notion-lane-read.json"), { conversation: "closed" });
     expect(read.sent).toEqual([{ to: OWNER, body: CHECKOUT_Q, kind: "host-checkout" }]);
-    expect(read.blocks).toEqual([{ uid: "notion:row-block", summary: "Owner block" }]);
+    expect(read.blocks.map(({ uid, summary }) => ({ uid, summary }))).toEqual([{ uid: "notion:row-block", summary: "Owner block" }]);
     expect(read.jobs.map((item) => ({ id: item.id, checkoutDate: item.checkoutDate }))).toEqual([
       { id: "notion:row-anita", checkoutDate: "2026-10-18" },
     ]);
