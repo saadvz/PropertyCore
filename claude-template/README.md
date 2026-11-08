@@ -79,8 +79,8 @@ is the Claude version of `CLEANER_CORE_BOOTSTRAP.md`. Claude works without it,
 because the connector's instructions carry the essentials, but the skill holds
 the full guide.
 
-- **Claude Code:** `/plugin marketplace add saadvz/TourCore`, then
-  `/plugin install cleaner-core@tour-core`.
+- **Claude Code:** `/plugin marketplace add saadvz/PropertyCore`, then
+  `/plugin install cleaner-core@property-core`.
 - **claude.ai, desktop, Cowork:** zip the `plugin/skills/cleaner-core` folder
   and upload it in **Settings → Capabilities → Skills**.
 

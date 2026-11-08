@@ -78,7 +78,7 @@ export function createVerificationProvider(config: TourCoreConfig): Verification
 }
 
 export function createDurin(config: TourCoreConfig, clock: Clock, log?: Log): DurinAccessAdapter {
-  if (config.accessMode === "durin-mock") {
+  if (config.accessMode === "door-demo") {
     return new MockDurinAccessAdapter({
       doorNames: Object.fromEntries(config.doors.map((d) => [d.id, d.name])),
       timeZone: config.property.timezone,

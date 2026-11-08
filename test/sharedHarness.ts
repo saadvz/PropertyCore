@@ -10,7 +10,7 @@ import { CALENDAR_URL, FROZEN } from "./wiringProof";
 
 /**
  * One account on one line, with properties set up through the agent's tools, for shared people
- * (saadvz/TourCore#190). Only 555 numbers; the door codes are the made-up Scratch pins.
+ * (saadvz/PropertyCore#190). Only 555 numbers; the door codes are the made-up Scratch pins.
  */
 
 export const [LANE, COURT] = SCRATCH_TENANTS as [(typeof SCRATCH_TENANTS)[number], (typeof SCRATCH_TENANTS)[number]];

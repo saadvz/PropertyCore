@@ -83,7 +83,7 @@ describe("routeLineText", () => {
     expect(routeLineText(account([lane, off]), STRANGER, "hi", people())).toEqual({ kind: "property", property: lane });
   });
 
-  it("a person on both: STOP and START to both, HELP to none, anything else to be worked out (saadvz/TourCore#190)", () => {
+  it("a person on both: STOP and START to both, HELP to none, anything else to be worked out (saadvz/PropertyCore#190)", () => {
     const two = account([lane, court]);
     const both = people({ [CLEANER]: [lane.id, court.id] });
     expect(routeLineText(two, CLEANER, "STOP", both)).toEqual({ kind: "person-all", properties: [lane, court] });
@@ -243,7 +243,7 @@ describe("texts on the shared line", () => {
     await m.toolAt(PATH, token, "save_property", { property: court.id, business: "Court", address: "8 Scratch Court, Teaneck, NJ 07666", timeZone: "America/New_York" });
     const savedCy = await m.toolAt(PATH, token, "save_people", { property: court.id, host: HOST, cleaner: STRANGER, cleanerName: "Cy" });
     expect(savedCy.isError, savedCy.text).toBe(false);
-    // The account's people list keeps the STOP, for every property that saves the phone (saadvz/TourCore#190).
+    // The account's people list keeps the STOP, for every property that saves the phone (saadvz/PropertyCore#190).
     const people = JSON.parse(readFileSync(join(m.app.root, "tenants", made.id, "people.json"), "utf8")) as PeopleFile;
     expect(people.people.find((p) => p.phone === STRANGER)?.stopped).toBeDefined();
     expect(people.people.find((p) => p.phone === STRANGER)?.where).toEqual([{ propertyId: court.id, role: "cleaner" }]);
@@ -258,7 +258,7 @@ describe("texts on the shared line", () => {
 
   it("saving one property's cleaner on the other is refused, however the phone is typed", SLOW, async () => {
     const s = await twoProperties();
-    // Without the host's shared: true (saadvz/TourCore#190).
+    // Without the host's shared: true (saadvz/PropertyCore#190).
     const taken = sharedRefusal([{ label: "12 Scratch Lane", role: "cleaner" }]);
     for (const cleaner of [CLEANER, "(555) 555-0131"]) {
       const refused = await s.m.toolAt(PATH, s.token, "save_people", { property: s.court.id, host: HOST, cleaner, cleanerName: "Ana" });

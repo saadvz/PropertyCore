@@ -3,6 +3,7 @@ import { formatPhone, helpNear } from "../core/phone";
 import { formatTime } from "../core/timezone";
 import { UNNAMED_VISITOR, type AuditEvent } from "../domain/model";
 import type { ExportBundle } from "../export/exportBundle";
+import { currentDecisionCode } from "../policy/evaluateAccess";
 
 export interface HistoryEntry {
   at: string;
@@ -185,7 +186,7 @@ function quotedHistoryAsk(detail: string): string {
 }
 
 function denial(code: string | undefined, c: { name: string; door: string }): string {
-  switch (code) {
+  switch (currentDecisionCode(code)) {
     case "DENY_TOO_EARLY":
       return `${c.name} arrived too early. ${c.door} stayed locked.`;
     case "DENY_WRONG_ROUTE":
@@ -194,7 +195,7 @@ function denial(code: string | undefined, c: { name: string; door: string }): st
       return `${c.name}'s tour time had ended. ${c.door} stayed locked.`;
     case "DENY_TOUR_COMPLETED":
       return `${c.name}'s tour was already over. ${c.door} stayed locked.`;
-    case "DENY_DURIN_UNHEALTHY":
+    case "DENY_DOOR_UNHEALTHY":
       return `The door system wasn't responding, so ${c.door} stayed locked.`;
     case "DENY_PROVIDER_FAILURE":
       return `The door system couldn't open ${c.door}, so it stayed locked.`;

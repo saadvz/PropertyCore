@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 
 /**
- * Texts held while a person on several properties is asked "which property?" (saadvz/TourCore#190).
+ * Texts held while a person on several properties is asked "which property?" (saadvz/PropertyCore#190).
  * One per phone, in line-asks.json in the account folder. A later text replaces the held one; the ask
  * goes out at most once every 10 minutes; after 2 hours the held text is dropped.
  */

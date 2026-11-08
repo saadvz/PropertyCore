@@ -159,10 +159,10 @@ function subsystemLines(ctx: ToolContext, id: string, draft: SetupDraft) {
   const local = usesLocalMessaging(draft, services.installedMessaging?.());
   return {
     texting,
-    lines: [`Visitor texting: ${texting.label}`, `Door access: ${draft.accessMode === "durin-mock" ? "Demo" : "Connected"}`],
+    lines: [`Visitor texting: ${texting.label}`, `Door access: ${draft.accessMode === "door-demo" ? "Demo" : "Connected"}`],
     sentence: local
-      ? localTestModeSentence(draft.accessMode === "durin-mock")
-      : modeSentence(texting.state === "connected", draft.accessMode === "durin-mock"),
+      ? localTestModeSentence(draft.accessMode === "door-demo")
+      : modeSentence(texting.state === "connected", draft.accessMode === "door-demo"),
   };
 }
 
@@ -218,7 +218,7 @@ function setupSnapshot(ctx: ToolContext, id: string) {
     verification: view.reviewCards.find((c) => c.step === "verification")?.rows ?? [],
     recordsAndMessages: view.services.items.map((s) => s.title),
     visitorTexting: subsystemLines(ctx, id, draft).texting.label,
-    doorAccess: draft.accessMode === "durin-mock" ? "Demo" : "Connected",
+    doorAccess: draft.accessMode === "door-demo" ? "Demo" : "Connected",
     alertsGoTo: view.operator.name,
     ...(view.operator.visitorContact ? { visitorHelpNumber: formatPhone(view.operator.visitorContact) } : {}),
     ...setupState(ctx, id),

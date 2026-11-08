@@ -93,7 +93,9 @@ settings are in [`docs/environment-variables.md`](docs/environment-variables.md)
 
 ## Tour Core is parked
 
-This repository started as Tour Core, a self-touring tool for rental units. Touring is parked: it stays in the
+This repository started as Tour Core, a self-touring tool for rental units, and was renamed from
+`saadvz/TourCore` to `saadvz/PropertyCore`. GitHub forwards the old address, and a clone made before the rename
+keeps working. Touring is parked: it stays in the
 repository and its tests keep running, but new accounts get properties, not touring. Its guide and brochure
 are in [`docs/tour-core/`](docs/tour-core/README.md), which links to its setup files.
 

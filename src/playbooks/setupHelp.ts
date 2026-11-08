@@ -3,7 +3,7 @@
  * The repository is public, so this page opens for a landlord the day it is on master.
  * The page does not name a person to contact.
  */
-export const SETUP_HELP_URL = "https://github.com/saadvz/TourCore/blob/master/docs/setup-help.md";
+export const SETUP_HELP_URL = "https://github.com/saadvz/PropertyCore/blob/master/docs/setup-help.md";
 
 /** The same ending on every failure line. Nothing follows the link. */
 export const SETUP_HELP_ENDING = `If it keeps failing, the setup help page has the usual fixes: ${SETUP_HELP_URL}`;

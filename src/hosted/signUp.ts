@@ -6,7 +6,7 @@ import type { AccountAnswer, AccountDoor } from "../mcp/oauth/provider";
 import type { PhoneCodes } from "./phoneCodes";
 
 /**
- * Sign in and Create account on the connect page (saadvz/TourCore#162). A phone code proves the
+ * Sign in and Create account on the connect page (saadvz/PropertyCore#162). A phone code proves the
  * landlord holds their phone; then the grant binds to the account that phone owns, or to a new
  * account with its own text line from the pool. No admin step.
  *

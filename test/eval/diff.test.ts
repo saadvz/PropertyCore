@@ -19,7 +19,7 @@ function config(name: string, doorId = "door_a"): TourCoreConfig {
     verificationValidForDays: 180,
     messagingMode: "live",
     storageMode: "memory",
-    accessMode: "durin-mock",
+    accessMode: "door-demo",
   };
 }
 

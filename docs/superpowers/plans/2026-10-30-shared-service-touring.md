@@ -23,7 +23,7 @@
 - Secrets never appear in logs, tool replies, IPC messages to the front's log, the registry, or `/admin`: routine URLs and keys, worker keys, Twilio credentials, door codes, invite codes after first shown.
 - Logs carry `tnt_…` and never a full phone number.
 - A touring process never sees another tenant's value or any `CLEANER_CORE_*` per-tenant name (`PER_TENANT_NAMES` in `src/cleaner-core/hosted/tenantEnv.ts`).
-- Door access stays `DURIN_DEMO`.
+- Door access stays `DOOR_DEMO`.
 - `AGENTS.md` and `docs/cleaner-core-safety-gates.md` are not edited.
 - Before every commit: `npm run typecheck` and the task's tests. Before the final push: `npm test` and `bash scripts/ci-check.sh`.
 

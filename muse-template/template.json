@@ -9,7 +9,7 @@
   "hostedCleanerCoreUrl": "https://tourcore-production-8b80.up.railway.app",
   "hostedCleanerCoreUrlNote": "The one Cleaner Core service every host and chat uses. Saad adds each host on its /admin page and sends them an invite code.",
   "repository": {
-    "url": "https://github.com/saadvz/TourCore",
+    "url": "https://github.com/saadvz/PropertyCore",
     "skill": "muse-template/skills/cleaner-core",
     "note": "Muse clones the repository on its cloud computer only to read and save the skills: Cleaner Core at setup, Supply Core when the host turns it on. It never runs anything from the clone.",
     "skills": ["muse-template/skills/cleaner-core", "muse-template/skills/supply-core"]

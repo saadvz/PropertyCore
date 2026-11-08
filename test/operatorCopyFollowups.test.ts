@@ -261,7 +261,7 @@ describe("operator-facing readiness and practice tour never name Durin", () => {
   });
 
   it("web, CLI, grok disconnect, and the wrong-door demo line never name Durin", () => {
-    const allowed = /durin-mock|createDurin|countDurinCalls|CountingDurin|MockDurin|durinCalled|durinLines|durinRequests|durinHealth|DENY_DURIN_UNHEALTHY|DURIN_DEMO|never name Durin|Never name Durin|before Durin|deps\.durin|this\.durin|src\/durin/i;
+    const allowed = /door-demo|createDurin|countDurinCalls|CountingDurin|MockDurin|durinCalled|durinLines|durinRequests|durinHealth|DENY_DOOR_UNHEALTHY|DOOR_DEMO|never name Durin|Never name Durin|before Durin|deps\.durin|this\.durin|src\/durin/i;
     const unexpected = (file: string) =>
       readFileSync(file, "utf8")
         .split("\n")
@@ -385,7 +385,7 @@ describe("Critiquito demo-card and real door access copy", () => {
     expect(view.services.items.map((item) => item.text)).toContain(
       "Tour Core only asks the door system to unlock a door after its own safety checks pass.",
     );
-    expect(readFileSync("src/setup/setupActions.ts", "utf8")).toContain('durin: "Real door access"');
+    expect(readFileSync("src/setup/setupActions.ts", "utf8")).toContain('door: "Real door access"');
   });
 });
 

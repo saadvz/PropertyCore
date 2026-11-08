@@ -107,8 +107,8 @@ describe("evaluateAccess", () => {
   });
 
   it("fails closed when Durin is unhealthy or health is unknown", () => {
-    expect(evaluateAccess(input({ durinHealth: { healthy: false, checkedAt: iso(14, 0) } }))).toMatchObject({ allowed: false, code: "DENY_DURIN_UNHEALTHY" });
-    expect(evaluateAccess(input({ durinHealth: undefined }))).toMatchObject({ allowed: false, code: "DENY_DURIN_UNHEALTHY" });
+    expect(evaluateAccess(input({ durinHealth: { healthy: false, checkedAt: iso(14, 0) } }))).toMatchObject({ allowed: false, code: "DENY_DOOR_UNHEALTHY" });
+    expect(evaluateAccess(input({ durinHealth: undefined }))).toMatchObject({ allowed: false, code: "DENY_DOOR_UNHEALTHY" });
   });
 
   it("denies a different prospect and a missing reservation", () => {

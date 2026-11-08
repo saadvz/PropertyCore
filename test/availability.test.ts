@@ -772,7 +772,7 @@ describe("pause and remove", () => {
       reservationId: reservation.id,
       prospectId: reservation.prospectId,
       doorId: reservation.allowedRoute[0]!,
-      durinGrantRef: "durin_pending",
+      doorGrantRef: "durin_pending",
       status: "ACTIVE",
       validFrom: reservation.windowStart!,
       validUntil: reservation.windowEnd!,

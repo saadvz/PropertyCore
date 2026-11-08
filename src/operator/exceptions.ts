@@ -10,6 +10,7 @@ import { profileFacts, questionTopic, structuredAnswer, type ProfileField, type 
 import { MAX_FACT_LENGTH } from "../config/validateConfig";
 import { UNNAMED_VISITOR, type AuditEvent, type Message, type Reservation, type ReservationStatus } from "../domain/model";
 import { PAUSED, TERMINAL } from "../domain/stateMachine";
+import { currentDecisionCode } from "../policy/evaluateAccess";
 import { applySetupCommand } from "../setup/commands";
 import { SetupInputError } from "../setup/setupActions";
 import { statusLabel } from "../setup/workspace";
@@ -145,7 +146,7 @@ const id = (...parts: string[]) => `exc_${createHash("sha256").update(parts.join
 const BLOCKING: ReservationStatus[] = [...PAUSED, "REVOKED", "CANCELLED", "VERIFICATION_FAILED", "EXPIRED"];
 const ACCESS_KINDS: Record<string, ExceptionKind | undefined> = {
   DENY_WRONG_ROUTE: "off-route-door",
-  DENY_DURIN_UNHEALTHY: "door-system",
+  DENY_DOOR_UNHEALTHY: "door-system",
   DENY_UNKNOWN: "access-problem",
   DENY_PROSPECT_MISMATCH: "access-problem",
   DENY_NO_RESERVATION: "access-problem",
@@ -160,7 +161,7 @@ function kindFor(e: AuditEvent): ExceptionKind | undefined {
     case "HELP_REQUESTED":
       return "needs-help";
     case "ACCESS_DENIED":
-      return ACCESS_KINDS[e.code ?? ""];
+      return ACCESS_KINDS[currentDecisionCode(e.code) ?? ""];
     case "PROVIDER_FAILURE":
       return "provider-failure";
     case "VERIFICATION_FAILED":

@@ -7,7 +7,7 @@
   "skill": "skills/property-core/SKILL.md",
   "hostedPropertyCoreUrl": "https://tourcore-production-8b80.up.railway.app",
   "repository": {
-    "url": "https://github.com/saadvz/TourCore",
+    "url": "https://github.com/saadvz/PropertyCore",
     "skill": "property-core-template/muse/skills/property-core",
     "note": "Muse clones the repository on its cloud computer only to read and save the skill. It never runs anything from the clone."
   },

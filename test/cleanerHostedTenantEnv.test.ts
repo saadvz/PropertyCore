@@ -51,7 +51,7 @@ describe("buildTenantEnv", () => {
     expect(Object.values(env).join("\n")).not.toContain("key-g1");
   });
 
-  it("passes the landlord's phone only once its code checked out at sign-up (saadvz/TourCore#164)", () => {
+  it("passes the landlord's phone only once its code checked out at sign-up (saadvz/PropertyCore#164)", () => {
     const owner = { phone: "+15555550160", email: "host@example.com", phoneVerifiedAt: NOW, terms: { version: "1", acceptedAt: NOW } };
     const base = { CLEANER_CORE_LANDLORD_PHONE: "+15555550199" };
     secrets.set(t.id, { CLEANER_CORE_LANDLORD_PHONE: "+15555550198" });

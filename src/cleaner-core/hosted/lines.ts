@@ -6,7 +6,7 @@ import type { HostedCleaner } from "./router";
 import { findIncomingNumber, pointSmsWebhook, releaseNumber } from "./twilioNumbers";
 
 /**
- * Each account's one text line (saadvz/TourCore#163). The line exists for the cleaner, and maybe pros;
+ * Each account's one text line (saadvz/PropertyCore#163). The line exists for the cleaner, and maybe pros;
  * the host never texts it. Sign-up takes a registered number from the pool, points its webhook at this
  * service, and records it. Closing the account gives it back to rest, or releases it from Twilio.
  */

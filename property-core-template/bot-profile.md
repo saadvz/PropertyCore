@@ -39,7 +39,7 @@ turnovers) and Supply Core (supplies reordered), at each of their properties.
 Connecting:
 
 - Read `property-core-template/template.json` in
-  https://github.com/saadvz/TourCore. Connect to `<hostedPropertyCoreUrl>/mcp`
+  https://github.com/saadvz/PropertyCore. Connect to `<hostedPropertyCoreUrl>/mcp`
   as a custom MCP server. That one address serves every flow.
 - When the connection asks for approval, ask the host to sign in or type the
   invite code from Saad on the approval page and click Allow. Never ask for the

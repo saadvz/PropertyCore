@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { filesUnder, REPO_ROOT } from "./files";
 
 /**
- * saadvz/TourCore#178: one documented way to start. property-core-template/ is the entry for every
+ * saadvz/PropertyCore#178: one documented way to start. property-core-template/ is the entry for every
  * agent, Grok Bot and Muse first, and it offers Cleaner Core and Supply Core. The older per-flow
  * folders stay as the guides the agents read, but none of them offers a start of its own.
  */
@@ -14,13 +14,16 @@ import { filesUnder, REPO_ROOT } from "./files";
 const read = (rel: string) => readFileSync(join(REPO_ROOT, rel), "utf8").replace(/\r\n/g, "\n");
 const json = <T>(rel: string) => JSON.parse(read(rel)) as T;
 const ENTRY = "property-core-template";
-const REPO = "https://github.com/saadvz/TourCore";
+const REPO = "https://github.com/saadvz/PropertyCore";
 const TEMPLATE_LINK = "https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ";
 
-/** SHA-256 of each entry prompt with LF line endings. Change a prompt only on purpose. */
+/**
+ * SHA-256 (base64) of each entry prompt with LF line endings. Change a prompt only on purpose.
+ * Base64, so a hex digest never holds a run of digits the door-code scan mistakes for a code.
+ */
 const PROMPT_PINS: Record<string, string> = {
-  [`${ENTRY}/SETUP_PROMPT.md`]: "54bbc4eb4269a11b3c8bd4c5286aca86de7c4f048efa315f32af2969e4645066",
-  [`${ENTRY}/muse/SETUP_PROMPT.md`]: "81800650f2c7b41e61738ecfb5cd3ef6f3f91d498aba1e2b91b1bb87e87bcbb3",
+  [`${ENTRY}/SETUP_PROMPT.md`]: "Z8aV4bPoo8PSq6SEjSo+awz9NWuDS61EJFI6+jalgeE=",
+  [`${ENTRY}/muse/SETUP_PROMPT.md`]: "DrYvPEjdIv2tSPwHMDd6WHA3WbHZPqc5HNtkHl+krIc=",
 };
 
 /** The prompt inside a SETUP_PROMPT.md's text block. */
@@ -49,7 +52,7 @@ const HTML_GUIDES = ["grok", "muse", "claude", "chatgpt"].map((agent) => `docs/p
 
 describe("the entry prompts", () => {
   it.each(Object.keys(PROMPT_PINS))("%s is pinned and offers Cleaner Core and Supply Core, never Tour Core", (rel) => {
-    expect(createHash("sha256").update(read(rel)).digest("hex")).toBe(PROMPT_PINS[rel]);
+    expect(createHash("sha256").update(read(rel)).digest("base64")).toBe(PROMPT_PINS[rel]);
     const prompt = promptOf(rel);
     expect(prompt).toContain(REPO);
     expect(prompt).toContain("Cleaner Core, Supply Core, or both");
@@ -230,7 +233,7 @@ describe("files the agents and the server read", () => {
       expect(manifest.name).toBe(plugin.name);
       expect(existsSync(join(REPO_ROOT, plugin.source, "skills", plugin.name, "SKILL.md"))).toBe(true);
     }
-    expect(read(`${ENTRY}/claude/SETUP_GUIDE.md`)).toContain("/plugin install property-core@tour-core");
+    expect(read(`${ENTRY}/claude/SETUP_GUIDE.md`)).toContain("/plugin install property-core@property-core");
   });
 });
 

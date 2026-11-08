@@ -77,7 +77,7 @@ describe("installation manifest", () => {
       deploymentMode: "GROK_MANAGED_P0",
       messagingProvider: "UNSET",
       storageProvider: "LOCAL_DEMO",
-      accessProvider: "DURIN_DEMO",
+      accessProvider: "DOOR_DEMO",
       operatorNotificationProvider: "NONE",
       publicEndpointProvider: "NONE",
     });
@@ -121,7 +121,7 @@ describe("settings layer and SecretStore", () => {
   it("secure-setup values win over .env; the manifest address is used when none is set, and always in GROK_MANAGED_P0", () => {
     const secrets = new MemorySecretStore();
     secrets.set({ SENDBLUE_API_API_KEY: "secure-key-123456" });
-    const manifest = () => ({ ...ManifestSchema.parse({ schemaVersion: 1, deploymentMode: "LOCAL_DEVELOPER", installationId: "inst_abcdefghijklmnop", publicEndpointProvider: "MANUAL", messagingProvider: "SENDBLUE", storageProvider: "LOCAL_DEMO", accessProvider: "DURIN_DEMO", operatorNotificationProvider: "NONE", installedAt: "x", updatedAt: "x" }), publicBaseUrl: TUNNEL });
+    const manifest = () => ({ ...ManifestSchema.parse({ schemaVersion: 1, deploymentMode: "LOCAL_DEVELOPER", installationId: "inst_abcdefghijklmnop", publicEndpointProvider: "MANUAL", messagingProvider: "SENDBLUE", storageProvider: "LOCAL_DEMO", accessProvider: "DOOR_DEMO", operatorNotificationProvider: "NONE", installedAt: "x", updatedAt: "x" }), publicBaseUrl: TUNNEL });
     const env = { SENDBLUE_API_API_KEY: "env-key-123456", PUBLIC_BASE_URL: "https://dev.example" };
     expect(effectiveEnv(env, { secrets, manifest }).SENDBLUE_API_API_KEY).toBe("secure-key-123456");
     expect(effectiveEnv(env, { secrets, manifest }).PUBLIC_BASE_URL).toBe("https://dev.example");

@@ -8,7 +8,7 @@
   "templateLink": "https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ",
   "hostedPropertyCoreUrl": "https://tourcore-production-8b80.up.railway.app",
   "repository": {
-    "url": "https://github.com/saadvz/TourCore",
+    "url": "https://github.com/saadvz/PropertyCore",
     "bootstrap": {
       "cleaning": "CLEANER_CORE_BOOTSTRAP.md",
       "supplies": "SUPPLY_CORE_BOOTSTRAP.md",

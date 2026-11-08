@@ -73,7 +73,7 @@ export const SETUP_DEFAULTS = {
   verificationValidForDays: 30,
   messagingMode: "demo",
   storageMode: "memory",
-  accessMode: "durin-mock",
+  accessMode: "door-demo",
 } as const;
 
 /** What the operator sees instead of mode ids. */
@@ -84,7 +84,7 @@ export const CHOICE_LABELS = {
   },
   messaging: { demo: "Demo messaging (texts show on screen)", live: "Real texts to visitors' phones" },
   storage: { memory: "Demo records (kept on this computer)", "google-drive": "Google Drive" },
-  access: { "durin-mock": "Door access demo mode (no real doors open)", durin: "Real door access" },
+  access: { "door-demo": "Door access demo mode (no real doors open)", door: "Real door access" },
 } as const;
 
 /**

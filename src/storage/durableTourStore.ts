@@ -1,7 +1,12 @@
 import type { TourCoreStore, CollectionName, Collections } from "./Store";
-import type { AuditEvent } from "../domain/model";
+import { upgradeAccessGrant, type AuditEvent } from "../domain/model";
 import { StorageUnavailableError } from "./errors";
 import { sha256Json, type DocumentStore } from "./documentStore";
+
+/** A record saved in an older shape, read in the current one. */
+function upgradeRecord(collection: CollectionName, body: unknown): unknown {
+  return collection === "accessGrants" ? upgradeAccessGrant(body) : body;
+}
 
 /**
  * Tour records that must be on Drive before Tour Core tells anyone they
@@ -35,7 +40,7 @@ export class DurableTourStore implements TourCoreStore {
     try {
       const doc = await this.remote.get(this.path(collection, id));
       if (!doc) return undefined;
-      return doc.body as Collections[K];
+      return upgradeRecord(collection, doc.body) as Collections[K];
     } catch (err) {
       if (err instanceof StorageUnavailableError) return this.inner.get(collection, id);
       throw err;
@@ -56,7 +61,7 @@ export class DurableTourStore implements TourCoreStore {
     if (!this.available()) return this.inner.list(collection);
     const docs = await this.remote.list(`tours-data/${collection}/`);
     if (!docs.length) return this.inner.list(collection);
-    return docs.map((doc) => doc.body as Collections[K]);
+    return docs.map((doc) => upgradeRecord(collection, doc.body) as Collections[K]);
   }
 
   async appendAudit(event: AuditEvent): Promise<void> {

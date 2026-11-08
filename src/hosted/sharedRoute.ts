@@ -1,7 +1,7 @@
 import { streetOf } from "../hub/people";
 
 /**
- * The words for a person who is on several of an account's properties (saadvz/TourCore#190): which
+ * The words for a person who is on several of an account's properties (saadvz/PropertyCore#190): which
  * property their text names, their answer to "which property?", and the line's own replies. Every
  * function looks only at the person's own properties, so nothing here can name another one.
  */

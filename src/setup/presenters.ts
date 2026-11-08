@@ -130,7 +130,7 @@ export const COMMON_TIME_ZONES = [
 ].map((id) => ({ id, label: `${friendlyTimeZone(id)} (${id.split("/").pop()!.replace(/_/g, " ")})` }));
 
 function servicesView(draft: SetupDraft) {
-  const demo = draft.storageMode === "memory" && draft.messagingMode === "demo" && draft.accessMode === "durin-mock";
+  const demo = draft.storageMode === "memory" && draft.messagingMode === "demo" && draft.accessMode === "door-demo";
   const live = draft.messagingMode === "live";
   return {
     allDemo: demo,
@@ -160,7 +160,7 @@ function servicesView(draft: SetupDraft) {
         dev: { mode: draft.messagingMode, adapter: live ? "MessagingProvider" : "DemoMessagingAdapter" },
       },
       {
-        title: draft.accessMode === "durin-mock" ? "Door access demo mode" : CHOICE_LABELS.access[draft.accessMode],
+        title: draft.accessMode === "door-demo" ? "Door access demo mode" : CHOICE_LABELS.access[draft.accessMode],
         text: "Tour Core only asks the door system to unlock a door after its own safety checks pass.",
         dev: { mode: draft.accessMode, adapter: "MockDurinAccessAdapter" },
       },

@@ -3,7 +3,7 @@ import { closeHostedApps } from "./cleanerOauthHarness";
 import { CLEANER, COURT, LANDLORD, LANE, LINE, sharedAccount, type SharedAccount } from "./sharedHarness";
 
 /**
- * A setup draft on an account with more than one property (saadvz/TourCore#166, after #190): it names
+ * A setup draft on an account with more than one property (saadvz/PropertyCore#166, after #190): it names
  * the people already on the account's other properties, so a draft that reuses one says so in its
  * summary and saves with shared: true only after the host's yes. Never a phone. Only 555 numbers.
  */

@@ -8,7 +8,7 @@ import { cleanupDesks, LOCK, ok, openDeskAt, PIN_KEY, ROUTINE, ZONE } from "./cl
 import { BUSINESS, CALENDAR_URL, CLEANER, DOOR_CODE, fakeSms, HOST } from "./wiringProof";
 
 /**
- * A desk on an account reads the account's opt-in and STOP, and reports its own (saadvz/TourCore#190).
+ * A desk on an account reads the account's opt-in and STOP, and reports its own (saadvz/PropertyCore#190).
  * One cleaner on two properties of one account. Only 555 numbers; the door code is made up.
  */
 

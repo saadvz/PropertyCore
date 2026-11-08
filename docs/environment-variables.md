@@ -1,7 +1,8 @@
 # Environment variables
 
 Every Property Core flow runs in one Node service, so they share one set of environment variables. The
-`TOURCORE_*` names are kept as they are, because live deployments use them.
+`TOURCORE_*` names are kept as they are, because live deployments, `.env` files and saved secure-setup values
+use them. The repository rename to Property Core (#179) did not change them.
 
 Developer values live in `.env` (see [`.env.example`](../.env.example)). Hosted Railway sets the first four on
 the service. A parked Tour Core install, Grok-managed or self-hosted, puts its credentials on Tour Core's secure

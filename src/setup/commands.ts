@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { TourHoursSchema, validateConfig } from "../config/tourCoreConfig";
+import { AccessModeSchema, TourHoursSchema, validateConfig } from "../config/tourCoreConfig";
 import {
   addDoor,
   addTourableSpace,
@@ -111,7 +111,7 @@ export const SETUP_COMMANDS = {
       messagingMode: z.preprocess((v) => (v === "sendblue" ? "live" : v), z.enum(["demo", "live"])).optional(),
       messagingProvider: z.enum(["local"]).optional(),
       storageMode: z.enum(["memory", "google-drive"]).optional(),
-      accessMode: z.enum(["durin-mock", "durin"]).optional(),
+      accessMode: AccessModeSchema.optional(),
     }),
     (d, i) => setServices(d, i),
   ),

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { accountOf, forgetPeople, PEOPLE_FILE, peopleFor, resetPeople, streetOf, type PersonChange } from "../src/hub/people";
 
-/** The account people list (saadvz/TourCore#190). Only 555 numbers. */
+/** The account people list (saadvz/PropertyCore#190). Only 555 numbers. */
 
 const HOST = "+15555550100";
 const C = "+15555550101";
