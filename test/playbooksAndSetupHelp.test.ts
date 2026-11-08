@@ -619,13 +619,13 @@ describe("setup help", () => {
     expect(install).toContain(GROK_ALERTS_SAY);
     expect(work).toContain(GROK_WAKE_WITH_PLACE);
     expect(work).toContain(GROK_WAKE_NO_PLACE);
-    for (const path of ["README.md", "GROK_BOOTSTRAP.md", "grok-template/bot-profile.md", "grok-template/context/installation.md"]) {
+    for (const path of ["docs/tour-core/README.md", "GROK_BOOTSTRAP.md", "grok-template/bot-profile.md", "grok-template/context/installation.md"]) {
       const doc = readFileSync(path, "utf8");
       expect(doc).toContain("visitorWillReceive");
       expect(doc).toMatch(/destructive/i);
       expect(doc).toMatch(/setup-help|setup help/i);
     }
-    expect(readFileSync("README.md", "utf8")).toContain("revoke_tour_access");
+    expect(readFileSync("docs/tour-core/README.md", "utf8")).toContain("revoke_tour_access");
     expect(readFileSync("GROK_BOOTSTRAP.md", "utf8")).toContain("cancel_tour");
     const prefs = OPERATOR_TOOLS.find((tool) => tool.name === "set_notification_preferences");
     expect(prefs?.description).toContain(SHARED_STEPS.alerts.ask);
@@ -640,6 +640,7 @@ describe("setup help", () => {
     const files = [
       "docs/setup-help.md",
       "README.md",
+      "docs/tour-core/README.md",
       "GROK_BOOTSTRAP.md",
       ".grok/skills/install-tour-core/SKILL.md",
       "grok-template/bot-profile.md",

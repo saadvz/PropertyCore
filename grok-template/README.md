@@ -39,7 +39,8 @@ Two ways in:
 | Integration | `integrations/tour-core-tools.md` | Custom MCP server; connected by every installation |
 | Manifest | `template.json` | For reviewers; lists every item, the repository setting, and what's never included |
 
-`SETUP_PROMPT.md` is the exact copy-paste Grok Bot prompt from the root README.
+`SETUP_PROMPT.md` is this template's copy-paste Grok Bot prompt. The Tour Core guide's copy, in
+[`docs/tour-core/README.md`](../docs/tour-core/README.md#set-up-with-grok-bot), reads a little differently.
 Do not change a word. Hosted storage-health guidance (`persistentVolume: false`
 means attach a volume; never use the ephemeral-storage escape hatch on a live
 service) is in `context/installation.md`, `integrations/tour-core-tools.md`,
