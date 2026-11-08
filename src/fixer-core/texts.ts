@@ -170,3 +170,15 @@ export function cleanerAskQuestion(supplyOn: boolean): string {
     ? 'After each cleaning, your cleaner is already asked "Anything running low?". Should that become "Anything running low or broken?", so they can report repairs too?'
     : 'Should your cleaner be asked "Anything broken?" after every cleaning? What they report opens a repair for you to approve.';
 }
+
+/** The visit page for a link that is unknown, revoked, cancelled, done or past its end. */
+export const VISIT_ENDED = "This visit has ended.";
+
+/** A page action before the visit opens. */
+export const VISIT_NOT_STARTED = "The visit hasn't started yet. Photos, done and a new price open 30 minutes before it.";
+
+/** A page action while repairs are turned off. */
+export const VISIT_PAGE_OFF = "That can't be saved right now. Tell the host.";
+
+/** With the visit link, for the agent. */
+export const VISIT_LINK_NEXT = "Send this link only to the pro's own email or phone, never to a group. It is shown once.";

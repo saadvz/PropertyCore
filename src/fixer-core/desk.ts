@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { localDateOf } from "../core/timezone";
-import { copyPhotos, messagePhotoId, photoCount, photoLinks, prunePhotos } from "../cleaner-core/photos";
+import { copyPhotos, MAX_JOB_PHOTOS, messagePhotoId, photoCount, photoLinks, prunePhotos, storePhoto } from "../cleaner-core/photos";
 import { askNext } from "../hub/ask";
 import { addCalendarDays } from "../hub/calendar";
 import { joinSplitDigits } from "../hub/digits";
@@ -10,12 +10,13 @@ import { refuseCards } from "../hub/cards";
 import type { AccessRefusal as DoorRefusal } from "../hub/doorAccess";
 import { hubFor, type Hub } from "../hub/hub";
 import type { People } from "../hub/people";
+import { sameHash } from "../hub/uploadCode";
 import { ConfirmationBook } from "../operator/confirmations";
 import { nextDates, scheduleProblem, type Schedule } from "../supply-core/schedule";
 import { supplyAskOn } from "../supply-core/store";
 import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
-import { bookingQuestion, cancelQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, visitOverNews } from "./texts";
+import { bookingQuestion, cancelQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, visitOverNews } from "./texts";
 import { latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type Candidate, type Contact, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
@@ -53,6 +54,37 @@ export type RevealRefusal = AccessRefusal | DoorRefusal | "no-job" | "off" | "da
 
 /** The visit page's answer. Never passed to a tool reply, a log line or a file. */
 export type RevealResult = { ok: true; code: string; lockLocation?: string } | { ok: false; reason: RevealRefusal };
+
+/** The visit page's path before its token. The page itself is in `visitPage.ts`. */
+export const FIXER_VISIT_PREFIX = "/fixer-core/visit/";
+/** Requests a visit link answers in an hour. */
+export const VISIT_HITS_PER_HOUR = 30;
+/** A visit token: `letterToken()`'s 64 letters a to p. */
+const VISIT_TOKEN = /^[a-p]{64}$/;
+/** The door code, and the page's photos, done and price, open this long before the visit. */
+const DOOR_LEAD_MS = 30 * 60_000;
+/** The page shows the address from this long before the visit. */
+const ADDRESS_LEAD_MS = 24 * 60 * 60_000;
+
+/** What the visit page shows for a live link. Never the code, the lock location or the token. */
+export interface VisitView {
+  jobId: string;
+  proName: string;
+  what: string;
+  from: string;
+  /** The visit's end, with any extension. */
+  until: string;
+  timeZone: string;
+  access: "code" | "host";
+  /** "during" from 30 minutes before the visit. */
+  phase: "before" | "during";
+  /** Only from 24 hours before the visit. */
+  address?: string;
+  estimateCents?: number;
+  raised?: { cents: number; waiting: boolean };
+  /** Photos the pro has added. */
+  photos: number;
+}
 
 /** A line for the host, sent once the record holding its news is saved. */
 interface HostNote {
@@ -232,6 +264,8 @@ function renumber(file: FixerFile, trades: readonly Trade[], first?: Pro): void 
 export class FixerDesk {
   private chain: Promise<unknown> = Promise.resolve();
   private readonly approvals: ConfirmationBook;
+  /** Requests to each visit link in its current hour, by token hash. In memory: a restart counts from zero. */
+  private readonly visitHits = new Map<string, { start: number; count: number }>();
 
   constructor(
     readonly root: string,
@@ -1076,6 +1110,7 @@ export class FixerDesk {
       const bound = tokenHash(JSON.stringify([target.fingerprint, access, order ?? null, [...holds].sort()]));
       const gate = this.confirm("fixer-book", job.id, bound, input.confirmation, question);
       if (gate !== "go") return gate;
+      // A new booking object, so a rebook never keeps the old visit link.
       const displaced = job.booking && !job.booking.hostYes && job.booking.proId !== target.proId ? { name: this.nameOf(file, job, job.booking.proId) ?? "The pro", reach: this.reachOfId(file, job, job.booking.proId) } : undefined;
       const booked: Booking = {
         proId: target.proId,
@@ -1344,8 +1379,9 @@ export class FixerDesk {
   /**
    * The visit page's "I'm at the door": the gate, then the hub. Each reveal is logged and told to the
    * host. Only the visit page calls this, never a tool; the code it returns goes on that page alone.
+   * With `visitHash`, the page's link must still be this job's live one when the call runs.
    */
-  revealCode(jobId: string): Promise<RevealResult> {
+  revealCode(jobId: string, visitHash?: string): Promise<RevealResult> {
     return this.serial(async (): Promise<RevealResult> => {
       let file: FixerFile;
       try {
@@ -1356,6 +1392,7 @@ export class FixerDesk {
       }
       const job = this.jobOf(file, jobId);
       if (!job?.booking) return { ok: false, reason: "no-job" };
+      if (visitHash !== undefined && this.liveVisit(file, visitHash)?.id !== job.id) return { ok: false, reason: "no-job" };
       if (!file.settings.activatedAt || file.offAt) return { ok: false, reason: "off" };
       const check = await this.accessFor(file, job);
       if (!check.ok) return check;
@@ -1580,12 +1617,20 @@ export class FixerDesk {
     return { cents: revised.cents, question: raisedPrice({ proName: this.bookedName(file, job), newCents: revised.cents, ...(booking.estimateCents !== undefined ? { oldCents: booking.estimateCents } : {}) }) };
   }
 
-  /** The pro says the work costs more than the estimate. Over the cost line or 20% it waits for the host's yes; otherwise it's news. */
-  raisePrice(jobId: string, cents: number, by: "pro" | "agent" | "host"): Promise<FixerReply> {
+  /**
+   * The pro says the work costs more than the estimate. Over the cost line or 20% it waits for the host's yes; otherwise it's news.
+   * From the visit page, `visitHash` must still be this job's live link, inside the visit.
+   */
+  raisePrice(jobId: string, cents: number, by: "pro" | "agent" | "host", visitHash?: string): Promise<FixerReply> {
     return this.guarded({ jobId, cents, by }, async () => {
       const file = this.read();
       const off = this.inactive(file);
       if (off) return off;
+      if (visitHash !== undefined) {
+        const page = this.pageJob(file, visitHash);
+        if ("isError" in page) return page;
+        if (page.id !== jobId) return fail(VISIT_ENDED);
+      }
       const job = this.jobOf(file, jobId);
       const booking = job?.booking;
       if (!job || !booking?.hostYes || !liveBooking(job)) return fail("Only a booked visit can have a raised price.");
@@ -1727,6 +1772,151 @@ export class FixerDesk {
       const key = this.deps.photoKey?.();
       if (!base || !key) return fail("Photo links need the server's public address and photo key.");
       return ok({ jobId: job.id, photos: photoLinks(this.root, `fixer:${job.id}`, base, key, this.deps.now()) });
+    });
+  }
+
+  /** The visit page link for a booked job, after the host's yes. Given once: only its hash is kept. */
+  visitLink(input: { jobId?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      if (!job) return fail(NO_JOB);
+      const booking = job.booking;
+      if (!booking?.hostYes || !liveBooking(job)) return fail("A visit link is only for a booked visit, after the host's yes.");
+      if (this.deps.now().getTime() >= this.endOf(booking)) return fail("That visit has already ended.");
+      if (booking.visitToken) return fail("The visit link was already given, and it is shown only once. If the pro lost it, call revoke_visit, then visit_link for a new one.");
+      const base = this.deps.publicBase?.()?.replace(/\/+$/, "");
+      if (!base) return fail("The visit link needs the server's public address.");
+      const token = letterToken();
+      booking.visitToken = tokenHash(token);
+      this.write(file);
+      return ok({ jobId: job.id, url: `${base}${FIXER_VISIT_PREFIX}${token}`, next: VISIT_LINK_NEXT });
+    });
+  }
+
+  /** Ends a visit link on the host's word. A new one can be given after. */
+  revokeVisit(input: { jobId?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const job = this.jobOf(file, input.jobId);
+      if (!job) return fail(NO_JOB);
+      if (!job.booking?.visitToken) return fail("That job has no visit link to end.");
+      delete job.booking.visitToken;
+      this.write(file);
+      return ok({ revoked: true, jobId: job.id, next: "The old link has ended. Call visit_link for a new one only if the host wants the pro to have it." });
+    });
+  }
+
+  /** The record for the visit page, or undefined when it can't be read: the page answers that as ended. */
+  private readForPage(): FixerFile | undefined {
+    try {
+      return this.read();
+    } catch (error) {
+      if (error instanceof DamagedRecord) return undefined;
+      throw error;
+    }
+  }
+
+  /** The job holding this visit token hash, in any state. Compared in constant time. */
+  private jobByVisitHash(file: FixerFile, hash: string): Job | undefined {
+    return file.jobs.find((job) => job.booking?.visitToken !== undefined && sameHash(job.booking.visitToken, hash));
+  }
+
+  /** The job a visit link opens: booked with the host's yes, not done or cancelled, before its end. */
+  private liveVisit(file: FixerFile, hash: string): Job | undefined {
+    const job = this.jobByVisitHash(file, hash);
+    const booking = job?.booking;
+    if (!job || !booking?.hostYes || !liveBooking(job)) return undefined;
+    return this.deps.now().getTime() < this.endOf(booking) ? job : undefined;
+  }
+
+  /** A page action's job: the live visit, from 30 minutes before it. Else the page's refusal; `ended` marks a 404. */
+  private pageJob(file: FixerFile, hash: string): Job | FixerReply {
+    const job = this.liveVisit(file, hash);
+    if (!job) return { text: VISIT_ENDED, structured: { ended: true }, isError: true };
+    if (this.deps.now().getTime() < Date.parse(job.booking!.from) - DOOR_LEAD_MS) return fail(VISIT_NOT_STARTED);
+    return job;
+  }
+
+  /**
+   * Counts one request to a visit link: 30 an hour per link (a fixed window from its first request),
+   * then "limited". A token no job holds isn't counted, so made-up tokens can't fill the memory.
+   */
+  visitHit(token: string): "unknown" | "ok" | "limited" {
+    if (!VISIT_TOKEN.test(token)) return "unknown";
+    const hash = tokenHash(token);
+    const now = this.deps.now().getTime();
+    for (const [key, entry] of this.visitHits) if (now - entry.start >= HOUR_MS || now < entry.start) this.visitHits.delete(key);
+    let entry = this.visitHits.get(hash);
+    if (!entry) {
+      const file = this.readForPage();
+      if (!file || !this.jobByVisitHash(file, hash)) return "unknown";
+      entry = { start: now, count: 0 };
+      this.visitHits.set(hash, entry);
+    }
+    entry.count += 1;
+    return entry.count > VISIT_HITS_PER_HOUR ? "limited" : "ok";
+  }
+
+  /** The live visit a page token opens, as the page shows it, or undefined (unknown, revoked, done, cancelled or ended). */
+  visitByToken(token: string): VisitView | undefined {
+    if (!VISIT_TOKEN.test(token)) return undefined;
+    const file = this.readForPage();
+    const job = file ? this.liveVisit(file, tokenHash(token)) : undefined;
+    const booking = job?.booking;
+    if (!file || !job || !booking) return undefined;
+    const now = this.deps.now().getTime();
+    const from = Date.parse(booking.from);
+    const address = this.hub().property().address;
+    const raised = booking.revisedQuote;
+    return {
+      jobId: job.id,
+      proName: this.bookedName(file, job),
+      what: job.what,
+      from: booking.from,
+      until: new Date(this.endOf(booking)).toISOString(),
+      timeZone: this.timeZone(),
+      access: booking.access,
+      phase: now >= from - DOOR_LEAD_MS ? "during" : "before",
+      ...(address && now >= from - ADDRESS_LEAD_MS ? { address } : {}),
+      ...(booking.estimateCents !== undefined ? { estimateCents: booking.estimateCents } : {}),
+      ...(raised ? { raised: { cents: raised.cents, waiting: !raised.hostYes && raisedPriceHeld(file.settings.costLineCents, booking.estimateCents, raised.cents) } } : {}),
+      photos: job.photos.filter((photo) => photo.from === "pro").length,
+    };
+  }
+
+  /** The pro's done from the visit page, with the amount when given. The page checked the input's shape. */
+  pageDone(token: string, input: { cents?: number; note?: string }): Promise<FixerReply> {
+    return this.guarded(input, async () => {
+      const file = this.read();
+      if (this.inactive(file)) return fail(VISIT_PAGE_OFF);
+      const job = this.pageJob(file, tokenHash(token));
+      if ("isError" in job) return job;
+      if (input.cents !== undefined && !isInt(input.cents, 0, 2_000_000)) return fail("An amount is $0 to $20,000.");
+      if (input.note !== undefined && !isText(input.note, 300)) return fail("Keep the note under 300 characters.");
+      const notes: HostNote[] = [];
+      this.finishJob(file, job, "pro-page", input.note ? redactDigits(input.note).trim() : undefined, notes);
+      if (input.cents !== undefined) this.logCost(file, job, input.cents, "pro", undefined, notes);
+      this.write(file);
+      await this.tell(notes);
+      return ok({ done: true, jobId: job.id });
+    });
+  }
+
+  /** One photo from the visit page, already stripped of its location data, kept as the job's next number. */
+  pagePhoto(token: string, photo: { bytes: Buffer; ext: string }): Promise<FixerReply> {
+    return this.guarded({}, () => {
+      const file = this.read();
+      if (this.inactive(file)) return fail(VISIT_PAGE_OFF);
+      const job = this.pageJob(file, tokenHash(token));
+      if ("isError" in job) return job;
+      const key = `fixer:${job.id}`;
+      if (!storePhoto(this.root, key, photo)) return fail(`This visit already has ${MAX_JOB_PHOTOS} photos.`);
+      job.photos.push({ id: String(photoCount(this.root, key)), from: "pro", at: this.deps.now().toISOString() });
+      this.write(file);
+      return ok({ saved: true, photos: job.photos.filter((entry) => entry.from === "pro").length });
     });
   }
 
