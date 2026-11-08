@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { createHash, randomInt } from "node:crypto";
 import { join } from "node:path";
 import { setAsideLine } from "../hub/calendars";
 import { hubFor, type Hub, type UploadResult } from "../hub/hub";
@@ -9,11 +9,11 @@ import { ConfirmationBook } from "../operator/confirmations";
 import { refuseCards } from "../hub/cards";
 import { cartFingerprint, checkCart, type CartInput, type GateContext, type Hold, type Mode } from "./gate";
 import { deadlineFor, dueOn, nextDates, scheduleProblem, type Schedule } from "./schedule";
-import { planStores, supplySetupAsk } from "./setupAsk";
+import { planStores, supplySetupAsk, unreadyStores } from "./setupAsk";
 import { monthSpentCents, onItsWay, readSupply, writeSupply, type Cart, type Item, type Order, type PlanStore, type Product, type SupplyFile } from "./store";
 
 /**
- * Supply Core's desk: every tool's behaviour over one tenant's `supply.json`. One call at a time.
+ * Supply Core's desk: every tool's behaviour over one property's `supply.json`. One call at a time.
  * It never sees a card detail and never buys anything; the agent (Grok or Muse) shops and reports back.
  */
 
@@ -25,26 +25,17 @@ export interface SupplyReply {
 
 export interface SupplyDeps {
   now(): Date;
-  /** The property's hub: its details and booking calendars. Defaults to the hub in this desk's folder. */
-  hub?(): Hub;
   /** True while Cleaner Core runs on the property, so the next checkout is the next cleaning. */
   cleaningOn?(): boolean;
   /** This property's public base, like https://host/t/tnt_x/p/prp_y, for one-time upload links. */
   uploadBase?(): string | undefined;
 }
 
-const hashOf = (code: string) => createHash("sha256").update(code).digest("hex");
-function sameHash(a: string, b: string): boolean {
-  const left = Buffer.from(a, "hex");
-  const right = Buffer.from(b, "hex");
-  return left.length === 32 && right.length === 32 && timingSafeEqual(left, right);
-}
-
 export const MAX_ITEMS = 30;
 /** check_supplies' next step when the property's bookings are in Google Calendar and no events came with the call. */
 export const GOOGLE_EVENTS_NEEDED = "Google Calendar is saved for this property: read its events and call check_supplies again with them as googleEvents. Until then, by-bookings items wait.";
 const ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
-const CARD_REFUSAL = "That looks like a card number. Supply Core never takes card details: keep them in your Vault.";
+export const CARD_REFUSAL = "That looks like a card number. Supply Core never takes card details: keep them in your Vault.";
 const APPROVAL_STALE = "That approval has expired or doesn't match this change. Ask the host again.";
 export const CART_MINUTES = 30;
 const CART_EXPIRED = "That cart expired. Check it again.";
@@ -109,6 +100,12 @@ export function dollars(cents: number): string {
   return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+/** An instant's local `YYYY-MM-DD` in a time zone. */
+const localYmd = (at: Date, timeZone: string): string => {
+  const { year, month, day } = localDateOf(at, timeZone);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+};
+
 const ok = (structured: Record<string, unknown>): SupplyReply => ({ text: JSON.stringify(structured), structured, isError: false });
 const fail = (text: string): SupplyReply => ({ text, isError: true });
 
@@ -125,6 +122,32 @@ function productProblem(p: ProductInput | undefined, which: string): string | un
   return undefined;
 }
 
+/** The order log's entry for a go or approved cart: placed when recorded, unconfirmed when it expired unrecorded. */
+function cartOrder(cart: Cart, at: string, chargedCents: number, approvedBy: Order["approvedBy"], status: Order["status"]): Order {
+  return {
+    id: newId("ord_", 8),
+    at,
+    store: cart.cart.store,
+    items: cart.cart.items.map((line) => ({ ...line })),
+    totalCents: cart.cart.totalCents,
+    chargedCents,
+    deadline: cart.deadline,
+    source: cart.source,
+    approvedBy,
+    status,
+  };
+}
+
+/** Counts one more store-blocked run for each item. True when any of them is now blocked two runs or more in a row. */
+function blockedAgain(items: readonly Item[]): boolean {
+  let twice = false;
+  for (const item of items) {
+    item.blockedRuns = (item.blockedRuns ?? 0) + 1;
+    if (item.blockedRuns >= 2) twice = true;
+  }
+  return twice;
+}
+
 export class SupplyDesk {
   private chain: Promise<unknown> = Promise.resolve();
   private readonly approvals: ConfirmationBook;
@@ -133,7 +156,7 @@ export class SupplyDesk {
     readonly root: string,
     readonly deps: SupplyDeps,
   ) {
-    // Kept in the tenant's folder, so a host's yes still counts after a restart.
+    // Kept in the property's folder, so a host's yes still counts after a restart.
     this.approvals = new ConfirmationBook(10 * 60_000, () => deps.now().getTime(), { file: join(root, "supply-approvals.json") });
     // The hub moves any old property and calendar fields out of supply.json before this desk reads it.
     this.hub();
@@ -162,23 +185,21 @@ export class SupplyDesk {
 
   /** The property's hub. Opening it first moves any old fields out of supply.json. */
   protected hub(): Hub {
-    return this.deps.hub?.() ?? hubFor(this.root, { now: () => this.deps.now() });
+    return hubFor(this.root, { now: () => this.deps.now() });
   }
 
-  /** The property, from its hub. The name is its nickname, else the street address. */
-  protected property(_file?: SupplyFile): { name: string; address: string; timeZone: string } | undefined {
-    const place = this.hub().property();
-    if (!place.address || !place.timeZone) return undefined;
-    return { name: place.nickname ?? place.address.split(",")[0]!.trim(), address: place.address, timeZone: place.timeZone };
+  /** The property's address and time zone, from its hub, once both are saved. */
+  protected property(): { address: string; timeZone: string } | undefined {
+    const { address, timeZone } = this.hub().property();
+    return address && timeZone ? { address, timeZone } : undefined;
   }
 
-  protected timeZone(file: SupplyFile): string {
-    return this.property(file)?.timeZone ?? "UTC";
+  protected timeZone(): string {
+    return this.property()?.timeZone ?? "UTC";
   }
 
-  protected today(file: SupplyFile): string {
-    const { year, month, day } = localDateOf(this.deps.now(), this.timeZone(file));
-    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  protected today(): string {
+    return localYmd(this.deps.now(), this.timeZone());
   }
 
   /**
@@ -189,32 +210,24 @@ export class SupplyDesk {
     if (!file.settings.activatedAt) return "go";
     const { confirmation, ...rest } = input;
     const fingerprint = createHash("sha256").update(JSON.stringify(rest)).digest("hex");
-    if (!confirmation) return ok({ question, confirmation: this.approvals.issue(action, target, fingerprint, question) });
+    return this.confirm(action, target, fingerprint, confirmation, question);
+  }
+
+  /** The host's yes, bound to one change: without a code, the question and a new code; with one, "go" once it redeems. */
+  private confirm(action: string, target: string, fingerprint: string, code: string | undefined, question: string): SupplyReply | "go" {
+    if (!code) return ok({ question, confirmation: this.approvals.issue(action, target, fingerprint, question) });
     try {
-      this.approvals.redeem(confirmation, action, target, fingerprint);
+      this.approvals.redeem(code, action, target, fingerprint);
     } catch {
       return fail(APPROVAL_STALE);
     }
     return "go";
   }
 
-  protected issue(action: string, target: string, fingerprint: string, question: string) {
-    return this.approvals.issue(action, target, fingerprint, question);
-  }
-
-  protected redeem(code: string, action: string, target: string, fingerprint: string): boolean {
-    try {
-      this.approvals.redeem(code, action, target, fingerprint);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   /** One line for the host: on, the item count, and this month's spending against the cap. */
   protected line(file: SupplyFile): string {
-    const month = new Intl.DateTimeFormat("en-US", { timeZone: this.timeZone(file), month: "long" }).format(this.deps.now());
-    const spent = monthSpentCents(file, this.timeZone(file), this.deps.now());
+    const month = new Intl.DateTimeFormat("en-US", { timeZone: this.timeZone(), month: "long" }).format(this.deps.now());
+    const spent = monthSpentCents(file, this.timeZone(), this.deps.now());
     const cap = file.settings.perMonthCapCents;
     const count = `${file.items.length} ${file.items.length === 1 ? "item" : "items"}`;
     return `Supplies: on, ${count}. ${month}: ${dollars(spent)}${cap !== undefined ? ` of ${dollars(cap)}` : ""}.`;
@@ -231,7 +244,7 @@ export class SupplyDesk {
         const next = ask.step === "products" && file.draft.length > 0 ? `${askNext(ask.tool)} Next item: ${file.draft[0]}.` : askNext(ask.tool);
         return ok({ ask, next, items: file.items.map((item) => item.name), ...(file.draft.length > 0 ? { draft: file.draft } : {}), ...(file.settings.stores ? { stores: file.settings.stores } : {}), ...setAside });
       }
-      const tz = this.timeZone(file);
+      const tz = this.timeZone();
       const now = this.deps.now();
       return ok({
         ...setAside,
@@ -323,7 +336,7 @@ export class SupplyDesk {
       if (input.storeNote !== undefined && (typeof input.storeNote !== "string" || input.storeNote.length >= 160)) return fail("The store note has to be under 160 characters.");
       const plan = file.settings.stores;
       if (plan) {
-        const allowed = [plan.primary.name, ...(plan.fast ? [plan.fast.name] : [])];
+        const allowed = planStores(file);
         const inPlan = (store: string) => allowed.some((name) => name.trim().toLowerCase() === store.trim().toLowerCase());
         if (!inPlan(input.preferred!.store) || (input.backup && !inPlan(input.backup.store))) return fail(`Pick products from your stores: ${allowed.join(" or ")}. To use another store, change the store plan with save_supply_stores.`);
       }
@@ -401,7 +414,7 @@ export class SupplyDesk {
       if (gate !== "go") return gate;
       file.settings.stores = { primary, ...(fast ? { fast } : {}) };
       // A store that left the plan isn't ready anymore; a new one has to be checked.
-      const kept = [primary.name, ...(fast ? [fast.name] : [])].map((name) => name.toLowerCase());
+      const kept = planStores(file).map((name) => name.toLowerCase());
       if (file.settings.storesReady) file.settings.storesReady = file.settings.storesReady.filter((name) => kept.includes(name.toLowerCase()));
       this.write(file);
       return ok({ saved: true, stores: file.settings.stores, next: "Call get_supply_state for the next step." });
@@ -427,15 +440,16 @@ export class SupplyDesk {
       if (!input.schedule) return fail("Pass the schedule to preview.");
       const problem = scheduleProblem(input.schedule);
       if (problem) return fail(problem);
-      const file = this.read();
-      const today = this.today(file);
-      const checkouts = input.schedule.kind === "bookings" ? await this.checkouts(file) : [];
+      // The preview doesn't use the record; it's read so a damaged supply.json fails this call too.
+      this.read();
+      const today = this.today();
+      const checkouts = input.schedule.kind === "bookings" ? await this.checkouts() : [];
       return ok({ nextDates: nextDates(input.schedule, today, today, 3, checkouts) });
     });
   }
 
   /** Checkout dates from the hub's last read where every booking calendar read cleanly. */
-  protected async checkouts(_file?: SupplyFile): Promise<string[]> {
+  protected async checkouts(): Promise<string[]> {
     return this.hub().checkouts()?.dates ?? [];
   }
 
@@ -513,8 +527,8 @@ export class SupplyDesk {
       if (file.items.length === 0) return fail("Add at least one item first.");
       if (!file.settings.mode) return fail("Choose hands-off or stop at checkout first.");
       if (!file.settings.checkTime) return fail("Choose the daily check time first.");
-      if (!this.property(file)) return fail("Save the property first.");
-      const unready = planStores(file).filter((name) => !(file.settings.storesReady ?? []).some((ready) => ready.toLowerCase() === name.toLowerCase()));
+      if (!this.property()) return fail("Save the property first.");
+      const unready = unreadyStores(file);
       if (unready.length > 0) return fail(`Check that you can check out at ${unready.join(" and ")} first: signed in, delivering to the property, and a payment method ready. Then save storesReady.`);
       file.settings.activatedAt = this.deps.now().toISOString();
       delete file.offAt;
@@ -524,9 +538,8 @@ export class SupplyDesk {
   }
 
   /** A local date for an instant, in the property's time zone. */
-  protected ymd(file: SupplyFile, iso: string): string {
-    const { year, month, day } = localDateOf(new Date(iso), this.timeZone(file));
-    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  protected ymd(iso: string): string {
+    return localYmd(new Date(iso), this.timeZone());
   }
 
   /**
@@ -543,19 +556,8 @@ export class SupplyDesk {
         continue;
       }
       if (cart.status === "go" || cart.status === "approved") {
-        file.orders.push({
-          id: newId("ord_", 8),
-          at: new Date(new Date(cart.expiresAt).getTime() - CART_MINUTES * 60_000).toISOString(),
-          store: cart.cart.store,
-          items: cart.cart.items.map((line) => ({ ...line })),
-          totalCents: cart.cart.totalCents,
-          // Counted at the checked total until Grok confirms or rules it out.
-          chargedCents: cart.cart.totalCents,
-          deadline: cart.deadline,
-          source: cart.source,
-          approvedBy: cart.status === "approved" ? "landlord" : "rules",
-          status: "unconfirmed",
-        });
+        // Counted at the checked total until Grok confirms or rules it out.
+        file.orders.push(cartOrder(cart, new Date(new Date(cart.expiresAt).getTime() - CART_MINUTES * 60_000).toISOString(), cart.cart.totalCents, cart.status === "approved" ? "landlord" : "rules", "unconfirmed"));
       }
     }
     file.carts = open;
@@ -577,14 +579,14 @@ export class SupplyDesk {
 
   /** Every item due today, with its deadline. */
   protected async dueItems(file: SupplyFile): Promise<Map<string, { item: Item; why: "schedule" | "report"; deadline: string }>> {
-    const today = this.today(file);
-    const checkouts = await this.checkouts(file);
+    const today = this.today();
+    const checkouts = await this.checkouts();
     const nextCleaningYmd = this.deps.cleaningOn?.() ? checkouts.filter((day) => day >= today).sort()[0] : undefined;
-    const activated = file.settings.activatedAt ? this.ymd(file, file.settings.activatedAt) : today;
+    const activated = file.settings.activatedAt ? this.ymd(file.settings.activatedAt) : today;
     const out = new Map<string, { item: Item; why: "schedule" | "report"; deadline: string }>();
     for (const item of file.items) {
-      const anchors = [item.lastOrderedAt, item.skippedAt].filter((at): at is string => Boolean(at)).map((at) => this.ymd(file, at)).sort();
-      const saved = this.ymd(file, item.savedAt);
+      const anchors = [item.lastOrderedAt, item.skippedAt].filter((at): at is string => Boolean(at)).map((at) => this.ymd(at)).sort();
+      const saved = this.ymd(item.savedAt);
       const due = dueOn({
         schedule: item.schedule,
         ...(anchors.length > 0 ? { anchorYmd: anchors[anchors.length - 1]! } : {}),
@@ -637,7 +639,7 @@ export class SupplyDesk {
           ...(item.preferred.lastPaidCents !== undefined ? { lastPaidCents: item.preferred.lastPaidCents } : {}),
         });
       }
-      const today = this.today(file);
+      const today = this.today();
       const late = file.orders.filter((order) => order.status === "placed" && !order.deliveredAt && !order.lateTold && order.deadline !== undefined && order.deadline < today);
       for (const order of late) order.lateTold = true;
       this.write(file);
@@ -648,7 +650,7 @@ export class SupplyDesk {
         unconfirmed: file.orders.filter((order) => order.status === "unconfirmed"),
         held: file.carts.filter((cart) => cart.status === "held").map((cart) => ({ cartToken: cart.token, store: cart.cart.store, totalCents: cart.cart.totalCents, holds: cart.holds })),
         late: late.map((order) => ({ orderId: order.id, store: order.store, deadline: order.deadline, ...(order.expectedBy ? { expectedBy: order.expectedBy } : {}) })),
-        monthSpentCents: monthSpentCents(file, this.timeZone(file), now),
+        monthSpentCents: monthSpentCents(file, this.timeZone(), now),
         ...(file.settings.perOrderCapCents !== undefined ? { perOrderCapCents: file.settings.perOrderCapCents } : {}),
         ...(file.settings.perMonthCapCents !== undefined ? { perMonthCapCents: file.settings.perMonthCapCents } : {}),
       });
@@ -712,7 +714,7 @@ export class SupplyDesk {
         ...(file.settings.perOrderCapCents !== undefined ? { perOrderCapCents: file.settings.perOrderCapCents } : {}),
         ...(file.settings.perMonthCapCents !== undefined ? { perMonthCapCents: file.settings.perMonthCapCents } : {}),
         priceJumpPct: file.settings.priceJumpPct,
-        monthSpentCents: monthSpentCents(file, this.timeZone(file), now),
+        monthSpentCents: monthSpentCents(file, this.timeZone(), now),
         items: new Map(file.items.map((item) => [item.id, { name: item.name, qtyPerOrder: item.qtyPerOrder, baseline: { preferred: item.preferred.lastPaidCents ?? item.preferred.priceCents, ...(item.backup ? { backup: item.backup.lastPaidCents ?? item.backup.priceCents } : {}) } }])),
         due: new Map([...due].map(([id, entry]) => [id, { deadline: entry.deadline }])),
         onItsWay: onItsWay(file, now),
@@ -720,11 +722,11 @@ export class SupplyDesk {
       };
       const cart: CartInput = { store: input.store, items: input.items.map((l) => ({ itemId: l.itemId, product: l.product, qty: l.qty, unitCents: l.unitCents })), shippingCents: input.shippingCents, taxCents: input.taxCents, totalCents: input.totalCents, deliveryBy: input.deliveryBy };
       const answer = checkCart(cart, ctx);
-      if (answer.verdict !== "refused") this.closeHeld(file, cart.items.map((line) => line.itemId));
       if (answer.verdict === "refused") {
         this.write(file);
         return ok({ verdict: "refused", remove: answer.remove, next: "Take those items out of the cart and check it again." });
       }
+      this.closeHeld(file, cart.items.map((line) => line.itemId));
       const reports = file.lowReports.filter((report) => cart.items.some((line) => line.itemId === report.itemId));
       const source = input.source ?? (reports.some((r) => r.source === "cleaner") ? "cleaner" : reports.length > 0 ? "host" : "schedule");
       const token = newId("cart_", 10);
@@ -765,8 +767,8 @@ export class SupplyDesk {
       if (cart.status !== "held") return fail(cart.status === "go" ? "That cart doesn't need approval. Place it and call record_order." : "That cart is already approved.");
       const names = cart.cart.items.map((line) => `${file.items.find((item) => item.id === line.itemId)?.name ?? line.itemId}${line.qty > 1 ? ` ×${line.qty}` : ""}`).join(", ");
       const question = `Place this order from ${cart.cart.store}: ${names}, ${dollars(cart.cart.totalCents)}? ${cart.holds.map((h) => h.charAt(0).toUpperCase() + h.slice(1)).join(". ")}.`;
-      if (!input.confirmation) return ok({ question, confirmation: this.issue("supply-cart", cart.token, cart.fingerprint, question) });
-      if (!this.redeem(input.confirmation, "supply-cart", cart.token, cart.fingerprint)) return fail(APPROVAL_STALE);
+      const gate = this.confirm("supply-cart", cart.token, cart.fingerprint, input.confirmation, question);
+      if (gate !== "go") return gate;
       cart.status = "approved";
       cart.expiresAt = new Date(this.deps.now().getTime() + CART_MINUTES * 60_000).toISOString();
       this.write(file);
@@ -817,19 +819,7 @@ export class SupplyDesk {
           this.write(file);
           return fail(NO_GO);
         }
-        order = {
-          id: newId("ord_", 8),
-          at: this.deps.now().toISOString(),
-          store: cart.cart.store,
-          items: cart.cart.items.map((line) => ({ ...line })),
-          totalCents: cart.cart.totalCents,
-          chargedCents: input.chargedCents,
-          deadline: cart.deadline,
-          source: cart.source,
-          approvedBy: cart.status === "approved" ? "landlord" : input.approvedBy === "grok-card" || input.approvedBy === "host-browser" ? input.approvedBy : "rules",
-          status: "placed",
-        };
-        cart.status = "recorded";
+        order = cartOrder(cart, this.deps.now().toISOString(), input.chargedCents, cart.status === "approved" ? "landlord" : input.approvedBy === "grok-card" || input.approvedBy === "host-browser" ? input.approvedBy : "rules", "placed");
         file.carts = file.carts.filter((entry) => entry !== cart);
         file.orders.push(order);
       }
@@ -853,15 +843,7 @@ export class SupplyDesk {
         const cart = file.carts.find((entry) => entry.token === input.cartToken);
         if (!cart) return fail(CART_EXPIRED);
         file.carts = file.carts.filter((entry) => entry !== cart);
-        let suggestOtherStore = false;
-        if (input.reason === "store-blocked") {
-          for (const line of cart.cart.items) {
-            const item = file.items.find((entry) => entry.id === line.itemId);
-            if (!item) continue;
-            item.blockedRuns = (item.blockedRuns ?? 0) + 1;
-            if (item.blockedRuns >= 2) suggestOtherStore = true;
-          }
-        }
+        const suggestOtherStore = input.reason === "store-blocked" && blockedAgain(cart.cart.items.map((line) => file.items.find((entry) => entry.id === line.itemId)).filter((item): item is Item => item !== undefined));
         this.write(file);
         return ok({ noted: input.reason, closed: cart.token, tellHost: true, ...(suggestOtherStore ? { suggestOtherStore: true } : {}), next: "Tell the host what happened, then try the backup or another store." });
       }
@@ -875,13 +857,7 @@ export class SupplyDesk {
       const ids = input.itemIds ?? [];
       const items = ids.map((id) => file.items.find((item) => item.id === id));
       if (ids.length === 0 || items.some((item) => !item)) return fail("Pass the ids of the items on the list that hit the problem.");
-      let suggestOtherStore = false;
-      if (input.reason === "store-blocked") {
-        for (const item of items) {
-          item!.blockedRuns = (item!.blockedRuns ?? 0) + 1;
-          if (item!.blockedRuns >= 2) suggestOtherStore = true;
-        }
-      }
+      const suggestOtherStore = input.reason === "store-blocked" && blockedAgain(items.filter((item): item is Item => item !== undefined));
       this.write(file);
       const next =
         input.reason === "listing-changed"
@@ -921,7 +897,7 @@ export class SupplyDesk {
 
 const desks = new Map<string, SupplyDesk>();
 
-/** One desk per tenant folder, so calls for the same tenant run one at a time. */
+/** One desk per property folder, so calls for the same property run one at a time. */
 export function supplyDeskFor(root: string, deps: SupplyDeps): SupplyDesk {
   const existing = desks.get(root);
   if (existing) return existing;
