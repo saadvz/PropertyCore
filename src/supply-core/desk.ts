@@ -279,7 +279,7 @@ export class SupplyDesk {
       if (input.bufferDays !== undefined && !isInt(input.bufferDays, 0, 14)) return fail("The delivery buffer has to be from 0 to 14 days.");
       if (input.checkTime !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.checkTime)) return fail("The check time has to be 24-hour HH:MM, like 10:00.");
       if (input.sharedSchedule) {
-        const problem = scheduleProblem(input.sharedSchedule);
+        const problem = scheduleProblem(input.sharedSchedule, this.today());
         if (problem) return fail(problem);
       }
       const plan = planStores(file);
@@ -343,7 +343,7 @@ export class SupplyDesk {
       // The shared schedule fills in an item saved without one.
       const schedule = input.schedule ?? file.settings.sharedSchedule;
       if (!schedule) return fail("The item needs a schedule.");
-      const scheduleIssue = scheduleProblem(schedule);
+      const scheduleIssue = scheduleProblem(schedule, this.today());
       if (scheduleIssue) return fail(scheduleIssue);
       const gate = this.approved(file, "supply-item", existing?.id ?? "new", input, `Save ${input.name}: ${input.qtyPerOrder} × ${input.preferred!.title} from ${input.preferred!.store}?`);
       if (gate !== "go") return gate;
@@ -438,7 +438,7 @@ export class SupplyDesk {
   previewSchedule(input: { schedule?: Schedule }): Promise<SupplyReply> {
     return this.guarded(input, async () => {
       if (!input.schedule) return fail("Pass the schedule to preview.");
-      const problem = scheduleProblem(input.schedule);
+      const problem = scheduleProblem(input.schedule, this.today());
       if (problem) return fail(problem);
       // The preview doesn't use the record; it's read so a damaged supply.json fails this call too.
       this.read();
