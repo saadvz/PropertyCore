@@ -114,12 +114,16 @@ export class ServiceNotices {
     return true;
   }
 
-  /** The notes not shown yet. Taking them clears them. */
-  take(tenantId: string): string[] {
+  /** The notes not shown yet. Reading them clears nothing. */
+  pending(tenantId: string): string[] {
+    return this.read(tenantId).notices;
+  }
+
+  /** Clears notes once a reply carried them to the host. A note added since stays. */
+  shown(tenantId: string, notices: string[]): void {
     const doc = this.read(tenantId);
-    if (doc.notices.length === 0) return [];
-    writeJsonAtomic(this.file(tenantId), { notices: [], told: doc.told });
-    return doc.notices;
+    const left = doc.notices.filter((notice) => !notices.includes(notice));
+    if (left.length !== doc.notices.length) writeJsonAtomic(this.file(tenantId), { notices: left, told: doc.told });
   }
 }
 
