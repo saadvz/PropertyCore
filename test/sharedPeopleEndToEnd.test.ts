@@ -6,7 +6,7 @@ import { filesUnder } from "./files";
 import { CLEANER, COURT, INVITE, LANDLORD, LANE, LINE, sharedAccount, type SharedAccount } from "./sharedHarness";
 
 /**
- * The issue's done-when (saadvz/TourCore#190): one cleaner on two properties of one account, after the
+ * The issue's done-when (saadvz/PropertyCore#190): one cleaner on two properties of one account, after the
  * host's shared: true, through a whole turnover on each. Nothing they receive names, hints at, or
  * carries the other property's address, label or door code. Only 555 numbers; the door codes are the
  * made-up Scratch pins. The labels are the host's own names, so no text to the cleaner may use them.
