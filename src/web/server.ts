@@ -498,7 +498,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           runtime,
           resources: [
             // On the multi-tenant service /mcp is the one address for both services.
-            { path: MCP_PATH, scope: OPERATOR_SCOPE, label: cleanerMultiTenant(installation.env()) ? "Tour Core and Cleaner Core" : "Tour Core" },
+            { path: MCP_PATH, scope: OPERATOR_SCOPE, label: cleanerMultiTenant(installation.env()) ? "Property Core" : "Tour Core" },
             { path: CLEANER_MCP_PATH, scope: CLEANER_SCOPE, label: "Cleaner Core", enabled: cleanerOn },
           ],
           endpoints: (path) => {
