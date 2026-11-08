@@ -87,6 +87,10 @@ export interface Contact {
   outcomeAt?: string;
   followUpAt?: string;
   quote?: { cents: number; note?: string };
+  /** What a "booked" outcome said, kept on the contact so a second one can wait for the host's choice. */
+  booked?: { from: string; until: string; estimateCents?: number };
+  /** When the "no outcome after 2 hours" note was made, so it is told once. */
+  unconfirmedAt?: string;
   cancelled?: true;
 }
 

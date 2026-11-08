@@ -65,7 +65,7 @@ export function bookingFingerprint(b: {
 }
 
 /** The door code goes to the pro only if the job isn't on the coded lock and a phone and saved code exist. */
-export function defaultAccess(job: Job, pro: Pro | undefined, codeSaved: boolean): "code" | "host" {
+export function defaultAccess(job: Job, pro: { reach: { phone?: string } } | undefined, codeSaved: boolean): "code" | "host" {
   if (job.doorLock || !pro?.reach.phone || !codeSaved) return "host";
   return "code";
 }

@@ -691,3 +691,179 @@ describe("check_fixes", () => {
     expect((await check(desk)).contactNext).toEqual([]);
   });
 });
+
+/** The shortlist, the host's pick and contacting a pro. */
+
+const cand = (name: string, extra: Record<string, unknown> = {}) => ({ name, source: "search", licensed: "yes" as const, reach: { phone: "+15555550177" }, ...extra });
+
+/** A plumber ranked first, a second saved plumber, and a host job started; the clock can move. */
+async function withJob(extra: Partial<FixerDeps> = {}) {
+  const clock = { at: NOW };
+  const m = made({ now: () => clock.at, ...extra });
+  await m.desk.savePro({ ...joe, preferredFor: [{ trade: "plumbing", rank: 1 }] });
+  await m.desk.savePro({ name: "Rita Rooter", trades: ["plumbing"], reach: { phone: "+15555550143" }, preferredFor: [{ trade: "plumbing", rank: 2 }] });
+  await m.desk.saveSettings({ prosDone: true });
+  await m.desk.saveSettings({ costLineCents: null });
+  await m.desk.saveSettings({ upkeepDone: true });
+  await m.desk.activate();
+  serve(ics());
+  await m.desk.openJob({ trade: "plumbing", what: "Kitchen sink leaks", urgency: "now", source: "host" });
+  const job = () => readFixer(m.root).jobs[0]!;
+  return { ...m, clock, job };
+}
+
+describe("shortlist and pick", () => {
+  it("keeps up to 8 candidates, https links only, and moves the job to shortlisted", async () => {
+    const { desk, job } = await withJob();
+    const bad = await desk.addCandidates({ jobId: job().id, candidates: [cand("Web Pro", { reach: { website: "http://pro.example.com" } })] });
+    expect(bad.isError).toBe(true);
+    const ok1 = await desk.addCandidates({ jobId: job().id, candidates: [cand("Pipe One", { reach: { website: "https://pipes.example.com" }, priceText: "$95/hr" })] });
+    expect(ok1.isError).toBe(false);
+    expect(job().state).toBe("shortlisted");
+    expect(job().candidates[0]!.id).toMatch(/^cand_[a-z0-9]{8}$/);
+    const many = Array.from({ length: 8 }, (_, i) => cand(`Pro Number ${i}`));
+    expect((await desk.addCandidates({ jobId: job().id, candidates: many })).isError).toBe(true);
+    expect(job().candidates).toHaveLength(1);
+    expect((await desk.addCandidates({ jobId: job().id, candidates: many.slice(0, 7) })).isError).toBe(false);
+    expect(job().candidates).toHaveLength(8);
+    expect((await desk.addCandidates({ jobId: job().id, candidates: [cand("One More")] })).isError).toBe(true);
+  });
+
+  it("refuses a price text of 60 characters or more", async () => {
+    const { desk, job } = await withJob();
+    expect((await desk.addCandidates({ jobId: job().id, candidates: [cand("Long Price", { priceText: "x".repeat(60) })] })).isError).toBe(true);
+  });
+
+  it("adds options to a contacted job only when asked", async () => {
+    const { desk, job } = await withJob();
+    const joeId = readFixer(desk.root).pros[0]!.id;
+    await desk.contactPro({ jobId: job().id, to: joeId, how: "call" });
+    expect((await desk.addCandidates({ jobId: job().id, candidates: [cand("Late One")] })).isError).toBe(true);
+    expect((await desk.addCandidates({ jobId: job().id, candidates: [cand("Late One")], options: true })).isError).toBe(false);
+    expect(job().state).toBe("shortlisted");
+  });
+
+  it("picks in two calls, in order, and refuses ids that are not on the job before the question", async () => {
+    const { desk, job } = await withJob();
+    await desk.addCandidates({ jobId: job().id, candidates: [cand("Pipe One"), cand("Pipe Two")] });
+    const [a, b] = job().candidates.map((c) => c.id);
+    const stranger = await desk.pickPros({ jobId: job().id, ids: [a!, "cand_zzzzzzzz"] });
+    expect(stranger.isError).toBe(true);
+    expect(stranger.structured?.confirmation).toBeUndefined();
+    const first = await desk.pickPros({ jobId: job().id, ids: [b!, a!] });
+    expect(first.structured!.question).toBe("Call Pipe Two, then Pipe One?");
+    expect(job().picked).toEqual([]);
+    expect((await desk.pickPros({ jobId: job().id, ids: [a!, b!], confirmation: codeOf(first) })).isError).toBe(true);
+    const again = await desk.pickPros({ jobId: job().id, ids: [b!, a!] });
+    expect((await desk.pickPros({ jobId: job().id, ids: [b!, a!], confirmation: codeOf(again) })).isError).toBe(false);
+    expect(job().picked).toEqual([b, a]);
+  });
+
+  it("refuses a drafted pro in a pick", async () => {
+    const { desk, job } = await withJob();
+    await desk.savePro({ name: "Draft Dan", trades: ["plumbing"], draft: true });
+    const draft = readFixer(desk.root).pros.find((p) => p.status === "draft")!;
+    expect((await desk.pickPros({ jobId: job().id, ids: [draft.id] })).isError).toBe(true);
+  });
+});
+
+describe("contacting a pro", () => {
+  it("refuses anyone not picked and not preferred, and tells the host", async () => {
+    const { desk, job } = await withJob();
+    await desk.addCandidates({ jobId: job().id, candidates: [cand("Pipe One")] });
+    const refused = await desk.contactPro({ jobId: job().id, to: job().candidates[0]!.id, how: "call" });
+    expect(refused).toMatchObject({ isError: true, structured: { tellHost: true } });
+    expect(refused.text).toContain("Pipe One");
+    expect(job().contacts).toEqual([]);
+  });
+
+  it("contacts a preferred pro after the go, and a picked candidate", async () => {
+    const { desk, job } = await withJob();
+    const joeId = readFixer(desk.root).pros[0]!.id;
+    const reply = await desk.contactPro({ jobId: job().id, to: joeId, how: "call" });
+    expect(reply.structured).toMatchObject({ reach: { phone: "+15555550142" } });
+    expect(reply.structured!.contactToken).toMatch(/^[a-p]+$/);
+    expect(job().contacts[0]!.id).toMatch(/^con_[a-z0-9]{8}$/);
+    expect(job().contacts[0]!.token).toBe(reply.structured!.contactToken);
+    expect(job().state).toBe("contacted");
+    await desk.addCandidates({ jobId: job().id, candidates: [cand("Pipe One")], options: true });
+    const id = job().candidates[0]!.id;
+    const pick = await desk.pickPros({ jobId: job().id, ids: [id] });
+    await desk.pickPros({ jobId: job().id, ids: [id], confirmation: codeOf(pick) });
+    expect((await desk.contactPro({ jobId: job().id, to: id, how: "call" })).isError).toBe(false);
+  });
+
+  it("refuses a text to a pro who has not opted in or has stopped", async () => {
+    const dir = folder();
+    const { peopleFor, resetPeople } = await import("../src/hub/people");
+    const people = () => peopleFor(dir, { now: () => NOW });
+    const { desk, job } = await withJob({ people, propertyId: "prop_a" });
+    const joeId = readFixer(desk.root).pros[0]!.id;
+    const no = await desk.contactPro({ jobId: job().id, to: joeId, how: "text" });
+    expect(no).toMatchObject({ isError: true, structured: { tellHost: true } });
+    people().optIn("+15555550142", "prop_a");
+    expect((await desk.contactPro({ jobId: job().id, to: joeId, how: "text" })).isError).toBe(false);
+    people().stop("+15555550142");
+    expect((await desk.contactPro({ jobId: job().id, to: joeId, how: "text" })).isError).toBe(true);
+    resetPeople();
+  });
+});
+
+describe("what a pro said", () => {
+  async function contacted() {
+    const w = await withJob();
+    const joeId = readFixer(w.root).pros[0]!.id;
+    const token = (await w.desk.contactPro({ jobId: w.job().id, to: joeId, how: "call" })).structured!.contactToken as string;
+    return { ...w, joeId, token };
+  }
+
+  it("refuses an unknown token and a contact on a cancelled job", async () => {
+    const { desk, job, token } = await contacted();
+    expect((await desk.recordContact({ contactToken: "nope", outcome: "declined" })).isError).toBe(true);
+    await desk.cancelJob({ jobId: job().id });
+    expect((await desk.recordContact({ contactToken: token, outcome: "declined" })).isError).toBe(true);
+  });
+
+  it("records a quote, then declined offers the next rank and no-answer too", async () => {
+    const { desk, job, token } = await contacted();
+    const quoted = await desk.recordContact({ contactToken: token, outcome: "quoted", quoteCents: 18000, note: "Parts extra" });
+    expect(quoted.isError).toBe(false);
+    expect(job().contacts[0]).toMatchObject({ outcome: "quoted", quote: { cents: 18000, note: "Parts extra" } });
+    const declined = await desk.recordContact({ contactToken: token, outcome: "declined" });
+    expect(declined.structured!.next).toMatchObject({ name: "Rita Rooter", rank: 2 });
+    const ritaId = readFixer(desk.root).pros[1]!.id;
+    const second = (await desk.contactPro({ jobId: job().id, to: ritaId, how: "call" })).structured!.contactToken as string;
+    const none = await desk.recordContact({ contactToken: second, outcome: "no-answer" });
+    expect(none.structured!.state).toBe("requested");
+    expect(job().state).toBe("requested");
+  });
+
+  it("goes back to shortlisted when candidates exist and nobody is left", async () => {
+    const { desk, job, token } = await contacted();
+    await desk.addCandidates({ jobId: job().id, candidates: [cand("Pipe One")], options: true });
+    const ritaId = readFixer(desk.root).pros[1]!.id;
+    await desk.recordContact({ contactToken: token, outcome: "declined" });
+    const second = (await desk.contactPro({ jobId: job().id, to: ritaId, how: "call" })).structured!.contactToken as string;
+    await desk.recordContact({ contactToken: second, outcome: "declined" });
+    expect(job().state).toBe("shortlisted");
+  });
+
+  it("puts a contact with no outcome after 2 hours under unconfirmed, once", async () => {
+    const { desk, clock, token } = await contacted();
+    expect((await check(desk)).unconfirmed).toEqual([]);
+    clock.at = new Date(NOW.getTime() + 2 * 3_600_000);
+    const seen = await check(desk);
+    expect(seen.unconfirmed).toEqual([expect.objectContaining({ contactToken: token, name: "Joe's Plumbing" })]);
+    expect((await check(desk)).unconfirmed).toEqual([]);
+  });
+
+  it("puts a waiting contact past 24 hours under follow-ups with the next pick", async () => {
+    const { desk, clock, token } = await contacted();
+    await desk.recordContact({ contactToken: token, outcome: "waiting" });
+    clock.at = new Date(NOW.getTime() + 23 * 3_600_000);
+    expect(((await desk.checkFixes({})).structured as { followUps: unknown[] }).followUps).toEqual([]);
+    clock.at = new Date(NOW.getTime() + 24 * 3_600_000);
+    const follow = ((await desk.checkFixes({})).structured as { followUps: { name: string; next?: { name: string } }[] }).followUps;
+    expect(follow).toEqual([expect.objectContaining({ name: "Joe's Plumbing", next: expect.objectContaining({ name: "Rita Rooter" }) })]);
+  });
+});

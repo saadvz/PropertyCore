@@ -12,11 +12,11 @@ import type { People } from "../hub/people";
 import { ConfirmationBook } from "../operator/confirmations";
 import { nextDates, scheduleProblem, type Schedule } from "../supply-core/schedule";
 import { supplyAskOn } from "../supply-core/store";
-import { contactAllowed, liveBooking } from "./gate";
+import { bookingFingerprint, bookingHolds, contactAllowed, defaultAccess, liveBooking } from "./gate";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
-import { hostGoQuestion } from "./texts";
-import { latestYmd, visitWindows, type VisitWindow } from "./window";
-import { TRADES, isTrade, newId, readFixer, writeFixer, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
+import { bookingQuestion, cancelQuestion, cleaningOrderQuestion, hostGoQuestion, pickQuestion, raisedPrice, rotationQuestion } from "./texts";
+import { latestYmd, overlapsStay, visitWindows, type VisitWindow } from "./window";
+import { TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type Candidate, type Contact, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
 /**
  * Fixer Core's desk: every tool's behaviour over one property's `fixer.json`. One call at a time.
@@ -49,6 +49,11 @@ export interface FixerDeps {
 
 export const MAX_PROS = 60;
 export const MAX_UPKEEP = 30;
+export const MAX_CANDIDATES = 8;
+const UNCONFIRMED_MS = 2 * 60 * 60_000;
+const FOLLOW_UP_MS = 24 * 60 * 60_000;
+const HOWS: readonly Contact["how"][] = ["call", "email", "form", "booking-page", "text", "network"];
+const OUTCOMES: readonly NonNullable<Contact["outcome"]>[] = ["booked", "quoted", "no-answer", "declined", "waiting"];
 export const CARD_REFUSAL = "That looks like a card number. Fixer Core never takes card details: keep them in your Vault.";
 const APPROVAL_STALE = "That approval has expired or doesn't match this change. Ask the host again.";
 const DAMAGED = "Fixer Core's record (fixer.json) couldn't be read, so nothing was changed. Ask for help restoring it.";
@@ -114,6 +119,20 @@ export interface JobInput {
   photoMessageIds?: string[];
   cleanerName?: string;
   doorLock?: true;
+}
+
+export interface CandidateInput {
+  name?: string;
+  trade?: Trade;
+  source?: string;
+  rating?: number;
+  reviewCount?: number;
+  licensed?: "yes" | "no" | "unknown";
+  backgroundChecked?: "yes" | "no" | "unknown";
+  costRange?: { lowCents: number; highCents: number };
+  priceText?: string;
+  earliestAt?: string;
+  reach?: ReachInput & { networkRef?: string };
 }
 
 export interface ApproveJobInput {
@@ -690,8 +709,445 @@ export class FixerDesk {
     });
   }
 
-  /** Task 7 fills this: the follow-ups, expiries and holds the check goes through before it answers. */
-  private sweep(_file: FixerFile): void {}
+  /** Why repairs can't take new work, or undefined. */
+  private inactive(file: FixerFile): FixerReply | undefined {
+    return !file.settings.activatedAt || file.offAt ? fail("Repairs aren't active yet. Call get_fixer_state.") : undefined;
+  }
+
+  private jobOf(file: FixerFile, id: unknown): Job | undefined {
+    return typeof id === "string" ? file.jobs.find((entry) => entry.id === id) : undefined;
+  }
+
+  /** A saved pro's or a candidate's name on this job. */
+  private nameOf(file: FixerFile, job: Job, id: string): string | undefined {
+    return file.pros.find((pro) => pro.id === id)?.name ?? job.candidates.find((c) => c.id === id)?.name;
+  }
+
+  private reachOfId(file: FixerFile, job: Job, id: string): ProReach {
+    return file.pros.find((pro) => pro.id === id)?.reach ?? job.candidates.find((c) => c.id === id)?.reach ?? {};
+  }
+
+  /** The next pick not yet tried, else the best ranked pro not yet tried. */
+  private nextPro(file: FixerFile, job: Job): { proId: string; name: string; rank?: number } | undefined {
+    const tried = job.contacts.filter((c) => !c.cancelled).map((c) => c.to);
+    for (const id of job.picked) {
+      const name = this.nameOf(file, job, id);
+      if (name && !tried.includes(id) && contactAllowed(job, id, file.pros).ok) return { proId: id, name };
+    }
+    const top = this.topPro(file, job.trade, tried);
+    return top && contactAllowed(job, top.pro.id, file.pros).ok ? { proId: top.pro.id, name: top.pro.name, rank: top.rank } : undefined;
+  }
+
+  /** The candidate as saved, or the plain reason it is refused. */
+  private candidateOf(raw: CandidateInput, job: Job): Candidate | string {
+    if (!raw || typeof raw !== "object") return "Each candidate needs a name, a trade and a way to reach them.";
+    if (!isText(raw.name, 80)) return "Each candidate needs a name.";
+    if (raw.trade !== undefined && !isTrade(raw.trade)) return `Pick a trade: ${TRADES.join(", ")}.`;
+    if (raw.source !== undefined && !isText(raw.source, 60)) return "A source is a short name, like search or a network.";
+    if (raw.priceText !== undefined && !isText(raw.priceText, 59)) return "The price text has to be under 60 characters.";
+    if (raw.rating !== undefined && !(typeof raw.rating === "number" && raw.rating >= 0 && raw.rating <= 5)) return "A rating is from 0 to 5.";
+    if (raw.reviewCount !== undefined && !isInt(raw.reviewCount, 0, 1_000_000)) return "The review count has to be a whole number.";
+    if (raw.licensed !== undefined && !["yes", "no", "unknown"].includes(raw.licensed)) return "Licensed is yes, no or unknown.";
+    if (raw.backgroundChecked !== undefined && !["yes", "no", "unknown"].includes(raw.backgroundChecked)) return "Background checked is yes, no or unknown.";
+    if (raw.earliestAt !== undefined && (typeof raw.earliestAt !== "string" || Number.isNaN(Date.parse(raw.earliestAt)))) return "The earliest time has to be a date and time.";
+    const range = raw.costRange;
+    if (range !== undefined && !(range && isInt(range.lowCents, 0, 2_000_000) && isInt(range.highCents, 0, 2_000_000) && range.lowCents <= range.highCents)) return "A cost range is low and high cents, 0 to 2,000,000.";
+    const reach = reachOf(raw.reach);
+    if (typeof reach === "string") return reach;
+    const networkRef = raw.reach?.networkRef;
+    if (networkRef !== undefined && !isText(networkRef, 120)) return "The network reference is too long.";
+    if (Object.keys(reach).length === 0 && networkRef === undefined) return "Each candidate needs a phone, email, link or network reference.";
+    return {
+      id: newId("cand_", 8),
+      name: raw.name.trim(),
+      trade: raw.trade ?? job.trade,
+      source: raw.source?.trim() ?? "search",
+      ...(raw.rating !== undefined ? { rating: raw.rating } : {}),
+      ...(raw.reviewCount !== undefined ? { reviewCount: raw.reviewCount } : {}),
+      licensed: raw.licensed ?? "unknown",
+      ...(raw.backgroundChecked ? { backgroundChecked: raw.backgroundChecked } : {}),
+      ...(range ? { costRange: { lowCents: range.lowCents, highCents: range.highCents } } : {}),
+      ...(raw.priceText ? { priceText: raw.priceText.trim() } : {}),
+      ...(raw.earliestAt ? { earliestAt: new Date(raw.earliestAt).toISOString() } : {}),
+      reach: { ...reach, ...(networkRef ? { networkRef } : {}) },
+    };
+  }
+
+  /** The pros the agent found, kept on the job (up to 8) for the host to pick from. */
+  addCandidates(input: { jobId?: string; candidates?: CandidateInput[]; options?: true }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      if (!job) return fail("There's no job with that id. Call get_fixer_state for the list.");
+      if (!isOpen(job) || liveBooking(job) || job.state === "booked") return fail("That job is already booked or closed.");
+      if (!job.hostGo) return fail("The host hasn't said go for this job yet.");
+      if (input.options !== undefined && input.options !== true) return fail("options is only ever true.");
+      if (job.state === "contacted" && !input.options) return fail("Someone is already being contacted. Only add options when the host asks for them.");
+      if (!Array.isArray(input.candidates) || input.candidates.length === 0) return fail("Pass the pros you found.");
+      const added: Candidate[] = [];
+      for (const raw of input.candidates) {
+        const made = this.candidateOf(raw, job);
+        if (typeof made === "string") return fail(made);
+        const same = [...job.candidates, ...added].find((c) => c.name.toLowerCase() === made.name.toLowerCase() && c.trade === made.trade);
+        if (!same) added.push(made);
+      }
+      if (job.candidates.length + added.length > MAX_CANDIDATES) return fail(`A job keeps up to ${MAX_CANDIDATES} candidates.`);
+      job.candidates.push(...added);
+      if (job.state === "requested" || job.state === "contacted") job.state = "shortlisted";
+      this.write(file);
+      return ok({ jobId: job.id, state: job.state, candidates: job.candidates.map((c) => ({ candidateId: c.id, name: c.name, trade: c.trade, source: c.source })), next: "Show the host the list and ask who to call, then call pick_pros." });
+    });
+  }
+
+  /** The host's pick, in order (two calls, the second with the code). */
+  pickPros(input: { jobId?: string; ids?: string[]; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      if (!job) return fail("There's no job with that id. Call get_fixer_state for the list.");
+      if (!isOpen(job) || !NOT_BOOKED.has(job.state)) return fail("That job isn't open for picking.");
+      if (!job.hostGo) return fail("The host hasn't said go for this job yet.");
+      const ids = input.ids;
+      if (!Array.isArray(ids) || ids.length === 0 || ids.length > MAX_CANDIDATES || !ids.every((id) => typeof id === "string")) return fail(`Pick 1 to ${MAX_CANDIDATES} pros by id.`);
+      if (new Set(ids).size !== ids.length) return fail("Each pro can be picked once.");
+      // A pick is the host's approval to call, so it only takes a candidate here or a saved pro.
+      const names: string[] = [];
+      for (const id of ids) {
+        const saved = file.pros.find((pro) => pro.id === id && pro.status === "saved");
+        const name = saved?.name ?? job.candidates.find((c) => c.id === id)?.name;
+        if (!name) return fail("Pick only from this job's candidates or the host's saved pros. Call get_fixer_state for the list.");
+        names.push(name);
+      }
+      const gate = this.approved(file, "fixer-pick", job.id, input, pickQuestion({ names }));
+      if (gate !== "go") return gate;
+      job.picked = [...ids];
+      this.write(file);
+      return ok({ picked: true, jobId: job.id, next: "Call contact_pro for the first one." });
+    });
+  }
+
+  /** A refusal the agent must pass to the host. */
+  private refuseHost(text: string): FixerReply {
+    return { text, structured: { tellHost: true }, isError: true };
+  }
+
+  /** Starts a contact with a picked or preferred pro and gives back the token that records what they said. */
+  contactPro(input: { jobId?: string; to?: string; how?: Contact["how"] }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      if (!job) return fail("There's no job with that id. Call get_fixer_state for the list.");
+      if (!isOpen(job) || !NOT_BOOKED.has(job.state)) return fail("That job isn't open for contacting anyone.");
+      if (typeof input.to !== "string" || !HOWS.includes(input.how as never)) return fail(`Say who to contact and how: ${HOWS.join(", ")}.`);
+      const allowed = contactAllowed(job, input.to, file.pros);
+      const name = this.nameOf(file, job, input.to);
+      if (!allowed.ok) {
+        if (allowed.reason === "no-go") return this.refuseHost("The host hasn't said go for this job yet, so I can't contact anyone.");
+        if (allowed.reason === "unknown") return this.refuseHost("That isn't a pro saved here or a candidate on this job.");
+        return this.refuseHost(`${name ?? "That pro"} isn't someone the host picked. Ask the host to pick them first.`);
+      }
+      const reach = this.reachOfId(file, job, input.to);
+      const how = input.how!;
+      if ((how === "call" || how === "text") && !reach.phone) return fail(`${name} has no phone number saved.`);
+      if (how === "email" && !reach.email) return fail(`${name} has no email address saved.`);
+      if (how === "text") {
+        const people = this.deps.people?.();
+        if (!people || !people.optedIn(reach.phone!) || people.stopped(reach.phone!)) return this.refuseHost(`${name} hasn't agreed to texts here, so I won't text them. Call or email instead.`);
+      }
+      if (job.contacts.some((c) => !c.cancelled && c.to === input.to && c.outcome === undefined)) return fail(`Record what ${name} said first, with record_contact.`);
+      const contact: Contact = { id: newId("con_", 8), to: input.to, how, token: letterToken(), at: this.deps.now().toISOString() };
+      job.contacts.push(contact);
+      if (job.state === "requested" || job.state === "shortlisted") job.state = "contacted";
+      this.write(file);
+      return ok({ contactToken: contact.token, reach, next: "Reach them, then call record_contact with this token and what they said." });
+    });
+  }
+
+  /** Is this contact still waiting on its pro? A cancelled contact or one on a closed job isn't. */
+  private liveContact(job: Job, contact: Contact): boolean {
+    return isOpen(job) && !contact.cancelled;
+  }
+
+  /** What a pro said: booked, quoted, no answer, declined or waiting. */
+  recordContact(input: { contactToken?: string; outcome?: NonNullable<Contact["outcome"]>; from?: string; until?: string; estimateCents?: number; quoteCents?: number; note?: string; followUpAt?: string }): Promise<FixerReply> {
+    return this.guarded(input, async () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const token = input.contactToken;
+      const job = typeof token === "string" && token ? file.jobs.find((j) => j.contacts.some((c) => c.token === token)) : undefined;
+      const contact = job?.contacts.find((c) => c.token === token);
+      if (!job || !contact || !this.liveContact(job, contact)) return fail("That contact isn't live. Start one with contact_pro.");
+      const outcome = input.outcome;
+      if (!OUTCOMES.includes(outcome as never)) return fail(`Say what happened: ${OUTCOMES.join(", ")}.`);
+      if (outcome !== "booked" && (input.from !== undefined || input.until !== undefined || input.estimateCents !== undefined)) return fail("A time and estimate go with a booked outcome.");
+      if (outcome !== "quoted" && input.quoteCents !== undefined) return fail("A quote goes with a quoted outcome.");
+      if (input.note !== undefined && !isText(input.note, 300)) return fail("Keep the note under 300 characters.");
+      if (input.estimateCents !== undefined && !isInt(input.estimateCents, 0, 2_000_000)) return fail("An estimate is 0 to 2,000,000 cents.");
+      if (input.followUpAt !== undefined && (typeof input.followUpAt !== "string" || Number.isNaN(Date.parse(input.followUpAt)))) return fail("The follow-up time has to be a date and time.");
+      const now = this.deps.now();
+      const at = now.toISOString();
+      const name = this.nameOf(file, job, contact.to) ?? "The pro";
+      if (outcome === "booked") return this.recordBooked(file, job, contact, name, input);
+      if (liveBooking(job)) return fail("This job already has a booking.");
+      if (outcome === "quoted") {
+        if (!isInt(input.quoteCents, 0, 2_000_000)) return fail("A quote is 0 to 2,000,000 cents.");
+        contact.quote = { cents: input.quoteCents, ...(input.note ? { note: redactDigits(input.note).trim() } : {}) };
+      }
+      contact.outcome = outcome;
+      contact.outcomeAt = at;
+      delete contact.unconfirmedAt;
+      if (outcome === "waiting") contact.followUpAt = input.followUpAt ? new Date(input.followUpAt).toISOString() : new Date(now.getTime() + FOLLOW_UP_MS).toISOString();
+      else delete contact.followUpAt;
+      const reply: Record<string, unknown> = { jobId: job.id, outcome };
+      if (outcome === "declined" || outcome === "no-answer") {
+        const next = this.nextPro(file, job);
+        if (next) {
+          reply.next = { proId: next.proId, name: next.name, ...(next.rank !== undefined ? { rank: next.rank } : {}), then: "Ask the host whether to call them, then contact_pro." };
+        } else if (!this.stillOpen(job)) {
+          job.state = job.candidates.length > 0 ? "shortlisted" : "requested";
+          reply.state = job.state;
+          reply.next = job.state === "shortlisted" ? "No one is left to call. Ask the host to pick someone else from the list or find more options." : "No one is left to call. Find more pros and add_candidates.";
+        }
+      }
+      this.write(file);
+      return ok(reply);
+    });
+  }
+
+  /** True while some contact on the job still has a chance: no outcome, waiting, quoted or booked. */
+  private stillOpen(job: Job): boolean {
+    return job.contacts.some((c) => !c.cancelled && (c.outcome === undefined || c.outcome === "waiting" || c.outcome === "quoted" || c.outcome === "booked"));
+  }
+
+  private occupyInput(file: FixerFile) {
+    const property = this.hub().property();
+    return {
+      timeZone: this.timeZone(),
+      ...(property.checkoutTime ? { checkoutTime: property.checkoutTime } : {}),
+      ...(property.checkInTime ? { checkInTime: property.checkInTime } : {}),
+      checkInBufferMinutes: file.settings.checkInBufferMinutes,
+    };
+  }
+
+  private codeSaved(): boolean {
+    return this.hub().doorAccess(this.deps.env ?? (() => process.env)).saved();
+  }
+
+  /** The pending booking a pro's "booked" gives: held for the host if it breaks a gate, kept on the contact if another is already pending. */
+  private async recordBooked(file: FixerFile, job: Job, contact: Contact, name: string, input: { from?: string; until?: string; estimateCents?: number }): Promise<FixerReply> {
+    if (liveBooking(job)) return fail("This job already has a booking. Cancel it first.");
+    const from = input.from;
+    const until = input.until;
+    if (typeof from !== "string" || typeof until !== "string" || Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(until))) return fail("A booked visit needs a from and until time.");
+    if (Date.parse(until) <= Date.parse(from)) return fail("The visit has to end after it starts.");
+    const span = { from: new Date(from).toISOString(), until: new Date(until).toISOString() };
+    const at = this.deps.now().toISOString();
+    contact.outcome = "booked";
+    contact.outcomeAt = at;
+    delete contact.unconfirmedAt;
+    delete contact.followUpAt;
+    contact.booked = { ...span, ...(input.estimateCents !== undefined ? { estimateCents: input.estimateCents } : {}) };
+    const pending = job.booking && !job.booking.hostYes ? job.booking : undefined;
+    if (pending && pending.proId !== contact.to) {
+      this.write(file);
+      return ok({ jobId: job.id, outcome: "booked", heldForHost: true, next: `${name} is another yes while ${this.nameOf(file, job, pending.proId) ?? "another pro"} is waiting on the host. Check check_fixes for the host to choose.` });
+    }
+    const windows = await this.windowsFor(job);
+    const overlaps = overlapsStay(span, this.hub().stays() ?? [], this.occupyInput(file));
+    const holds = bookingHolds({ span, windows, overlaps, ...(file.settings.costLineCents !== undefined ? { costLineCents: file.settings.costLineCents } : {}), ...(input.estimateCents !== undefined ? { estimateCents: input.estimateCents } : {}) });
+    const access = defaultAccess(job, { reach: this.reachOfId(file, job, contact.to) }, this.codeSaved());
+    const booking: Booking = {
+      proId: contact.to,
+      ...span,
+      ...(input.estimateCents !== undefined ? { estimateCents: input.estimateCents } : {}),
+      access,
+      ...(holds.length > 0 ? { heldFor: holds } : {}),
+      fingerprint: bookingFingerprint({ proId: contact.to, ...span, ...(input.estimateCents !== undefined ? { estimateCents: input.estimateCents } : {}), access, ...(job.cleaningOrder ? { cleaningOrder: job.cleaningOrder } : {}) }),
+    };
+    job.booking = booking;
+    this.write(file);
+    const blocked = holds.filter((h) => h === "outside-window" || h === "overlaps-stay");
+    const reply: Record<string, unknown> = { jobId: job.id, outcome: "booked", access, ...(holds.length > 0 ? { heldFor: holds } : {}) };
+    if (blocked.length > 0) {
+      reply.next = `That time doesn't fit between guests (${blocked.join(", ")}). Tell the host, and ask ${name} for another time.`;
+    } else {
+      reply.question = bookingQuestion({ proName: name, ...span, timeZone: this.timeZone(), ...(input.estimateCents !== undefined ? { estimateCents: input.estimateCents } : {}), access });
+      reply.next = "Ask the host this question, then call approve_booking.";
+    }
+    return ok(reply);
+  }
+
+  /** Reads the calendars again, unless Cleaner Core or Supply Core already does. */
+  private async refreshCalendars(googleEvents?: GoogleEventList): Promise<void> {
+    const hub = this.hub();
+    if (!this.deps.cleaningOn?.() && !supplyAskOn(this.root) && (hub.calendars().length > 0 || hub.google())) {
+      await hub.readCalendars({ ...(googleEvents ? { googleEvents } : {}), tenantId: "fixer" });
+    }
+  }
+
+  /** The host's yes to a booking (two calls, the second with the code), or to a raised price with `revised`. */
+  approveBooking(input: { jobId?: string; access?: "code" | "host"; cleaningOrder?: "before" | "after"; revised?: true; proId?: string; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, async () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      if (!job || !isOpen(job)) return fail("There's no open job with that id. Call get_fixer_state for the list.");
+      if (input.access !== undefined && input.access !== "code" && input.access !== "host") return fail("Access is code or host.");
+      if (input.cleaningOrder !== undefined && input.cleaningOrder !== "before" && input.cleaningOrder !== "after") return fail("The cleaning order is before or after.");
+      if (input.revised !== undefined && input.revised !== true) return fail("revised is only ever true.");
+      if (input.revised) return this.approveRevised(file, job, input);
+      if (liveBooking(job)) return fail("This job already has a booking.");
+      const target = this.bookingTarget(file, job, input.proId);
+      if (typeof target === "string") return fail(target);
+      const name = this.nameOf(file, job, target.proId) ?? "The pro";
+      const access = input.access ?? target.access;
+      if (access === "code" && defaultAccess(job, { reach: this.reachOfId(file, job, target.proId) }, this.codeSaved()) !== "code") return fail("The door code can't go to this pro: there's no saved code, no phone for them, or the job is on the coded lock. Let them in yourself instead.");
+      const order = input.cleaningOrder ?? target.cleaningOrder ?? job.cleaningOrder;
+      // The stays and windows are read again now, so a yes after they changed is refused.
+      await this.refreshCalendars();
+      const span = { from: target.from, until: target.until };
+      const windows = await this.windowsFor({ ...job, ...(order ? { cleaningOrder: order } : {}) });
+      const overlaps = overlapsStay(span, this.hub().stays() ?? [], this.occupyInput(file));
+      const holds = bookingHolds({ span, windows, overlaps, ...(file.settings.costLineCents !== undefined ? { costLineCents: file.settings.costLineCents } : {}), ...(target.estimateCents !== undefined ? { estimateCents: target.estimateCents } : {}) });
+      if (holds.includes("overlaps-stay")) return fail(`That time now overlaps a guest stay, so nothing is booked. Ask ${name} for another time.`);
+      if (holds.includes("outside-window")) return fail(`That time is no longer open between guests, so nothing is booked. Ask ${name} for another time.`);
+      const window = windows.find((w) => Date.parse(w.from) <= Date.parse(span.from) && Date.parse(span.until) <= Date.parse(w.until));
+      if (window?.cleaning && !order) return ok({ question: cleaningOrderQuestion({ proName: name }), next: "Ask the host, then call approve_booking again with cleaningOrder set to before or after." });
+      const question = bookingQuestion({ proName: name, ...span, timeZone: this.timeZone(), ...(target.estimateCents !== undefined ? { estimateCents: target.estimateCents } : {}), access });
+      const bound = tokenHash(JSON.stringify([target.fingerprint, access, order ?? null]));
+      const gate = this.confirm("fixer-book", job.id, bound, input.confirmation, question);
+      if (gate !== "go") return gate;
+      const booked: Booking = {
+        proId: target.proId,
+        ...span,
+        ...(target.estimateCents !== undefined ? { estimateCents: target.estimateCents } : {}),
+        access,
+        hostYes: { at: this.deps.now().toISOString() },
+        ...(order ? { cleaningOrder: order } : {}),
+        fingerprint: bookingFingerprint({ proId: target.proId, ...span, ...(target.estimateCents !== undefined ? { estimateCents: target.estimateCents } : {}), access, ...(order ? { cleaningOrder: order } : {}) }),
+      };
+      job.booking = booked;
+      if (order) job.cleaningOrder = order;
+      job.state = "booked";
+      this.write(file);
+      return ok({ booked: true, jobId: job.id, proId: booked.proId, from: booked.from, until: booked.until, access, next: access === "host" ? "Tell the pro the time. The host will let them in." : "Tell the pro the time." });
+    });
+  }
+
+  /** The booking the host is answering: the pending one, or a held yes from another pro the host chose. */
+  private bookingTarget(file: FixerFile, job: Job, proId: string | undefined): Booking | string {
+    const pending = job.booking && !job.booking.hostYes ? job.booking : undefined;
+    if (proId !== undefined && proId !== pending?.proId) {
+      const held = job.contacts.find((c) => !c.cancelled && c.to === proId && c.outcome === "booked" && c.booked);
+      if (!held?.booked) return "That pro hasn't offered a booking on this job.";
+      const access = defaultAccess(job, { reach: this.reachOfId(file, job, proId) }, this.codeSaved());
+      const { from, until, estimateCents } = held.booked;
+      return { proId, from, until, ...(estimateCents !== undefined ? { estimateCents } : {}), access, fingerprint: bookingFingerprint({ proId, from, until, ...(estimateCents !== undefined ? { estimateCents } : {}), access, ...(job.cleaningOrder ? { cleaningOrder: job.cleaningOrder } : {}) }) };
+    }
+    return pending ?? "There's no booking waiting for the host's yes on this job.";
+  }
+
+  /** The host's yes to a raised price a pro gave after the visit was booked. */
+  private approveRevised(file: FixerFile, job: Job, input: { confirmation?: string }): FixerReply {
+    const booking = job.booking;
+    const revised = booking?.revisedQuote;
+    if (!booking || !liveBooking(job) || !revised || revised.hostYes) return fail("There's no raised price waiting for the host's yes.");
+    const name = this.nameOf(file, job, booking.proId) ?? "The pro";
+    const question = raisedPrice({ proName: name, newCents: revised.cents, oldCents: booking.estimateCents ?? 0 });
+    const gate = this.confirm("fixer-revised", job.id, tokenHash(JSON.stringify([booking.fingerprint, revised.cents])), input.confirmation, question);
+    if (gate !== "go") return gate;
+    revised.hostYes = { at: this.deps.now().toISOString() };
+    this.write(file);
+    return ok({ approved: true, jobId: job.id, revised: true });
+  }
+
+  /** Cancels one job for good: ends the visit link, asks about changing the code if it was shown, and says who to tell. */
+  private cancelCore(file: FixerFile, job: Job, reason: string): { name: string; reach: ProReach } | undefined {
+    const live = liveBooking(job) && job.booking;
+    const tell = live ? { name: this.nameOf(file, job, live.proId) ?? "The pro", reach: this.reachOfId(file, job, live.proId) } : undefined;
+    const at = this.deps.now().toISOString();
+    job.state = "cancelled";
+    job.cancelledAt = at;
+    job.cancelReason = reason;
+    for (const contact of job.contacts) if (contact.outcome === undefined || contact.outcome === "waiting") contact.cancelled = true;
+    if (job.booking) {
+      delete job.booking.visitToken;
+      if (job.booking.revealedAt && job.booking.revealedAt.length > 0) job.rotationAsked = { at };
+    }
+    return tell;
+  }
+
+  /** The host's cancel (two calls when a booking is live) and who to tell. */
+  cancelJob(input: { jobId?: string; reason?: string; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const job = this.jobOf(file, input.jobId);
+      if (!job) return fail("There's no job with that id. Call get_fixer_state for the list.");
+      if (!isOpen(job)) return fail("That job is already closed.");
+      if (input.reason !== undefined && !isText(input.reason, 200)) return fail("Keep the reason under 200 characters.");
+      if (liveBooking(job) && job.booking) {
+        const gate = this.approved(file, "fixer-cancel", job.id, input, cancelQuestion({ proName: this.nameOf(file, job, job.booking.proId) ?? "the pro" }));
+        if (gate !== "go") return gate;
+      }
+      const tellPro = this.cancelCore(file, job, input.reason ? redactDigits(input.reason).trim() : "Cancelled");
+      this.write(file);
+      return ok({ cancelled: true, jobId: job.id, ...(tellPro ? { tellPro, next: `Tell ${tellPro.name} the visit is cancelled.` } : {}) });
+    });
+  }
+
+  /** Contacts with no outcome after 2 hours (told once) and waiting ones past their follow-up time. */
+  private sweep(file: FixerFile): { unconfirmed: Record<string, unknown>[]; followUps: Record<string, unknown>[] } {
+    const now = this.deps.now().getTime();
+    const at = new Date(now).toISOString();
+    const unconfirmed: Record<string, unknown>[] = [];
+    const followUps: Record<string, unknown>[] = [];
+    for (const job of file.jobs) {
+      if (!isOpen(job) || liveBooking(job)) continue;
+      for (const contact of job.contacts) {
+        if (contact.cancelled) continue;
+        const name = this.nameOf(file, job, contact.to) ?? "The pro";
+        if (contact.outcome === undefined && !contact.unconfirmedAt && now - Date.parse(contact.at) >= UNCONFIRMED_MS) {
+          contact.unconfirmedAt = at;
+          unconfirmed.push({ jobId: job.id, contactToken: contact.token, proId: contact.to, name, since: contact.at });
+        }
+        if (contact.outcome === "waiting" && contact.followUpAt && Date.parse(contact.followUpAt) <= now) {
+          const next = this.nextPro(file, job);
+          followUps.push({ jobId: job.id, contactToken: contact.token, proId: contact.to, name, ...(next ? { next } : {}) });
+        }
+      }
+    }
+    return { unconfirmed, followUps };
+  }
+
+  /** Bookings waiting on the host: held by a gate, or with another pro's yes to choose from. */
+  private heldList(file: FixerFile): Record<string, unknown>[] {
+    const out: Record<string, unknown>[] = [];
+    for (const job of file.jobs) {
+      const booking = job.booking;
+      if (!isOpen(job) || !booking || booking.hostYes) continue;
+      const others = job.contacts
+        .filter((c) => !c.cancelled && c.outcome === "booked" && c.booked && c.to !== booking.proId)
+        .map((c) => ({ proId: c.to, name: this.nameOf(file, job, c.to) ?? "The pro", ...c.booked! }));
+      if (!booking.heldFor && others.length === 0) continue;
+      out.push({ jobId: job.id, proId: booking.proId, name: this.nameOf(file, job, booking.proId) ?? "The pro", from: booking.from, until: booking.until, ...(booking.estimateCents !== undefined ? { estimateCents: booking.estimateCents } : {}), ...(booking.heldFor ? { heldFor: booking.heldFor } : {}), ...(others.length > 0 ? { others } : {}) });
+    }
+    return out;
+  }
+
+  /** Jobs whose door code was opened by a pro and then cancelled: the host is asked whether to change it. */
+  private rotationList(file: FixerFile): Record<string, unknown>[] {
+    return file.jobs
+      .filter((job) => job.rotationAsked && !job.rotationAsked.answer && job.booking)
+      .map((job) => ({ jobId: job.id, question: rotationQuestion({ proName: this.nameOf(file, job, job.booking!.proId) ?? "The pro" }) }));
+  }
 
   /** Upkeep items whose date is within `leadDays` and that have no job open or already started for that date. */
   private upkeepDue(file: FixerFile): Record<string, unknown>[] {
@@ -733,12 +1189,9 @@ export class FixerDesk {
     return this.guarded(rest, async () => {
       const file = this.read();
       if (!file.settings.activatedAt || file.offAt) return fail("Repairs aren't active yet. Call get_fixer_state.");
-      this.sweep(file);
-      const hub = this.hub();
+      const swept = this.sweep(file);
       // Cleaner Core or Supply Core read the calendars when they run; otherwise this check does.
-      if (!this.deps.cleaningOn?.() && !supplyAskOn(this.root) && (hub.calendars().length > 0 || hub.google())) {
-        await hub.readCalendars({ ...(input.googleEvents ? { googleEvents: input.googleEvents } : {}), tenantId: "fixer" });
-      }
+      await this.refreshCalendars(input.googleEvents);
       const windows: Record<string, VisitWindow[]> = {};
       for (const job of file.jobs) {
         if (isOpen(job) && job.hostGo && !liveBooking(job)) windows[job.id] = await this.windowsFor(job);
@@ -758,12 +1211,12 @@ export class FixerDesk {
         upkeepDue: this.upkeepDue(file),
         contactNext: this.contactNext(file),
         windows,
-        unconfirmed: [],
-        followUps: [],
-        held: [],
+        unconfirmed: swept.unconfirmed,
+        followUps: swept.followUps,
+        held: this.heldList(file),
         delays: [],
         preferredAsk: [],
-        rotationAsk: [],
+        rotationAsk: this.rotationList(file),
         news,
       };
       this.write(file);
@@ -783,21 +1236,20 @@ export class FixerDesk {
     });
   }
 
-  /** Turned off: no new work. With `cancel`, every job still going is cancelled too. */
+  /** Turned off: no new work. With `cancel`, every job still going is cancelled too, and the pros with a live booking are listed to tell. */
   turnOff(cancel: boolean): Promise<FixerReply> {
     return this.guarded({}, () => {
       const file = this.read();
-      const at = this.deps.now().toISOString();
-      file.offAt = at;
+      file.offAt = this.deps.now().toISOString();
+      const tellPro: { name: string; reach: ProReach }[] = [];
       if (cancel) {
         for (const job of file.jobs.filter(isOpen)) {
-          job.state = "cancelled";
-          job.cancelledAt = at;
-          job.cancelReason = "Repairs turned off";
+          const tell = this.cancelCore(file, job, "Repairs turned off");
+          if (tell) tellPro.push(tell);
         }
       }
       this.write(file);
-      return ok({ off: true });
+      return ok({ off: true, ...(cancel ? { tellPro } : {}) });
     });
   }
 }

@@ -65,6 +65,20 @@ export function preferredQuestion(f: { proName: string; trade: Trade }): string 
   return `Add ${f.proName} to your preferred list for ${f.trade}?`;
 }
 
+/** The host's pick: who to call, in order. */
+export function pickQuestion(f: { names: string[] }): string {
+  return `Call ${f.names.join(", then ")}?`;
+}
+
+/** Asked when the visit shares the turnover with a cleaning. */
+export function cleaningOrderQuestion(f: { proName: string }): string {
+  return `${f.proName} would come the day of a cleaning. Before or after the cleaning?`;
+}
+
+export function cancelQuestion(f: { proName: string }): string {
+  return `Cancel the repair visit with ${f.proName}? I'll tell them it's off.`;
+}
+
 export function rotationQuestion(f: { proName: string }): string {
   return `${f.proName} knows the door code. Want to change it? Set the new code on the lock, then save it here.`;
 }
