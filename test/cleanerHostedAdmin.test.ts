@@ -156,6 +156,21 @@ describe("the admin page", () => {
     expect(m.registry.list()).toHaveLength(1);
   });
 
+  it("keeps each account's health on the list after a refused add", async () => {
+    const m = await start();
+    const admin = await signIn(m);
+    const court = m.registry.create({ label: "Court", twilioNumber: "+15555550160" }).tenant;
+    m.registry.addProperty(court.id, "8 Scratch Court");
+    m.registry.addProperty(court.id, "9 Scratch Annex");
+    const table = (page: string) => /<table>[\s\S]*?<\/table>/.exec(page)?.[0];
+    const normal = (await admin.page("/admin")).html;
+    expect(normal).toMatch(/Court<\/a>.*<td>2 properties<\/td>/);
+    const refused = await admin.post("/admin/tenants", { label: " ", number: LANE_LINE });
+    expect(refused.status).toBe(400);
+    expect(refused.html).toContain("Add a label.");
+    expect(table(refused.html)).toBe(table(normal));
+  });
+
   it("makes a new invite, changes the primary, disables and enables", async () => {
     const m = await start();
     fakeTwilio();
