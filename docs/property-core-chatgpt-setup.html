@@ -223,14 +223,14 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
 <header>
   <div class="eyebrow">Property Core · ChatGPT guide</div>
   <h1>Set up Property Core in ChatGPT</h1>
-  <p class="lede">In ChatGPT, as a plain chat, Property Core runs <b>Cleaner Core</b> at a basic level, with one hourly task. It texts your cleaner about each turnover and hands over the door code once the guests have left.</p>
+  <p class="lede">In ChatGPT, Property Core runs <b>Cleaner Core</b>. It texts your cleaner about each turnover and hands over the door code once the guests have left. ChatGPT checks for news once an hour.</p>
   <p class="lede">You don't need any technical skills. Follow the steps in order.</p>
   <div class="facts"><span class="fact"><b>About 20 minutes</b></span><span class="fact"><b>5 steps</b></span><span class="fact">Needs a <b>computer</b> (not the phone app)</span></div>
 </header>
 
 <section class="scope" aria-label="What ChatGPT runs">
-  <p class="note">Supply Core needs an always-on agent. To have supplies reordered, set it up with <a href="property-core-grok-setup.html">Grok Bot</a> or <a href="property-core-muse-setup.html">Muse</a>.</p>
-  <p class="note">Fixer Core, for repairs, comes next. Tour Core (self-guided tours) is parked: only touring accounts Saad sets up get it. Its guide is <a href="tour-core/README.md">here</a>.</p>
+  <p class="note">To have supplies reordered too, use Supply Core with <a href="property-core-grok-setup.html">Grok Bot</a> or <a href="property-core-muse-setup.html">Muse</a>. It needs an assistant that can shop on its own.</p>
+  <p class="note">Coming soon: Fixer Core, for repairs. Self-guided tours (Tour Core) are on hold for new hosts, and Saad sets them up by hand. Their guide is <a href="tour-core/README.md">here</a>.</p>
 </section>
 
 <div class="stuck" role="note">
@@ -298,11 +298,11 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
             <li><div>In <b>Name</b>, type <b>Property Core</b>.</div></li>
             <li><div>In the box that asks for a URL (a web address), paste this:<div class="copy"><code id="url-clean">https://tourcore-production-8b80.up.railway.app/mcp</code><button type="button" data-copy="url-clean">Copy</button></div></div></li>
             <li><div>For <b>Authentication</b>, pick <b>OAuth</b>. Leave everything else. Click <span class="btn-label">Create</span>.</div></li>
-            <li><div>A page titled <b>Connect ChatGPT to Tour Core and Cleaner Core</b> opens. That old name is expected. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you.</div></li>
+            <li><div>A page titled <b>Connect ChatGPT to Property Core</b> opens. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you.</div></li>
             <li><div>Click <span class="btn-label">Allow</span>.</div></li>
           </ol>
           <p class="tip"><b>Only if your bookings are on a Google calendar:</b> connect <b>Google Calendar</b> in the same list.</p><p class="note warn">Add Property Core once. Don't add a second one.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>New connector</span></div><div class="mock-body"><div class="field"><label>Name</label><div class="val">Property Core</div></div><div class="field"><label>MCP server URL</label><div class="val hl mono">…railway.app/mcp</div></div><div class="field"><label>Authentication</label><div class="radio"><b></b> OAuth</div></div><div class="mock-btns"><span class="mbtn primary">Create</span></div></div></div><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Approval page</span></div><div class="mock-body"><div class="mock-title">Connect ChatGPT to Tour Core and Cleaner Core</div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>New connector</span></div><div class="mock-body"><div class="field"><label>Name</label><div class="val">Property Core</div></div><div class="field"><label>MCP server URL</label><div class="val hl mono">…railway.app/mcp</div></div><div class="field"><label>Authentication</label><div class="radio"><b></b> OAuth</div></div><div class="mock-btns"><span class="mbtn primary">Create</span></div></div></div><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Approval page</span></div><div class="mock-body"><div class="mock-title">Connect ChatGPT to Property Core</div>
       <div class="field"><label>Your Property Core account</label><div class="radio"><b></b> Sign in</div><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> Create account</div><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> I have an invite code</div></div>
       <div class="field"><label>Code from the text</label><div class="val hl secret">••••••</div></div>
       <div class="mock-btns"><span class="mbtn">Deny</span><span class="mbtn primary">Allow</span></div></div></div></div>
