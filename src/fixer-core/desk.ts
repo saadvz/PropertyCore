@@ -12,7 +12,7 @@ import type { People } from "../hub/people";
 import { ConfirmationBook } from "../operator/confirmations";
 import { nextDates, scheduleProblem, type Schedule } from "../supply-core/schedule";
 import { supplyAskOn } from "../supply-core/store";
-import { bookingFingerprint, bookingHolds, contactAllowed, defaultAccess, liveBooking } from "./gate";
+import { bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, defaultAccess, liveBooking } from "./gate";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
 import { bookingQuestion, cancelQuestion, cleaningOrderQuestion, hostGoQuestion, pickQuestion, raisedPrice, rotationQuestion } from "./texts";
 import { latestYmd, overlapsStay, visitWindows, type VisitWindow } from "./window";
@@ -51,6 +51,8 @@ export const MAX_PROS = 60;
 export const MAX_UPKEEP = 30;
 export const MAX_CANDIDATES = 8;
 const UNCONFIRMED_MS = 2 * 60 * 60_000;
+export const GOOGLE_EVENTS_NEEDED = "Google Calendar is saved for this property: read its events and call approve_booking again with them as googleEvents.";
+const PAST_SPAN = "That time has already started, so it can't be booked. Ask the pro for a time still to come.";
 const FOLLOW_UP_MS = 24 * 60 * 60_000;
 const HOWS: readonly Contact["how"][] = ["call", "email", "form", "booking-page", "text", "network"];
 const OUTCOMES: readonly NonNullable<Contact["outcome"]>[] = ["booked", "quoted", "no-answer", "declined", "waiting"];
@@ -145,6 +147,11 @@ const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const URGENCIES = ["now", "soon", "by-date", "flexible"] as const;
 /** A job is still going until it is done or cancelled; these states are before any contact. */
 const NOT_BOOKED = new Set<Job["state"]>(["requested", "shortlisted", "contacted"]);
+
+/** What a booking was checked against, as its fingerprint. */
+function fingerprintOf(b: { proId: string; from: string; until: string; estimateCents?: number; access: "code" | "host" }, order?: "before" | "after"): string {
+  return bookingFingerprint({ proId: b.proId, from: b.from, until: b.until, ...(b.estimateCents !== undefined ? { estimateCents: b.estimateCents } : {}), access: b.access, ...(order ? { cleaningOrder: order } : {}) });
+}
 
 /** The record couldn't be read: the desk answers with a plain refusal and leaves the file alone. */
 class DamagedRecord extends Error {}
@@ -900,6 +907,9 @@ export class FixerDesk {
         if (!isInt(input.quoteCents, 0, 2_000_000)) return fail("A quote is 0 to 2,000,000 cents.");
         contact.quote = { cents: input.quoteCents, ...(input.note ? { note: redactDigits(input.note).trim() } : {}) };
       }
+      // The pro whose yes is pending took it back (or went quiet): the pending booking goes.
+      if (job.booking && !job.booking.hostYes && job.booking.proId === contact.to) delete job.booking;
+      delete contact.booked;
       contact.outcome = outcome;
       contact.outcomeAt = at;
       delete contact.unconfirmedAt;
@@ -940,6 +950,19 @@ export class FixerDesk {
     return this.hub().doorAccess(this.deps.env ?? (() => process.env)).saved();
   }
 
+  /** The gate holds for a span, with the windows they were checked against. */
+  private async holdsFor(file: FixerFile, job: Job, span: { from: string; until: string }, estimateCents: number | undefined, order?: "before" | "after"): Promise<{ holds: BookingHold[]; windows: VisitWindow[] }> {
+    const windows = await this.windowsFor({ ...job, ...(order ? { cleaningOrder: order } : {}) });
+    const overlaps = overlapsStay(span, this.hub().stays() ?? [], this.occupyInput(file));
+    const holds = bookingHolds({ span, windows, overlaps, ...(file.settings.costLineCents !== undefined ? { costLineCents: file.settings.costLineCents } : {}), ...(estimateCents !== undefined ? { estimateCents } : {}) });
+    return { holds, windows };
+  }
+
+  /** The question for a booking, with the holds the host's yes would accept. */
+  private questionFor(file: FixerFile, proName: string, b: { from: string; until: string; estimateCents?: number }, access: "code" | "host", holds: readonly BookingHold[]): string {
+    return bookingQuestion({ proName, from: b.from, until: b.until, timeZone: this.timeZone(), ...(b.estimateCents !== undefined ? { estimateCents: b.estimateCents } : {}), access, holds, ...(file.settings.costLineCents !== undefined ? { costLineCents: file.settings.costLineCents } : {}) });
+  }
+
   /** The pending booking a pro's "booked" gives: held for the host if it breaks a gate, kept on the contact if another is already pending. */
   private async recordBooked(file: FixerFile, job: Job, contact: Contact, name: string, input: { from?: string; until?: string; estimateCents?: number }): Promise<FixerReply> {
     if (liveBooking(job)) return fail("This job already has a booking. Cancel it first.");
@@ -947,6 +970,7 @@ export class FixerDesk {
     const until = input.until;
     if (typeof from !== "string" || typeof until !== "string" || Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(until))) return fail("A booked visit needs a from and until time.");
     if (Date.parse(until) <= Date.parse(from)) return fail("The visit has to end after it starts.");
+    if (Date.parse(from) <= this.deps.now().getTime()) return fail(PAST_SPAN);
     const span = { from: new Date(from).toISOString(), until: new Date(until).toISOString() };
     const at = this.deps.now().toISOString();
     contact.outcome = "booked";
@@ -959,9 +983,7 @@ export class FixerDesk {
       this.write(file);
       return ok({ jobId: job.id, outcome: "booked", heldForHost: true, next: `${name} is another yes while ${this.nameOf(file, job, pending.proId) ?? "another pro"} is waiting on the host. Check check_fixes for the host to choose.` });
     }
-    const windows = await this.windowsFor(job);
-    const overlaps = overlapsStay(span, this.hub().stays() ?? [], this.occupyInput(file));
-    const holds = bookingHolds({ span, windows, overlaps, ...(file.settings.costLineCents !== undefined ? { costLineCents: file.settings.costLineCents } : {}), ...(input.estimateCents !== undefined ? { estimateCents: input.estimateCents } : {}) });
+    const { holds } = await this.holdsFor(file, job, span, input.estimateCents);
     const access = defaultAccess(job, { reach: this.reachOfId(file, job, contact.to) }, this.codeSaved());
     const booking: Booking = {
       proId: contact.to,
@@ -969,32 +991,40 @@ export class FixerDesk {
       ...(input.estimateCents !== undefined ? { estimateCents: input.estimateCents } : {}),
       access,
       ...(holds.length > 0 ? { heldFor: holds } : {}),
-      fingerprint: bookingFingerprint({ proId: contact.to, ...span, ...(input.estimateCents !== undefined ? { estimateCents: input.estimateCents } : {}), access, ...(job.cleaningOrder ? { cleaningOrder: job.cleaningOrder } : {}) }),
+      fingerprint: "",
     };
+    booking.fingerprint = fingerprintOf(booking, job.cleaningOrder);
     job.booking = booking;
     this.write(file);
-    const blocked = holds.filter((h) => h === "outside-window" || h === "overlaps-stay");
     const reply: Record<string, unknown> = { jobId: job.id, outcome: "booked", access, ...(holds.length > 0 ? { heldFor: holds } : {}) };
-    if (blocked.length > 0) {
-      reply.next = `That time doesn't fit between guests (${blocked.join(", ")}). Tell the host, and ask ${name} for another time.`;
+    if (holds.includes("overlaps-stay")) {
+      reply.next = `That time overlaps a guest stay, so it can't be booked. Tell the host, and ask ${name} for another time.`;
     } else {
-      reply.question = bookingQuestion({ proName: name, ...span, timeZone: this.timeZone(), ...(input.estimateCents !== undefined ? { estimateCents: input.estimateCents } : {}), access });
+      reply.question = this.questionFor(file, name, booking, access, holds);
       reply.next = "Ask the host this question, then call approve_booking.";
     }
     return ok(reply);
   }
 
+  /** True when this desk reads the calendars itself: neither Cleaner Core nor Supply Core does, and one is saved. */
+  private readsCalendars(): boolean {
+    const hub = this.hub();
+    return !this.deps.cleaningOn?.() && !supplyAskOn(this.root) && (hub.calendars().length > 0 || Boolean(hub.google()));
+  }
+
   /** Reads the calendars again, unless Cleaner Core or Supply Core already does. */
   private async refreshCalendars(googleEvents?: GoogleEventList): Promise<void> {
     const hub = this.hub();
-    if (!this.deps.cleaningOn?.() && !supplyAskOn(this.root) && (hub.calendars().length > 0 || hub.google())) {
+    if (this.readsCalendars()) {
       await hub.readCalendars({ ...(googleEvents ? { googleEvents } : {}), tenantId: "fixer" });
     }
   }
 
   /** The host's yes to a booking (two calls, the second with the code), or to a raised price with `revised`. */
-  approveBooking(input: { jobId?: string; access?: "code" | "host"; cleaningOrder?: "before" | "after"; revised?: true; proId?: string; confirmation?: string }): Promise<FixerReply> {
-    return this.guarded(input, async () => {
+  approveBooking(input: { jobId?: string; access?: "code" | "host"; cleaningOrder?: "before" | "after"; revised?: true; proId?: string; googleEvents?: GoogleEventList; confirmation?: string }): Promise<FixerReply> {
+    // Event text can hold long booking numbers. Only their dates are read, so they skip the card check.
+    const { googleEvents, ...rest } = input;
+    return this.guarded(rest, async () => {
       const file = this.read();
       const off = this.inactive(file);
       if (off) return off;
@@ -1012,33 +1042,34 @@ export class FixerDesk {
       if (access === "code" && defaultAccess(job, { reach: this.reachOfId(file, job, target.proId) }, this.codeSaved()) !== "code") return fail("The door code can't go to this pro: there's no saved code, no phone for them, or the job is on the coded lock. Let them in yourself instead.");
       const order = input.cleaningOrder ?? target.cleaningOrder ?? job.cleaningOrder;
       // The stays and windows are read again now, so a yes after they changed is refused.
-      await this.refreshCalendars();
+      if (this.readsCalendars() && this.hub().google() && !googleEvents) return fail(GOOGLE_EVENTS_NEEDED);
+      await this.refreshCalendars(googleEvents);
       const span = { from: target.from, until: target.until };
-      const windows = await this.windowsFor({ ...job, ...(order ? { cleaningOrder: order } : {}) });
-      const overlaps = overlapsStay(span, this.hub().stays() ?? [], this.occupyInput(file));
-      const holds = bookingHolds({ span, windows, overlaps, ...(file.settings.costLineCents !== undefined ? { costLineCents: file.settings.costLineCents } : {}), ...(target.estimateCents !== undefined ? { estimateCents: target.estimateCents } : {}) });
-      if (holds.includes("overlaps-stay")) return fail(`That time now overlaps a guest stay, so nothing is booked. Ask ${name} for another time.`);
-      if (holds.includes("outside-window")) return fail(`That time is no longer open between guests, so nothing is booked. Ask ${name} for another time.`);
-      const window = windows.find((w) => Date.parse(w.from) <= Date.parse(span.from) && Date.parse(span.until) <= Date.parse(w.until));
-      if (window?.cleaning && !order) return ok({ question: cleaningOrderQuestion({ proName: name }), next: "Ask the host, then call approve_booking again with cleaningOrder set to before or after." });
-      const question = bookingQuestion({ proName: name, ...span, timeZone: this.timeZone(), ...(target.estimateCents !== undefined ? { estimateCents: target.estimateCents } : {}), access });
-      const bound = tokenHash(JSON.stringify([target.fingerprint, access, order ?? null]));
+      if (Date.parse(span.from) <= this.deps.now().getTime()) return fail(PAST_SPAN);
+      const { holds, windows } = await this.holdsFor(file, job, span, target.estimateCents, order);
+      if (holds.includes("overlaps-stay")) return fail(`That time overlaps a guest stay, so nothing is booked. Ask ${name} for another time.`);
+      const checkoutDay = localYmd(new Date(span.from), this.timeZone());
+      if (!order && windows.some((w) => w.cleaning && w.checkoutYmd === checkoutDay)) return ok({ question: cleaningOrderQuestion({ proName: name }), next: "Ask the host, then call approve_booking again with cleaningOrder set to before or after." });
+      const question = this.questionFor(file, name, target, access, holds);
+      const bound = tokenHash(JSON.stringify([target.fingerprint, access, order ?? null, [...holds].sort()]));
       const gate = this.confirm("fixer-book", job.id, bound, input.confirmation, question);
       if (gate !== "go") return gate;
+      const displaced = job.booking && !job.booking.hostYes && job.booking.proId !== target.proId ? { name: this.nameOf(file, job, job.booking.proId) ?? "The pro", reach: this.reachOfId(file, job, job.booking.proId) } : undefined;
       const booked: Booking = {
         proId: target.proId,
-        ...span,
+        from: span.from,
+        until: span.until,
         ...(target.estimateCents !== undefined ? { estimateCents: target.estimateCents } : {}),
         access,
         hostYes: { at: this.deps.now().toISOString() },
         ...(order ? { cleaningOrder: order } : {}),
-        fingerprint: bookingFingerprint({ proId: target.proId, ...span, ...(target.estimateCents !== undefined ? { estimateCents: target.estimateCents } : {}), access, ...(order ? { cleaningOrder: order } : {}) }),
+        fingerprint: fingerprintOf(target, order),
       };
       job.booking = booked;
       if (order) job.cleaningOrder = order;
       job.state = "booked";
       this.write(file);
-      return ok({ booked: true, jobId: job.id, proId: booked.proId, from: booked.from, until: booked.until, access, next: access === "host" ? "Tell the pro the time. The host will let them in." : "Tell the pro the time." });
+      return ok({ booked: true, jobId: job.id, proId: booked.proId, from: booked.from, until: booked.until, access, ...(displaced ? { tellPro: displaced } : {}), next: access === "host" ? "Tell the pro the time. The host will let them in." : "Tell the pro the time." });
     });
   }
 
@@ -1050,7 +1081,8 @@ export class FixerDesk {
       if (!held?.booked) return "That pro hasn't offered a booking on this job.";
       const access = defaultAccess(job, { reach: this.reachOfId(file, job, proId) }, this.codeSaved());
       const { from, until, estimateCents } = held.booked;
-      return { proId, from, until, ...(estimateCents !== undefined ? { estimateCents } : {}), access, fingerprint: bookingFingerprint({ proId, from, until, ...(estimateCents !== undefined ? { estimateCents } : {}), access, ...(job.cleaningOrder ? { cleaningOrder: job.cleaningOrder } : {}) }) };
+      const alt = { proId, from, until, ...(estimateCents !== undefined ? { estimateCents } : {}), access };
+      return { ...alt, fingerprint: fingerprintOf(alt, job.cleaningOrder) };
     }
     return pending ?? "There's no booking waiting for the host's yes on this job.";
   }
@@ -1070,19 +1102,24 @@ export class FixerDesk {
   }
 
   /** Cancels one job for good: ends the visit link, asks about changing the code if it was shown, and says who to tell. */
-  private cancelCore(file: FixerFile, job: Job, reason: string): { name: string; reach: ProReach } | undefined {
+  private cancelCore(file: FixerFile, job: Job, reason: string): { tellPro?: { name: string; reach: ProReach }; rotationAsk?: { jobId: string; question: string } } {
     const live = liveBooking(job) && job.booking;
-    const tell = live ? { name: this.nameOf(file, job, live.proId) ?? "The pro", reach: this.reachOfId(file, job, live.proId) } : undefined;
+    const proName = job.booking ? this.nameOf(file, job, job.booking.proId) ?? "The pro" : "The pro";
+    const tellPro = live && job.booking ? { name: proName, reach: this.reachOfId(file, job, job.booking.proId) } : undefined;
     const at = this.deps.now().toISOString();
     job.state = "cancelled";
     job.cancelledAt = at;
     job.cancelReason = reason;
     for (const contact of job.contacts) if (contact.outcome === undefined || contact.outcome === "waiting") contact.cancelled = true;
+    let rotationAsk: { jobId: string; question: string } | undefined;
     if (job.booking) {
       delete job.booking.visitToken;
-      if (job.booking.revealedAt && job.booking.revealedAt.length > 0) job.rotationAsked = { at };
+      if (job.booking.revealedAt && job.booking.revealedAt.length > 0) {
+        job.rotationAsked = { at };
+        rotationAsk = { jobId: job.id, question: rotationQuestion({ proName }) };
+      }
     }
-    return tell;
+    return { ...(tellPro ? { tellPro } : {}), ...(rotationAsk ? { rotationAsk } : {}) };
   }
 
   /** The host's cancel (two calls when a booking is live) and who to tell. */
@@ -1097,9 +1134,9 @@ export class FixerDesk {
         const gate = this.approved(file, "fixer-cancel", job.id, input, cancelQuestion({ proName: this.nameOf(file, job, job.booking.proId) ?? "the pro" }));
         if (gate !== "go") return gate;
       }
-      const tellPro = this.cancelCore(file, job, input.reason ? redactDigits(input.reason).trim() : "Cancelled");
+      const { tellPro, rotationAsk } = this.cancelCore(file, job, input.reason ? redactDigits(input.reason).trim() : "Cancelled");
       this.write(file);
-      return ok({ cancelled: true, jobId: job.id, ...(tellPro ? { tellPro, next: `Tell ${tellPro.name} the visit is cancelled.` } : {}) });
+      return ok({ cancelled: true, jobId: job.id, ...(tellPro ? { tellPro, next: `Tell ${tellPro.name} the visit is cancelled.` } : {}), ...(rotationAsk ? { rotationAsk: [rotationAsk] } : {}) });
     });
   }
 
@@ -1127,17 +1164,21 @@ export class FixerDesk {
     return { unconfirmed, followUps };
   }
 
-  /** Bookings waiting on the host: held by a gate, or with another pro's yes to choose from. */
+  /** Bookings waiting on the host: held by a gate, or with other pros' yes to choose from. */
   private heldList(file: FixerFile): Record<string, unknown>[] {
     const out: Record<string, unknown>[] = [];
     for (const job of file.jobs) {
-      const booking = job.booking;
-      if (!isOpen(job) || !booking || booking.hostYes) continue;
+      if (!isOpen(job) || liveBooking(job)) continue;
+      const booking = job.booking && !job.booking.hostYes ? job.booking : undefined;
       const others = job.contacts
-        .filter((c) => !c.cancelled && c.outcome === "booked" && c.booked && c.to !== booking.proId)
+        .filter((c) => !c.cancelled && c.outcome === "booked" && c.booked && c.to !== booking?.proId)
         .map((c) => ({ proId: c.to, name: this.nameOf(file, job, c.to) ?? "The pro", ...c.booked! }));
-      if (!booking.heldFor && others.length === 0) continue;
-      out.push({ jobId: job.id, proId: booking.proId, name: this.nameOf(file, job, booking.proId) ?? "The pro", from: booking.from, until: booking.until, ...(booking.estimateCents !== undefined ? { estimateCents: booking.estimateCents } : {}), ...(booking.heldFor ? { heldFor: booking.heldFor } : {}), ...(others.length > 0 ? { others } : {}) });
+      if (!booking?.heldFor && others.length === 0) continue;
+      out.push({
+        jobId: job.id,
+        ...(booking ? { proId: booking.proId, name: this.nameOf(file, job, booking.proId) ?? "The pro", from: booking.from, until: booking.until, ...(booking.estimateCents !== undefined ? { estimateCents: booking.estimateCents } : {}), ...(booking.heldFor ? { heldFor: booking.heldFor } : {}) } : {}),
+        ...(others.length > 0 ? { others } : {}),
+      });
     }
     return out;
   }
@@ -1242,14 +1283,16 @@ export class FixerDesk {
       const file = this.read();
       file.offAt = this.deps.now().toISOString();
       const tellPro: { name: string; reach: ProReach }[] = [];
+      const rotationAsk: { jobId: string; question: string }[] = [];
       if (cancel) {
         for (const job of file.jobs.filter(isOpen)) {
-          const tell = this.cancelCore(file, job, "Repairs turned off");
-          if (tell) tellPro.push(tell);
+          const done = this.cancelCore(file, job, "Repairs turned off");
+          if (done.tellPro) tellPro.push(done.tellPro);
+          if (done.rotationAsk) rotationAsk.push(done.rotationAsk);
         }
       }
       this.write(file);
-      return ok({ off: true, ...(cancel ? { tellPro } : {}) });
+      return ok({ off: true, ...(cancel ? { tellPro, rotationAsk } : {}) });
     });
   }
 }

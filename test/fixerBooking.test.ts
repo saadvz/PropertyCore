@@ -219,8 +219,9 @@ describe("the host's yes", () => {
     const ask = await w.desk.approveBooking({ jobId: w.job().id });
     expect(ask.structured!.confirmation).toBeUndefined();
     expect(ask.structured!.question).toMatch(/before or after the cleaning/i);
-    // After the cleaning leaves no room at 11 to 1, so that order is refused.
-    expect((await w.desk.approveBooking({ jobId: w.job().id, cleaningOrder: "after" })).isError).toBe(true);
+    // After the cleaning leaves no room at 11 to 1, so the question says it is outside the open times.
+    const after = await w.desk.approveBooking({ jobId: w.job().id, cleaningOrder: "after" });
+    expect(after.structured!.question).toContain("That's outside the open times between stays.");
     const done = await yes(w, { cleaningOrder: "before" });
     expect(done.isError).toBe(false);
     expect(w.job().booking!.cleaningOrder).toBe("before");
@@ -238,6 +239,113 @@ describe("the host's yes", () => {
     expect(first.structured!.question).toBe("Joe's Plumbing says the fix is $300.00, not $180.00. Go ahead?");
     await w.desk.approveBooking({ jobId: w.job().id, revised: true, confirmation: codeOf(first) });
     expect(w.job().booking!.revisedQuote!.hostYes).toBeDefined();
+  });
+});
+
+describe("holds in the question", () => {
+  it("lets the host say yes to a time outside the open times, with the hold stated", async () => {
+    const w = await setup();
+    const token = await w.contact();
+    await w.desk.recordContact({ contactToken: token, outcome: "booked", from: "2026-11-25T15:00:00.000Z", until: "2026-11-25T17:00:00.000Z", estimateCents: 18000 });
+    expect(w.job().booking!.heldFor).toEqual(["outside-window"]);
+    const first = await w.desk.approveBooking({ jobId: w.job().id });
+    expect(first.structured!.question).toBe("Joe's Plumbing can come Wednesday 10 to 12, about $180. That's outside the open times between stays. Book it and let them in with the door code?");
+    expect((await w.desk.approveBooking({ jobId: w.job().id, confirmation: codeOf(first) })).isError).toBe(false);
+    expect(w.job().state).toBe("booked");
+  });
+
+  it("states the cost hold and the no-estimate hold", async () => {
+    const w = await setup({ costLine: 10_000 });
+    const over = await booked(w);
+    expect(over.structured!.question).toBe("Joe's Plumbing can come Tuesday 10 to 12, about $180. That's over your $100 cost line. Book it and let them in with the door code?");
+    const rita = await w.contact("Rita");
+    await w.desk.recordContact({ contactToken: rita, outcome: "declined" });
+    const none = await w.desk.recordContact({ contactToken: await w.contact("Joe"), outcome: "booked", ...TUE });
+    expect(none.structured!.question).toBe("Joe's Plumbing can come Tuesday 10 to 12. They gave no estimate, and you have a $100 cost line. Book it and let them in with the door code?");
+  });
+
+  it("refuses the second call when a cost line was saved between the calls", async () => {
+    const w = await setup();
+    await booked(w);
+    const first = await w.desk.approveBooking({ jobId: w.job().id });
+    const file = readFixer(w.root);
+    file.settings.costLineCents = 10_000;
+    writeFixer(w.root, file);
+    expect((await w.desk.approveBooking({ jobId: w.job().id, confirmation: codeOf(first) })).isError).toBe(true);
+    expect(w.job().state).toBe("contacted");
+  });
+
+  it("refuses a time that has already started, at the pro's yes and at the host's", async () => {
+    const w = await setup();
+    const token = await w.contact();
+    const past = await w.desk.recordContact({ contactToken: token, outcome: "booked", from: "2026-11-08T14:00:00.000Z", until: "2026-11-08T16:00:00.000Z" });
+    expect(past.isError).toBe(true);
+    expect(past.text).toContain("already started");
+    await booked(w, "Rita");
+    const file = readFixer(w.root);
+    file.jobs[0]!.booking!.from = "2026-11-08T14:00:00.000Z";
+    writeFixer(w.root, file);
+    const refused = await w.desk.approveBooking({ jobId: w.job().id });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain("already started");
+  });
+
+  it("refuses a second call after the booking was re-recorded or the cleaning order changed", async () => {
+    const w = await setup();
+    await booked(w);
+    const first = await w.desk.approveBooking({ jobId: w.job().id });
+    await w.desk.recordContact({ contactToken: readFixer(w.root).jobs[0]!.contacts[0]!.token, outcome: "booked", from: "2026-11-10T16:00:00.000Z", until: "2026-11-10T18:00:00.000Z", estimateCents: 18000 });
+    expect((await w.desk.approveBooking({ jobId: w.job().id, confirmation: codeOf(first) })).isError).toBe(true);
+    const second = await w.desk.approveBooking({ jobId: w.job().id, cleaningOrder: "before" });
+    expect((await w.desk.approveBooking({ jobId: w.job().id, cleaningOrder: "after", confirmation: codeOf(second) })).isError).toBe(true);
+    expect(w.job().state).toBe("contacted");
+  });
+
+  it("asks for Google Calendar events on both calls when Google is saved", async () => {
+    const w = await setup();
+    await booked(w);
+    hubFor(w.root, { now: () => NOW }).setCalendars({ calendars: [{ name: "Airbnb", url: LANE }], google: true, done: true });
+    const first = await w.desk.approveBooking({ jobId: w.job().id });
+    expect(first.isError).toBe(true);
+    expect(first.text).toContain("googleEvents");
+    const second = await w.desk.approveBooking({ jobId: w.job().id, confirmation: "ABCDEF" });
+    expect(second.text).toContain("googleEvents");
+    const given = await w.desk.approveBooking({ jobId: w.job().id, googleEvents: { items: [] } as never });
+    expect(given.isError).toBe(false);
+  });
+});
+
+describe("a pending booking and its pro", () => {
+  it.each(["declined", "no-answer", "waiting"] as const)("drops the pending booking when its own pro says %s", async (outcome) => {
+    const w = await setup();
+    await booked(w);
+    const token = readFixer(w.root).jobs[0]!.contacts[0]!.token;
+    await w.desk.recordContact({ contactToken: token, outcome });
+    expect(w.job().booking).toBeUndefined();
+    expect((await w.desk.approveBooking({ jobId: w.job().id })).isError).toBe(true);
+  });
+
+  it("keeps other pros' yes for the host to choose, and tells the displaced pro", async () => {
+    const w = await setup();
+    await booked(w);
+    const rita = await w.contact("Rita");
+    await w.desk.recordContact({ contactToken: rita, outcome: "booked", from: "2026-11-11T15:00:00.000Z", until: "2026-11-11T17:00:00.000Z" });
+    await w.desk.recordContact({ contactToken: readFixer(w.root).jobs[0]!.contacts[0]!.token, outcome: "declined" });
+    const held = ((await w.desk.checkFixes({})).structured as { held: { proId?: string; others: { name: string }[] }[] }).held;
+    expect(held).toEqual([expect.objectContaining({ others: [expect.objectContaining({ name: "Rita Rooter" })] })]);
+    expect(held[0]!.proId).toBeUndefined();
+    const chosen = await yes(w, { proId: w.pro("Rita").id });
+    expect(chosen.isError).toBe(false);
+    expect(w.job().booking!.proId).toBe(w.pro("Rita").id);
+  });
+
+  it("tells the displaced pending pro when the host picks another", async () => {
+    const w = await setup();
+    await booked(w);
+    const rita = await w.contact("Rita");
+    await w.desk.recordContact({ contactToken: rita, outcome: "booked", from: "2026-11-11T15:00:00.000Z", until: "2026-11-11T17:00:00.000Z" });
+    const chosen = await yes(w, { proId: w.pro("Rita").id });
+    expect(chosen.structured!.tellPro).toEqual({ name: "Joe's Plumbing", reach: { phone: "+15555550142" } });
   });
 });
 
@@ -275,11 +383,24 @@ describe("cancel", () => {
     const file = readFixer(w.root);
     file.jobs[0]!.booking!.revealedAt = [NOW.toISOString()];
     writeFixer(w.root, file);
-    await yes0(w);
+    const reply = await cancelTwice(w);
+    const question = "Joe's Plumbing knows the door code. Want to change it? Set the new code on the lock, then save it here.";
+    expect(reply.structured!.rotationAsk).toEqual([{ jobId: w.job().id, question }]);
     expect(w.job().rotationAsked).toEqual({ at: NOW.toISOString() });
     const asks = ((await w.desk.checkFixes({})).structured as { rotationAsk: { question: string }[] }).rotationAsk;
     expect(asks).toEqual([{ jobId: w.job().id, question: "Joe's Plumbing knows the door code. Want to change it? Set the new code on the lock, then save it here." }]);
     expect(readFileSync(join(w.root, FIXER_FILE), "utf8")).not.toContain(CODE);
+  });
+
+  it("turning off with cancel carries the rotation question, since check_fixes is off", async () => {
+    const w = await setup();
+    await booked(w);
+    await yes(w);
+    const file = readFixer(w.root);
+    file.jobs[0]!.booking!.revealedAt = [NOW.toISOString()];
+    writeFixer(w.root, file);
+    const reply = await w.desk.turnOff(true);
+    expect(reply.structured!.rotationAsk).toEqual([expect.objectContaining({ jobId: w.job().id, question: expect.stringContaining("knows the door code") })]);
   });
 
   it("turning off with cancel lists the pros to tell", async () => {
@@ -293,7 +414,7 @@ describe("cancel", () => {
 });
 
 /** A cancel in two calls. */
-async function yes0(w: World) {
+async function cancelTwice(w: World) {
   const first = await w.desk.cancelJob({ jobId: w.job().id });
   return w.desk.cancelJob({ jobId: w.job().id, confirmation: codeOf(first) });
 }

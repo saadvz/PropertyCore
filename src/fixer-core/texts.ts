@@ -1,4 +1,5 @@
 import { formatWeekday, zonedParts } from "../core/timezone";
+import type { BookingHold } from "./gate";
 import type { Trade } from "./store";
 
 /**
@@ -39,6 +40,16 @@ export function hostGoQuestion(f: { what: string; cleanerName?: string; proName?
   return `${f.what}${f.cleanerName ? ` (photo from ${f.cleanerName})` : ""}. ${tail}`;
 }
 
+/** One short sentence per hold the host's yes would accept. A stay overlap is never asked, so it has none. */
+export function holdSentences(f: { holds: readonly BookingHold[]; costLineCents?: number }): string {
+  const line = f.costLineCents === undefined ? "" : shortDollars(f.costLineCents);
+  const parts: string[] = [];
+  if (f.holds.includes("outside-window")) parts.push("That's outside the open times between stays.");
+  if (f.holds.includes("cost")) parts.push(`That's over your ${line} cost line.`);
+  if (f.holds.includes("no-estimate")) parts.push(`They gave no estimate, and you have a ${line} cost line.`);
+  return parts.map((part) => `${part} `).join("");
+}
+
 export function bookingQuestion(f: {
   proName: string;
   from: string;
@@ -46,11 +57,14 @@ export function bookingQuestion(f: {
   timeZone: string;
   estimateCents?: number;
   access: "code" | "host";
+  holds?: readonly BookingHold[];
+  costLineCents?: number;
 }): string {
   const when = `${formatWeekday(new Date(f.from), f.timeZone)} ${hourOf(f.from, f.timeZone)} to ${hourOf(f.until, f.timeZone)}`;
   const about = f.estimateCents === undefined ? "" : `, about ${shortDollars(f.estimateCents)}`;
   const tail = f.access === "host" ? "you'll let them in?" : "let them in with the door code?";
-  return `${f.proName} can come ${when}${about}. Book it and ${tail}`;
+  const holds = holdSentences({ holds: f.holds ?? [], ...(f.costLineCents !== undefined ? { costLineCents: f.costLineCents } : {}) });
+  return `${f.proName} can come ${when}${about}. ${holds}Book it and ${tail}`;
 }
 
 export function raisedPrice(f: { proName: string; newCents: number; oldCents: number }): string {
