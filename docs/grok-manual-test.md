@@ -336,7 +336,7 @@ real deploy.
 
 | # | Do | Expect |
 | --- | --- | --- |
-| H1 | Push `saadvz/TourCore` and create one Railway service from that repo (`master`) | Railpack runs `npm run build` and `npm start`. No Docker |
+| H1 | Push `saadvz/PropertyCore` and create one Railway service from that repo (`master`) | Railpack runs `npm run build` and `npm start`. No Docker |
 | H2 | Generate a public domain. Mount a volume at `/data`. Set `TOURCORE_DEPLOYMENT_MODE=HOSTED_RAILWAY_P0` and `TOURCORE_HOME=/data`. Do not set a Tour Core Google OAuth client. Healthcheck path `/healthz`. Do not set `TOURCORE_GROK_LEGACY_OAUTH_COMPAT` | Deploy logs show the version, `HOSTED_RAILWAY_P0`, the port, the public host, `Railway volume (live operational store)`, and `Grok legacy OAuth compatibility active for HOSTED_RAILWAY_P0.` No credentials |
 | H3 | Open `https://<domain>/healthz` | `200` and `"service":"tour-core"`. The URL does not contain `trycloudflare` |
 | H4 | Set `hostedTourCoreUrl` in the bot template to `https://<domain>`. Do not register a Tour Core Google callback | Skills still say `hostedTourCoreUrl`, not a Railway hostname |
