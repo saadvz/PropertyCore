@@ -199,7 +199,10 @@ describe("hosted first approved connection owns the demo", () => {
     const app = await hostedApp({ seed: true });
     const script = await app.http("/connect.js");
     expect(script.status).toBe(200);
-    expect(await script.text()).not.toContain("/claim");
+    const text = await script.text();
+    expect(text).not.toContain("/claim");
+    expect(text).not.toContain("pairing code");
+    expect(text).toContain("Go back to your chat and connect again, then click Allow on the page the chat opens.");
     expect((await app.http("/claim")).status).toBe(404);
   });
 
