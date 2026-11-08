@@ -9,6 +9,8 @@ import { readFixer } from "../src/fixer-core/store";
 import { setCalendarFetch } from "../src/hub/calendarFetch";
 import { hubFor, resetHubs } from "../src/hub/hub";
 import { peopleFor, resetPeople } from "../src/hub/people";
+import { supplySetupAsk } from "../src/supply-core/setupAsk";
+import { emptySupply, type SupplyFile } from "../src/supply-core/store";
 
 /**
  * Fixer Core's MCP tools: strict inputs, card refusal before the desk, one desk method per tool, and
@@ -194,5 +196,57 @@ describe("no tool reply holds the door code", () => {
       expect(JSON.stringify(reply.structured ?? {})).not.toContain(CODE);
       expect(reply.text).not.toContain("lockbox");
     }
+  });
+});
+
+describe("the hub's setup through Fixer Core", () => {
+  /** A desk on a fresh folder, with its record ready for Activate but for the property and calendars. */
+  async function fresh() {
+    const root = mkdtempSync(join(tmpdir(), "fixer-hub-"));
+    dirs.push(root);
+    const now = () => NOW;
+    const desk = fixerDeskFor(root, { now, publicBase: () => "https://fixer.example.com/t/acct/p/prop" });
+    for (const step of [{ prosDone: true }, { costLineCents: null }, { upkeepDone: true }] as const) expect((await desk.saveSettings(step)).isError).toBe(false);
+    return { root, desk, hub: () => hubFor(root, { now }) };
+  }
+
+  it("keeps the host's 'no booking calendar' in fixer.json, so Supply Core still asks for its calendars", async () => {
+    const { root, desk, hub } = await fresh();
+    await handleFixerTool(desk, "save_fixer_property", { address: "12 Scratch Lane, Teaneck, NJ 07666", timeZone: "America/New_York" });
+    const none = await handleFixerTool(desk, "save_fixer_sources", { done: true });
+    expect(none?.structured).toMatchObject({ calendars: [], noCalendar: true });
+    expect(readFixer(root).setup.noCalendar).toBe(true);
+    expect(hub().calendarsDone()).toBe(false);
+    // Supply Core, with its list done and an item that goes by bookings, still asks where the bookings come from.
+    const supply = { ...emptySupply(), setup: { itemsDone: true }, items: [{ schedule: { kind: "bookings", stays: 2 } }] } as unknown as SupplyFile;
+    expect(supplySetupAsk(supply, hub())?.step).toBe("sources");
+    expect((await handleFixerTool(desk, "activate_fixer", {}))?.isError).toBe(false);
+  });
+
+  it("refuses Activate with neither a calendar nor the host's 'none'", async () => {
+    const { desk } = await fresh();
+    await handleFixerTool(desk, "save_fixer_property", { address: "12 Scratch Lane, Teaneck, NJ 07666", timeZone: "America/New_York" });
+    expect((await handleFixerTool(desk, "activate_fixer", {}))?.text).toBe("Save a booking calendar first, or say there is none.");
+    // Google Calendar is the hub's, shared as Supply Core saves it.
+    expect((await handleFixerTool(desk, "save_fixer_sources", { google: true }))?.structured).toEqual({ calendars: ["Google Calendar"] });
+    expect((await handleFixerTool(desk, "activate_fixer", {}))?.isError).toBe(false);
+  });
+
+  it("checks the address and time zone as Supply Core does, and takes the host's yes to change them after Activate", async () => {
+    const { desk, hub } = await fresh();
+    expect((await handleFixerTool(desk, "save_fixer_property", { address: " ", timeZone: "America/New_York" }))?.text).toBe("The property needs its delivery address.");
+    expect((await handleFixerTool(desk, "save_fixer_property", { address: "12 Scratch Lane", timeZone: "Mars/Olympus" }))?.text).toBe("That time zone isn't one I know. Use a name like America/New_York.");
+    await handleFixerTool(desk, "save_fixer_property", { address: "12 Scratch Lane, Teaneck, NJ 07666", timeZone: "America/New_York" });
+    await handleFixerTool(desk, "save_fixer_sources", { done: true });
+    await handleFixerTool(desk, "activate_fixer", {});
+    const move = { address: "8 Scratch Court, Teaneck, NJ 07666", timeZone: "America/New_York" };
+    const ask = (await handleFixerTool(desk, "save_fixer_property", move))!;
+    expect(ask.structured?.question).toBe("Save 8 Scratch Court, Teaneck, NJ 07666 as the property's address for repairs?");
+    expect(hub().property().address).toBe("12 Scratch Lane, Teaneck, NJ 07666");
+    const code = (ask.structured!.confirmation as { code: string }).code;
+    expect((await handleFixerTool(desk, "save_fixer_property", { ...move, address: "9 Scratch Court, Teaneck, NJ 07666", confirmation: code }))?.isError).toBe(true);
+    const fresh2 = (await handleFixerTool(desk, "save_fixer_property", move))!;
+    expect((await handleFixerTool(desk, "save_fixer_property", { ...move, confirmation: (fresh2.structured!.confirmation as { code: string }).code }))?.isError).toBe(false);
+    expect(hub().property().address).toBe(move.address);
   });
 });

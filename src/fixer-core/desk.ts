@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { isValidTimeZone, localDateOf } from "../core/timezone";
+import { localDateOf } from "../core/timezone";
 import { isDone, isYes } from "../cleaner-core/core";
 import { isInjuryReport } from "../cleaner-core/injury";
 import { cleanerPhotoFetch, copyPhotos, downloadPhotos, MAX_JOB_PHOTOS, messagePhotoId, photoCount, photoLinks, prunePhotos, storePhoto, type InboundMedia } from "../cleaner-core/photos";
@@ -11,7 +11,7 @@ import { joinSplitDigits } from "../hub/digits";
 import type { GoogleEventList } from "../hub/sources";
 import { refuseCards } from "../hub/cards";
 import type { AccessRefusal as DoorRefusal } from "../hub/doorAccess";
-import { hubFor, type Hub } from "../hub/hub";
+import { hubFor, propertyDetailsProblem, type Hub } from "../hub/hub";
 import type { People } from "../hub/people";
 import { sameHash } from "../hub/uploadCode";
 import { ConfirmationBook } from "../operator/confirmations";
@@ -20,7 +20,7 @@ import { supplyAskOn } from "../supply-core/store";
 import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
 import { holdsOtherRole, priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
-import { bookingQuestion, cancelQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, proHurtNews, proTextFailed, proInvite, proTextNews, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
+import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, proHurtNews, proTextFailed, proInvite, proTextNews, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type Candidate, type Contact, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
@@ -670,7 +670,7 @@ export class FixerDesk {
     return this.guarded({}, () => {
       const file = this.read();
       if (file.settings.activatedAt) return ok({ active: true, line: this.line(file) });
-      const problems = activateProblems(this.hub());
+      const problems = activateProblems(this.hub(), file);
       if (problems.length > 0) return fail(problems.join(" "));
       file.settings.activatedAt = this.deps.now().toISOString();
       delete file.offAt;
@@ -679,15 +679,16 @@ export class FixerDesk {
     });
   }
 
-  /** The property's address, time zone and name, saved in its hub and shared with the other flows. Activate needs them. */
-  saveProperty(input: { address?: string; timeZone?: string; name?: string }): Promise<FixerReply> {
+  /** The property's address, time zone and name, saved in its hub and shared with the other flows. Activate needs them; after it, a change takes the host's yes. */
+  saveProperty(input: { address?: string; timeZone?: string; name?: string; confirmation?: string }): Promise<FixerReply> {
     return this.guarded(input, () => {
-      if (!isText(input.address, 200)) return fail("Give the property's street address.");
-      if (input.name !== undefined && !isText(input.name, 80)) return fail("Keep the property's name under 80 characters.");
-      if (typeof input.timeZone !== "string" || !isValidTimeZone(input.timeZone)) return fail("That time zone isn't one I know. Use a name like America/New_York.");
-      // Read so a damaged fixer.json fails this call too.
+      const problem = propertyDetailsProblem(input);
+      if (problem) return fail(problem);
       const file = this.read();
-      const saved = this.hub().saveProperty({ address: input.address.trim(), timeZone: input.timeZone, nickname: input.name?.trim() || undefined });
+      const details = { address: input.address!, timeZone: input.timeZone!, ...(input.name !== undefined ? { name: input.name } : {}) };
+      const gate = this.approved(file, "fixer-property", "property", input, propertyQuestion({ address: details.address.trim() }));
+      if (gate !== "go") return gate;
+      const saved = this.hub().saveDetails(details);
       if (!saved.ok) return fail(saved.error);
       return ok({ saved: true, ...(this.askFor(file) ? { next: "Call get_fixer_state for the next step." } : {}) });
     });
@@ -695,28 +696,28 @@ export class FixerDesk {
 
   /**
    * The property's booking calendars, in its hub and shared with the other flows: a one-time upload
-   * link for one calendar, google: true for Google Calendar, or done: true when that's all (none is fine).
+   * link for one calendar, google: true for Google Calendar, or done: true when that's all. The host's
+   * "there is no booking calendar" stays in fixer.json, so the other flows still ask for theirs.
    */
   saveSources(input: { uploadLink?: { name?: string }; google?: true; done?: true }): Promise<FixerReply> {
     return this.guarded(input, () => {
-      this.read();
+      const file = this.read();
       const hub = this.hub();
-      if (input.uploadLink) {
-        const name = input.uploadLink.name?.trim() ?? "";
-        if (!isText(name, 40)) return fail("Give the calendar a short name, like Airbnb.");
-        const base = this.deps.publicBase?.();
-        if (!base) return fail("I can't make an upload link until the server's public address is saved.");
-        const made = hub.issueCalendarUpload({ name, base, ...(input.google ? { google: true } : {}) });
-        if ("error" in made) return fail(made.error);
+      if (input.done && !input.uploadLink && !input.google && hub.calendars().length === 0 && !hub.google()) {
+        file.setup.noCalendar = true;
+        this.write(file);
+        return ok({ calendars: [], noCalendar: true, ...(this.askFor(file) ? { next: "Call get_fixer_state for the next step." } : {}) });
+      }
+      const saved = hub.saveSources(input, this.deps.publicBase?.());
+      if (!saved.ok) return fail(saved.error);
+      if ("upload" in saved) {
         return ok({
-          uploadUrl: made.uploadUrl,
-          expiresInMinutes: made.expiresInMinutes,
+          uploadUrl: saved.upload.uploadUrl,
+          expiresInMinutes: saved.upload.expiresInMinutes,
           next: 'From your own cloud computer, POST JSON {"url": "<calendar link>"} to uploadUrl with Content-Type: application/json, or open uploadUrl in your own browser and hand it to the host to paste the link there. Never put the link or uploadUrl in chat. Then call get_fixer_state.',
         });
       }
-      const saved = hub.setCalendars({ ...(input.google ? { google: true } : {}), ...(input.done ? { done: true } : {}) });
-      if (!saved.ok) return fail(saved.error);
-      return ok({ calendars: [...hub.calendars().map((c) => c.name), ...(hub.google() ? ["Google Calendar"] : [])], ...(hub.calendarsDone() ? { done: true } : {}) });
+      return ok({ calendars: saved.calendars });
     });
   }
 

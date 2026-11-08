@@ -258,7 +258,7 @@ async function repairCall(h: HostedCleaner, tenant: Tenant, property: Property, 
   if (name === "preview_schedule") return !(property.flows.supplies.on && runsSupplies(caller.assistant)) && fixerOn ? fixerPreview(h, tenant, property, args) : undefined;
   if (name === "get_job_photos") {
     if (!namesRepairJob(args)) return undefined;
-    return fixerOn ? fixerPhotos(h, tenant, property, args.job as string) : { text: flowOff("fixer", property.label), isError: true };
+    return fixerOn ? fixerPhotos(h, tenant, property, args) : { text: flowOff("fixer", property.label), isError: true };
   }
   if (!property.flows.fixer.on) return { text: flowOff("fixer", property.label), isError: true };
   return (await fixerCall(h, tenant, property, caller.assistant, name, args)) ?? { text: "Fixer Core couldn't answer that.", isError: true };

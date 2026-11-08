@@ -44,12 +44,15 @@ function draftsByTrade(file: FixerFile): { trade: Trade; pros: DraftPro[] }[] {
   })).filter((group) => group.pros.length > 0);
 }
 
-/** Why Activate is refused, in plain words; empty when it can go. The property and its calendars are the hub's. */
-export function activateProblems(hub: Hub): string[] {
+/**
+ * Why Activate is refused, in plain words; empty when it can go. The property and its calendars are
+ * the hub's; the host's "there is no booking calendar" is Fixer Core's own, in fixer.json.
+ */
+export function activateProblems(hub: Hub, file: FixerFile): string[] {
   const out: string[] = [];
   const place = hub.property();
   if (!place.address || !place.timeZone) out.push("Save the property's address and time zone first.");
-  if (hub.calendars().length === 0 && !hub.google() && !hub.calendarsDone()) out.push("Save a booking calendar first, or say there is none.");
+  if (hub.calendars().length === 0 && !hub.google() && !hub.calendarsDone() && !file.setup.noCalendar) out.push("Save a booking calendar first, or say there is none.");
   return out;
 }
 
@@ -105,7 +108,7 @@ export function fixerSetupAsk(file: FixerFile, hub: Hub, cleaningOn: boolean, su
     };
   }
   if (!file.setup.upkeepDone) return { step: "upkeep", tool: "save_upkeep", questions: [UPKEEP_QUESTION] };
-  const blockers = activateProblems(hub);
+  const blockers = activateProblems(hub, file);
   return {
     step: "review",
     tool: "activate_fixer",

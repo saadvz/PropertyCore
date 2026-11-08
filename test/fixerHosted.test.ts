@@ -1,12 +1,15 @@
-import { existsSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FIXER_AGENTS_ONLY } from "../src/cleaner-core/assistant";
 import { propertyFolder, type Property } from "../src/cleaner-core/hosted/properties";
-import { tickAllFixers } from "../src/cleaner-core/hosted/router";
+import { hostedCleaner, propertyContext, tickAllFixers } from "../src/cleaner-core/hosted/router";
 import type { Tenant } from "../src/cleaner-core/hosted/registry";
-import { resetFixerDesks } from "../src/fixer-core/desk";
-import { readFixer } from "../src/fixer-core/store";
+import { FixerDesk, resetFixerDesks } from "../src/fixer-core/desk";
+import { readFixer, tokenHash } from "../src/fixer-core/store";
+import { fixerDesk } from "../src/hosted/fixer";
+import { hubFor } from "../src/hub/hub";
 import { FIXER_TOOL_NAMES } from "../src/fixer-core/tools";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
@@ -30,6 +33,7 @@ const JOES = { name: "Joe's Plumbing", trades: ["plumbing"], reach: { phone: JOE
 let open: MultiTenantApp | undefined;
 let clock = new Date(NOW);
 afterEach(() => {
+  vi.restoreAllMocks();
   open?.close();
   open = undefined;
   closeHostedApps();
@@ -73,14 +77,14 @@ async function activeFixer(m: MultiTenantApp, token: string, property: Property)
 }
 
 /** Opens a host's job and books Joe for Tuesday, with the host's yes. */
-async function bookedJob(m: MultiTenantApp, token: string, property: Property) {
+async function bookedJob(m: MultiTenantApp, token: string, property: Property, access?: "code") {
   const { call, joeId } = await activeFixer(m, token, property);
   const jobId = (await call("open_job", { trade: "plumbing", what: "Sink leaks", urgency: "soon", source: "host" })).structured!.jobId as string;
   await call("check_fixes");
   const contactToken = (await call("contact_pro", { jobId, to: joeId, how: "call" })).structured!.contactToken as string;
   await call("record_contact", { contactToken, outcome: "booked", ...TUE, estimateCents: 18000 });
-  const ask = await call("approve_booking", { jobId });
-  await call("approve_booking", { jobId, confirmation: codeOf(ask) });
+  const ask = await call("approve_booking", { jobId, ...(access ? { access } : {}) });
+  await call("approve_booking", { jobId, ...(access ? { access } : {}), confirmation: codeOf(ask) });
   return { call, jobId, joeId };
 }
 
@@ -242,5 +246,71 @@ describe("a booked visit", () => {
     await tickAllFixers(m.hosted());
     expect(readFixer(folder(m, tenant, property)).jobs[0]).toMatchObject({ id: jobId, state: "in-progress" });
     expect(m.sms.sent).toEqual([]);
+  });
+});
+
+describe("round 1 fixes", () => {
+  it("turning on with an unreadable record says so and leaves Fixer Core off", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    mkdirSync(folder(m, tenant, property), { recursive: true });
+    writeFileSync(join(folder(m, tenant, property), "fixer.json"), "{ not json");
+    const refused = await m.toolAt(PATH, token, "set_flows", { property: property.id, fixer: true });
+    expect(refused).toMatchObject({ isError: true, text: "Fixer Core's record (fixer.json) couldn't be read, so nothing was changed. Ask for help restoring it." });
+    expect(flows(m, tenant).fixer.on).toBe(false);
+  });
+
+  it("refuses card-like text on get_job_photos for a repair job before the desk", SLOW, async () => {
+    const m = await start();
+    const { property, token } = await account(m);
+    const { jobId } = await bookedJob(m, token, property);
+    const refused = await m.toolAt(PATH, token, "get_job_photos", { property: property.id, job: jobId, note: "4242 4242 4242 4242" });
+    expect(refused).toMatchObject({ isError: true, text: "That looks like a card number. Fixer Core never takes card details: keep them in your Vault." });
+  });
+
+  it("one property's clock failing never stops another's, logs no job text, and rounds never overlap", SLOW, async () => {
+    const m = await start();
+    const a = await account(m, "grok", LANE);
+    const b = await account(m, "grok", COURT);
+    await bookedJob(m, a.token, a.property);
+    await bookedJob(m, b.token, b.property);
+    const bad = folder(m, a.tenant, a.property);
+    const tick = FixerDesk.prototype.tick;
+    const spy = vi.spyOn(FixerDesk.prototype, "tick").mockImplementation(function (this: FixerDesk) {
+      if (this.root === bad) throw new Error("Sink leaks at the side gate");
+      return tick.call(this);
+    });
+    const lines: string[] = [];
+    const server = m.hosted();
+    const h = hostedCleaner({ ...server, log: (line) => lines.push(line) });
+    clock = new Date(TUE.from);
+    // A second round asked while the first runs is skipped.
+    await Promise.all([tickAllFixers(h), tickAllFixers(h)]);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(readFixer(folder(m, b.tenant, b.property)).jobs[0]!.state).toBe("in-progress");
+    expect(readFixer(bad).jobs[0]!.state).toBe("booked");
+    expect(lines).toEqual([`Fixer Core couldn't run ${a.tenant.id}/${a.property.id}'s clock this round.`]);
+    // The guard lets the next round run.
+    await tickAllFixers(h);
+    expect(spy).toHaveBeenCalledTimes(4);
+  });
+
+  it("turning Fixer Core off after the pro saw the door code asks the host about changing it", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    m.hosted().secrets.set(tenant.id, { CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64") });
+    const ctx = propertyContext(m.hosted(), m.registry.get(tenant.id)!, property);
+    expect(hubFor(ctx.root, { now: () => clock }).doorAccess(ctx.env).save(["6", "2", "0", "4"].join(""), undefined, undefined).ok).toBe(true);
+    const { call, jobId } = await bookedJob(m, token, property, "code");
+    const url = String((await call("visit_link", { jobId })).structured!.url);
+    clock = new Date(Date.parse(TUE.from) - 10 * 60_000);
+    const shown = await fixerDesk(m.hosted(), m.registry.get(tenant.id)!, property).revealCode(jobId, tokenHash(url.slice(url.lastIndexOf("/") + 1)));
+    expect(shown.ok).toBe(true);
+    const ask = await m.toolAt(PATH, token, "set_flows", { property: property.id, fixer: false });
+    const off = await m.toolAt(PATH, token, "set_flows", { property: property.id, fixer: false, confirmation: codeOf(ask) });
+    expect(off.isError, off.text).toBe(false);
+    expect(off.structured?.rotationAsk).toEqual([{ jobId, question: "Joe's Plumbing knows the door code. Want to change it? Set the new code on the lock, then save it here." }]);
+    expect(off.text).toContain("Then ask the host each question in rotationAsk.");
+    expect(off.raw).not.toContain(["6", "2", "0", "4"].join(""));
   });
 });

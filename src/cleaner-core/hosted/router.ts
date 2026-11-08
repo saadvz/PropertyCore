@@ -452,11 +452,25 @@ export async function drainAllTenants(h: HostedCleaner): Promise<void> {
   }
 }
 
+/** True while a round of Fixer Core's clock runs, so the next tick skips rather than overlaps it. */
+let fixerRound = false;
+
 /**
  * Fixer Core's clock: one pass for each property with Fixer Core on, on the same tick as the alerts.
- * One property's failure never stops the rest, and the log line names only the property.
+ * One property's failure never stops the rest, and the log line names only the property. A round
+ * still running when the next tick comes makes that tick skip.
  */
 export async function tickAllFixers(h: HostedCleaner): Promise<void> {
+  if (fixerRound) return;
+  fixerRound = true;
+  try {
+    await fixerPass(h);
+  } finally {
+    fixerRound = false;
+  }
+}
+
+async function fixerPass(h: HostedCleaner): Promise<void> {
   for (const listed of h.registry.list()) {
     const tenant = h.registry.get(listed.id);
     if (!tenant || tenant.disabled) continue;

@@ -118,8 +118,8 @@ async function turnOn(ctx: FlowContext, property: Property, flow: FlowName): Pro
     return undefined;
   }
   if (flow === "fixer") {
-    await turnOnFixer(ctx.h, ctx.tenant, property);
-    return undefined;
+    const reply = await turnOnFixer(ctx.h, ctx.tenant, property);
+    return reply.isError ? fail(reply.text) : undefined;
   }
   ctx.h.registry.setFlow(ctx.tenant.id, property.id, flow, true);
   return undefined;

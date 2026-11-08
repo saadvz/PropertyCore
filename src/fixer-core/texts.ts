@@ -222,3 +222,8 @@ export function fixerOffQuestion(f: { label: string; jobs: { what: string; proNa
   const count = f.jobs.length === 1 ? "This repair job is cancelled" : `These ${f.jobs.length} repair jobs are cancelled`;
   return `Turn off Fixer Core for ${f.label}? ${count}: ${list}. I'll tell each booked pro, and their visit links end. The pros and upkeep are kept. Reply yes to turn it off.`;
 }
+
+/** After Activate, changing the property's address takes the host's yes (design pass). */
+export function propertyQuestion(f: { address: string }): string {
+  return `Save ${f.address} as the property's address for repairs?`;
+}

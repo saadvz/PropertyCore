@@ -106,12 +106,16 @@ export function repairsLine(h: HostedCleaner, tenant: Tenant, property: Property
   return fixerDesk(h, tenant, property).summaryLine();
 }
 
-/** Turns Fixer Core on for the property: the flow and the record. Setup starts; nobody is contacted. */
-export async function turnOnFixer(h: HostedCleaner, tenant: Tenant, property: Property): Promise<void> {
+/**
+ * Turns Fixer Core on for the property: the record first, then the flow. Setup starts; nobody is
+ * contacted. A record that can't be read leaves the flow off, and the reply says why.
+ */
+export async function turnOnFixer(h: HostedCleaner, tenant: Tenant, property: Property): Promise<FixerReply> {
+  const reply = await fixerDesk(h, tenant, property).turnOn();
+  if (reply.isError) return reply;
   h.registry.setFlow(tenant.id, property.id, "fixer", true);
-  await fixerDesk(h, tenant, property).turnOn();
   cleaningDesk(h, tenant, property)?.refreshSupplyAsk();
-  h.log(`${tenant.id}/${property.id} turned Fixer Core on.`);
+  return reply;
 }
 
 /**
@@ -124,7 +128,6 @@ export async function turnOffFixer(h: HostedCleaner, tenant: Tenant, property: P
   if (reply.isError) h.log(`${tenant.id}/${property.id}'s Fixer Core record couldn't be read while turning it off.`);
   h.registry.setFlow(tenant.id, property.id, "fixer", false);
   cleaningDesk(h, tenant, property)?.refreshSupplyAsk();
-  h.log(`${tenant.id}/${property.id} turned Fixer Core off.`);
   return reply;
 }
 
@@ -213,9 +216,10 @@ export async function fixerPreview(h: HostedCleaner, tenant: Tenant, property: P
   return fixerDesk(h, tenant, property).previewSchedule(parsed.data as never);
 }
 
-/** A repair job's photo links. */
-export function fixerPhotos(h: HostedCleaner, tenant: Tenant, property: Property, job: string): Promise<FixerReply> {
-  return fixerDesk(h, tenant, property).jobPhotos(job);
+/** A repair job's photo links. Card-like text is refused before the desk, as on every Fixer Core tool. */
+export async function fixerPhotos(h: HostedCleaner, tenant: Tenant, property: Property, args: Record<string, unknown>): Promise<FixerReply> {
+  if (refuseCards(args)) return { text: CARD_REFUSAL, isError: true };
+  return fixerDesk(h, tenant, property).jobPhotos(String(args.job));
 }
 
 /** Within this long of a done, a job's photos may still be due to go. */

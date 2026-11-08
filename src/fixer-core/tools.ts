@@ -61,8 +61,8 @@ export const FIXER_TOOLS: FixerTool[] = [
     name: "save_fixer_property",
     title: "Save the property for repairs",
     description:
-      "Saves the property's street address, the time zone you work out from it, and an optional name that defaults to the street address. They're the property's, shared with Cleaner Core and Supply Core. Activate needs them.",
-    input: z.object({ address: z.string().max(200), timeZone: z.string().max(80), name: z.string().max(80).optional() }).strict(),
+      `Saves the property's street address, the time zone you work out from it, and an optional name that defaults to the street address. They're the property's, shared with Cleaner Core and Supply Core. Activate needs them. ${AFTER_ACTIVATE}`,
+    input: z.object({ address: z.string().max(200), timeZone: z.string().max(80), name: z.string().max(80).optional(), confirmation: Confirmation }).strict(),
   },
   {
     name: "save_fixer_sources",
