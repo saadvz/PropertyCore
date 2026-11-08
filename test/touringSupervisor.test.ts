@@ -198,6 +198,29 @@ describe("TouringSupervisor", () => {
     expect(h.supervisor.health(lane.id)).toEqual({ up: false, restartsLastDay: 0 });
   });
 
+  it("lets every caller waiting on a start go when the tenant is stopped mid-start (#215)", async () => {
+    const h = harness();
+    const first = h.supervisor.ensure(lane);
+    const second = h.supervisor.ensure(lane);
+    h.supervisor.stop(lane.id);
+    const settled = await Promise.race([Promise.all([first, second]).then(() => "settled"), new Promise((resolve) => setTimeout(() => resolve("hung"), 50))]);
+    expect(settled).toBe("settled");
+    expect(h.workers[0]!.killed).toBe(true);
+    expect(h.supervisor.target(lane.id)).toBeUndefined();
+  });
+
+  it("lets a caller waiting on a restart go when the tenant is stopped", async () => {
+    const h = harness();
+    await h.startReady(lane);
+    h.workers[0]!.exit(1);
+    const waiting = h.supervisor.ensure(lane);
+    h.supervisor.stop(lane.id);
+    const settled = await Promise.race([waiting.then(() => "settled"), new Promise((resolve) => setTimeout(() => resolve("hung"), 50))]);
+    expect(settled).toBe("settled");
+    h.advance(120 * SECOND);
+    expect(h.workers).toHaveLength(1);
+  });
+
   it("relays a worker's alert and sends the answer back", async () => {
     const h = harness();
     await h.startReady(lane);

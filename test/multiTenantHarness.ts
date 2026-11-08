@@ -27,7 +27,7 @@ export interface Wake {
   body: string;
 }
 
-export async function multiTenantApp(options: { now?: () => Date; env?: NodeJS.ProcessEnv } = {}) {
+export async function multiTenantApp(options: { now?: () => Date; authNow?: () => number; env?: NodeJS.ProcessEnv } = {}) {
   const sms = fakeSms();
   setCleanerTwilioClient(sms);
   setCleanerCalendarFetch(async (url) => ({
@@ -61,6 +61,7 @@ export async function multiTenantApp(options: { now?: () => Date; env?: NodeJS.P
     undefined,
     undefined,
     now,
+    options.authNow,
   );
   const registry = new TenantRegistry(app.root, now);
   let rpc = 0;
