@@ -41,7 +41,7 @@ Tour Core was a proof of concept for the agentic flow. Cleaner Core is further a
 - Secrets stay out of code, logs, prompts, chat, and tool arguments.
 - Existing cleaning tenants behave exactly as today. Their connectors at `/mcp/cleaner-core` keep working without reconnecting.
 - These modes behave exactly as today, and their tests stay green unchanged: single-tenant `HOSTED_RAILWAY_P0` without `CLEANER_CORE_MULTI_TENANT`, local, Grok-managed, and single-tenant Cleaner Core with `CLEANER_CORE_ASSISTANT`.
-- Door access stays on the demo adapter (`DURIN_DEMO`). No real lock is opened.
+- Door access stays on the demo adapter (`DOOR_DEMO`). No real lock is opened.
 
 ## Part 1. One address, and what the agent sees
 
