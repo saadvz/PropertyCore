@@ -5,10 +5,11 @@
   "profile": "bot-profile.md",
   "hostedTourCoreUrl": "https://tourcore-production-8b80.up.railway.app",
   "repository": {
-    "url": "https://github.com/saadvz/TourCore",
+    "url": "https://github.com/saadvz/PropertyCore",
+    "formerUrls": ["https://github.com/saadvz/TourCore"],
     "fallback": "TOURCORE_REPO_URL",
     "bootstrap": "GROK_BOOTSTRAP.md",
-    "note": "The canonical public Tour Core repository. An address from the operator's message or TOURCORE_REPO_URL is only a fallback; if it differs from this one, Grok asks the operator, and npm run bootstrap:grok refuses a clone whose origin differs. Never a private repository."
+    "note": "The canonical public Property Core repository (Tour Core is parked in it). A clone made before the rename has a formerUrls address as its origin, which is the same repository. An address from the operator's message or TOURCORE_REPO_URL is only a fallback; if it differs from this one, Grok asks the operator, and npm run bootstrap:grok refuses a clone whose origin differs. Never a private repository."
   },
   "context": [
     "context/tour-core-overview.md",
