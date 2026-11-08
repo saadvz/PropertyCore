@@ -1,6 +1,6 @@
 import type { TourCoreConfig } from "../config/tourCoreConfig";
 import { calendarDaysBetween, isoDate, isBeyondBookingHorizon, parseIsoDate } from "../core/schedule";
-import { formatDay, formatLocalDate, formatTime, localDateOf, weekdayOf, type LocalDate } from "../core/timezone";
+import { formatDay, formatLocalDate, formatTime, localDateOf, sameLocalDate as sameDay, weekdayOf, type LocalDate } from "../core/timezone";
 import { TourCoreError, VisitorDenialCopy } from "../core/TourCore";
 import { namesTourDay } from "../core/spokenTime";
 import { acceptsNextOpening } from "../intent/yesNo";
@@ -8,10 +8,6 @@ import { normalize, stripFiller } from "../intent/normalize";
 import type { ReplyPrompt } from "../messaging/presentation";
 import { timeMenu } from "./entry";
 import type { Said, VisitorDemoSession } from "./session";
-
-function sameDay(a: LocalDate, b: LocalDate): boolean {
-  return a.year === b.year && a.month === b.month && a.day === b.day;
-}
 
 function weekdayPlural(requested: LocalDate, tz: string): string {
   return `${formatLocalDate(requested, tz).split(",")[0]!}s`;

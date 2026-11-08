@@ -31,7 +31,7 @@ import { pickerMiss, placeAliases, propertyPickerText, propertyShortName, resolv
 import { OverstayScheduler } from "./overstayScheduler";
 import { oneOffBlockReason } from "./oneOffGate";
 import { markRemovedReply, shouldReplyRemoved } from "./removedReplies";
-import { draftStartDisclosure, smsDisclosure, smsHelpBody, smsStopAck, SmsConsentDirectory } from "./smsConsent";
+import { draftStartDisclosure, smsHelpBody, smsStopAck, SmsConsentDirectory } from "./smsConsent";
 import { restoreSession, RestoreError, SessionPersistence, type DurableSession } from "./durableSession";
 import { VisitorDemoSession, type VisitorDemoRegistry } from "./session";
 import type { VerificationLinks } from "./verificationLinks";

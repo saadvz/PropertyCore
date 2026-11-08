@@ -43,7 +43,7 @@ export function unitLabel(name: string): string {
 }
 
 /** Codes with a digit (4b, 12c), or 1–2 letters (PH, A). Three-plus letter words stay spelled names. */
-function isShortUnitCode(token: string): boolean {
+export function isShortUnitCode(token: string): boolean {
   if (!/^[a-z0-9]+$/i.test(token)) return false;
   return /\d/.test(token) || token.length <= 2;
 }

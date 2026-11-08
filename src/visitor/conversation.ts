@@ -3,7 +3,7 @@ import { orList, resolveQuestion, unitsNamedIn } from "../core/questions";
 import { isoDate, parseIsoDate } from "../core/schedule";
 import { dayReference, spokenTimes, type DayReference, type SpokenTime } from "../core/spokenTime";
 import { bookedClockZone, tourAlreadyUnderway } from "../core/inProgressTour";
-import { addDays, formatDay, formatTime, formatVisitorClock, isValidTimeZone, localDateOf, UnsetTimeZoneError, weekdayOf, zonedParts, type LocalDate } from "../core/timezone";
+import { addDays, formatDay, formatTime, formatVisitorClock, isValidTimeZone, localDateOf, sameLocalDate as sameLocalDay, UnsetTimeZoneError, weekdayOf, zonedParts, type LocalDate } from "../core/timezone";
 import {
   NOTHING_BOOKED_CANCEL,
   TOUR_AGAIN_SUFFIX,
@@ -66,7 +66,7 @@ import { SMS_GATE_REMINDER, SMS_KEYWORD_PROMPT, smsDisclosure, smsHelpBody, smsO
  * confirms it. The time is not dropped.
  */
 
-export { keywordOf, type Keyword } from "../intent";
+export { keywordOf } from "../intent";
 
 export const isGreeting = (text: string) => /^(hi|hello|hey|hiya|tour|book|start over|new tour|hi there|good (morning|afternoon|evening))\b/.test(normalize(text));
 
@@ -132,15 +132,6 @@ const DAY_MENU = `I have tours available. ${WHICH_DAY}`;
 const MENU_NUMBER = /^\s*(?:#|number |option )?(\d{1,2})\s*[.!]?\s*$/i;
 const EXPLICIT_CHANGE_PHRASE = /\b(instead|switch|change to|move it|reschedule|another time|another day|different day)\b/;
 const WEEKDAY_OR_DAY = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow)\b/;
-const WEEKDAY_WORD: Record<string, string> = {
-  MON: "monday",
-  TUE: "tuesday",
-  WED: "wednesday",
-  THU: "thursday",
-  FRI: "friday",
-  SAT: "saturday",
-  SUN: "sunday",
-};
 const TIME_SHIFT_ASK =
   /\b((?:make|move|switch|change)(?: it| the tour| that)? (?:later|earlier)|(?:a |an )?(?:later|earlier) (?:time|slot|opening)|(?:later|earlier) if possible|can we do (?:it )?(?:later|earlier)|later in the week|(?:is there )?anything (?:later|earlier)(?! is fine)|(?:later|earlier) would be better)\b/;
 /** "sooner" is a change only as an ask, not in consent idioms like "the sooner the better". */
@@ -248,10 +239,6 @@ function excludedDays(text: string): Set<string> {
   return excluded;
 }
 
-function sameLocalDay(a: LocalDate, b: LocalDate): boolean {
-  return a.year === b.year && a.month === b.month && a.day === b.day;
-}
-
 function dayAskExcluded(ask: DayReference, text: string, today: LocalDate): boolean {
   const excluded = excludedDays(text);
   if (ask.relative === "today" && excluded.has("today")) return true;
@@ -299,16 +286,6 @@ async function answerLeftoverAfterConsent(turn: Turn, text: string): Promise<voi
     alreadyRecorded: true,
     unknownReply: unknownReplyFor(turn),
   });
-}
-
-async function affirmsBookedDay(turn: Turn): Promise<boolean> {
-  const reservation = await turn.session.reservation();
-  if (!reservation?.slotStart) return false;
-  const booked = weekdayOf(localDateOf(new Date(reservation.slotStart), turn.session.config.property.timezone));
-  const word = WEEKDAY_WORD[booked];
-  if (!word) return false;
-  const n = normalize(turn.said.text ?? "");
-  return new RegExp(`\\b${word}\\b.{0,24}\\b(fine|ok|okay|good|works|great)\\b`).test(n) || new RegExp(`\\b(fine|ok|okay|good|works|great).{0,24}\\b${word}\\b`).test(n);
 }
 
 /** A clear YES/NO, including yes/ok plus extra words. Change markers are not consent. */
@@ -846,8 +823,6 @@ async function ask(turn: Turn, question: string, resume?: () => Promise<void>): 
   if (resume) await resume();
   else await resumeStep(session, turn.stage, turn.awaiting, out.fairHousing ? { repeatLiveMenu: true } : undefined);
 }
-
-const listOf = (items: string[]) => (items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
 
 async function contextDay(session: VisitorDemoSession): Promise<LocalDate | undefined> {
   const reservation = await session.reservation();
