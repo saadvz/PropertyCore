@@ -182,3 +182,15 @@ export const VISIT_PAGE_OFF = "That can't be saved right now. Tell the host.";
 
 /** With the visit link, for the agent. */
 export const VISIT_LINK_NEXT = "Send this link only to the pro's own email or phone, never to a group. It is shown once.";
+
+/** The host ended the visit link; visit_link waits for a rebook or more time. */
+export const VISIT_REVOKED = "The host ended this visit link. A new time or more time for the visit gives a new one.";
+
+/** A pro who gets the code by text has no visit page (Decision 5). */
+export function visitTextPath(f: { proName: string }): string {
+  return `${f.proName} texts on the line, so the door code and done go by text. There's no visit page for this visit.`;
+}
+
+export function rescheduleQuestion(f: { proName: string }): string {
+  return `Move the repair visit with ${f.proName} to a new time? I'll tell them this time is off.`;
+}

@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { fixerDeskFor, resetFixerDesks, type FixerDeps, type FixerReply } from "../src/fixer-core/desk";
 import { readFixer, tokenHash, writeFixer } from "../src/fixer-core/store";
-import { FIXER_VISIT_PREFIX, handleVisitRequest, stripPhotoMetadata } from "../src/fixer-core/visitPage";
-import { photoFolder } from "../src/cleaner-core/photos";
+import { FIXER_VISIT_PREFIX, handleVisitRequest, stripPhotoMetadata, type VisitResponse } from "../src/fixer-core/visitPage";
+import { codeText } from "../src/fixer-core/texts";
+import { photoFolder, storePhoto } from "../src/cleaner-core/photos";
 import { setCalendarFetch } from "../src/hub/calendarFetch";
 import { hubFor, resetHubs } from "../src/hub/hub";
 import { peopleFor, resetPeople } from "../src/hub/people";
@@ -116,21 +117,37 @@ async function setup(opts: { costLine?: number; lockLocation?: string; requestKe
     resetFixerDesks();
     resetHubs();
   };
-  return { root, desk, deps, state, job, pro, at, restart, notes, sent, replies, keep, setBase: (value: string | undefined) => (base = value) };
+  /** This world's page responses, for the header checks. */
+  const responses: VisitResponse[] = [];
+  return { root, desk, deps, people, state, job, pro, at, restart, notes, sent, replies, keep, responses, setBase: (value: string | undefined) => (base = value) };
 }
 type World = Awaited<ReturnType<typeof setup>>;
 
-/** Books Sam with the host's yes and gives back the contact token. */
-async function book(w: World, span = TUE, extra: Record<string, unknown> = {}): Promise<string> {
-  const id = w.pro("Sam").id;
-  const pick = await w.keep(w.desk().pickPros({ jobId: w.job().id, ids: [id] }));
-  expect((await w.keep(w.desk().pickPros({ jobId: w.job().id, ids: [id], confirmation: codeOf(pick) }))).isError).toBe(false);
+/** Books Sam (or Joe, who texts on the line) with the host's yes and gives back the contact token. */
+async function book(w: World, span = TUE, extra: Record<string, unknown> = {}, name: "Sam" | "Joe" = "Sam"): Promise<string> {
+  const id = w.pro(name).id;
+  if (name === "Sam") {
+    const pick = await w.keep(w.desk().pickPros({ jobId: w.job().id, ids: [id] }));
+    expect((await w.keep(w.desk().pickPros({ jobId: w.job().id, ids: [id], confirmation: codeOf(pick) }))).isError).toBe(false);
+  }
   const token = (await w.keep(w.desk().contactPro({ jobId: w.job().id, to: id, how: "call" }))).structured!.contactToken as string;
-  expect((await w.keep(w.desk().recordContact({ contactToken: token, outcome: "booked", ...span, estimateCents: 18000 }))).isError).toBe(false);
+  await rebook(w, token, span, extra);
+  return token;
+}
+
+/** The pro on this contact gives a time and the host says yes. */
+async function rebook(w: World, contactToken: string, span: { from: string; until: string }, extra: Record<string, unknown> = {}): Promise<void> {
+  expect((await w.keep(w.desk().recordContact({ contactToken, outcome: "booked", ...span, estimateCents: 18000 }))).isError).toBe(false);
   const first = await w.keep(w.desk().approveBooking({ jobId: w.job().id, ...extra }));
   expect((await w.keep(w.desk().approveBooking({ jobId: w.job().id, ...extra, confirmation: codeOf(first) }))).isError).toBe(false);
   expect(w.job().state).toBe("booked");
-  return token;
+}
+
+/** The host's two calls to move the visit to a new time. */
+async function reschedule(w: World, proName: string): Promise<FixerReply> {
+  const ask = await w.keep(w.desk().rescheduleJob({ jobId: w.job().id, reason: "Pro is running late" }));
+  expect(ask.structured!.question).toBe(`Move the repair visit with ${proName} to a new time? I'll tell them this time is off.`);
+  return w.keep(w.desk().rescheduleJob({ jobId: w.job().id, reason: "Pro is running late", confirmation: codeOf(ask) }));
 }
 
 /** The visit link's token, from the url visit_link gave. */
@@ -142,11 +159,10 @@ async function link(w: World): Promise<{ url: string; token: string }> {
   return { url, token: url.slice(`${BASE}${FIXER_VISIT_PREFIX}`.length) };
 }
 
-type Res = { status: number; headers: Record<string, string>; body: string | Buffer };
-const all: Res[] = [];
+type Res = VisitResponse;
 async function call(w: World, token: string, sub = "", method = sub ? "POST" : "GET", contentType = sub && sub !== "photo" ? "application/json" : "", body: Buffer | string = sub && sub !== "photo" ? "{}" : ""): Promise<Res> {
   const res = await handleVisitRequest(w.desk(), { method, sub, token, contentType, body: Buffer.isBuffer(body) ? body : Buffer.from(body, "utf8") });
-  all.push(res);
+  w.responses.push(res);
   return res;
 }
 const text = (res: Res) => (Buffer.isBuffer(res.body) ? res.body.toString("utf8") : res.body);
@@ -175,6 +191,7 @@ function jpegWithGps(): Buffer {
     seg(0xe0, Buffer.from("JFIF\0\x01\x01\0\0\x01\0\x01\0\0", "latin1")),
     seg(0xe1, Buffer.from("Exif\0\0GPSLatitude 40.88 GPSLongitude -74.01", "latin1")),
     seg(0xed, Buffer.from("Photoshop 3.0\0IPTC GPS city Teaneck", "latin1")),
+    seg(0xfe, Buffer.from("Comment GPS 40.88", "latin1")),
     seg(0xdb, Buffer.alloc(65, 1)),
     seg(0xda, Buffer.from([0x01, 0x01, 0x00, 0x00, 0x3f, 0x00])),
     Buffer.from([0x12, 0x34, 0xff, 0x00, 0x56, 0xff, 0xd0, 0x78]),
@@ -250,20 +267,43 @@ describe("the visit link", () => {
     expect(again.text.includes(token)).toBe(false);
   });
 
-  it("ends on revoke_visit, and a new link can then be given", async () => {
+  it("ends on revoke_visit, and stays ended until an extend gives a new link", async () => {
     const w = await setup();
     await book(w);
     const first = await link(w);
     expect((await call(w, first.token)).status).toBe(200);
     expect((await w.keep(w.desk().revokeVisit({ jobId: w.job().id }))).isError).toBe(false);
     expect(w.job().booking!.visitToken).toBeUndefined();
+    expect(w.job().booking!.visitRevokedAt).toBe(NOW.toISOString());
     const gone = await call(w, first.token);
     expect(gone.status).toBe(404);
     expect(text(gone)).toContain("This visit has ended.");
     expect((await w.keep(w.desk().revokeVisit({ jobId: w.job().id }))).isError).toBe(true);
+    const refused = await w.keep(w.desk().visitLink({ jobId: w.job().id }));
+    expect(refused).toMatchObject({ isError: true, text: "The host ended this visit link. A new time or more time for the visit gives a new one." });
+    const until = new Date(Date.parse(TUE.until) + HOUR).toISOString();
+    const ask = await w.keep(w.desk().extendVisit({ jobId: w.job().id, until }));
+    expect((await w.keep(w.desk().extendVisit({ jobId: w.job().id, until, confirmation: codeOf(ask) }))).isError).toBe(false);
+    expect(w.job().booking!.visitRevokedAt).toBeUndefined();
     const second = await link(w);
     expect(second.token).not.toBe(first.token);
     expect((await call(w, second.token)).status).toBe(200);
+  });
+
+  it("is refused for a pro who gets the code by text, unless that text failed", async () => {
+    let fails = false;
+    const w = await setup();
+    w.deps.send = async () => !fails;
+    w.people().optIn(JOE, PROPERTY_ID);
+    await book(w, TUE, {}, "Joe");
+    const refused = await w.keep(w.desk().visitLink({ jobId: w.job().id }));
+    expect(refused).toMatchObject({ isError: true, text: "Joe's Plumbing texts on the line, so the door code and done go by text. There's no visit page for this visit." });
+    fails = true;
+    w.at(TUE.from);
+    await w.desk().tick();
+    expect(w.job().codeNoteAt).toBeDefined();
+    const { token } = await link(w);
+    expect((await call(w, token)).status).toBe(200);
   });
 
   it("gets a new token on an extend: the old one ends", async () => {
@@ -276,9 +316,10 @@ describe("the visit link", () => {
     expect((await call(w, first.token)).status).toBe(404);
     const second = await link(w);
     expect(second.token).not.toBe(first.token);
-    // The extension counts: the page is live after the booked end.
+    // The extension counts: the door still opens after the booked end.
     w.at(Date.parse(TUE.until) + 30 * MIN);
-    expect((await call(w, second.token)).status).toBe(200);
+    expect(text(await call(w, second.token))).toContain("I'm at the door");
+    expect(doorWord(await call(w, second.token, "door"))).toBe("opened");
   });
 
   it("gets a new token on a rebook: approve_booking clears the old one", async () => {
@@ -446,14 +487,38 @@ describe("the page before, during and after the visit", () => {
     expect((await call(w, token, "door")).status).toBe(404);
   });
 
-  it("ends at the visit's end", async () => {
+  it("after the visit's end with no done, takes photos and done but shows no door", async () => {
     const w = await setup();
     await book(w);
     const { token } = await link(w);
     w.at(TUE.until);
+    const page = await call(w, token);
+    expect(page.status).toBe(200);
+    expect(text(page)).not.toContain("I'm at the door");
+    expect(text(page)).toContain("The visit&#39;s time is up, so the door code no longer shows.");
+    expect(text(page)).toContain("Mark done");
+    const door = await call(w, token, "door");
+    expect(doorWord(door)).toBe("refused 409");
+    expect(json(door).error).toBe("The visit's time is up, so the door code no longer shows.");
+    expect(holdsCode(door)).toBe(false);
+    w.at(Date.parse(TUE.until) + 23 * HOUR);
+    expect((await call(w, token, "photo", "POST", "image/jpeg", jpegWithGps())).status).toBe(200);
+    expect((await call(w, token, "done", "POST", "application/json", JSON.stringify({ cents: 18000 })))).toMatchObject({ status: 200 });
+    expect(w.job()).toMatchObject({ state: "done", done: { by: "pro-page" } });
+    expect((await call(w, token)).status).toBe(404);
+  });
+
+  it("ends 24 hours after the visit's end even with no done", async () => {
+    const w = await setup();
+    await book(w);
+    const { token } = await link(w);
+    w.at(Date.parse(TUE.until) + 24 * HOUR - 1);
+    expect((await call(w, token)).status).toBe(200);
+    w.at(Date.parse(TUE.until) + 24 * HOUR);
     const res = await call(w, token);
     expect(res.status).toBe(404);
     expect(text(res)).toContain("This visit has ended.");
+    expect((await call(w, token, "done")).status).toBe(404);
   });
 
   it("takes a raised price, held for the host with a cost line", async () => {
@@ -463,12 +528,79 @@ describe("the page before, during and after the visit", () => {
     w.at(TUE.from);
     const bad = await call(w, token, "quote", "POST", "application/json", JSON.stringify({ cents: "lots" }));
     expect(bad.status).toBe(400);
-    const res = await call(w, token, "quote", "POST", "application/json", JSON.stringify({ cents: 42_000, note: "The trap is cracked" }));
+    // The page sends only the price: a note isn't kept, so it isn't taken.
+    expect((await call(w, token, "quote", "POST", "application/json", JSON.stringify({ cents: 42_000, note: "The trap is cracked" }))).status).toBe(400);
+    expect(w.job().booking!.revisedQuote).toBeUndefined();
+    const res = await call(w, token, "quote", "POST", "application/json", JSON.stringify({ cents: 42_000 }));
     expect(res.status).toBe(200);
     expect(json(res).held).toBe(true);
     expect(w.job().booking!.revisedQuote).toMatchObject({ cents: 42_000, by: "pro" });
     expect(w.notes.map((n) => n.text)).toEqual(["Sam Spigot says the fix is $420.00, not $180.00. Go ahead?"]);
     expect(text(await call(w, token))).toContain("$420.00");
+  });
+});
+
+describe("reschedule", () => {
+  const WED = { from: "2026-11-11T15:00:00.000Z", until: "2026-11-11T17:00:00.000Z" };
+
+  it("ends the old booking and link, asks about the code after a reveal, and a rebook gets a new token", async () => {
+    const w = await setup();
+    const contact = await book(w);
+    const first = await link(w);
+    w.at(TUE.from);
+    expect(doorWord(await call(w, first.token, "door"))).toBe("opened");
+    expect((await w.keep(w.desk().rescheduleJob({ jobId: "job_nope000000" }))).isError).toBe(true);
+    const moved = await reschedule(w, "Sam Spigot");
+    expect(moved.isError).toBe(false);
+    const rotation = "Sam Spigot knows the door code. Want to change it? Set the new code on the lock, then save it here.";
+    expect(moved.structured).toMatchObject({ rescheduled: true, state: "contacted", tellPro: { name: "Sam Spigot", reach: { phone: SAM } }, rotationAsk: [{ jobId: w.job().id, question: rotation }] });
+    expect(w.job().state).toBe("contacted");
+    expect(w.job().booking).toBeUndefined();
+    expect(w.job().codeShown).toBe(true);
+    expect(w.job().reschedules).toEqual([{ at: TUE.from, reason: "Pro is running late" }]);
+    expect((await call(w, first.token)).status).toBe(404);
+    // Only a live booking can be moved.
+    expect((await w.keep(w.desk().rescheduleJob({ jobId: w.job().id }))).isError).toBe(true);
+    await rebook(w, contact, WED);
+    const second = await link(w);
+    expect(second.token).not.toBe(first.token);
+    w.at(WED.from);
+    expect((await call(w, second.token, "done")).status).toBe(200);
+    // The question after the old reveal still stands after the new visit's done.
+    const asks = (await w.keep(w.desk().checkFixes({}))).structured as { rotationAsk: { jobId: string; question: string }[] };
+    expect(asks.rotationAsk).toEqual([{ jobId: w.job().id, question: rotation }]);
+  });
+
+  it("gives the new visit its own code text", async () => {
+    const w = await setup();
+    w.people().optIn(JOE, PROPERTY_ID);
+    const contact = await book(w, TUE, {}, "Joe");
+    w.at(TUE.from);
+    await w.desk().tick();
+    expect(w.sent).toHaveLength(1);
+    const moved = await reschedule(w, "Joe's Plumbing");
+    expect(moved.isError).toBe(false);
+    expect(w.job().codeTextAt).toBeUndefined();
+    expect(w.job().codeTextSent).toBeUndefined();
+    await rebook(w, contact, WED);
+    w.at(Date.parse(WED.from) - 30 * MIN);
+    await w.desk().tick();
+    await w.desk().tick();
+    expect(w.sent).toHaveLength(2);
+    expect(w.sent[1]!.body === codeText({ proName: "Joe's Plumbing", street: "12 Scratch Lane", code: CODE })).toBe(true);
+    expect(w.job().codeTextSent).toBe(true);
+    // Joe is preferred, so done asks neither question; the rotation question came at the reschedule.
+    expect(moved.structured!.rotationAsk).toEqual([expect.objectContaining({ jobId: w.job().id })]);
+  });
+
+  it("needs the host's yes", async () => {
+    const w = await setup();
+    await book(w);
+    const ask = await w.keep(w.desk().rescheduleJob({ jobId: w.job().id }));
+    expect(ask.structured!.confirmation).toBeDefined();
+    expect(w.job().state).toBe("booked");
+    expect((await w.keep(w.desk().rescheduleJob({ jobId: w.job().id, confirmation: "wrong" }))).isError).toBe(true);
+    expect(w.job().state).toBe("booked");
   });
 });
 
@@ -488,6 +620,7 @@ describe("photos", () => {
     expect(raw).not.toContain("GPS");
     expect(raw).not.toContain("Exif");
     expect(raw).not.toContain("Photoshop");
+    expect(raw).not.toContain("Comment");
     expect(raw).toContain("JFIF");
     expect(saved!.includes(Buffer.from([0x12, 0x34, 0xff, 0x00, 0x56, 0xff, 0xd0, 0x78]))).toBe(true);
     expect(w.job().photos).toEqual([expect.objectContaining({ id: "1", from: "pro" })]);
@@ -509,7 +642,7 @@ describe("photos", () => {
     expect(webp[20]! & 0x10).toBe(0x10);
   });
 
-  it("refuses HEIC and HEIF, other types, a mismatched body, a broken JPEG and anything over 5 MB", async () => {
+  it("refuses HEIC, HEIF and GIF, other types, a mismatched body, a broken JPEG and anything over 5 MB", async () => {
     const w = await setup();
     await book(w);
     const { token } = await link(w);
@@ -519,25 +652,37 @@ describe("photos", () => {
     expect((await call(w, token, "photo", "POST", "image/svg+xml", Buffer.from("<svg/>"))).status).toBe(415);
     expect((await call(w, token, "photo", "POST", "image/png", jpegWithGps())).status).toBe(415);
     expect((await call(w, token, "photo", "POST", "image/jpeg", Buffer.from([0xff, 0xd8, 0xff, 0xe1, 0x40, 0x00, 0x01]))).status).toBe(415);
+    // A restart marker outside a scan is a malformed file.
+    expect((await call(w, token, "photo", "POST", "image/jpeg", Buffer.from([0xff, 0xd8, 0xff, 0xd0, 0xff, 0xd9]))).status).toBe(415);
+    expect((await call(w, token, "photo", "POST", "image/gif", Buffer.from("GIF89a....;", "latin1"))).status).toBe(415);
     const big = Buffer.concat([jpegWithGps(), Buffer.alloc(5 * 1024 * 1024)]);
     expect((await call(w, token, "photo", "POST", "image/jpeg", big)).status).toBe(413);
     expect(savedPhotos(w)).toEqual([]);
     expect(w.job().photos).toEqual([]);
-    // PNG, WebP and GIF are kept.
+    // PNG and WebP are kept.
     expect((await call(w, token, "photo", "POST", "image/png", pngWithGps())).status).toBe(200);
     expect((await call(w, token, "photo", "POST", "image/webp", webpWithGps())).status).toBe(200);
-    expect((await call(w, token, "photo", "POST", "image/gif", Buffer.from("GIF89a....;", "latin1"))).status).toBe(200);
-    expect(w.job().photos.map((p) => p.from)).toEqual(["pro", "pro", "pro"]);
+    expect(w.job().photos.map((p) => p.from)).toEqual(["pro", "pro"]);
   });
 
-  it("keeps up to 10 photos", async () => {
+  it("keeps up to 10 of the pro's own photos, beside the cleaner's", async () => {
     const w = await setup();
     await book(w);
     const { token } = await link(w);
+    // The cleaner's report already holds 4 photos.
+    const file = w.state();
+    for (let n = 1; n <= 4; n++) {
+      storePhoto(w.root, `fixer:${w.job().id}`, { bytes: Buffer.from("cleaner"), ext: "jpg" });
+      file.jobs.at(-1)!.photos.push({ id: String(n), from: "cleaner", at: NOW.toISOString() });
+    }
+    writeFixer(w.root, file);
     w.at(TUE.from);
     for (let i = 0; i < 10; i++) expect((await call(w, token, "photo", "POST", "image/jpeg", jpegWithGps())).status).toBe(200);
-    expect((await call(w, token, "photo", "POST", "image/jpeg", jpegWithGps())).status).toBe(409);
-    expect(w.job().photos).toHaveLength(10);
+    const full = await call(w, token, "photo", "POST", "image/jpeg", jpegWithGps());
+    expect(full.status).toBe(409);
+    expect(json(full).error).toBe("This visit already has 10 photos.");
+    expect(w.job().photos.filter((p) => p.from === "pro")).toHaveLength(10);
+    expect(savedPhotos(w)).toHaveLength(14);
   });
 });
 
@@ -585,9 +730,14 @@ describe("limits and headers", () => {
     expect((await call(w, token)).headers["Content-Security-Policy"]).not.toContain(nonce!);
     await call(w, token, "door");
     await call(w, token, "nope");
+    await call(w, token, "done", "PUT");
+    await call(w, token, "photo", "POST", "image/heic", Buffer.from("x"));
+    await call(w, token, "done", "POST", "application/json", "not json");
     await call(w, "b".repeat(64));
-    expect(all.length).toBeGreaterThan(0);
-    for (const res of all) expectStrictHeaders(res);
+    await call(w, "b".repeat(64), "door");
+    for (let i = 0; i < 30; i++) await call(w, token);
+    expect(new Set(w.responses.map((res) => res.status))).toEqual(new Set([200, 400, 404, 405, 415, 429]));
+    for (const res of w.responses) expectStrictHeaders(res);
   });
 
   it("never puts the code in a tool reply", async () => {

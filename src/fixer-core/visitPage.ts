@@ -33,8 +33,8 @@ export const MAX_VISIT_PHOTO_BYTES = 5 * 1024 * 1024;
 const MAX_JSON_BYTES = 4096;
 const MAX_CENTS = 2_000_000;
 
-/** MMS photo types the page keeps, by extension. HEIC and HEIF are refused: their metadata isn't stripped here. */
-const PHOTO_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
+/** MMS photo types the page keeps, by extension. HEIC, HEIF and GIF are refused: their metadata isn't stripped here. */
+const PHOTO_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/webp": "webp" };
 
 const STRICT: Record<string, string> = {
   "Cache-Control": "no-store",
@@ -51,11 +51,12 @@ const COPY = {
   notFound: "Not found.",
   sendJson: "Send JSON with Content-Type: application/json.",
   tooLarge: "That request is too large.",
-  photoType: "Send the photo as a JPEG, PNG, WebP or GIF. On an iPhone, pick Most Compatible in Camera settings.",
+  photoType: "Send the photo as a JPEG, PNG or WebP. On an iPhone, pick Most Compatible in Camera settings.",
   photoTooBig: "That photo is over 5 MB. Send a smaller one.",
   photoUnreadable: "That photo couldn't be read. Try another one.",
   codeSoon: "The door code shows here from 30 minutes before the visit.",
   codeNotYet: "The door code shows from 30 minutes before the visit.",
+  codeOver: "The visit's time is up, so the door code no longer shows.",
   hostLetsIn: "The host will let you in.",
   codeRefused: "The door code can't be shown. Ask the host to let you in.",
   guestsHere: "The guests haven't left yet. Try again in a few minutes.",
@@ -71,7 +72,7 @@ const COPY = {
 /** The plain reason a door POST got no code. */
 function doorReason(reason: RevealRefusal): string {
   if (reason === "before-visit") return COPY.codeNotYet;
-  if (reason === "after-visit" || reason === "window-over") return VISIT_ENDED;
+  if (reason === "after-visit" || reason === "window-over") return COPY.codeOver;
   if (reason === "guests-not-left") return COPY.guestsHere;
   if (reason === "host-access") return COPY.hostLetsIn;
   return COPY.codeRefused;
@@ -106,16 +107,17 @@ export async function handleVisitRequest(desk: FixerDesk, req: VisitRequest): Pr
   const parsed = jsonObject(req.body);
   if (!parsed) return refuse(400, COPY.sendJson);
   if (refuseCards(parsed)) return refuse(400, CARD_REFUSAL);
-  const input = amountAndNote(parsed, req.sub === "quote");
-  if (typeof input === "string") return refuse(400, input);
   if (req.sub === "done") {
+    const input = amountAndNote(parsed);
+    if (typeof input === "string") return refuse(400, input);
     const reply = await desk.pageDone(req.token, input);
     if (reply.isError) return reply.structured?.ended ? refuse(404, VISIT_ENDED) : refuse(409, reply.text);
     return json(200, { done: true, message: COPY.done });
   }
-  // The note was checked for card numbers like every field; the raised price itself is the cents.
-  if (view.estimateCents !== undefined && input.cents! <= view.estimateCents) return refuse(400, `That isn't more than the ${dollars(view.estimateCents)} estimate. Put what you charged with Done instead.`);
-  const reply = await desk.raisePrice(view.jobId, input.cents!, "pro", hash);
+  const price = priceOnly(parsed);
+  if (typeof price === "string") return refuse(400, price);
+  if (view.estimateCents !== undefined && price.cents <= view.estimateCents) return refuse(400, `That isn't more than the ${dollars(view.estimateCents)} estimate. Put what you charged with Done instead.`);
+  const reply = await desk.raisePrice(view.jobId, price.cents, "pro", hash);
   if (reply.isError) return reply.structured?.ended ? refuse(404, VISIT_ENDED) : refuse(409, COPY.notSaved);
   const held = reply.structured?.held === true;
   return json(200, { held, message: held ? COPY.heldQuote : COPY.toldQuote });
@@ -133,11 +135,19 @@ async function photo(desk: FixerDesk, req: VisitRequest, refuse: (status: number
   return json(200, { saved: true, photos: count, message: `${count} ${count === 1 ? "photo" : "photos"} saved.` });
 }
 
-/** `{ cents?, note? }` for done, `{ cents, note? }` for a raised price, and nothing else. A blank note is no note. */
-function amountAndNote(body: Record<string, unknown>, centsNeeded: boolean): { cents?: number; note?: string } | string {
+const isCents = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= MAX_CENTS;
+
+/** A raised price is `{ cents }` and nothing else. */
+function priceOnly(body: Record<string, unknown>): { cents: number } | string {
+  if (Object.keys(body).some((key) => key !== "cents")) return "Send only the new price.";
+  return isCents(body.cents) ? { cents: body.cents } : COPY.amount;
+}
+
+/** Done is `{ cents?, note? }` and nothing else. A blank note is no note. */
+function amountAndNote(body: Record<string, unknown>): { cents?: number; note?: string } | string {
   if (Object.keys(body).some((key) => key !== "cents" && key !== "note")) return "Send only the amount and a note.";
   const { cents, note } = body;
-  if (cents === undefined ? centsNeeded : !(typeof cents === "number" && Number.isInteger(cents) && cents >= 0 && cents <= MAX_CENTS)) return COPY.amount;
+  if (cents !== undefined && !isCents(cents)) return COPY.amount;
   if (note !== undefined && (typeof note !== "string" || note.length > 300)) return COPY.note;
   const trimmed = typeof note === "string" ? note.trim() : "";
   return { ...(cents !== undefined ? { cents: cents as number } : {}), ...(trimmed ? { note: trimmed } : {}) };
@@ -193,7 +203,9 @@ function visitPage(view: VisitView, nonce: string): string {
   lines.push(
     view.access === "host"
       ? `<p>${escape(COPY.hostLetsIn)}</p>`
-      : `<section>
+      : view.phase === "after"
+        ? `<p>${escape(COPY.codeOver)}</p>`
+        : `<section>
         <button id="door" type="button">I'm at the door</button>
         <p class="hint">Tap when you're at the door. The host is told each time the code is shown.</p>
         <div id="code-box" hidden><p class="code" id="code"></p><p id="lock"></p></div>
@@ -201,7 +213,7 @@ function visitPage(view: VisitView, nonce: string): string {
       </section>`,
     `<section>
         <label for="photo">Photos of the work (up to 10)</label>
-        <input id="photo" type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple>
+        <input id="photo" type="file" accept="image/jpeg,image/png,image/webp" multiple>
         <p class="hint" id="photo-msg">${view.photos} ${view.photos === 1 ? "photo" : "photos"} saved.</p>
       </section>`,
     `<form id="done">
@@ -217,8 +229,6 @@ function visitPage(view: VisitView, nonce: string): string {
         <h2>Costs more than the estimate?</h2>
         <label for="quote-amount">New price, in dollars</label>
         <input id="quote-amount" inputmode="decimal" autocomplete="off" required>
-        <label for="quote-note">Why (optional)</label>
-        <textarea id="quote-note" maxlength="300"></textarea>
         <button type="submit">Ask the host</button>
         <p class="error" id="quote-msg" role="alert"></p>
       </form>`,
@@ -280,7 +290,8 @@ const SCRIPT = `(() => {
         if (c === undefined) return say(id + "-msg", "Type the amount in dollars, like 180 or 180.50.");
         body.cents = c;
       }
-      const note = $(id + "-note").value.trim();
+      const noteBox = $(id + "-note");
+      const note = noteBox ? noteBox.value.trim() : "";
       if (note) body.note = note;
       const { ok, data } = await send(sub, JSON.stringify(body), "application/json");
       if (!ok) return say(id + "-msg", data.error || offline);
@@ -343,18 +354,18 @@ function escape(value: string): string {
 
 /**
  * The photo without its location and text metadata, or undefined when it isn't the type it claims
- * or can't be walked. JPEG: APP1 (EXIF, XMP) and APP13 (IPTC), and anything after the end of the
- * image. PNG: eXIf, tEXt, iTXt and zTXt. WebP: EXIF and XMP, with the VP8X flags cleared to match.
+ * or can't be walked. JPEG: APP1 (EXIF, XMP), APP13 (IPTC), comments, and anything after the end of
+ * the image. PNG: eXIf, tEXt, iTXt and zTXt. WebP: EXIF and XMP, with the VP8X flags cleared to match.
  */
 export function stripPhotoMetadata(bytes: Buffer, ext: string): Buffer | undefined {
   if (ext === "jpg") return stripJpeg(bytes);
   if (ext === "png") return stripPng(bytes);
   if (ext === "webp") return stripWebp(bytes);
-  if (ext === "gif") return /^GIF8[79]a/.test(bytes.toString("latin1", 0, 6)) ? bytes : undefined;
   return undefined;
 }
 
-const JPEG_DROP = new Set([0xe1, 0xed]);
+/** APP1, APP13 and COM. */
+const JPEG_DROP = new Set([0xe1, 0xed, 0xfe]);
 
 /** Walks the JPEG's segments, and the entropy-coded data of each scan, up to the end of image. */
 function stripJpeg(b: Buffer): Buffer | undefined {
@@ -372,11 +383,8 @@ function stripJpeg(b: Buffer): Buffer | undefined {
       parts.push(Buffer.from([0xff, 0xd9]));
       return Buffer.concat(parts);
     }
-    if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
-      parts.push(Buffer.from([0xff, marker]));
-      i = at;
-      continue;
-    }
+    // A restart or TEM marker belongs inside a scan's data; out here the file is malformed.
+    if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) return undefined;
     if (at + 2 > b.length) return undefined;
     const length = b.readUInt16BE(at);
     const end = at + length;

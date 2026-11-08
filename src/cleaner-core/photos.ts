@@ -215,11 +215,11 @@ export async function downloadPhoto(media: InboundMedia, fetchImpl: PhotoFetch, 
   }
 }
 
-/** Writes a downloaded photo as the job's next number. False once the job has 10. */
-export function storePhoto(root: string, jobId: string, photo: { bytes: Buffer; ext: string }): boolean {
+/** Writes a downloaded photo as the job's next number. False once the job has `max` (10 unless a caller keeps two sets). */
+export function storePhoto(root: string, jobId: string, photo: { bytes: Buffer; ext: string }, max = MAX_JOB_PHOTOS): boolean {
   const dir = join(photosDir(root), photoFolder(jobId));
   const files = photoFiles(dir);
-  if (files.length >= MAX_JOB_PHOTOS) return false;
+  if (files.length >= max) return false;
   const n = (files.at(-1)?.n ?? 0) + 1;
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${n}.${photo.ext}`), photo.bytes);

@@ -16,7 +16,7 @@ import { nextDates, scheduleProblem, type Schedule } from "../supply-core/schedu
 import { supplyAskOn } from "../supply-core/store";
 import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
-import { bookingQuestion, cancelQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, visitOverNews } from "./texts";
+import { bookingQuestion, cancelQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type Candidate, type Contact, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
@@ -65,6 +65,8 @@ const VISIT_TOKEN = /^[a-p]{64}$/;
 const DOOR_LEAD_MS = 30 * 60_000;
 /** The page shows the address from this long before the visit. */
 const ADDRESS_LEAD_MS = 24 * 60 * 60_000;
+/** With no done, the page still takes photos, done and a price this long after the visit's end. */
+const PAGE_AFTER_MS = 24 * 60 * 60_000;
 
 /** What the visit page shows for a live link. Never the code, the lock location or the token. */
 export interface VisitView {
@@ -76,8 +78,8 @@ export interface VisitView {
   until: string;
   timeZone: string;
   access: "code" | "host";
-  /** "during" from 30 minutes before the visit. */
-  phase: "before" | "during";
+  /** "during" from 30 minutes before the visit; "after" once its end has passed with no done. */
+  phase: "before" | "during" | "after";
   /** Only from 24 hours before the visit. */
   address?: string;
   estimateCents?: number;
@@ -218,6 +220,9 @@ function localYmd(at: Date, timeZone: string): string {
 
 /** Jobs still going: not done and not cancelled. */
 const isOpen = (job: Job): boolean => job.state !== "done" && job.state !== "cancelled";
+
+/** Was the door code shown or texted on any visit of this job? A rebook keeps the answer. */
+const codeWasShown = (job: Job): boolean => job.codeShown === true || (job.booking?.revealedAt?.length ?? 0) > 0;
 
 /** Digit runs of 4 or more (after split digits are joined) become a note, so a door code or account number never lands in a job. */
 export function redactDigits(text: string): string {
@@ -1171,7 +1176,7 @@ export class FixerDesk {
     let rotationAsk: { jobId: string; question: string } | undefined;
     if (job.booking) {
       delete job.booking.visitToken;
-      if (job.booking.revealedAt && job.booking.revealedAt.length > 0) {
+      if (codeWasShown(job)) {
         job.rotationAsked = { at };
         rotationAsk = { jobId: job.id, question: rotationQuestion({ proName }) };
       }
@@ -1194,6 +1199,44 @@ export class FixerDesk {
       const { tellPro, rotationAsk } = this.cancelCore(file, job, input.reason ? redactDigits(input.reason).trim() : "Cancelled");
       this.write(file);
       return ok({ cancelled: true, jobId: job.id, ...(tellPro ? { tellPro, next: `Tell ${tellPro.name} the visit is cancelled.` } : {}), ...(rotationAsk ? { rotationAsk: [rotationAsk] } : {}) });
+    });
+  }
+
+  /**
+   * The host moves a booked visit to a new time (two calls): the job goes back to contacted, the old
+   * booking and its visit link end, and the new visit gets its own code text. After a reveal, the host
+   * gets the rotation question, as on a cancel.
+   */
+  rescheduleJob(input: { jobId?: string; reason?: string; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      if (!job) return fail(NO_JOB);
+      const booking = job.booking;
+      if (!booking?.hostYes || !liveBooking(job)) return fail("Only a booked visit can be moved to a new time.");
+      if (input.reason !== undefined && !isText(input.reason, 200)) return fail("Keep the reason under 200 characters.");
+      const proName = this.bookedName(file, job);
+      const gate = this.approved(file, "fixer-reschedule", job.id, input, rescheduleQuestion({ proName }));
+      if (gate !== "go") return gate;
+      const at = this.deps.now().toISOString();
+      const tellPro = { name: proName, reach: this.reachOfId(file, job, booking.proId) };
+      let rotationAsk: { jobId: string; question: string } | undefined;
+      if (codeWasShown(job)) {
+        job.codeShown = true;
+        job.rotationAsked = { at, proId: booking.proId };
+        rotationAsk = { jobId: job.id, question: rotationQuestion({ proName }) };
+      }
+      (job.reschedules ??= []).push({ at, ...(input.reason ? { reason: redactDigits(input.reason).trim() } : {}) });
+      // The old booking goes with its visit link; the next visit's code text is its own.
+      delete job.booking;
+      delete job.codeTextAt;
+      delete job.codeTextSent;
+      delete job.codeNoteAt;
+      job.state = "contacted";
+      this.write(file);
+      return ok({ rescheduled: true, jobId: job.id, state: job.state, tellPro, ...(rotationAsk ? { rotationAsk: [rotationAsk] } : {}), next: `Tell ${proName} this time is off. Ask them, or another pro, for a new time, then record_contact with booked.` });
     });
   }
 
@@ -1245,8 +1288,8 @@ export class FixerDesk {
   /** Jobs whose door code was opened by a pro and then cancelled: the host is asked whether to change it. */
   private rotationList(file: FixerFile): Record<string, unknown>[] {
     return file.jobs
-      .filter((job) => job.rotationAsked && !job.rotationAsked.answer && job.booking)
-      .map((job) => ({ jobId: job.id, question: rotationQuestion({ proName: this.nameOf(file, job, job.booking!.proId) ?? "The pro" }) }));
+      .filter((job) => job.rotationAsked && !job.rotationAsked.answer && (job.rotationAsked.proId ?? job.booking))
+      .map((job) => ({ jobId: job.id, question: rotationQuestion({ proName: this.nameOf(file, job, job.rotationAsked!.proId ?? job.booking!.proId) ?? "The pro" }) }));
   }
 
   /** Upkeep items whose date is within `leadDays` and that have no job open or already started for that date. */
@@ -1402,6 +1445,7 @@ export class FixerDesk {
         const at = this.deps.now().toISOString();
         const revealed = (job.booking.revealedAt ??= []);
         revealed.push(at);
+        job.codeShown = true;
         notes.push(this.news(job, "revealed", revealNews({ proName: this.bookedName(file, job), at, timeZone: this.timeZone() }), `fixer:${job.id}:revealed:${revealed.length}`));
       }
       this.write(file);
@@ -1450,6 +1494,7 @@ export class FixerDesk {
     const opened = this.openCode(file, job, check.window, notes);
     if (!opened.ok) return;
     (booking.revealedAt ??= []).push(at);
+    job.codeShown = true;
     this.write(file);
     const street = streetOf(this.hub().property().address ?? "");
     let sent = false;
@@ -1674,8 +1719,9 @@ export class FixerDesk {
       const gate = this.confirm("fixer-extend", job.id, tokenHash(JSON.stringify([booking.fingerprint, until])), input.confirmation, extendQuestion({ proName, until, timeZone: this.timeZone() }));
       if (gate !== "go") return gate;
       booking.extendedUntil = until;
-      // The old visit link ends; visit_link gives a new one.
+      // The old visit link ends, a revoked one too; visit_link gives a new one.
       delete booking.visitToken;
+      delete booking.visitRevokedAt;
       this.write(file);
       return ok({ extended: true, jobId: job.id, until, tellPro: { name: proName, reach: this.reachOfId(file, job, booking.proId) }, next: `Tell ${proName} the new end. If they use the visit page, their old link has ended: call visit_link for a new one.` });
     });
@@ -1689,7 +1735,7 @@ export class FixerDesk {
     const at = this.deps.now().toISOString();
     job.preferredAsked = { at: job.preferredAsked?.at ?? at, answer };
     const preferred = pro?.status === "saved" && pro.preferredFor.some((entry) => entry.trade === job.trade);
-    if (preferred || !job.booking?.revealedAt?.length || job.rotationAsked) return undefined;
+    if (preferred || !codeWasShown(job) || job.rotationAsked) return undefined;
     job.rotationAsked = { at };
     return { jobId: job.id, question: rotationQuestion({ proName: this.bookedName(file, job) }) };
   }
@@ -1786,7 +1832,10 @@ export class FixerDesk {
       const booking = job.booking;
       if (!booking?.hostYes || !liveBooking(job)) return fail("A visit link is only for a booked visit, after the host's yes.");
       if (this.deps.now().getTime() >= this.endOf(booking)) return fail("That visit has already ended.");
-      if (booking.visitToken) return fail("The visit link was already given, and it is shown only once. If the pro lost it, call revoke_visit, then visit_link for a new one.");
+      if (booking.visitRevokedAt) return fail(VISIT_REVOKED);
+      if (booking.visitToken) return fail("The visit link was already given, and it is shown only once. A new time or more time for the visit gives a new one.");
+      // Access follows how the pro talks: a pro on the code text path has no page, unless that text failed.
+      if (this.textPhone(file, job) && !job.codeNoteAt) return fail(visitTextPath({ proName: this.bookedName(file, job) }));
       const base = this.deps.publicBase?.()?.replace(/\/+$/, "");
       if (!base) return fail("The visit link needs the server's public address.");
       const token = letterToken();
@@ -1796,7 +1845,7 @@ export class FixerDesk {
     });
   }
 
-  /** Ends a visit link on the host's word. A new one can be given after. */
+  /** Ends a visit link on the host's word. It stays ended: only a rebook or an extend gives a new one. */
   revokeVisit(input: { jobId?: string }): Promise<FixerReply> {
     return this.guarded(input, () => {
       const file = this.read();
@@ -1804,8 +1853,9 @@ export class FixerDesk {
       if (!job) return fail(NO_JOB);
       if (!job.booking?.visitToken) return fail("That job has no visit link to end.");
       delete job.booking.visitToken;
+      job.booking.visitRevokedAt = this.deps.now().toISOString();
       this.write(file);
-      return ok({ revoked: true, jobId: job.id, next: "The old link has ended. Call visit_link for a new one only if the host wants the pro to have it." });
+      return ok({ revoked: true, jobId: job.id, next: "The link has ended. Tell the host the pro needs another way in, or a new time." });
     });
   }
 
@@ -1824,12 +1874,12 @@ export class FixerDesk {
     return file.jobs.find((job) => job.booking?.visitToken !== undefined && sameHash(job.booking.visitToken, hash));
   }
 
-  /** The job a visit link opens: booked with the host's yes, not done or cancelled, before its end. */
+  /** The job a visit link opens: booked with the host's yes, not done or cancelled, up to 24 hours after its end. */
   private liveVisit(file: FixerFile, hash: string): Job | undefined {
     const job = this.jobByVisitHash(file, hash);
     const booking = job?.booking;
     if (!job || !booking?.hostYes || !liveBooking(job)) return undefined;
-    return this.deps.now().getTime() < this.endOf(booking) ? job : undefined;
+    return this.deps.now().getTime() < this.endOf(booking) + PAGE_AFTER_MS ? job : undefined;
   }
 
   /** A page action's job: the live visit, from 30 minutes before it. Else the page's refusal; `ended` marks a 404. */
@@ -1879,7 +1929,7 @@ export class FixerDesk {
       until: new Date(this.endOf(booking)).toISOString(),
       timeZone: this.timeZone(),
       access: booking.access,
-      phase: now >= from - DOOR_LEAD_MS ? "during" : "before",
+      phase: now < from - DOOR_LEAD_MS ? "before" : now < this.endOf(booking) ? "during" : "after",
       ...(address && now >= from - ADDRESS_LEAD_MS ? { address } : {}),
       ...(booking.estimateCents !== undefined ? { estimateCents: booking.estimateCents } : {}),
       ...(raised ? { raised: { cents: raised.cents, waiting: !raised.hostYes && raisedPriceHeld(file.settings.costLineCents, booking.estimateCents, raised.cents) } } : {}),
@@ -1913,7 +1963,10 @@ export class FixerDesk {
       const job = this.pageJob(file, tokenHash(token));
       if ("isError" in job) return job;
       const key = `fixer:${job.id}`;
-      if (!storePhoto(this.root, key, photo)) return fail(`This visit already has ${MAX_JOB_PHOTOS} photos.`);
+      // Only the pro's own photos count toward their 10; the cleaner's report may hold 10 more.
+      const full = `This visit already has ${MAX_JOB_PHOTOS} photos.`;
+      if (job.photos.filter((entry) => entry.from === "pro").length >= MAX_JOB_PHOTOS) return fail(full);
+      if (!storePhoto(this.root, key, photo, 2 * MAX_JOB_PHOTOS)) return fail(full);
       job.photos.push({ id: String(photoCount(this.root, key)), from: "pro", at: this.deps.now().toISOString() });
       this.write(file);
       return ok({ saved: true, photos: job.photos.filter((entry) => entry.from === "pro").length });

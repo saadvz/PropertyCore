@@ -104,6 +104,8 @@ export interface Booking {
   hostYes?: { at: string };
   /** The visit page's token hash; a new one on every rebook, extend or cancel. */
   visitToken?: string;
+  /** The host ended the visit link: no new one until a rebook or an extend. */
+  visitRevokedAt?: string;
   /** Each time the page showed the code. */
   revealedAt?: string[];
   revisedQuote?: { cents: number; at: string; by?: "pro" | "agent" | "host"; hostYes?: { at: string } };
@@ -141,7 +143,12 @@ export interface Job {
   /** What the host has been told, once each. `text` is the line, never a code. */
   news: { kind: string; at: string; text?: string; toldAt?: string }[];
   preferredAsked?: { at: string; answer?: "yes" | "no" };
-  rotationAsked?: { at: string; answer?: "yes" | "no" };
+  /** `proId` names the pro when the booking that showed the code was rescheduled away. */
+  rotationAsked?: { at: string; answer?: "yes" | "no"; proId?: string };
+  /** The door code was shown or texted on some visit of this job, kept across a reschedule. */
+  codeShown?: true;
+  /** Each time the host moved the visit to a new time. */
+  reschedules?: { at: string; reason?: string }[];
   /** Set and saved before the hub is asked for the code, so a restart never texts it twice. */
   codeTextAt?: string;
   /** Set once the code text was sent. */
