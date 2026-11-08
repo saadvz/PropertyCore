@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { canonicalRepoUrl, checkRepositorySource, normalizeRepoUrl } from "../src/install/repoSource";
+import { canonicalRepoUrl, checkRepositorySource, formerRepoUrls, normalizeRepoUrl } from "../src/install/repoSource";
 
 /** GROK_BOOTSTRAP.md is the one entry point for a blank Grok Bot: short, safe, and pointing at the skill. */
 
@@ -168,6 +168,16 @@ describe("canonical repository", () => {
     const mismatch = checkRepositorySource({ canonical: "https://github.com/owner/repo", actual: "https://github.com/else/where" });
     expect(mismatch.ok).toBe(false);
     expect(mismatch.message).toContain("Not starting an unexpected repository");
+  });
+
+  it("accepts a clone made before the rename, whose origin is still the old address (#179)", () => {
+    const root = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+    expect(canonicalRepoUrl(root)).toBe("https://github.com/saadvz/PropertyCore");
+    expect(formerRepoUrls(root)).toEqual(["https://github.com/saadvz/TourCore"]);
+    const old = checkRepositorySource({ canonical: canonicalRepoUrl(root), actual: "https://github.com/saadvz/TourCore.git", former: formerRepoUrls(root) });
+    expect(old.ok).toBe(true);
+    expect(old.message).toContain("former address");
+    expect(checkRepositorySource({ canonical: canonicalRepoUrl(root), actual: "https://github.com/else/where", former: formerRepoUrls(root) }).ok).toBe(false);
   });
 
   it("is recorded in the template manifest, with GROK_BOOTSTRAP.md as its entry point", () => {
