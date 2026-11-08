@@ -428,7 +428,7 @@ describe("Tour Core journey", () => {
     ctx.durin.setHealthy(false, "controller offline");
 
     const out = await tour.request("entrance");
-    expect(out).toMatchObject({ durinCalled: false, decision: { allowed: false, code: "DENY_DURIN_UNHEALTHY" } });
+    expect(out).toMatchObject({ durinCalled: false, decision: { allowed: false, code: "DENY_DOOR_UNHEALTHY" } });
     expect(ctx.durin.calls.requestAccess).toHaveLength(0);
   });
 
