@@ -136,7 +136,7 @@ describe("the invite code on the Allow page", () => {
     const { page } = await pendingRequest(app, clientId, `${BASE}/mcp`, OPERATOR_SCOPE);
     expect(page.status).toBe(200);
     const html = await page.text();
-    expect(html).toContain("Connect your Grok Bot to Tour Core and Cleaner Core");
+    expect(html).toContain("Connect your Grok Bot to Property Core");
     expect(html).toContain('id="oauth-invite"');
   });
 
