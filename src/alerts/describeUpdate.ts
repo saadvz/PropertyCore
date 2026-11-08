@@ -124,67 +124,30 @@ async function describeTimeRequest(services: OperatorServices, event: OperatorEv
   const choices = currentAt
     ? "Would you like to approve that time, suggest another time, decline the request, or keep the current booking?"
     : "Would you like to approve that time, suggest another time, or decline the request?";
-  if (request.status === "WITHDRAWN") {
-    return {
-      eventType: event.eventType,
-      summary: `${who} — ${requested}. ${WITHDRAWN_FOR_REGULAR_BOOKING}`,
-      request: {
-        tourTimeRequestId: request.id,
-        tourRef: tourRef(tour.propertyId, tour.tourId),
-        visitorName: visitorNameOf(tour),
-        unitName: unitNameOf(tour),
-        requestedTime: requested,
-        ...(currentAt ? { currentTime: when(currentAt, now, tz) } : {}),
-        status: "withdrawn",
-      },
-      instructions: `${WITHDRAWN_FOR_REGULAR_BOOKING} No decision is needed.`,
-    };
-  }
-  if (request.status === "EXPIRED") {
-    return {
-      eventType: event.eventType,
-      summary: `${who} — ${requested}. ${requestTimePassedLine(who)}`,
-      request: {
-        tourTimeRequestId: request.id,
-        tourRef: tourRef(tour.propertyId, tour.tourId),
-        visitorName: visitorNameOf(tour),
-        unitName: unitNameOf(tour),
-        requestedTime: requested,
-        ...(currentAt ? { currentTime: when(currentAt, now, tz) } : {}),
-        status: "expired",
-      },
-      instructions: `${requestTimePassedLine(who)} No decision is needed.`,
-    };
-  }
-  if (request.status !== "PENDING") {
-    return {
-      eventType: event.eventType,
-      summary: `${who} — ${requested}. ${REQUEST_ALREADY_HANDLED}`,
-      request: {
-        tourTimeRequestId: request.id,
-        tourRef: tourRef(tour.propertyId, tour.tourId),
-        visitorName: visitorNameOf(tour),
-        unitName: unitNameOf(tour),
-        requestedTime: requested,
-        ...(currentAt ? { currentTime: when(currentAt, now, tz) } : {}),
-        status: request.status.toLowerCase(),
-      },
-      instructions: `${REQUEST_ALREADY_HANDLED} No decision is needed.`,
-    };
-  }
+  const requestOf = (status: string) => ({
+    tourTimeRequestId: request.id,
+    tourRef: tourRef(tour.propertyId, tour.tourId),
+    visitorName: visitorNameOf(tour),
+    unitName: unitNameOf(tour),
+    requestedTime: requested,
+    ...(currentAt ? { currentTime: when(currentAt, now, tz) } : {}),
+    status,
+  });
+  /** A request already settled: the line says what happened, and no decision is needed. */
+  const settled = (line: string, status: string) => ({
+    eventType: event.eventType,
+    summary: `${who} — ${requested}. ${line}`,
+    request: requestOf(status),
+    instructions: `${line} No decision is needed.`,
+  });
+  if (request.status === "WITHDRAWN") return settled(WITHDRAWN_FOR_REGULAR_BOOKING, "withdrawn");
+  if (request.status === "EXPIRED") return settled(requestTimePassedLine(who), "expired");
+  if (request.status !== "PENDING") return settled(REQUEST_ALREADY_HANDLED, request.status.toLowerCase());
   return {
     eventType: event.eventType,
     summary: `${asking}${note} ${choices}`,
     outsideHours: placement === "OUTSIDE_HOURS",
-    request: {
-      tourTimeRequestId: request.id,
-      tourRef: tourRef(tour.propertyId, tour.tourId),
-      visitorName: visitorNameOf(tour),
-      unitName: unitNameOf(tour),
-      requestedTime: requested,
-      ...(currentAt ? { currentTime: when(currentAt, now, tz) } : {}),
-        status: "waiting",
-    },
+    request: requestOf("waiting"),
     instructions:
       "A decision is required. Use reply_to_time_request with approve, propose, or decline. For a move the landlord is directing, use schedule_tour. Ask once, using the question Tour Core returns, before approving or moving a tour. A time outside normal touring hours needs the stronger confirmation Tour Core returns. Don't change the property's regular hours. If the time overlaps another tour, say so and don't approve it.",
   };

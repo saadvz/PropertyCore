@@ -1,6 +1,5 @@
 import type { Installation } from "../install/installation";
 import type { InstallationManifest } from "../install/manifest";
-import { toE164 } from "./Messenger";
 import { LocalMessagingProvider, readLocalEnv } from "./local/provider";
 import { PhotonMessagingProvider, readPhotonEnv } from "./photon/provider";
 import type { MessagingProvider, MessagingProviderId, MessagingProviderInfo, MessagingReadiness } from "./provider";
@@ -137,13 +136,4 @@ export function activeFromNumber(inst: Installation): string | undefined {
   if (selection.provider === "local") return readLocalEnv(inst.env()).fromNumber;
   if (selection.provider === "sendblue") return inst.sendblueEnv().fromNumber;
   return undefined;
-}
-
-export function webhookUrlForInstallation(inst: Installation, path: string): string | undefined {
-  const base = inst.publicBaseUrl();
-  return base ? `${base}${path}` : undefined;
-}
-
-export function toMessagingLine(raw: string | undefined): string | undefined {
-  return raw ? toE164(raw) : undefined;
 }

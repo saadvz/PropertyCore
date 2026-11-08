@@ -6,7 +6,7 @@ import type { CartInput, Mode } from "./gate";
 import type { Schedule } from "./schedule";
 
 /**
- * Supply Core's record: one `supply.json` in the tenant's folder, beside `cleaner-live.json`. It
+ * Supply Core's record: one `supply.json` in the property's folder, beside `cleaner-live.json`. It
  * holds the list, the settings, the open carts, and the order log. Never a card detail.
  */
 

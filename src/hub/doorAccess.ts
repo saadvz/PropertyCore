@@ -299,8 +299,4 @@ export class DoorAccess {
     this.file = next;
     return true;
   }
-
-  protected current(): DoorAccessFile {
-    return this.file;
-  }
 }

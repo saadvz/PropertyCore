@@ -3,7 +3,6 @@ import type { InboundMedia } from "../inbound";
 import { MessagingError, toE164, type DeliveryReceipt, type OutgoingMessage } from "../Messenger";
 import type { MessagingLedger } from "../ledger";
 import { publicBase } from "../publicUrl";
-import { providerConsentRecommendation } from "../consentPolicy";
 import type { MessagingCapabilities, MessagingCheck, MessagingConfigField, MessagingLine, MessagingProvider, ProviderConnectContext, ProviderConnectResult, WebhookHttpRequest } from "../provider";
 import { photonHttpClient, type PhotonClient, type PhotonLine } from "./client";
 import { verifyPhotonWebhook } from "./signature";
@@ -134,10 +133,6 @@ export class PhotonMessagingProvider implements MessagingProvider {
 
   credentialNames(): string[] {
     return ["TOURCORE_PHOTON_PROJECT_ID", "TOURCORE_PHOTON_PROJECT_SECRET", "TOURCORE_PHOTON_PHONE_NUMBER"];
-  }
-
-  defaultConsentMode(): "keyword_confirm" | "disabled" {
-    return providerConsentRecommendation("photon").mode;
   }
 
   webhookPath(): string {
