@@ -1,6 +1,7 @@
 {
   "name": "Cleaner Core for ChatGPT",
   "version": "0.1.0",
+  "startHere": "../property-core-template/chatgpt/SETUP_GUIDE.md",
   "readme": "README.md",
   "hostedCleanerCoreUrl": "https://tourcore-production-8b80.up.railway.app",
   "hostedCleanerCoreUrlNote": "The one Cleaner Core service every host and chat uses. Saad adds each host on its /admin page and sends them an invite code.",
