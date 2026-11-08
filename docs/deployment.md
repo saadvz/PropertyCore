@@ -245,7 +245,7 @@ enforces it), none returns one, and none runs a shell command. There is no
 
 ## Bootstrap (`npm run bootstrap:grok`)
 
-`scripts/bootstrap-grok.mjs` (plain Node: checks Node 20+, installs
+`scripts/bootstrap-grok.mjs` (plain Node: checks Node 22.13+, installs
 dependencies with `npm ci` on a fresh folder) hands off to
 `src/install/bootstrap.ts`:
 
