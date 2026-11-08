@@ -1,7 +1,7 @@
 # Fixer Core: repairs and upkeep for a rental
 
-Date: 2026-11-07. Status: written spec for Saad's review. The choices marked
-**Decision** below are Saad's to make, each with a recommendation.
+Date: 2026-11-07. Status: approved. The decisions below were made on
+2026-11-08, and the build issues (#170 to #174) follow them.
 Issue: saadvz/TourCore#169, part of saadvz/TourCore#159 (Phase 1). Builds on
 the property hub (#165, `docs/superpowers/specs/2026-11-07-property-hub-details-calendars-design.md`
 and `docs/superpowers/specs/2026-11-07-property-hub-door-access-design.md`),
@@ -55,88 +55,75 @@ From #159 and #169 to #174:
   `window.until`. Fixer Core checks the rest before asking, the way
   `deliverPin` does for Cleaner Core.
 
-## Decisions for Saad
+## Decisions
 
-Each one names the option this spec is written around. Reply with the number
-and a letter to change one.
+Made on 2026-11-08.
 
-1. **Trades.** (A, recommended) The nine trades in #169, with two rules:
-   a locksmith job never gets the door code (the lock may be what's broken,
-   so the host lets them in), and backup cleaning is left out of Fixer Core
-   because a cleaning belongs to Cleaner Core. A backup cleaner there is new
-   work with its own issue, since Cleaner Core has one cleaner per property
-   today. (B) All nine, with backup cleaning as an ordinary Fixer Core job.
-2. **What a cleaner's report or due upkeep does.** (A, recommended) It opens a
-   requested job and asks the host once: `Kitchen sink is leaking (photo from
-   Maria). Want me to call Joe's Plumbing?` The host's yes starts it. A job the
-   host asked for starts right away. (B) It goes straight to the preferred pro
-   with no question.
-3. **The cost line.** Under Decision 4A every booking already asks the host,
-   so the line matters in two places: the booking question says when an
-   estimate is over it or missing, and a price the pro raises on site waits
-   for the host's yes before the work goes on. Under 4B it's also what makes a
-   preferred pro's booking wait. (A, recommended) Every property has a line,
-   default $250, set in setup. (B) The line is optional, like Supply Core's
-   caps. With no line, a raised price is news to the host, not a hold.
-4. **The yes for door access.** (A, recommended) Once per job, asked together
-   with the booking: `Joe's Plumbing can come Tuesday 10 to 12, about $180.
-   Book it and let them in with the door code?` (B) A standing yes for each
-   preferred pro, asked when they're saved.
-5. **How the pro gets in and reports done.** (A, recommended) A visit page:
-   one private link per booked job, which the agent sends the pro by email or
-   text. Inside the visit window, after the pro taps "I'm at the door", it
-   shows the door code, and it takes the done photos and the amount charged.
-   The link holds no code, and no tool reply does. But the link works for
-   whoever holds it during the visit, and it travels through the agent and
-   the pro's email, so the spec treats it like a key (Part 4). A pro who
-   opted in to the text line can get the code by text and reply DONE with
-   photos instead, like the cleaner. (B) The text
-   line only: a pro who won't text can't get the code, and the host lets them
-   in. (C) Fixer Core never shares access, and the host always lets pros in.
-   Under every option the host can pick "I'll let them in" for a job.
+1. **Trades.** The nine trades in #169, with two rules. Backup cleaning is
+   left out of Fixer Core, because a cleaning belongs to Cleaner Core (a
+   backup cleaner there is new work with its own issue). A locksmith is
+   treated like any other trade, except on a job about the lock the door
+   code opens, since that code may not work: there the booking question
+   defaults to "I'll let them in".
+2. **A cleaner's report or due upkeep** opens a requested job and asks the
+   host once: `Kitchen sink is leaking (photo from Maria). Want me to call
+   Joe's Plumbing?` The host's yes starts it. A job the host asked for starts
+   right away.
+3. **The cost line is optional**, like Supply Core's caps. With a line set, a
+   booking whose estimate is over it or missing says so in the booking
+   question, and a price the pro raises on site waits for the host's yes.
+   With no line, a raised price is news to the host, not a hold.
+4. **The yes for door access** comes once per job, asked together with the
+   booking: `Joe's Plumbing can come Tuesday 10 to 12, about $180. Book it
+   and let them in with the door code?`
+5. **How the pro gets in and reports done** follows how the pro talks to the
+   agent. A pro who texts on the line (after their YES) gets the code by text
+   and replies DONE with photos, like the cleaner. A pro reached by email or
+   phone gets a visit page: one private link per booked job that shows the
+   code only inside the visit window, after the pro taps "I'm at the door",
+   and takes the done photos and the amount charged. The link holds no code,
+   and no tool reply does. But the link works for whoever holds it during the
+   visit, and it travels through the agent and the pro's email, so the spec
+   treats it like a key (Part 4). The host can always pick "I'll let them
+   in" for a job.
 6. **After the visit.** With the host's own code, Fixer Core can stop showing
    the code, but the pro still knows it. Real per-visit codes need a lock
-   partner (#180). (A, recommended) After a visit by a pro who isn't on the
-   preferred list, Fixer Core asks the host to change the code, using the
-   steps in `docs/cleaner-core-code-rotation.md`, and the cleaner gets the new
-   code as today. The preferred-list question comes first: a pro the host adds
-   to the list gets no rotation question. A cancel after the code was shown
-   asks the same question. (B) Ask after every pro visit. (C) No code to a
-   pro who isn't preferred until a lock partner gives per-visit codes.
-7. **A pro and a cleaning on the same turnover.** (A, recommended, as #171
-   says) The pro comes after the cleaner. Their window starts at the
-   cleaner's DONE, or when planning ahead, at checkout plus the cleaning
-   length (default 3 hours). (B) Indoor trades (plumbing, HVAC, electrical,
-   appliance, pest control, handyman) come before the cleaner, so the cleaner
-   cleans up after them. (C) The host picks per job.
-8. **Asking the cleaner.** (A, recommended) With Fixer Core on, the DONE text's
-   question becomes `Anything running low or broken? Reply with what, or
-   NONE.` One answer can mark supplies low and open a repair. (B) No new
-   question: only problems the cleaner reports on their own open jobs. Option
-   A changes cleaner-facing copy, so it needs a design pass.
-9. **Hours a pro can be booked.** (A, recommended) 8:00 to 18:00 in the
-   property's time zone by default, editable in setup, and never within 1 hour
-   of the next check-in. (B) Any time between stays.
-10. **Pros in the people list.** (A, recommended, as the #170 comment says)
-    Every saved pro with a phone is a person in `people.json` with role
-    `pro`. A shortlist candidate joins only when booked. A person can be a
-    `pro` and hold another role on the same property (a cleaner who is also
-    the handyman): `where` gets a second entry, which `people.ts` allows
-    today only once per property, so that rule changes. (B) Only pros who
-    text on the line join, and the rest stay in `fixer.json` alone.
-
-Which pro networks Fixer Core connects to is not a decision here. #175 is
-researching it, and this spec takes candidates from any source the same way
-(Part 3).
+   partner (#180). After a visit by a pro who isn't on the preferred list,
+   Fixer Core asks the host to change the code, using the steps in
+   `docs/cleaner-core-code-rotation.md`, and the cleaner gets the new code as
+   today. The preferred-list question comes first: a pro the host adds to the
+   list gets no rotation question. A cancel after the code was shown asks the
+   same question.
+7. **A pro and a cleaning on the same turnover:** the host picks per job.
+   When a job's window shares a turnover with a cleaning, the booking
+   question asks whether the pro comes before or after the cleaner (Part 2,
+   Visit windows).
+8. **Asking the cleaner** is the host's choice in setup. With it on, the DONE
+   text's question becomes `Anything running low or broken? Reply with what,
+   or NONE.` One answer can mark supplies low and open a repair. With it off,
+   the DONE text stays as it is, and only problems the cleaner reports on
+   their own open jobs. The new wording needs a design pass.
+9. **Booking hours:** any time between stays, never within
+   `checkInBufferMinutes` (default 1 hour) of the next check-in.
+10. **Pros in the people list.** Every saved pro with a phone is a person in
+    `people.json` with role `pro`. A shortlist candidate joins only when
+    booked. A person can be a `pro` and hold another role on the same
+    property (a cleaner who is also the handyman): `where` gets a second
+    entry, which `people.ts` allows today only once per property, so that
+    rule changes.
+11. **Agents in v1:** Grok Bot and Muse, like Supply Core. Late-visit news,
+    follow-ups and the sweep need an agent that runs without the host there.
+12. **Pro networks:** no Thumbtack partner access for now. In v1 the agent
+    finds pros with its own search. The question comes back after the first
+    real repairs.
 
 ## Not in this version
 
 - Paying a pro, a payment link, or holding any card or bank detail.
 - Per-visit door codes from a lock partner (#180). The provider behind
   `request()` changes, and Fixer Core's own checks stay.
-- Fixer Core calling a pro network from the server. The agent reaches
-  networks itself, through its browser or a connector, until #175 picks one
-  worth connecting.
+- Fixer Core calling a pro network from the server, and Thumbtack partner
+  access (Decision 12). The agent finds pros with its own search.
 - Warranties, invoices as files, or tax records. The cost log is a number and
   a note per job.
 - Fixer Core with Tour Core, and on Claude or ChatGPT plain chats. Like Supply
@@ -150,7 +137,8 @@ researching it, and this spec takes candidates from any source the same way
 
 - `docs/cleaner-core-safety-gates.md` and `docs/supply-core-safety-gates.md`
   stay green. Decision 8 changes one Cleaner Core gate (the supplies
-  question), and that gate is updated with it.
+  question) when the host turns the question on, and that gate is updated
+  with it.
 - No live text to a real person without Saad's okay. Tests and Scratch runs
   use only 555 numbers, made-up door codes, and `example.com` addresses.
 - No call, email or form from a test reaches anyone. The agent's outside work
@@ -208,11 +196,11 @@ Core:
 | File | Job |
 | --- | --- |
 | `store.ts` | Reads and writes `fixer.json`: settings, pros, upkeep, jobs. |
-| `window.ts` | Pure functions. The open visit windows for a job, from the hub's merged stays, check-in and checkout times, booking hours, and any cleaning on the same turnover. |
+| `window.ts` | Pure functions. The open visit windows for a job, from the hub's merged stays, check-in and checkout times, and any cleaning on the same turnover. |
 | `gate.ts` | Pure functions. Go or hold for a contact, a booking, and door access, and the tokens bound to each. |
 | `setupAsk.ts` | The `ask` steps, in the `get_state` → `ask` shape, with draft-and-confirm. |
 | `desk.ts` | One per property folder, like `SupplyDesk`. Jobs, the sweep, door access through the hub, and news for the host. |
-| `visitPage.ts` | The visit page (Decision 5A): the private link, the window check, photos and the amount. |
+| `visitPage.ts` | The visit page (Decision 5): the private link, the window check, photos and the amount. |
 | `tools.ts` | The MCP tools (Part 5). |
 
 Upkeep schedules reuse `src/supply-core/schedule.ts` (`every` and `custom`,
@@ -246,8 +234,8 @@ Core gets one line saying it works with Grok Bot and Muse.
   contacts and receipts where it can read them, searches, calls, emails,
   fills in web forms and booking pages, reports every outcome back, and sends
   the pro the visit link.
-- **Cleaner Core** asks the cleaner (Decision 8) and passes reports on, as it
-  passes supply reports today.
+- **Cleaner Core** asks the cleaner when the host turned it on (Decision 8),
+  and passes reports on, as it passes supply reports today.
 
 **Routines.** No new routine. The property's existing Alerts routine (Grok)
 or recurring task (Muse) gains one step: call `check_fixes` and act on what
@@ -274,10 +262,10 @@ checkout, and its DONE time, through one new read in
 
 ```
 settings: {
-  costLineCents: number,          // Decision 3: default 25000, $1 to $5,000
-  hours: { from: "HH:MM", until: "HH:MM" },   // Decision 9: default 08:00 to 18:00
-  checkInBufferMinutes: number,   // default 60, 0 to 240
+  costLineCents?: number,         // Decision 3: optional, $1 to $5,000
+  checkInBufferMinutes: number,   // Decision 9: default 60, 0 to 240
   cleaningMinutes: number,        // Decision 7: default 180, 30 to 480
+  askCleaner: boolean,            // Decision 8: ask the cleaner "Anything running low or broken?" after each clean
   activatedAt?: string,
 }
 pros: Pro[]                       // up to 60
@@ -298,7 +286,7 @@ jobs: Job[]
   addedAt, lastJobAt? }
 
 Trade = "plumbing" | "hvac" | "electrical" | "handyman" | "gutters"
-      | "pest-control" | "appliance" | "locksmith"     // + "backup-cleaning" under Decision 1B
+      | "pest-control" | "appliance" | "locksmith"
 ```
 
 `phone` is E.164 and is the pro's key in `people.json` (role `pro`, on each
@@ -325,6 +313,7 @@ properties needs the host's `shared: true`, as for any person.
   photos: PhotoRef[],             // { id, from: "cleaner" | "pro", at }: photos.ts entries,
                                   // the cleaner's report photos, then the pro's done photos
   urgency: "now" | "soon" | "by-date" | "flexible",
+  cleaningOrder?: "before" | "after",   // Decision 7: asked when a window shares a cleaning's turnover
   byDate?,                        // local YYYY-MM-DD, for "by-date"
   state: "requested" | "shortlisted" | "contacted" | "booked" | "in-progress" | "done" | "cancelled",
   hostGo?: { at },                // the host's go for a job they didn't start (Decision 2)
@@ -353,8 +342,8 @@ Contact: { id, to: string,        // a pro or candidate id
 Booking: { proId, from, until,    // ISO instants
            estimateCents?, access: "code" | "host",
            heldFor?: ("cost" | "no-estimate" | "outside-window" | "overlaps-stay")[],
-           hostYes?: { at },      // the booking and the access, together (Decision 4A)
-           visitToken?,           // the visit page's token hash (Decision 5A); a new one on
+           hostYes?: { at },      // the booking and the access, together (Decision 4)
+           visitToken?,           // the visit page's token hash (Decision 5); a new one on
                                   // every rebook, extend or cancel
            revealedAt?: string[], // each time the page showed the code
            revisedQuote?: { cents, at, hostYes? },
@@ -388,11 +377,15 @@ job's latest date (the `byDate`, or 14 days for `soon`, 30 for `flexible`):
 - A window lies between a checkout (the hub's `checkoutTime`, default 11:00)
   and the next check-in (`checkInTime`, default 16:00) minus
   `checkInBufferMinutes`. Days with no stay and no block are open all day.
-  A block counts as occupied, since it may be the owner's own stay.
-- Only inside `hours`.
+  A block counts as occupied, since it may be the owner's own stay. Any hour
+  can be booked (Decision 9).
 - With a cleaning on that turnover (Cleaner Core on, a cleaning job for that
-  checkout), the window starts at the cleaner's DONE, or before it's known,
-  at checkout plus `cleaningMinutes` (Decision 7A).
+  checkout), the host picks the order (Decision 7). After: the window starts
+  at the cleaner's DONE, or before it's known, at checkout plus
+  `cleaningMinutes`. Before: the window starts at checkout and the pro is
+  booked to finish within `cleaningMinutes`; Fixer Core doesn't move the
+  cleaner in v1, so the booking question says the cleaner may need to come
+  later, and the host arranges it.
 - `urgency: "now"` still uses windows, and a time during a stay is held for
   the host (`overlaps-stay`).
 
@@ -419,9 +412,10 @@ Core's `get_state` gain one line (`Repairs: on, 4 pros, 1 job open.`, or
    trade, with gaps marked "needs you". The host confirms, edits or removes.
    Only confirmed pros are `saved`. For each trade the host puts the pros in
    the order to call them, which is each pro's `preferredFor` rank.
-2. **The cost line** (Decision 3). "Any repair over this needs your yes."
-3. **Booking hours** (Decision 9), shown as the default with a choice to
-   change.
+2. **The cost line** (Decision 3), optional: "Want a cost line? Any repair
+   over it needs your yes, and so does a price raised on site."
+3. **Asking the cleaner** (Decision 8), only with Cleaner Core on: "Should
+   your cleaner be asked 'Anything broken?' after every cleaning?"
 4. **Upkeep**, optional: "Want reminders for regular upkeep?" Suggested
    items: gutters spring and fall, HVAC filters every 3 months, smoke
    detectors twice a year. For each: the schedule (read back through
@@ -443,19 +437,19 @@ two-call approval. A pro the agent adds is a draft until the host confirms.
 
 - **The host asks** ("Find someone for the gutters before winter"): the agent
   calls `open_job` with `source: "host"`. That's the host's go.
-- **The cleaner reports a problem.** The answer to the DONE question
-  (Decision 8A), or a problem the cleaner texts on their own, reaches the
-  agent through `check_now` with a new `MessageHandled` label,
+- **The cleaner reports a problem.** The answer to the DONE question (when the
+  host turned it on, Decision 8), or a problem the cleaner texts on their own,
+  reaches the agent through `check_now` with a new `MessageHandled` label,
   `repair-report`, with the photos' ids. Step 11 of the Cleaner Core
   instructions in `src/cleaner-core/assistant.ts` gains what to do with it.
-  The agent matches it to a trade and calls `open_job` with
-  `source: "cleaner"`, the cleaning job id and the photo ids. The cleaner's
-  words are saved with every run of 4 or more digits redacted. A report that
-  is a supply goes to `report_low` as today, and one answer can do both.
+  The agent matches it to a trade and calls `open_job` with `source:
+  "cleaner"`, the cleaning job id and the photo ids. The cleaner's words are
+  saved with every run of 4 or more digits redacted. A report that is a supply
+  goes to `report_low` as today, and one answer can do both.
 - **Upkeep comes due.** `check_fixes` returns upkeep items `leadDays` before
   their next date. The agent calls `open_job` with `source: "upkeep"`.
 
-A job from the cleaner or upkeep waits for the host's go (Decision 2A).
+A job from the cleaner or upkeep waits for the host's go (Decision 2).
 `check_fixes` returns it in `needsGo` with a question for the agent to ask,
 and `approve_job` takes the two-call yes. A cleaner's text can only open a
 requested job. It can't pick a pro, contact anyone, approve a booking or set
@@ -471,15 +465,16 @@ shortlist.
 
 ### The shortlist
 
-The agent searches on its own (Google, Yelp, and any source it can reach) and
-through any pro network it's connected to. It records each candidate with
+The agent searches on its own (Google, Yelp, and any source it can reach).
+Fixer Core has no network partner access in v1 (Decision 12), but an agent
+that already has a network's app may use it. It records each candidate with
 `add_candidates`: name, trade, rating and review count, licensed or not,
 estimated cost range, earliest availability, source, and how to reach them.
 Up to 8 per job. Each candidate's `source` names where it came from, so a
 network that #175 recommends fits without a change here.
 
-The early #175 findings (`docs/fixer-core-pro-networks.md`, in its own PR)
-shape this: a network may return licensing and a price as text but no
+The pro networks research (#175, `docs/fixer-core-pro-networks.md`)
+shapes this: a network may return licensing and a price as text but no
 availability, phone or email. So `costRange` and `earliestAt` are optional,
 `priceText` keeps the source's words, and a network candidate is reached by
 `networkRef`, with its replies coming back through the network
@@ -528,10 +523,12 @@ host. `record_contact` with `booked` runs the booking gate (`gate.ts`):
 
 - **held, outside-window**: the time isn't inside an open window.
 - **held, overlaps-stay**: the time overlaps a stay.
-- **held, cost**: the estimate is over `costLineCents`.
-- **held, no-estimate**: no estimate was given (Decision 3A).
-- Every booking also needs the host's yes for access (Decision 4A), so it
-  always asks the host once. The holds decide what the question says.
+- **held, cost**: a cost line is set and the estimate is over it.
+- **held, no-estimate**: a cost line is set and no estimate was given.
+- Every booking also needs the host's yes for access (Decision 4), so it
+  always asks the host once. The holds decide what the question says. When
+  a cleaning shares the turnover, the question also asks before or after
+  the cleaner (Decision 7).
 
 `approve_booking` is the two-call yes. Its question carries the pro, the time,
 the estimate, any hold, and the access: `Joe's Plumbing can come Tuesday 10 to
@@ -541,7 +538,8 @@ confirms with the pro. The agent never confirms a held time to the pro before
 the yes. The booking's token is bound to the exact pro, time, estimate and
 access, and any change needs a new `record_contact`.
 
-A locksmith job is always `access: "host"` (Decision 1A).
+A locksmith job about the lock the door code opens defaults to
+`access: "host"` (Decision 1). Any other locksmith job is like any trade.
 
 ## 4. The visit
 
@@ -560,8 +558,9 @@ asking the hub:
   the cleaner's DONE for that checkout. Until then the code waits, the way
   Cleaner Core's release waits for clearance. A day with no checkout needs no
   clearance;
-- it goes one-to-one: to the pro's own phone on the line after their YES, or
-  through the visit page. Never a group, never in an email or a tool reply.
+- it goes one-to-one: by text to a pro who texts on the line, after their YES,
+  or else through the visit page (Decision 5). Never a group, never in an
+  email or a tool reply.
 
 Then Fixer Core asks `hub.doorAccess(env).request({ person, window, purpose: "repair" })`
 with the pro's phone and the visit window. The hub refuses after the window
@@ -575,15 +574,18 @@ request key can't open (`no-key` or `sealed`): the page shows no code, the
 host gets the one note, and the pro is told the host will let them in. This
 case has its own test.
 
+Which way the code goes follows how the pro talks to the agent (Decision 5):
+by text for a pro who texts on the line, else the visit page.
+
 **By text**, for a pro who opted in: at the start of the visit, one text:
 `Hi Joe, the door code for 12 Scratch Lane is {code}, at {lock location}.
 Reply DONE with photos when you finish.` A replay or restart sends it once.
 
-**By the visit page** (Decision 5A): after the host's yes, `visit_link` gives
-the agent a link `/{base}/visit/{token}` to send the pro, for every booked
-job. The token is letters only, like photo links, and holds no code. The
-link is returned once. A rebook, an extend or a cancel ends it and issues a
-new one, and `revoke_visit` ends it on the host's word.
+**By the visit page**, for a pro reached by email or phone: after the host's
+yes, `visit_link` gives the agent a link `/{base}/visit/{token}` to send the
+pro, for that pro's booked job. The token is letters only, like photo links, and
+holds no code. The link is returned once. A rebook, an extend or a cancel ends
+it and issues a new one, and `revoke_visit` ends it on the host's word.
 
 - Before the visit, the page shows the time and the job, and says the code
   shows at the start. It shows the address only from 24 hours before.
@@ -607,7 +609,7 @@ thread with anyone else in it, and the host hears of every reveal.
 
 **After the visit.** The code stops showing, but a pro who saw it still knows
 it. With the host's own code there's no way to take it back, only to change
-it (Decision 6A). When the pro isn't on the preferred list after the
+it (Decision 6). When the pro isn't on the preferred list after the
 preferred-list question, the host is asked: `Joe's Plumbing knows the door
 code. Want to change it? Set the new code on the lock, then save it here.` This
 uses the existing one-time upload link.
@@ -632,14 +634,15 @@ deleted 30 days after done. `get_job_photos` takes a Fixer Core job id too.
 
 **A price raised on site.** When the pro says the work will cost more than
 the approved estimate (on the visit page, by text, or to the agent), it's
-recorded as `revisedQuote`. Over the cost line, or more than 20% over the
-estimate, it waits for the host's yes through `approve_booking` before the
-pro goes on: `Joe's Plumbing says the fix is $420, not $180. Go ahead?` The
-pro is told to wait for the answer. Under both, it's news to the host.
+recorded as `revisedQuote`. With a cost line set, a price over the line, or
+more than 20% over the estimate, waits for the host's yes through
+`approve_booking` before the pro goes on: `Joe's Plumbing says the fix is
+$420, not $180. Go ahead?` The pro is told to wait for the answer. Otherwise,
+and with no line set, it's news to the host (Decision 3).
 
 `record_cost` logs the amount against the job, from the pro, the agent or
 the host. There's no payment step. When the amount is over the estimate by
-more than 20%, or over the cost line, the host is told once. The amount is
+more than 20%, or over a cost line, the host is told once. The amount is
 already charged, so this is news, not a hold.
 
 `get_fixer_state` shows each open job, and the cost log for this month and
@@ -666,7 +669,7 @@ preferred list for plumbing?` A yes is `save_pro` with the job id, two-call.
 | Tool | Does |
 | --- | --- |
 | `get_fixer_state` | Setup's next `ask`, or the summary: pros by trade, upkeep, open jobs, the cost log. |
-| `save_fixer_settings` | Cost line, hours, check-in buffer, cleaning length. Two-call after Activate. |
+| `save_fixer_settings` | Cost line (or none), check-in buffer, cleaning length, asking the cleaner. Two-call after Activate. |
 | `save_pro` / `remove_pro` | The pro list. The agent's drafts are `draft` until the host confirms. With a `jobId`, saves a pro from a done job. Two-call after Activate. |
 | `save_upkeep` / `remove_upkeep` | Upkeep items. Two-call after Activate. |
 | `preview_schedule` | Supply Core's tool, listed whenever Fixer Core or Supply Core is on: the next 3 dates, or why a schedule is refused. |
@@ -704,7 +707,7 @@ gate with its tests. In short:
 
 1. No payment and no card details.
 2. Contact only a pro the host approved.
-3. The cost line and the window are Fixer Core's code.
+3. The cost line (when set) and the window are Fixer Core's code.
 4. Door access only for a booked job, with the host's yes, inside the visit,
    after the guests left, one-to-one.
 5. The visit page holds no code, shows it only after "I'm at the door"
@@ -721,15 +724,18 @@ gate with its tests. In short:
 **New tests (vitest).**
 
 - `test/fixerWindow.test.ts`: windows between stays merged from two
-  calendars, blocks as occupied, check-in buffer, hours, open days with no
-  booking, a cleaning on the turnover (DONE known and not),
+  calendars, blocks as occupied, check-in buffer, any hour between stays,
+  open days with no booking, a cleaning on the turnover before and after
+  (DONE known and not),
   same-day turnovers, time zones and daylight-saving days.
 - `test/fixerGate.test.ts`: contact allowed for preferred and picked pros
   only; booking holds for outside-window, overlaps-stay, cost at, below and
-  above the line, and no estimate; tokens bound to the exact booking; door
-  access refused before the visit, after it, without the host's yes, with
-  `access: "host"`, for a locksmith, and on a checkout day before the guests
-  left; a revised price over the line held; one live booking per job.
+  above a line, no estimate with a line, and neither hold with no line; tokens
+  bound to the exact booking; door access refused before the visit, after it,
+  without the host's yes, with `access: "host"`, for a locksmith on the coded
+  lock, and on a checkout day before the guests left; a locksmith on another
+  lock allowed; a revised price over a line held, and only news with no line;
+  one live booking per job.
 - `test/fixerDesk.test.ts`: the setup asks with drafts; the job states end to
   end for each start (host, cleaner, upkeep); declined and no-answer offering
   the next pick; the 2-hour sweep and 24-hour follow-up; done from each path;
@@ -747,9 +753,9 @@ gate with its tests. In short:
 - `test/fixerHosted.test.ts`: `set_flows` with `fixer: true` behind
   `FIXER_CORE=1`; tool lists with Fixer Core on and off; Grok and Muse only;
   two accounts apart.
-- `test/cleanerRepairAsk.test.ts` (Decision 8A): the DONE question's new
-  words only with Fixer Core on; a reply that's both a supply and a repair;
-  STOP, HELP, injury and code-like texts still win.
+- `test/cleanerRepairAsk.test.ts` (Decision 8): the DONE question's new words
+  only with Fixer Core on and the host's setup choice on; a reply that's both
+  a supply and a repair; STOP, HELP, injury and code-like texts still win.
 
 **Updated tests.** `cleanerHostedRegistry` (`fixer-not-yet` only without the
 flag), `propertyFlows`, `propertyClientMatrix`, the pinned assistant texts,
@@ -769,7 +775,7 @@ it needs Saad's okay, and a host runs it with their own agent.
 | Issue | Parts |
 | --- | --- |
 | #170 Preferred pros, asked first | Part 2 (pros, setup step 1), Part 3 (preferred pro first), the preferred-list question, `people.json` role `pro` |
-| #171 Jobs and what starts them | Part 2 (jobs, windows and the hub's merged stays, upkeep), Part 3 (opening a job), Decision 8 |
+| #171 Jobs and what starts them | Part 2 (jobs, windows and the hub's merged stays, upkeep), Part 3 (opening a job), Decisions 7 and 8 |
 | #172 Shortlist and the host's pick | Part 3 (the shortlist), `add_candidates`, `pick_pros` |
 | #173 The agent contacts and books | Part 3 (contacting, booking), the sweep |
 | #174 Access, done with photos, cost | Part 4, the visit page, the gates doc |
@@ -780,7 +786,7 @@ jobs. #173 needs #172. #174 needs #173's bookings.
 ## Later
 
 - Per-visit codes from a lock partner (#180).
-- A pro network connected from the server, if #175 finds one worth it.
+- Thumbtack partner access for search, after the first real repairs (Decision 12).
 - Recurring pros for upkeep booked without a new question each time.
 - Jobs during a stay with the guest's consent.
 - Warranties and invoice files.
