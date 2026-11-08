@@ -1,5 +1,11 @@
 # Cleaner Core Grok Bot template (v0.2.0)
 
+> **To start, use [`property-core-template/`](../property-core-template/README.md).**
+> Its Grok Bot sets up Cleaner Core and Supply Core from one connection. This
+> folder holds the Cleaner Core guide that bot reads: the standing
+> instructions, the routine docs, and the manifest. A bot added from the
+> Cleaner Core team template before the change keeps working as it is.
+
 Everything a Grok Bot needs to set up and run Cleaner Core, versioned with the
 code. The Grok Bot is the host's chat. Cleaner Core is the hosted service that
 keeps the records and sends the texts.
@@ -12,7 +18,9 @@ Host ─► Grok Bot ─► hosted Cleaner Core (hostedCleanerCoreUrl/mcp/cleane
 
 ## How a host starts
 
-From the team template (the usual way):
+New hosts start from [`property-core-template/`](../property-core-template/README.md)
+and pick Cleaner Core for their property. The steps below are for a bot added
+from the older Cleaner Core team template, which still works:
 
 1. Open the Cleaner Core template link and click **Add to Grok Bot**, then
    **Add Bot**.
@@ -20,8 +28,8 @@ From the team template (the usual way):
 3. When the Cleaner Core page opens, type the invite code from Saad and click
    Allow.
 
-Without the template, open a new Grok Bot and paste the prompt in
-[`SETUP_PROMPT.md`](SETUP_PROMPT.md) instead.
+The paste-in prompt that used to be in [`SETUP_PROMPT.md`](SETUP_PROMPT.md)
+moved to [`property-core-template/SETUP_PROMPT.md`](../property-core-template/SETUP_PROMPT.md).
 
 Either way, Grok clones the repository only to read
 [`CLEANER_CORE_BOOTSTRAP.md`](../CLEANER_CORE_BOOTSTRAP.md) and the routine
@@ -30,6 +38,10 @@ template was shared. Then it asks the setup questions one at a time. The host
 never leaves the chat.
 
 ## Build the team template
+
+New team templates are built from
+[`property-core-template/`](../property-core-template/README.md#build-the-team-template).
+These steps are kept for rebuilding the older Cleaner Core template.
 
 A Grok Bot template is made from a configured bot: **Share as Template**
 packages its profile, instructions, skills, standard plugins, and routines. It
@@ -69,14 +81,14 @@ To demo again:
 
 | Part | File | How it gets into Grok Bot |
 | --- | --- | --- |
-| The paste-in prompt | `SETUP_PROMPT.md` | Fallback without the template: the host pastes it into a new Grok Bot |
+| Where the paste-in prompt went | `SETUP_PROMPT.md` | Points to `property-core-template/SETUP_PROMPT.md`, the one prompt for every flow |
 | Profile and standing instructions | `bot-profile.md` | Bot actions → Edit Profile, and the Bot's instructions. They name the repository and the hosted address, so the template needs no paste-in prompt |
 | Routine: Cleaner Core Check | `routines/cleaner-core-check.md` | Grok creates it before Activate (scheduled trigger) |
 | Routine: Cleaner Core Alerts | `routines/cleaner-core-alerts.md` | Grok creates it before Activate (authenticated webhook trigger) |
 | Manifest | `template.json` | For reviewers. It lists every item and what's never included |
 
-`SETUP_PROMPT.md` is pinned by `test/cleanerTemplate.test.ts`. Change it only
-on purpose, and update the pin in the same change.
+`test/setupEntryPoint.test.ts` checks that `SETUP_PROMPT.md` points to the
+Property Core prompt and holds no prompt of its own.
 
 ## What Grok does itself
 

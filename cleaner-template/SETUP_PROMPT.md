@@ -1,9 +1,11 @@
-Paste this into a new Grok Bot to set up Cleaner Core.
+# This prompt moved
 
-```text
-Set up Cleaner Core, my cleaning scheduler, using the open-source repository at https://github.com/saadvz/TourCore.
-Use your cloud computer to clone the repository only so you can read its setup instructions. Read CLEANER_CORE_BOOTSTRAP.md and follow it as the authoritative setup instructions. Use the hosted Cleaner Core service it names. Do not start Cleaner Core on your computer.
-Do as much of the setup yourself as possible, with your own tools. Never ask me to paste API keys, passwords, tokens, or door codes into chat. When a secret is needed, use your secure card. When the connection asks for approval, ask me to type my invite code from Saad on the Cleaner Core page and click Allow. Never ask me for the invite code in chat.
-After you're connected, call get_state and follow its next step, one question at a time.
-Start now.
-```
+To set up Cleaner Core in a new Grok Bot, paste the Property Core prompt in
+[`property-core-template/SETUP_PROMPT.md`](../property-core-template/SETUP_PROMPT.md)
+instead, or add the Property Core team template from
+[`property-core-template/`](../property-core-template/README.md). The same bot
+sets up Cleaner Core, Supply Core, or both, from one connection.
+
+A bot that already runs Cleaner Core doesn't need to change anything. It keeps
+reading [`CLEANER_CORE_BOOTSTRAP.md`](../CLEANER_CORE_BOOTSTRAP.md) and the
+routine docs in this folder, which stay where they are.
