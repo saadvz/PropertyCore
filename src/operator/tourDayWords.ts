@@ -2,7 +2,7 @@ import type { Weekday } from "../core/timezone";
 
 const TOUR_DAY_ORDER: Weekday[] = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 
-const DAY_NAME: Record<Weekday, string> = {
+export const DAY_NAME: Readonly<Record<Weekday, string>> = {
   MON: "Monday",
   TUE: "Tuesday",
   WED: "Wednesday",
@@ -12,7 +12,7 @@ const DAY_NAME: Record<Weekday, string> = {
   SUN: "Sunday",
 };
 
-function joinList(parts: string[]): string {
+export function joinList(parts: string[]): string {
   if (parts.length <= 1) return parts[0] ?? "";
   if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
   return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;

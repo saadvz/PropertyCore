@@ -13,7 +13,7 @@ import { chooseMessagingProvider } from "../messaging/switchProvider";
 import { LOCAL_TEST_TEXTING, SetupInputError, createPropertySetup, localTestModeSentence, modeSentence, visitorsTextLine } from "../setup/setupActions";
 import { applySetupCommand } from "../setup/commands";
 import { canonicalDoor, canonicalUnitName } from "../setup/normalizeDraft";
-import { describeTourDays } from "./tourDayWords";
+import { describeTourDays, joinList } from "./tourDayWords";
 import { applyZoneSwitchAnswer, commitZoneAnswer, fieldsToHold, guessedZoneName, heldZoneFields, holdZoneSwitchFields, mergedZoneDetails, rememberZoneSwitch, switchHoldReply, switchQuestionForOffer, zoneReply, zoneSwitchAnswer, zoneSwitchQuestion } from "./zoneCopy";
 import { reuseDaysRefusal } from "../config/validateConfig";
 import { addressConfirmQuestion, nextAddressPartQuestion, savedFullAddress } from "../setup/address";
@@ -23,7 +23,8 @@ import { NO_FORM_QUESTION } from "../setup/verification";
 import { publishGuards, publishProperty, readinessForProperty, runPracticeTour, visitorTexting } from "./setupFlow";
 import { matchDoor, requireUnit, resolvePropertyId } from "./resolve";
 import { defaultMessagingMode, type OperatorServices } from "./services";
-import type { OperatorTool, ToolContext, ToolKind } from "./tools";
+import type { OperatorTool, ToolContext } from "./tools";
+import { tool } from "./defineTool";
 import type { Door, TourCoreConfig, TourHours, Unit } from "../config/tourCoreConfig";
 import { describeTourWindows } from "../setup/setupActions";
 import { planTourHours } from "./hoursPlan";
@@ -35,23 +36,13 @@ import { isFairHousingStatement } from "../core/fairHousing";
  * current milestone and next step get_state reports. They do not text visitors.
  */
 
-function tool<S extends z.ZodObject>(def: {
-  name: string;
-  title: string;
-  description: string;
-  kind: ToolKind;
-  input: S;
-  run: (ctx: ToolContext, input: z.infer<S>) => Promise<Record<string, unknown>>;
-}): OperatorTool {
-  return def as unknown as OperatorTool;
-}
-
 const Property = z.string().max(200).optional().describe("Which property: its name, address or propertyId. Leave out when there's only one.");
 const UnitValue = z.union([z.string().max(300), z.number(), z.boolean()]).optional();
 const Duration = z.union([z.number().int(), z.string().max(40)]);
 const Facts = z.array(z.string().max(300)).max(30);
 
-function servicesOf(ctx: ToolContext): OperatorServices {
+/** The shared services, with this installation's texting (when there is one) visible to setup and publishing. */
+export function servicesOf(ctx: ToolContext): OperatorServices {
   if (!ctx.installation) return ctx.services;
   return { ...ctx.services, installedMessaging: () => installedMessaging(ctx.installation!) };
 }
@@ -130,7 +121,7 @@ function propertyIdOf(ctx: ToolContext, property: string | undefined): string {
   return resolvePropertyId(ctx.services.workspace, property);
 }
 
-function open(ctx: ToolContext, property: string | undefined) {
+export function open(ctx: ToolContext, property: string | undefined) {
   const id = propertyIdOf(ctx, property);
   return { id, draft: ctx.services.workspace.openDraft(id).draft };
 }
@@ -732,12 +723,6 @@ export function hoursAlreadyChosen(ctx: ToolContext, id: string): boolean {
   return state.status === "PUBLISHED_FOR_DEMO" || !!state.readiness?.passed || !!state.dryTour?.passed;
 }
 
-function joinList(parts: string[]): string {
-  if (parts.length <= 1) return parts[0] ?? "";
-  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
-  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
-}
-
 function routeThrough(doors: string[]): string {
   return doors.join(", then ");
 }
@@ -779,7 +764,7 @@ function profileValues(entry: Record<string, unknown>): Record<string, string | 
   return Object.fromEntries(keys.filter((key) => entry[key] !== undefined).map((key) => [key, entry[key] as string | number | boolean]));
 }
 
-function parseHours(input: { days?: string | string[]; start?: string; end?: string; tourLength?: string | number; newTourEvery?: string | number; earlyArrival?: string | number }) {
+export function parseHours(input: { days?: string | string[]; start?: string; end?: string; tourLength?: string | number; newTourEvery?: string | number; earlyArrival?: string | number }) {
   const out: Record<string, unknown> = {};
   if (input.days !== undefined) {
     const text = Array.isArray(input.days) ? input.days.join(", ") : input.days;
