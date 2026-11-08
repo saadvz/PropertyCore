@@ -73,5 +73,5 @@
   "verificationValidForDays": 30,
   "messagingMode": "demo",
   "storageMode": "memory",
-  "accessMode": "durin-mock"
+  "accessMode": "door-demo"
 }

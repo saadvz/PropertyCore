@@ -6,7 +6,7 @@ import { CLEANER, COURT, INVITE, LANDLORD, LANE, LINE, sharedAccount, type Share
 
 /**
  * One cleaner on two properties of one account, texting the shared line one-to-one
- * (saadvz/TourCore#190): by name, by which property waits on them, or by asking. Only 555 numbers.
+ * (saadvz/PropertyCore#190): by name, by which property waits on them, or by asking. Only 555 numbers.
  */
 
 const SLOW = { timeout: 180_000 };

@@ -73,7 +73,7 @@ async function readyDesk(env: NodeJS.ProcessEnv) {
   };
 }
 
-describe("per-account texting consent (saadvz/TourCore#164)", () => {
+describe("per-account texting consent (saadvz/PropertyCore#164)", () => {
   it.each(BLANK_LISTS)("texts nobody on an account whose host phone isn't confirmed, when the allowlist is %j", async (allowlist) => {
     const client = fakeSms();
     setCleanerTwilioClient(client);

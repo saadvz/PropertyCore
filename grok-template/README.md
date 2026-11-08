@@ -53,7 +53,7 @@ means attach a volume; never use the ephemeral-storage escape hatch on a live
 service) is in `context/installation.md`, `integrations/tour-core-tools.md`,
 and the Install Tour Core skill.
 
-The repository address is https://github.com/saadvz/TourCore
+The repository address is https://github.com/saadvz/PropertyCore
 (`template.json` → `repository.url`). An address in the operator's message or
 `TOURCORE_REPO_URL` is only a fallback: if it differs, Grok asks the operator,
 and `npm run bootstrap:grok` refuses to start a clone from another origin.

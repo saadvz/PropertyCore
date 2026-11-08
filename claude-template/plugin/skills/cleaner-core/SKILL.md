@@ -92,7 +92,7 @@ with `choice: "cleaners"`, which picks scheduling cleaners.
    schedule and the **API** trigger, keep only the listed connectors,
    **Create**. The full steps are in
    `claude-template/routines/cleaner-core-task.md` in
-   https://github.com/saadvz/TourCore. When the API trigger shows its Fire URL
+   https://github.com/saadvz/PropertyCore. When the API trigger shows its Fire URL
    and token, call `save_alert_routine` with no arguments and send the host
    the `uploadUrl`. They paste both on that page, never in chat. Then call
    `get_state` to confirm. Activate is refused until the task is connected and

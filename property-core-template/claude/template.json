@@ -7,7 +7,7 @@
   "plugin": "plugin",
   "hostedPropertyCoreUrl": "https://tourcore-production-8b80.up.railway.app",
   "repository": {
-    "url": "https://github.com/saadvz/TourCore",
+    "url": "https://github.com/saadvz/PropertyCore",
     "note": "Claude never clones or runs anything. The skill and the connector's own instructions carry the guide."
   },
   "integrations": [

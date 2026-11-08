@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { ASK_EVERY_MS, HOLD_MS, LineAsks } from "../src/hosted/lineAsks";
 import { answerOf, businessFor, droppedNote, lineStartText, lineStopText, namedProperty, sharedRefusal, whichPropertyText, type Named } from "../src/hosted/sharedRoute";
 
-/** Property names, the which-property ask, and held line texts (saadvz/TourCore#190). */
+/** Property names, the which-property ask, and held line texts (saadvz/PropertyCore#190). */
 
 const A: Named = { id: "prp_aaaaaaaaaa", label: "Beach", address: "12 Scratch Lane, Teaneck, NJ 07666" };
 const B: Named = { id: "prp_bbbbbbbbbb", label: "Court", nickname: "the cottage", address: "8 Scratch Court, Teaneck, NJ 07666" };

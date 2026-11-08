@@ -9,7 +9,7 @@ import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 import { CALENDAR_URL, FROZEN } from "./wiringProof";
 
 /**
- * The issue's done-when (saadvz/TourCore#161): one account runs Cleaner Core and Supply Core on two
+ * The issue's done-when (saadvz/PropertyCore#161): one account runs Cleaner Core and Supply Core on two
  * properties at once, on its one line, set up through the Grok chat with the property argument. Each
  * property has its own cleaner; the landlord is the host on both. Only 555 numbers; the door codes
  * are the made-up Scratch pins.

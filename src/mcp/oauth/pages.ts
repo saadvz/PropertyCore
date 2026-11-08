@@ -44,9 +44,9 @@ ${body}
 </html>
 `;
 
-export function consentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; label?: "Tour Core" | "Cleaner Core" | "Tour Core and Cleaner Core"; assistant?: CleanerAssistant; invite?: boolean; account?: AccountForms }): string {
+export function consentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; label?: "Tour Core" | "Cleaner Core" | "Property Core"; assistant?: CleanerAssistant; invite?: boolean; account?: AccountForms }): string {
   if (p.label === "Cleaner Core") return cleanerConsentPage(p, ASSISTANT_PROFILES[p.assistant ?? "grok"].consent);
-  if (p.label === "Tour Core and Cleaner Core") return cleanerConsentPage(p, ASSISTANT_PROFILES[p.assistant ?? "grok"].consent, SHARED_WORDS);
+  if (p.label === "Property Core") return cleanerConsentPage(p, ASSISTANT_PROFILES[p.assistant ?? "grok"].consent, SHARED_WORDS);
   const requestId = escape(p.requestId);
   const decision = p.hosted
     ? `${p.firstClaim ? "<p>Approving this first connection will make this Grok connection the owner of this Tour Core demo.</p>" : ""}
@@ -99,7 +99,7 @@ const CLEANER_WORDS: ConsentWords = {
 
 /** The one address on the multi-tenant service: the host picks touring or cleaning after connecting. */
 const SHARED_WORDS: ConsentWords = {
-  product: "Tour Core and Cleaner Core",
+  product: "Property Core",
   asking: "is asking to run touring or cleaning on your number.",
   can: ["set your number up for touring or cleaning", "save your properties, calendars, people and schedule", "text visitors or your cleaner as that service does", "tell you what they say"],
   cannot: ["read back a door code", "reach another host's number or records", "read provider secrets"],
@@ -138,7 +138,7 @@ ${list(words.cannot)}
   );
 }
 
-/** Sign in and Create account on the multi-tenant service's connect page (saadvz/TourCore#162). */
+/** Sign in and Create account on the multi-tenant service's connect page (saadvz/PropertyCore#162). */
 export interface AccountForms {
   termsUrl: string;
 }

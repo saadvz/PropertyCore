@@ -1,5 +1,5 @@
 {
-  "name": "tour-core",
+  "name": "property-core",
   "owner": { "name": "Property Core" },
   "metadata": { "description": "Claude plugins for Property Core's hosted services." },
   "plugins": [

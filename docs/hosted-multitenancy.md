@@ -71,7 +71,7 @@ Each account has one text line, for the cleaner (and maybe pros). The host
 never texts it; they use their agent. US carriers take days to register a
 number for business texting (10DLC or toll-free verification), so numbers are
 bought and registered ahead of time and kept in a pool,
-`/data/number-pool.json` (saadvz/TourCore#163).
+`/data/number-pool.json` (saadvz/PropertyCore#163).
 
 - **Top up.** `/admin/pool` adds numbers that are on the Twilio account and
   held by no account or other part of the service. Add only registered

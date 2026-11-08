@@ -110,18 +110,28 @@ export const VerificationSchema = z.object({
   validUntil: IsoDate,
 });
 
-export const AccessGrantSchema = z.object({
+/**
+ * Grants saved before saadvz/PropertyCore#179 call the door system's reference
+ * `durinGrantRef`. Read them as `doorGrantRef`; the old field is dropped.
+ */
+export function upgradeAccessGrant<T>(raw: T): T {
+  if (!raw || typeof raw !== "object" || !("durinGrantRef" in raw)) return raw;
+  const { durinGrantRef, ...rest } = raw as Record<string, unknown>;
+  return ("doorGrantRef" in rest ? rest : { ...rest, doorGrantRef: durinGrantRef }) as T;
+}
+
+export const AccessGrantSchema = z.preprocess(upgradeAccessGrant, z.object({
   id: z.string(),
   reservationId: z.string(),
   prospectId: z.string(),
   doorId: z.string(),
-  durinGrantRef: z.string(),
+  doorGrantRef: z.string(),
   status: z.enum(["ACTIVE", "REVOKED"]),
   validFrom: IsoDate,
   validUntil: IsoDate,
   createdAt: IsoDate,
   revokedAt: IsoDate.optional(),
-});
+}));
 
 export const MessageSchema = z.object({
   id: z.string(),

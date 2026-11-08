@@ -8,7 +8,7 @@
   "hostedCleanerCoreUrl": "https://tourcore-production-8b80.up.railway.app",
   "hostedCleanerCoreUrlNote": "The one Cleaner Core service every host and chat uses. Saad adds each host on its /admin page and sends them an invite code.",
   "repository": {
-    "url": "https://github.com/saadvz/TourCore",
+    "url": "https://github.com/saadvz/PropertyCore",
     "note": "Claude never clones or runs Cleaner Core. The skill and the connector's own instructions carry the guide."
   },
   "deployment": {

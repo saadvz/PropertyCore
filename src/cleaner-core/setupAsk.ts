@@ -313,7 +313,7 @@ export interface DraftFill {
 }
 
 /**
- * The draft that starts setup (saadvz/TourCore#166). `needsYou` holds the questions of every step
+ * The draft that starts setup (saadvz/PropertyCore#166). `needsYou` holds the questions of every step
  * that is still missing, whatever its order; `confirm` holds what the host always confirms.
  */
 export interface SetupDraft {

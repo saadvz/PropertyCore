@@ -5,6 +5,14 @@ import { FACT_TOPICS } from "../setup/factsSheet";
 import { UnitProfileSchema } from "./unitProfile";
 import { semanticIssues, type ConfigIssue, type ConfigSection } from "./validateConfig";
 
+/**
+ * Door access spellings saved before saadvz/PropertyCore#179, when they named the
+ * lock provider. They are still read, and a save writes the new spelling.
+ */
+export const LEGACY_ACCESS_MODES: Readonly<Record<string, "door-demo" | "door">> = { "durin-mock": "door-demo", durin: "door" };
+
+export const AccessModeSchema = z.preprocess((v) => (typeof v === "string" ? (LEGACY_ACCESS_MODES[v] ?? v) : v), z.enum(["door-demo", "door"]));
+
 const Id = z.string().regex(/^[a-z0-9_]+$/, "ids use lowercase letters, digits and underscores");
 const TimeOfDay = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "use 24-hour HH:MM");
 
@@ -241,7 +249,7 @@ export const TourCoreConfigShape = z.object({
    */
   messagingProvider: z.enum(["local"]).optional(),
   storageMode: z.enum(["memory", "google-drive"]),
-  accessMode: z.enum(["durin-mock", "durin"]),
+  accessMode: AccessModeSchema,
 });
 
 export type TourCoreConfig = z.infer<typeof TourCoreConfigShape>;

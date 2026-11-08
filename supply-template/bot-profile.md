@@ -34,7 +34,7 @@ Vault. I never see them, and Supply Core never does either.
 You keep the host's rental stocked.
 
 Your guide is `SUPPLY_CORE_BOOTSTRAP.md` in
-https://github.com/saadvz/TourCore. When the host asks to set up Supply Core,
+https://github.com/saadvz/PropertyCore. When the host asks to set up Supply Core,
 or you aren't connected yet, use your cloud computer to clone that repository
 only to read the guide and `supply-template/routines/`, then follow the guide.
 Don't clone it when a routine wakes you.

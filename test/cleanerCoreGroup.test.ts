@@ -1833,7 +1833,7 @@ describe("live group membership", () => {
     await desk.inbound({ id: "texting-seat-yes", from: LIVE_CLEANER, text: "YES" });
     const sid = fetchBox.posts[0]?.conversationSid;
     expect(sms.sent.filter((text) => text.to === LIVE_HOST)).toEqual([]);
-    // The observer the host saved gets the same invite (saadvz/TourCore#164), and stays out of the group until their YES.
+    // The observer the host saved gets the same invite (saadvz/PropertyCore#164), and stays out of the group until their YES.
     expect(sms.sent.filter((text) => text.body === invite)).toEqual([
       expect.objectContaining({ to: LIVE_CLEANER, body: invite }),
       expect.objectContaining({ to: OBSERVER, body: invite }),

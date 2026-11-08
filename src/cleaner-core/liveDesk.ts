@@ -179,7 +179,7 @@ export const DRAFT_NEW_SINCE = "Something new came in since this draft. Read it 
 const RECIPIENT_NEEDED = "Say who to text: the cleaner, the group, or a saved contact's name.";
 const NO_GROUP = "There's no group chat for this property.";
 const GROUP_ONLY = "Messages go to the group. Send it with to: group.";
-/** Nobody on the account is texted until the saved host is the landlord's confirmed phone (saadvz/TourCore#164). */
+/** Nobody on the account is texted until the saved host is the landlord's confirmed phone (saadvz/PropertyCore#164). */
 const HOST_UNCONFIRMED = "I can text only after the host's phone is confirmed. Save the phone you confirmed when you signed in as the host's number.";
 const CLEANER_IS_LINE = "The cleaner's number is one of this service's own lines. Save the cleaner's own phone.";
 const DOOR_CODE_QUESTION = "You added other people to the group. Should the door code go to the whole group, or only privately to the cleaner?";
@@ -333,7 +333,7 @@ interface PeopleInput {
   groupChat?: string;
   /** Who gets the door code once others are in the group. */
   doorCodeTo?: string;
-  /** The host confirmed a person already on another property (saadvz/TourCore#190). The hosted layer reads it; the desk ignores it. */
+  /** The host confirmed a person already on another property (saadvz/PropertyCore#190). The hosted layer reads it; the desk ignores it. */
   shared?: boolean;
 }
 
@@ -647,7 +647,7 @@ export class LiveDesk {
   /** Why the hub refused door access during this call, for mark_guests_left's reply. */
   private accessRefusal: AccessRefusal | undefined;
   private engine: CleanerCore | undefined;
-  /** The account this property belongs to, when its folder is an account's property folder (saadvz/TourCore#190). */
+  /** The account this property belongs to, when its folder is an account's property folder (saadvz/PropertyCore#190). */
   private readonly account: { accountRoot: string; propertyId: string } | undefined;
   /** The account's people: their one YES and their own STOP, for every property they're on. */
   private readonly people: People | undefined;
@@ -2734,7 +2734,7 @@ export class LiveDesk {
 
   /**
    * True when the saved host is the account's landlord: the phone confirmed at sign-up, or on an
-   * account with none, a phone the old operator allowlist approves (saadvz/TourCore#164).
+   * account with none, a phone the old operator allowlist approves (saadvz/PropertyCore#164).
    */
   private hostConfirmed(): boolean {
     return landlordConfirmed(this.env(), this.file.host);
@@ -3009,7 +3009,7 @@ export class LiveDesk {
 
   private async inboundNow(input: Inbound): Promise<{ sent: CleanerText[] }> {
     const from = parsePhone(input.from);
-    // Only the people the host saved are read (saadvz/TourCore#164). A stranger's text, STOP or
+    // Only the people the host saved are read (saadvz/PropertyCore#164). A stranger's text, STOP or
     // "someone is hurt" never reaches the engine, changes nothing, and gets no reply with the address.
     if (!from || !mayText(this.env(), from) || !this.savedPhones().includes(from)) return { sent: [] };
     if (this.claiming.has(input.id)) return { sent: [] };

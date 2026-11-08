@@ -33,7 +33,7 @@ const REPLY_EVERY_MS = 12 * 60 * 60_000;
 
 export type LineRoute =
   | { kind: "property"; property: Property }
-  /** A person on two or more properties sent STOP or START: it covers every one (saadvz/TourCore#190). */
+  /** A person on two or more properties sent STOP or START: it covers every one (saadvz/PropertyCore#190). */
   | { kind: "person-all"; properties: Property[] }
   /** A person on two or more properties sent HELP: no property, and Twilio answers it. */
   | { kind: "person-help" }

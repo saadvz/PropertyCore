@@ -29,8 +29,8 @@ export const ManifestSchema = z.strictObject({
   messagingProvider: z.enum(["UNSET", "SENDBLUE", "TWILIO", "PHOTON", "LOCAL", "DEMO"]),
   /** GOOGLE_DRIVE is canonical portable storage. LOCAL_DEMO stays on this computer. */
   storageProvider: z.enum(["LOCAL_DEMO", "GOOGLE_DRIVE"]),
-  /** Future: DURIN. */
-  accessProvider: z.enum(["DURIN_DEMO"]),
+  /** DOOR_DEMO was saved as DURIN_DEMO before saadvz/PropertyCore#179; that spelling still reads. */
+  accessProvider: z.preprocess((v) => (v === "DURIN_DEMO" ? "DOOR_DEMO" : v), z.enum(["DOOR_DEMO"])),
   operatorNotificationProvider: z.enum(["NONE", "GROK_ROUTINE"]),
   options: z
     .strictObject({
@@ -196,7 +196,7 @@ export class InstallationFiles {
       publicEndpointProvider: "NONE",
       messagingProvider: "UNSET",
       storageProvider: "LOCAL_DEMO",
-      accessProvider: "DURIN_DEMO",
+      accessProvider: "DOOR_DEMO",
       operatorNotificationProvider: "NONE",
       ...(input.options ? { options: input.options } : {}),
       installedAt: now,

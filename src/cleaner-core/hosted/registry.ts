@@ -49,7 +49,7 @@ export interface Tenant {
   properties: Property[];
   createdAt: string;
   lastActivityAt?: string;
-  /** The landlord who signed up, set only after their phone code checked out (saadvz/TourCore#162). */
+  /** The landlord who signed up, set only after their phone code checked out (saadvz/PropertyCore#162). */
   owner?: TenantOwner;
 }
 

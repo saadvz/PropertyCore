@@ -8,7 +8,7 @@ import { loadLocalEnv } from "../web/env";
 import { checkPublicEndpoint } from "./checks";
 import { DEPLOYMENT_MODE_LABELS, parseDeploymentMode, type DeploymentMode } from "./deployment";
 import { Installation } from "./installation";
-import { canonicalRepoUrl, checkRepositorySource, originUrl } from "./repoSource";
+import { canonicalRepoUrl, checkRepositorySource, formerRepoUrls, originUrl } from "./repoSource";
 import { CloudflareQuickTunnelProvider, downloadFile, ManualPublicEndpointProvider, RailwayPublicEndpointProvider, type PublicEndpointProvider } from "./publicEndpoint";
 import { ServiceManager, serviceDir, type ServiceStatus } from "./service";
 import { useSettingsSource } from "./settings";
@@ -228,7 +228,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       service: new ServiceManager({ root, repoDir, port, env: { ...process.env, TOURCORE_DEPLOYMENT_MODE: mode } }),
       endpoint,
       dependencies: () => checkDependencies(repoDir),
-      repository: () => checkRepositorySource({ canonical: canonicalRepoUrl(repoDir), actual: originUrl(repoDir) }),
+      repository: () => checkRepositorySource({ canonical: canonicalRepoUrl(repoDir), actual: originUrl(repoDir), former: formerRepoUrls(repoDir) }),
     },
     { mode, legacyOAuthCompat },
   );

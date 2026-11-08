@@ -16,10 +16,15 @@ import { defineRailway, github, project, service, volume } from "railway/iac";
  * Config-as-code railway.json is not used. New Railway services cannot opt
  * into it, and it stops being read on 2026-12-01.
  */
+/*
+ * The service, project and volume keep the names they were created with
+ * (`tour-core`, `tourcore-data`) after the repository became Property Core
+ * (#179). A new name here would make a new resource, and a new volume is empty.
+ */
 export default defineRailway(() => {
   const data = volume("tourcore-data", { sizeMB: 1024 });
   const web = service("tour-core", {
-    source: github("saadvz/TourCore", { branch: "master" }),
+    source: github("saadvz/PropertyCore", { branch: "master" }),
     build: "npm run build",
     start: "npm start",
     healthcheck: "/healthz",

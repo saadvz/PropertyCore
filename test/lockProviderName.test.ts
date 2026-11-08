@@ -12,20 +12,18 @@ import { installHarness } from "./installHarness";
 
 /**
  * #176: until the lock integration is announced, nothing a tester's agent reads
- * names the lock provider. Agents say "door access". Stored identifiers
- * (`durin-mock`, `DURIN_DEMO`, `DENY_DURIN_UNHEALTHY`) are renamed later, in #179,
- * and class and file names inside src/ stay as they are.
+ * names the lock provider. Agents say "door access". The stored identifiers were
+ * renamed in #179 (old spellings are still read, inside src/ only), and class and
+ * file names inside src/ stay as they are.
  */
-// Skips "during" (lowercase g, so camelCase like sentDuringPayments too). Record keys such as
-// durinGrantRef are stored identifiers, listed below, for #179 to rename.
+// Skips "during" (lowercase g, so camelCase like sentDuringPayments too).
 const NAME = /[dD][uU][rR][iI][nN](?!g)/;
-const STORED_IDENTIFIERS = /durin-mock|DURIN_DEMO|DENY_DURIN_UNHEALTHY|durinGrantRef/g;
 
 function mentions(text: string, label: string): string[] {
   return text
     .split("\n")
     .map((line, i) => ({ line, i }))
-    .filter(({ line }) => NAME.test(line.replace(STORED_IDENTIFIERS, "")))
+    .filter(({ line }) => NAME.test(line))
     .map(({ line, i }) => `${label}:${i + 1}: ${line.trim().slice(0, 160)}`);
 }
 
@@ -65,7 +63,7 @@ describe("text the server sends to agents never names the lock provider", () => 
     unhealthy.clock.set(t1.slotStart);
     unhealthy.durin.setHealthy(false, "controller offline");
     const denied = await t1.request("entrance");
-    expect(denied.decision.code).toBe("DENY_DURIN_UNHEALTHY");
+    expect(denied.decision.code).toBe("DENY_DOOR_UNHEALTHY");
 
     const failing = setup();
     const t2 = await bookTour(failing);

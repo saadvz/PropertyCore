@@ -10,7 +10,7 @@ import { TenantOptOuts } from "./crossService";
 import { sharedRefusal } from "./sharedRoute";
 
 /**
- * The hosted side of an account's people (saadvz/TourCore#190): the one-time move from the older files,
+ * The hosted side of an account's people (saadvz/PropertyCore#190): the one-time move from the older files,
  * the host's shared: true when a saved phone is already on another property, and the account list
  * kept in step with each property's saved people. Desks tell each other about a YES or STOP themselves.
  */

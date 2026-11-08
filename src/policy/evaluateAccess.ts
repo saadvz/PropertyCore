@@ -19,8 +19,18 @@ export type AccessDecisionCode =
   | "DENY_TOO_EARLY"
   | "DENY_EXPIRED"
   | "DENY_WRONG_ROUTE"
-  | "DENY_DURIN_UNHEALTHY"
+  | "DENY_DOOR_UNHEALTHY"
   | "DENY_UNKNOWN";
+
+/**
+ * Decision codes kept in the append-only audit before saadvz/PropertyCore#179.
+ * Readers of old audit events map them to the current code.
+ */
+const LEGACY_DECISION_CODES: Readonly<Record<string, AccessDecisionCode>> = { DENY_DURIN_UNHEALTHY: "DENY_DOOR_UNHEALTHY" };
+
+export function currentDecisionCode(code: string | undefined): string | undefined {
+  return code === undefined ? undefined : (LEGACY_DECISION_CODES[code] ?? code);
+}
 
 export interface AccessDecision {
   allowed: boolean;
@@ -119,7 +129,7 @@ function evaluate({ reservation, prospect, consent, verification, doorId, reques
   }
 
   if (!durinHealth || durinHealth.healthy !== true) {
-    return deny("DENY_DURIN_UNHEALTHY", `The door system is not healthy${durinHealth?.detail ? `: ${durinHealth.detail}` : ""}`);
+    return deny("DENY_DOOR_UNHEALTHY", `The door system is not healthy${durinHealth?.detail ? `: ${durinHealth.detail}` : ""}`);
   }
 
   return { allowed: true, code: "ALLOW", reason: "all access checks passed" };

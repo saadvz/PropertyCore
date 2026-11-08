@@ -55,7 +55,7 @@ export function endpointsFor(publicBaseUrl: string, mcpPath: string): OAuthEndpo
   return { issuer: origin, resource: `${origin}${mcpPath}`, resourceMetadataUrl: `${origin}/.well-known/oauth-protected-resource${mcpPath}` };
 }
 
-export type ResourceLabel = "Tour Core" | "Cleaner Core" | "Tour Core and Cleaner Core";
+export type ResourceLabel = "Tour Core" | "Cleaner Core" | "Property Core";
 
 /** One protected MCP resource on this authorization server, with its own scope. */
 export interface OAuthResource {
@@ -143,7 +143,7 @@ export interface InviteBook {
 
 export type AccountAnswer = { ok: true; tenantId: string } | { ok: false; message: string };
 
-/** The connect page's Sign in and Create account (saadvz/TourCore#162). Each answer is the page's own words. */
+/** The connect page's Sign in and Create account (saadvz/PropertyCore#162). Each answer is the page's own words. */
 export interface AccountDoor {
   /** The terms page a new account accepts, when sign-up is open. */
   open(): { termsUrl: string } | undefined;

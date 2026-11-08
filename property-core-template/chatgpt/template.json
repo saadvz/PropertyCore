@@ -5,7 +5,7 @@
   "instructions": "SETUP_GUIDE.md",
   "hostedPropertyCoreUrl": "https://tourcore-production-8b80.up.railway.app",
   "repository": {
-    "url": "https://github.com/saadvz/TourCore",
+    "url": "https://github.com/saadvz/PropertyCore",
     "note": "ChatGPT never clones or runs anything. The connector's own instructions carry the guide."
   },
   "integrations": [

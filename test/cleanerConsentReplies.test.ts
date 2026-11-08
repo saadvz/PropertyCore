@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { CLEANER, COURT, LANDLORD, LANE, LINE, sharedAccount, type SharedAccount } from "./sharedHarness";
 
-// saadvz/TourCore#164: replies to a saved person's own text (STOP, START, "which property?",
+// saadvz/PropertyCore#164: replies to a saved person's own text (STOP, START, "which property?",
 // "use your assistant") wait for a confirmed host like every other text, because several name
 // the address. The STOP itself is still kept.
 

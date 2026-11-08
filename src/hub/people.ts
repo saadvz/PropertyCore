@@ -3,7 +3,7 @@ import { basename, dirname, join } from "node:path";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 
 /**
- * An account's people, held once for all its properties (saadvz/TourCore#190): the cleaner and contacts,
+ * An account's people, held once for all its properties (saadvz/PropertyCore#190): the cleaner and contacts,
  * with the properties they're on, their one YES, and their own STOP. Kept in people.json in the account
  * folder. Each property's desk keeps its own roles and setup; this list holds who the person is and what
  * they agreed to. The landlord's phone is never a person here: it is kept per property for routing only.

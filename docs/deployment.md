@@ -80,7 +80,7 @@ and non-secret:
   "publicEndpointProvider": "CLOUDFLARE_QUICK_TUNNEL",
   "messagingProvider": "UNSET",
   "storageProvider": "LOCAL_DEMO",
-  "accessProvider": "DURIN_DEMO",
+  "accessProvider": "DOOR_DEMO",
   "operatorNotificationProvider": "GROK_ROUTINE",
   "options": { "grokLegacyOAuthCompat": true },
   "installedAt": "...",
@@ -205,7 +205,7 @@ them, with the requirement Tour Core (not the agent) assigns:
 | --- | --- | --- |
 | `RUNTIME`, `PUBLIC_ENDPOINT` | required before property | BOOTSTRAP |
 | `GROK_OPERATOR` | required before property | CONNECT |
-| `VISITOR_MESSAGING`, `STORAGE`, `ACCESS` (manifest `accessProvider: DURIN_DEMO` accepted) | required before property | INFRASTRUCTURE |
+| `VISITOR_MESSAGING`, `STORAGE`, `ACCESS` (manifest `accessProvider: DOOR_DEMO` accepted) | required before property | INFRASTRUCTURE |
 | `PROPERTY` | required to publish | PROPERTY |
 | `OPERATOR_ALERTS` ("Tour updates") | recommended; offered only after the property is saved; turned on or declined with `save_settings`; chosen but not connected → `CONNECT_OPERATOR_ALERTS` | PROPERTY |
 | `READINESS`, `PRACTICE_TOUR` | required to publish; run automatically | VALIDATE |
@@ -523,7 +523,11 @@ separate optional mode.
 
 ### One-time admin setup
 
-1. Push Tour Core to GitHub (`saadvz/TourCore`, branch `master`).
+1. Push Tour Core to GitHub (`saadvz/PropertyCore`, branch `master`). The repository was called
+   `saadvz/TourCore` before #179. A service connected under the old name keeps its connection, but after the
+   rename check that the service's source in Railway (Settings, Source) shows `saadvz/PropertyCore`, and
+   reconnect it there if it does not. The service, project and volume keep their `tour-core` and
+   `tourcore-data` names: renaming them makes new ones, and a new volume starts empty.
 2. Create one Railway project and one service from that repo. Do not create
    a project per landlord.
 3. Generate a Railway public domain (Settings, Networking). Leave
