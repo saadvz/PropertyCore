@@ -160,8 +160,7 @@ export function exportFileName(createdAt: string): string {
 }
 
 function assertClean(backup: PortableBackup, secretValues: string[], purpose: "create" | "restore"): PortableBackup {
-  const text = JSON.stringify(backup);
-  if (secretValues.some((secret) => secret.length >= 6 && text.includes(secret)) || looksLikeSecret(backup, secretValues)) {
+  if (looksLikeSecret(backup, secretValues)) {
     throw new PortableBackupError(purpose === "create" ? NOT_MADE_SECRET : RESTORE_SECRET);
   }
   const unfit = purpose === "create" ? NOT_MADE : undefined;
