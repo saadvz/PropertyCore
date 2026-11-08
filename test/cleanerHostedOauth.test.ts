@@ -137,6 +137,7 @@ describe("the invite code on the Allow page", () => {
     expect(page.status).toBe(200);
     const html = await page.text();
     expect(html).toContain("Connect your Grok Bot to Property Core");
+    expect(html).toContain("is asking to run cleanings, supplies, or tours at your properties.");
     expect(html).toContain('id="oauth-invite"');
   });
 
