@@ -7,7 +7,7 @@ import { sharedRefusal } from "../src/hosted/sharedRoute";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { CLEANER, COURT, INVITE, LANDLORD, LANE, LINE, sharedAccount, STRANGER, type SharedAccount } from "./sharedHarness";
 
-/** Saving a person who is already on another property of the account (saadvz/TourCore#190). Only 555 numbers. */
+/** Saving a person who is already on another property of the account (saadvz/PropertyCore#190). Only 555 numbers. */
 
 const SLOW = { timeout: 180_000 };
 let open: SharedAccount | undefined;
