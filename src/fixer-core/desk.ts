@@ -1324,7 +1324,7 @@ export class FixerDesk {
     const booking = job.booking;
     const ymd = booking ? localYmd(new Date(booking.from), this.timeZone()) : this.today();
     const checkoutDay = (this.hub().stays() ?? []).some((stay) => stay.checkout === ymd);
-    let cleared = job.cleared === ymd;
+    let cleared = file.clearedYmd === ymd;
     if (checkoutDay && !cleared && this.deps.cleanings) cleared = (await this.deps.cleanings(ymd))?.cleared === true;
     return accessCheck({ job, pro: booking ? { reach: this.reachOfId(file, job, booking.proId) } : undefined, now: this.deps.now(), checkoutDay, cleared });
   }
@@ -1373,12 +1373,18 @@ export class FixerDesk {
     });
   }
 
-  /** The pro's phone when the code may go by text: a saved pro who prefers text, said YES, and hasn't stopped. */
+  /**
+   * The pro's phone when the code may go by text: a saved pro who prefers text, said YES, and hasn't
+   * stopped. A pro who holds another role here (the cleaner who is also the handyman) is reached by
+   * the visit page only, so their texts stay with that role.
+   */
   private textPhone(file: FixerFile, job: Job): string | undefined {
     const pro = file.pros.find((entry) => entry.id === job.booking?.proId && entry.status === "saved");
     const phone = pro?.reach.phone;
     const people = this.deps.people?.();
-    if (!pro?.prefersText || !phone || !people || !this.deps.send) return undefined;
+    const here = this.deps.propertyId;
+    if (!pro?.prefersText || !phone || !people || !here || !this.deps.send) return undefined;
+    if (people.rolesOn(phone, here).some((role) => role !== "pro")) return undefined;
     return people.optedIn(phone) && !people.stopped(phone) ? phone : undefined;
   }
 
@@ -1479,7 +1485,7 @@ export class FixerDesk {
     });
   }
 
-  /** The host says the guests have left: today counts as cleared for each open job's checkout-day check. */
+  /** The host says the guests have left: today counts as cleared for every job's checkout-day check, even one opened later today. */
   guestsLeft(input: { confirmed?: true }): Promise<FixerReply> {
     return this.guarded(input, () => {
       const file = this.read();
@@ -1487,7 +1493,7 @@ export class FixerDesk {
       if (off) return off;
       if (input.confirmed !== true) return fail("Ask the host whether the guests have left, then call again with confirmed: true.");
       const today = this.today();
-      for (const job of file.jobs) if (isOpen(job)) job.cleared = today;
+      file.clearedYmd = today;
       this.write(file);
       return ok({ cleared: today, next: "A repair visit today can get the door code now." });
     });
@@ -1527,6 +1533,8 @@ export class FixerDesk {
   recordDone(input: { jobId?: string; note?: string; by?: "agent" | "host"; cents?: number }): Promise<FixerReply> {
     return this.guarded(input, async () => {
       const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
       const job = this.jobOf(file, input.jobId);
       if (!job) return fail(NO_JOB);
       if (!job.booking?.hostYes || !liveBooking(job)) return fail("Only a booked visit can be marked done.");
@@ -1548,6 +1556,8 @@ export class FixerDesk {
   recordCost(input: { jobId?: string; cents?: number; by?: "pro" | "agent" | "host"; note?: string }): Promise<FixerReply> {
     return this.guarded(input, async () => {
       const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
       const job = this.jobOf(file, input.jobId);
       if (!job) return fail(NO_JOB);
       if (!job.booking?.hostYes || !(liveBooking(job) || job.state === "done")) return fail("A cost goes on a booked or finished job.");
@@ -1574,6 +1584,8 @@ export class FixerDesk {
   raisePrice(jobId: string, cents: number, by: "pro" | "agent" | "host"): Promise<FixerReply> {
     return this.guarded({ jobId, cents, by }, async () => {
       const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
       const job = this.jobOf(file, jobId);
       const booking = job?.booking;
       if (!job || !booking?.hostYes || !liveBooking(job)) return fail("Only a booked visit can have a raised price.");
@@ -1667,6 +1679,8 @@ export class FixerDesk {
   skipQuestion(input: { jobId?: string; question?: "preferred" | "rotate" }): Promise<FixerReply> {
     return this.guarded(input, () => {
       const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
       const job = this.jobOf(file, input.jobId);
       if (!job) return fail(NO_JOB);
       if (input.question === "preferred") {
@@ -1690,6 +1704,8 @@ export class FixerDesk {
   changeDoorCode(input: { jobId?: string }): Promise<FixerReply> {
     return this.guarded(input, () => {
       const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
       const job = this.jobOf(file, input.jobId);
       if (!job) return fail(NO_JOB);
       if (!job.rotationAsked) return fail("Changing the code is asked after a visit where the pro got it.");

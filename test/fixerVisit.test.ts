@@ -108,7 +108,8 @@ async function setup(opts: Opts = {}) {
   await desk().openJob({ trade: "plumbing", what: "Sink leaks", urgency: "soon", source: "host" });
   await desk().checkFixes({});
   const state = () => readFixer(root);
-  const job = () => state().jobs[0]!;
+  /** The job opened last: the one from setup, unless a test opens another. */
+  const job = () => state().jobs.at(-1)!;
   const pro = (name: string) => state().pros.find((p) => p.name.startsWith(name))!;
   const at = (iso: string | number) => {
     clock = new Date(iso);
@@ -118,7 +119,7 @@ async function setup(opts: Opts = {}) {
     resetFixerDesks();
     resetHubs();
   };
-  return { root, desk, deps, state, job, pro, at, restart, sent, notes, setServerKey: (key: string | undefined) => (serverKey = key) };
+  return { root, desk, deps, people, state, job, pro, at, restart, sent, notes, setServerKey: (key: string | undefined) => (serverKey = key) };
 }
 type World = Awaited<ReturnType<typeof setup>>;
 
@@ -254,6 +255,8 @@ describe("the clock pass and the code text", () => {
     await w.desk().tick();
     expect(w.sent.length).toBe(0);
     expect(w.notes.map((n) => n.text)).toEqual(["I couldn't open the door code for Joe's Plumbing's visit, so it wasn't sent. You'll need to let them in."]);
+    // The mark was saved before the hub was asked, so the text is never tried again.
+    expect(w.job().codeTextAt).toBe(new Date(Date.parse(TUE.from) - 10 * MIN).toISOString());
     expect(w.job().codeNoteAt).toBeDefined();
     expect(outcome(await w.desk().revealCode(w.job().id))).toBe("no-key");
     expect(w.notes.length).toBe(1);
@@ -267,6 +270,18 @@ describe("the clock pass and the code text", () => {
     expect(w.sent.length).toBe(0);
     expect(w.job().codeTextAt).toBeUndefined();
     expect(w.job().state).toBe("in-progress");
+  });
+
+  it("never texts a pro who is also the property's cleaner: they use the visit page", async () => {
+    const w = await setup();
+    w.people().savePropertyPeople(PROPERTY_ID, HOST, [{ phone: JOE, role: "cleaner", name: "Joe" }]);
+    expect(w.people().rolesOn(JOE, PROPERTY_ID)).toEqual(expect.arrayContaining(["pro", "cleaner"]));
+    await book(w);
+    w.at(TUE.from);
+    await w.desk().tick();
+    expect(w.sent.length).toBe(0);
+    expect(w.job().codeTextAt).toBeUndefined();
+    expect(outcome(await w.desk().revealCode(w.job().id))).toBe("opened");
   });
 
   it("never texts a pro who hasn't said YES", async () => {
@@ -309,6 +324,19 @@ describe("the door code on the page", () => {
     expect(outcome(await w.desk().revealCode(w.job().id))).toBe("guests-not-left");
     expect((await w.desk().guestsLeft({})).isError).toBe(true);
     expect((await w.desk().guestsLeft({ confirmed: true })).isError).toBe(false);
+    expect(outcome(await w.desk().revealCode(w.job().id))).toBe("opened");
+  });
+
+  it("keeps the guests-left date for the property, so a job opened later that day sees it", async () => {
+    const span = { from: "2026-11-10T17:00:00.000Z", until: "2026-11-10T19:00:00.000Z" };
+    const w = await setup({ stays: [["20261107", "20261110"]] });
+    w.at("2026-11-10T16:30:00.000Z");
+    expect((await w.desk().guestsLeft({ confirmed: true })).isError).toBe(false);
+    expect(w.state().clearedYmd).toBe("2026-11-10");
+    expect((await w.desk().cancelJob({ jobId: w.job().id })).isError).toBe(false);
+    await w.desk().openJob({ trade: "plumbing", what: "Toilet runs", urgency: "now", source: "host" });
+    await book(w, "Sam", span);
+    w.at(span.from);
     expect(outcome(await w.desk().revealCode(w.job().id))).toBe("opened");
   });
 
@@ -387,6 +415,26 @@ describe("price and cost", () => {
     await w.desk().recordDone({ jobId: w.job().id, by: "host" });
     expect(w.notes.map((n) => n.text)).toContain("Joe's Plumbing's job is marked done, but no photos came.");
     expect(w.job().done!.by).toBe("host");
+  });
+});
+
+describe("turned off", () => {
+  it("refuses the visit's tools while repairs are off", async () => {
+    const w = await setup();
+    await book(w);
+    expect((await w.desk().turnOff(false)).isError).toBe(false);
+    const id = w.job().id;
+    const replies = [
+      await w.desk().recordDone({ jobId: id }),
+      await w.desk().recordCost({ jobId: id, cents: 100, by: "host" }),
+      await w.desk().raisePrice(id, 42_000, "pro"),
+      await w.desk().skipQuestion({ jobId: id, question: "preferred" }),
+      await w.desk().changeDoorCode({ jobId: id }),
+      await w.desk().guestsLeft({ confirmed: true }),
+      await w.desk().extendVisit({ jobId: id, until: "2026-11-10T18:00:00.000Z" }),
+    ];
+    expect(replies.map((reply) => reply.text)).toEqual(Array(7).fill("Repairs aren't active yet. Call get_fixer_state."));
+    expect(w.job().state).toBe("booked");
   });
 });
 

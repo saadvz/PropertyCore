@@ -148,8 +148,6 @@ export interface Job {
   codeTextSent?: true;
   /** The one host note about the code for this job. */
   codeNoteAt?: string;
-  /** The local date the host said guests left. */
-  cleared?: string;
   createdAt: string;
   cancelledAt?: string;
   cancelReason?: string;
@@ -172,6 +170,8 @@ export interface FixerFile {
   pros: Pro[];
   upkeep: Upkeep[];
   jobs: Job[];
+  /** The local date (YYYY-MM-DD) the host last said the guests have left, for every job's checkout-day check. */
+  clearedYmd?: string;
   offAt?: string;
 }
 
