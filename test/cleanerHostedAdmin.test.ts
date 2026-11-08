@@ -229,7 +229,7 @@ describe("the admin page", () => {
     // Nothing recreates the deleted folder on the next drain, and no desk for its property stays cached.
     expect(existsSync(tenantFolder(m.app.root, lane.id))).toBe(false);
     expect(liveDeskFor(propertyFolder(m.app.root, lane.id, property), () => ({}), () => new Date())).not.toBe(cached);
-    // Nor does the account's people list (saadvz/TourCore#190).
+    // Nor does the account's people list (saadvz/PropertyCore#190).
     expect(peopleFor(tenantFolder(m.app.root, lane.id), { now: () => new Date() })).not.toBe(cachedPeople);
   });
 
@@ -389,7 +389,7 @@ describe("the admin page", () => {
   });
 });
 
-describe("the number pool on the admin page (saadvz/TourCore#163)", () => {
+describe("the number pool on the admin page (saadvz/PropertyCore#163)", () => {
   const POOL_A = "+15555550181";
   const POOL_B = "+15555550182";
 
