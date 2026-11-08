@@ -36,7 +36,7 @@ export const REQUIRED_MODULES = ["tsx", "@modelcontextprotocol/sdk", "express", 
  */
 export function nodeVersionProblem(version: string): string | undefined {
   const [major = 0, minor = 0] = version.split(".").map(Number);
-  if (major < 22 || (major === 22 && minor < 13)) return `Tour Core needs Node.js 22.13 or newer (this computer has ${version}).`;
+  if (major < 22 || (major === 22 && minor < 13)) return `Tour Core needs Node.js 22.13 or newer, and this computer has ${version}. Install the LTS version from nodejs.org, then run this again.`;
   return undefined;
 }
 
