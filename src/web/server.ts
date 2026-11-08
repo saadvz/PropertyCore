@@ -17,7 +17,7 @@ import { LOCAL_WEBHOOK_PATH } from "../messaging/local/provider";
 import { resetLocalSmsOutbox } from "../messaging/local/outbox";
 import { PHOTON_WEBHOOK_PATH } from "../messaging/photon/provider";
 import { readTwilioEnv, TWILIO_WEBHOOK_PATH } from "../messaging/twilio/provider";
-import { cleanerCoreEnabled, cleanerMultiTenant, supplyCoreOn, tourCoreTenants } from "../cleaner-core/flag";
+import { cleanerCoreEnabled, cleanerMultiTenant, tourCoreTenants } from "../cleaner-core/flag";
 import type { TouringFront } from "../hosted/serviceTools";
 import type { OperatorServices } from "../operator/services";
 import { DeliveryError } from "../alerts/operatorEvents";
