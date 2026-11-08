@@ -1,8 +1,8 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { ChatGptTaskSink, ClaudeRoutineFireSink, cleaningUpdateEvent, GrokRoutineWebhookSink, testEvent } from "../alerts/operatorEvents";
-import { ASSISTANT_PROFILES, CHATGPT_CHECK_GAP_MS, CHATGPT_DESK_WORDING, CHATGPT_TASK, CHATGPT_TASK_CONNECTED, chatGptAsk, CLAUDE_DESK_WORDING, CLAUDE_FIRE_URL, CLAUDE_IMAGE_TYPES, CLAUDE_MAX_IMAGE_BYTES, CLAUDE_MAX_IMAGES, CLAUDE_TASK, claudeAsk, claudeAskNext, cleanerAssistant, GROK_HELPER, MUSE_DESK_WORDING, MUSE_TASK, MUSE_TASK_CONNECTED, museAsk, taskWarning, type CleanerAssistant, type DeskWording } from "./assistant";
+import { ASSISTANT_PROFILES, CHATGPT_CHECK_GAP_MS, CHATGPT_DESK_WORDING, CHATGPT_TASK, CHATGPT_TASK_CONNECTED, chatGptAsk, CLAUDE_DESK_WORDING, CLAUDE_FIRE_URL, CLAUDE_IMAGE_TYPES, CLAUDE_MAX_IMAGE_BYTES, CLAUDE_MAX_IMAGES, CLAUDE_TASK, claudeAsk, claudeAskNext, cleanerAssistant, GROK_HELPER, MUSE_DESK_WORDING, MUSE_TASK, MUSE_TASK_CONNECTED, museAsk, runsSupplies, taskWarning, type CleanerAssistant, type DeskWording } from "./assistant";
 import { currentCaller, withCaller, type CleanerCaller } from "./callerContext";
 import { OperatorEventOutbox } from "../alerts/outbox";
 import { parsePhone } from "../core/phone";
@@ -10,28 +10,28 @@ import { FileRuntimeStore } from "../storage/runtimeStore";
 import { ConfirmationBook } from "../operator/confirmations";
 import { supplyAskOn } from "../supply-core/store";
 import { messagingKeyword, normalize } from "../intent";
-import { stripFiller } from "../intent/normalize";
 import { spokenTimes } from "../core/spokenTime";
 import { formatWhen, zonedInstant } from "../hub/calendar";
 import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink, venmoProfileLink, venmoUsername, type PaymentSettings, type PayRecord } from "./payments";
-import { joinSplitDigits, openCleanerCore, redactDigitRuns, SAFETY, storedConsent, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type SourceClaim, type TextKind } from "./core";
+import { joinSplitDigits } from "../hub/digits";
+import { sameHash, uploadHash } from "../hub/uploadCode";
+import { isDeparture, openCleanerCore, redactDigitRuns, SAFETY, storedConsent, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type TextKind } from "./core";
 import { cleanerMultiTenant, groupChatEnabled } from "./flag";
 import { GROUP_RECIPIENT, draftStatus, earlierThan, replyStateAt, type ReplyState, type StoredDraft } from "./replies";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
 import { calendarUrlAllowed, type CalendarFetch } from "../hub/fetchLimits";
-import { calendarFetch, setCalendarFetch } from "../hub/calendarFetch";
+import { setCalendarFetch } from "../hub/calendarFetch";
 import { forgetHub, hubFor, resetHubs, type Hub, type HubSave, type UploadResult } from "../hub/hub";
 import type { HubProperty } from "../hub/store";
-import { LEGACY_CALENDAR, MAX_CALENDARS, maskedLink, setAsideLine, type StoredCalendar } from "../hub/calendars";
+import { DOOR_CODE_IN_CHAT, LEGACY_CALENDAR, MAX_CALENDARS, maskedLink, setAsideLine, type StoredCalendar } from "../hub/calendars";
 import { allTimesAsk, askNext, DOOR_CODE_STEP, DRAFT_CONFIRM, DRAFT_FILL, DRAFT_NEXT, moreSourcesAsk, PAYMENTS_STEP, peopleAsk, PREFERENCES_STEP, propertyAsk, SCHEDULE_STEP, sourcesAsk, START_ASK, SUPPLIES_STEP, type SetupAsk, type SetupDraft } from "./setupAsk";
 import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jobHoldLine, optedOutCodeLine, resumeNote } from "./cleanerTexts";
 import { isInjuryReport } from "./injury";
 import { GroupNotConfirmed } from "./groupThread";
 import { cleanerPinStatusUrl, deleteLiveGroup, landlordConfirmed, liveSmsOn, mayText, sendLiveGroup, sendLiveSms, verifiedLandlordPhone } from "./liveSms";
-import { LOCK_LOCATION_REFUSED, serverPinKey, type AccessRefusal, type DoorAccess } from "../hub/doorAccess";
+import { DOOR_CODE_SHAPE_REFUSED, LOCK_LOCATION_REFUSED, PIN_KEY_MISSING, serverPinKey, UPLOAD_LINK_OFF, type AccessRefusal, type DoorAccess } from "../hub/doorAccess";
 import { DOOR_WINDOW_OVER, type AccessRefusedLines, type DoorAccessPort } from "./doorPort";
-import { HUB_DOOR_CODE_PREFIX } from "../hub/paths";
 import { accountOf, peopleFor, resetPeople, streetOf, type MoveSource, type People, type PersonChange, type Role } from "../hub/people";
 import { containsCodeToken, redactPhone } from "./redact";
 import { isScratchTestNumber } from "./scratch";
@@ -72,16 +72,13 @@ function listText(items: string[]): string {
   return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
 }
 
-const DEPARTURES = new Set(["guests have left", "guests left", "they have left", "they left", "departed", "left"]);
-
 const PIN_SENT = "I sent the door code to the cleaner. I'll tell you if it doesn't go through.";
 const UPDATE_HELD = "Times saved. I'll send the cleaner the new time in about a minute. If the time changes again before then, they get only the last one.";
 const PIN_SENT_GROUP = "I posted the door code in the cleaning group for the cleaner. I'll tell you if it doesn't go through.";
 const PIN_FAILED = "The door code didn't reach the cleaner. Tell your Grok Bot the guests have left and I'll resend it.";
 const PIN_REPEAT = "I already sent the door code to the cleaner.";
-const PIN_KEY_MISSING = "I can't send the door code yet. Let's finish setting up Cleaner Core first.";
 const PIN_REENTER = "Please enter the door code again in the private box. Don't text it here.";
-export const DOOR_CODE_IN_CHAT = "Please don't send the door code in chat. Use the private box instead.";
+export { DOOR_CODE_IN_CHAT };
 const DIRECT_TEXT_REPLY = "Got it. To send the door code, tell your Grok Bot the guests have left. The cleaner is still waiting for the OK.";
 const ROUTINE_SAVED = "Alerts are connected. I queued a test alert for the routine.";
 /** Activate's refusal while the routine's test wake-up hasn't gone through. The reason and the fix follow. */
@@ -94,16 +91,10 @@ const ROUTINE_NEEDED =
   "Send the routine's https address and its key. If your secure card can't pass them to a tool, call save_alert_routine with no arguments to get a one-time upload link.";
 /** Where Grok's own computer posts the routine's address and key. The rest of the path is the one-time code. */
 export const ALERT_UPLOAD_PREFIX = "/cleaner-core/alert-routine/";
-/** Where Grok's own computer posts a calendar link from its secure card. The rest of the path is the one-time code. */
-export const CALENDAR_UPLOAD_PREFIX = "/cleaner-core/calendar-link/";
 const CALENDAR_UPLOAD_NEXT =
   'From your own cloud computer, POST JSON {"url": "<calendar link>"} to uploadUrl with Content-Type: application/json, using the link from your secure card. Never put it in chat or in a tool argument. Then call get_state to confirm.';
-/** Where Grok's own computer posts the door code from its secure card. The rest of the path is the one-time code. */
-/** The hub's door code link. Cleaner Core's older prefix still leads to it (hubDoorCode). */
-export const DOOR_CODE_UPLOAD_PREFIX = HUB_DOOR_CODE_PREFIX;
 const DOOR_CODE_UPLOAD_NEXT =
   'From your own cloud computer, POST JSON {"code": "<door code>"} to uploadUrl with Content-Type: application/json, using the code from your secure card. Never put it in chat. Then call get_state to confirm.';
-const DOOR_CODE_UPLOAD_REFUSED = "Send the door code as 4 to 8 digits in code.";
 /** A tool got a secure card's placeholder instead of the door code. */
 const MASKED_CODE =
   "That door code came through masked, so I didn't save it. Call save_door_code with no code to get a one-time upload link, and post the code to it from your own computer.";
@@ -126,7 +117,8 @@ const GROK_DESK_WORDING: DeskWording = {
   maskedCode: MASKED_CODE,
   maskedLink: MASKED_LINK,
 };
-const UPLOAD_LINK_OFF ="I can't make an upload link until the server's public address is saved.";
+/** Each deployment's wording, by its chat. */
+const DESK_WORDING: Record<CleanerAssistant, DeskWording> = { grok: GROK_DESK_WORDING, claude: CLAUDE_DESK_WORDING, chatgpt: CHATGPT_DESK_WORDING, muse: MUSE_DESK_WORDING };
 const UPLOAD_CONNECTED = "Alerts are connected.";
 const UPLOAD_REFUSED = "Send the routine's https webhook address as url and its key as token.";
 const UPLOAD_GONE = "This upload link isn't valid anymore. Call save_alert_routine with no arguments for a new one.";
@@ -277,7 +269,6 @@ interface Preferences {
   supplyNotes: boolean;
   instructions?: string;
 }
-/** The name a legacy single calendar link reads as. Its source id stays `guesty-lite`. */
 
 /**
  * An inbound text from the cleaner, the host in the group, or a saved contact, for Grok to read.
@@ -380,6 +371,13 @@ export interface ToolNo {
 }
 
 export type ToolReply = ToolOk | ToolNo;
+
+/** Saves the alert routine's address and key to the secret store. */
+type SaveRoutine = (values: { CLEANER_CORE_ROUTINE_URL: string; CLEANER_CORE_ROUTINE_KEY: string }) => void;
+/** Saves a new photo link key to the secret store. */
+type SavePhotoKey = (values: { CLEANER_CORE_PHOTO_KEY: string }) => void;
+/** A one-time upload link's answer. */
+type UploadReply = { status: 200 | 400 | 404; body: { ok: boolean; message?: string; error?: string } };
 
 /**
  * Cleaner Core's own record for one property. The property's details (nickname, address, type, time
@@ -487,11 +485,6 @@ export function setCleanerCalendarFetch(fetchImpl: CalendarFetch | undefined): v
   setCalendarFetch(fetchImpl);
 }
 
-/** The calendar read every flow uses. */
-export function cleanerCalendarFetch(): CalendarFetch {
-  return calendarFetch();
-}
-
 type AlertFetch = NonNullable<NonNullable<ConstructorParameters<typeof GrokRoutineWebhookSink>[1]>["fetch"]>;
 
 let alertFetch: AlertFetch | undefined;
@@ -576,17 +569,6 @@ function maskedValue(token: string): boolean {
   return MASK_MARK.test(token) || /^(.)\1*$/su.test(token) || /^[xX]+$/.test(token);
 }
 
-function uploadHash(code: string): string {
-  return createHash("sha256").update(code).digest("hex");
-}
-
-/** Compares two sha256 hex digests in constant time. */
-function sameHash(a: string, b: string): boolean {
-  const left = Buffer.from(a, "hex");
-  const right = Buffer.from(b, "hex");
-  return left.length === 32 && right.length === 32 && timingSafeEqual(left, right);
-}
-
 /** What check_now and run_checks say while set-aside calendars hold the saved list back. */
 function calendarsHeld(count: number): string {
   const cleanings = `${count} upcoming ${count === 1 ? "cleaning" : "cleanings"}`;
@@ -616,6 +598,11 @@ function clockText(hm: string): string {
   return `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`;
 }
 
+/** A setup question as this chat shows it. Grok's is shown as it is. */
+function askFor(assistant: CleanerAssistant, ask: SetupAsk): SetupAsk {
+  return assistant === "muse" ? museAsk(ask) : assistant === "chatgpt" ? chatGptAsk(ask) : assistant === "claude" ? claudeAsk(ask) : ask;
+}
+
 /** The saved extra contacts. A legacy observer reads as one contact named Observer and comes first. */
 function contactsOf(file: LiveFile): Contact[] {
   return [...(file.observer ? [{ name: "Observer", role: "observer" as const, phone: file.observer }] : []), ...(file.contacts ?? [])];
@@ -638,13 +625,15 @@ function hasTimes(job: JobView): boolean {
   return Boolean(job.checkoutTime && (job.nextCheckInTime || !job.nextCheckInDate));
 }
 
+/** A job that is called off, declined, started, or done: never timed again. */
+const CLOSED_STATUSES = new Set(["canceled", "declined", "in_progress", "done"]);
+
 /**
  * The job confirm_times would time: the first one that is not called off, declined, started, or done.
  * A finished cleaning is never timed again, so a later booking is the one asked about.
  */
 function timesTarget(engine: CleanerCore): JobView | undefined {
-  const closed = new Set(["canceled", "declined", "in_progress", "done"]);
-  return engine.jobs().find((job) => !closed.has(job.status));
+  return engine.jobs().find((job) => !CLOSED_STATUSES.has(job.status));
 }
 
 export class LiveDesk {
@@ -742,7 +731,7 @@ export class LiveDesk {
    */
   saveAlertRoutine(
     input: { url?: string; token?: string },
-    save: (values: { CLEANER_CORE_ROUTINE_URL: string; CLEANER_CORE_ROUTINE_KEY: string }) => void,
+    save: SaveRoutine,
     pinKey?: Buffer,
   ): Promise<ToolReply> {
     return this.serial(async () => this.saveAlertRoutineNow(input, save, pinKey));
@@ -750,7 +739,7 @@ export class LiveDesk {
 
   private saveAlertRoutineNow(
     input: { url?: string; token?: string },
-    save: (values: { CLEANER_CORE_ROUTINE_URL: string; CLEANER_CORE_ROUTINE_KEY: string }) => void,
+    save: SaveRoutine,
     pinKey: Buffer | undefined,
   ): ToolReply {
     const url = typeof input.url === "string" ? input.url.trim() : "";
@@ -799,7 +788,7 @@ export class LiveDesk {
   }
 
   /** Saves the routine through the secret store, ends any upload link, and queues the test wake-up. */
-  private connectRoutine(url: string, token: string, save: (values: { CLEANER_CORE_ROUTINE_URL: string; CLEANER_CORE_ROUTINE_KEY: string }) => void): void {
+  private connectRoutine(url: string, token: string, save: SaveRoutine): void {
     save({ CLEANER_CORE_ROUTINE_URL: url, CLEANER_CORE_ROUTINE_KEY: token });
     this.uploadKey = undefined;
     delete this.file.alertUpload;
@@ -817,10 +806,9 @@ export class LiveDesk {
   private issueUpload(pinKey: Buffer | undefined): ToolReply {
     const base = publicBaseUrl(this.env());
     if (!base) return this.fail(UPLOAD_LINK_OFF);
-    const origin = base;
     for (let attempt = 0; attempt < 8; attempt++) {
       const code = randomBytes(32).toString("base64url");
-      const uploadUrl = `${origin}${ALERT_UPLOAD_PREFIX}${code}`;
+      const uploadUrl = `${base}${ALERT_UPLOAD_PREFIX}${code}`;
       // A link that happens to hold the door code would be refused as a reply, so make another.
       if (this.leaks(uploadUrl)) continue;
       const by = currentCaller();
@@ -839,8 +827,8 @@ export class LiveDesk {
   uploadAlertRoutine(
     code: string,
     body: Record<string, unknown>,
-    save: (values: { CLEANER_CORE_ROUTINE_URL: string; CLEANER_CORE_ROUTINE_KEY: string }) => void,
-  ): Promise<{ status: 200 | 400 | 404; body: { ok: boolean; message?: string; error?: string } }> {
+    save: SaveRoutine,
+  ): Promise<UploadReply> {
     return this.serial(async () => {
       const pending = this.file.alertUpload;
       if (!pending || !sameHash(uploadHash(code), pending.hash)) return { status: 404, body: { ok: false, error: UPLOAD_GONE } };
@@ -1125,8 +1113,8 @@ export class LiveDesk {
     if ([business, nickname, propertyType].some((text) => text && this.carriesCode(text))) return this.fail(DOOR_CODE_IN_CHAT);
     const checkoutText = input.checkoutTime?.trim() ?? "";
     const checkInText = input.checkInTime?.trim() ?? "";
-    const checkoutTime = checkoutText ? hourMinute(checkoutText) : undefined;
-    const checkInTime = checkInText ? hourMinute(checkInText) : undefined;
+    const checkoutTime = hourMinute(checkoutText);
+    const checkInTime = hourMinute(checkInText);
     if ((checkoutText && !checkoutTime) || (checkInText && !checkInTime)) {
       return this.fail("Send the usual checkout and check-in times as 24-hour HH:MM, like 11:00 and 15:00.");
     }
@@ -1253,8 +1241,8 @@ export class LiveDesk {
     if (input.quietFrom !== undefined || input.quietUntil !== undefined) {
       const fromText = input.quietFrom?.trim() ?? "";
       const untilText = input.quietUntil?.trim() ?? "";
-      const from = fromText ? hourMinute(fromText) : undefined;
-      const until = untilText ? hourMinute(untilText) : undefined;
+      const from = hourMinute(fromText);
+      const until = hourMinute(untilText);
       if (!fromText && !untilText) quiet = undefined;
       else if (!from || !until || from === until) return this.fail("Send both quiet-hours times as 24-hour HH:MM, like 21:00 and 08:00.");
       else quiet = { from, until };
@@ -1391,7 +1379,7 @@ export class LiveDesk {
     const code = input.code?.trim() ?? "";
     // A Grok Bot's secure card can't fill a tool argument, so no code means: make an upload link.
     if (!code) return this.issueDoorCodeUpload(input.lockLocation?.trim(), pinKey);
-    if (!/^\d{4,8}$/.test(code)) return this.fail(/\d/.test(code) || code.length > 12 ? "Send the door code as 4 to 8 digits." : this.words().maskedCode);
+    if (!/^\d{4,8}$/.test(code)) return this.fail(/\d/.test(code) || code.length > 12 ? DOOR_CODE_SHAPE_REFUSED : this.words().maskedCode);
     this.openSeal(pinKey);
     const previousLock = this.door().lockLocation();
     const previousCode = this.pin;
@@ -1437,7 +1425,7 @@ export class LiveDesk {
    * Seals a door code posted to its upload link, with the same checks as save_door_code. Only a save
    * uses the link up. The code is never repeated or logged, and the reply never holds it.
    */
-  uploadDoorCode(code: string, body: Record<string, unknown>): Promise<{ status: 200 | 400 | 404; body: { ok: boolean; message?: string; error?: string } }> {
+  uploadDoorCode(code: string, body: Record<string, unknown>): Promise<UploadReply> {
     return this.serial(async () => {
       const door = this.door();
       const before = door.uploadLinkOpen(code).open ? this.doorCodeBefore() : undefined;
@@ -1480,11 +1468,7 @@ export class LiveDesk {
       const question = `Save ${dollarsText(cents)} per cleaning to @${venmo}?`;
       return this.reply({ profile: venmoProfileLink(venmo), question, confirmation: this.approvals.issue(PAYMENTS_ACTION, "payments", fingerprint, question) });
     }
-    try {
-      this.approvals.redeem(code, PAYMENTS_ACTION, "payments", fingerprint);
-    } catch {
-      return this.fail(APPROVAL_STALE);
-    }
+    if (!this.redeemed(this.approvals, code, PAYMENTS_ACTION, "payments", fingerprint)) return this.fail(APPROVAL_STALE);
     const saved = this.file.payments;
     const onSince = saved?.on && saved.onSince ? saved.onSince : now;
     this.file.payments = { on: true, rateCents: cents, venmo, onSince, savedAt: now };
@@ -1728,11 +1712,11 @@ export class LiveDesk {
    * Re-reads the saved calendars, sends reminders that are due, and returns the host alerts
    * that are new since the last call. Google events are applied only when Grok passes them.
    */
-  checkNow(input: { googleEvents?: GoogleEventList } = {}, save?: (values: { CLEANER_CORE_PHOTO_KEY: string }) => void): Promise<ToolReply> {
+  checkNow(input: { googleEvents?: GoogleEventList } = {}, save?: SavePhotoKey): Promise<ToolReply> {
     return this.serial(() => this.checkNowSerial(input, save));
   }
 
-  private async checkNowSerial(input: { googleEvents?: GoogleEventList }, save?: (values: { CLEANER_CORE_PHOTO_KEY: string }) => void): Promise<ToolReply> {
+  private async checkNowSerial(input: { googleEvents?: GoogleEventList }, save?: SavePhotoKey): Promise<ToolReply> {
     this.resume();
     const engine = this.engine;
     // The routines are created before Activate, so the Check routine can wake first.
@@ -1876,10 +1860,7 @@ export class LiveDesk {
       sources.push(fromLink(source, calendar.origin));
       applied.push(calendar.name);
     }
-    if (google) {
-      const snapshot = google;
-      sources.push({ kind: "google-calendar", read: async () => snapshot });
-    }
+    if (google) sources.push({ kind: "google-calendar", read: async () => google });
     if (sources.length === 0) return result;
     const polled = (await engine.readSources(sources)).polled;
     if (!polled) {
@@ -1899,7 +1880,7 @@ export class LiveDesk {
     if (!this.groupOn() || !this.place.address || !this.place.timeZone) return [];
     const job = timesTarget(engine);
     if (!job || job.status !== "discovered" || job.checkoutTime || (this.file.timedJobs ?? []).includes(job.id)) return [];
-    const day = formatWhen(zonedInstant(job.checkoutDate, "12:00", this.place.timeZone), this.place.timeZone).day;
+    const day = this.checkoutDay(job.checkoutDate);
     const body = engine.newBookingAsk(job.id) ?? `New booking at ${this.place.address}, checking out ${day}. What are the checkout time and the next check-in time?`;
     return [{ id: `new-booking:${job.id}`, body }];
   }
@@ -1920,10 +1901,6 @@ export class LiveDesk {
     }
   }
 
-  /**
-   * A finished cleaning's facts, for Grok to summarize in its own words. Times are local at the
-   * property. Notes were redacted when they were kept, and the reply's leak check still runs.
-   */
   /**
    * Adds an owed record for each cleaning finished while payments were on, and returns the ones
    * check_now shows now: new ones, and unpaid ones whose next 9:00 AM reminder is due.
@@ -1966,8 +1943,7 @@ export class LiveDesk {
   }
 
   private payLink(job: JobView, record: PayRecord): string {
-    const zone = this.place.timeZone ?? "UTC";
-    const day = formatWhen(zonedInstant(job.checkoutDate, "12:00", zone), zone).day.split(", ").at(-1) ?? job.checkoutDate;
+    const day = this.checkoutDay(job.checkoutDate).split(", ").at(-1) ?? job.checkoutDate;
     const label = this.payLabel();
     return venmoPayLink({ username: record.venmo, cents: record.amountCents, label, day });
   }
@@ -2006,8 +1982,7 @@ export class LiveDesk {
     owed.record.how = input.how === "other" ? "other" : "venmo";
     owed.record.confirmedBy = "landlord";
     this.persist();
-    const zone = this.place.timeZone ?? "UTC";
-    const day = formatWhen(zonedInstant(owed.job.checkoutDate, "12:00", zone), zone).day.split(", ").at(-1);
+    const day = this.checkoutDay(owed.job.checkoutDate).split(", ").at(-1);
     return this.reply({ next: `Marked ${this.file.cleanerName ? `${this.file.cleanerName}'s` : "the cleaner's"} ${day} cleaning paid.` });
   }
 
@@ -2030,6 +2005,10 @@ export class LiveDesk {
     return this.reply({ job: item.job, amount: item.amount, ...(item.link ? { link: item.link } : { payInVenmo: true }) });
   }
 
+  /**
+   * A finished cleaning's facts, for Grok to summarize in its own words. Times are local at the
+   * property. Notes were redacted when they were kept, and the reply's leak check still runs.
+   */
   private completedFacts(job: JobView): Record<string, unknown> {
     const zone = this.place.timeZone ?? "UTC";
     const local = (iso: string | undefined) => {
@@ -2039,7 +2018,7 @@ export class LiveDesk {
     };
     return {
       nickname: this.place.nickname ?? this.place.address ?? "the property",
-      day: formatWhen(zonedInstant(job.checkoutDate, "12:00", zone), zone).day,
+      day: this.checkoutDay(job.checkoutDate),
       arrivalTime: job.arrivalTime ?? null,
       startedAt: local(job.startedAt),
       doneAt: local(job.doneAt),
@@ -2057,11 +2036,11 @@ export class LiveDesk {
    * 2026-10-18 or the day check_now named, like Sunday, Oct 18. Without it, the latest job with
    * photos. The signing key is CLEANER_CORE_PHOTO_KEY, or one made once and saved through `save`.
    */
-  getJobPhotos(input: { job?: string }, save?: (values: { CLEANER_CORE_PHOTO_KEY: string }) => void): Promise<ToolReply> {
+  getJobPhotos(input: { job?: string }, save?: SavePhotoKey): Promise<ToolReply> {
     return this.serial(async () => this.getJobPhotosNow(input, save));
   }
 
-  private getJobPhotosNow(input: { job?: string }, save: ((values: { CLEANER_CORE_PHOTO_KEY: string }) => void) | undefined): ToolReply {
+  private getJobPhotosNow(input: { job?: string }, save: SavePhotoKey | undefined): ToolReply {
     this.resume();
     const engine = this.engine;
     if (!this.file.checked || !engine) return this.fail("Run the checks first.");
@@ -2078,14 +2057,13 @@ export class LiveDesk {
 
   /** The job a lowercase `wanted` names: its checkout date, its day like "sunday, oct 18", or its id. */
   private findJob(jobs: JobView[], wanted: string): JobView | undefined {
-    const zone = this.place.timeZone ?? "UTC";
-    const dayOf = (job: JobView) => formatWhen(zonedInstant(job.checkoutDate, "12:00", zone), zone).day.toLowerCase();
+    const dayOf = (job: JobView) => this.checkoutDay(job.checkoutDate).toLowerCase();
     return jobs.find((item) => item.checkoutDate === wanted || dayOf(item) === wanted || item.id.toLowerCase() === wanted);
   }
 
   /** Supply Core is offered at setup only to an always-on agent (Grok Bot, Muse) on the shared service, where the add-on lives. */
   private offersSupplies(): boolean {
-    return ASSISTANT_PROFILES[this.assistant()].supplies && cleanerMultiTenant(this.env());
+    return runsSupplies(this.assistant()) && cleanerMultiTenant(this.env());
   }
 
   /** The host answered the Supply Core question, or turned it on another way: setup doesn't ask again. */
@@ -2261,7 +2239,6 @@ export class LiveDesk {
     const heldLine = result.sent.find((text) => text.kind === "pin-held")?.body;
     const sentNow = result.sent.some((text) => text.kind === "pin");
     const privateNow = result.sent.some((text) => text.kind === "pin" && text.channel !== "group");
-    const failed = result.sent.some((text) => text.kind === "pin-failed") || this.engine.outbox().some((item) => item.kind === "pin" && item.status === "failed");
     if (this.groupOn() && this.engine.groupPinSettled() && !sentNow) {
       this.file.pinSend = { sid: this.file.pinSend?.sid ?? "", outcome: "settled", notePending: false };
       this.persist();
@@ -2273,7 +2250,6 @@ export class LiveDesk {
     }
     if (heldLine) return this.reply({ next: heldLine });
     if (sentNow) return this.reply({ next: privateNow ? PIN_SENT : PIN_SENT_GROUP });
-    if (failed) return this.reply({ next: this.words().pinFailed });
     return this.reply({ next: this.words().pinFailed });
   }
 
@@ -2310,11 +2286,7 @@ export class LiveDesk {
       const next = `Pause the cleaning at ${address}? No cleaning offer, reminder, or door code goes out until you resume it, and the cleaner gets one text saying it's on hold. Reply yes to pause.`;
       return this.reply({ next, confirmation: this.approvals.issue(HOLD_ACTION, CLEANING_TARGET, fingerprint, next) });
     }
-    try {
-      this.approvals.redeem(code, HOLD_ACTION, CLEANING_TARGET, fingerprint);
-    } catch {
-      return this.fail(APPROVAL_STALE);
-    }
+    if (!this.redeemed(this.approvals, code, HOLD_ACTION, CLEANING_TARGET, fingerprint)) return this.fail(APPROVAL_STALE);
     await this.engine.hostHold(`hold-${randomUUID()}`);
     this.syncHold();
     this.persist();
@@ -2329,16 +2301,6 @@ export class LiveDesk {
   private savedPhones(): string[] {
     const raw = [this.file.host, this.file.cleaner, this.file.observer, ...(this.file.contacts ?? []).map((contact) => contact.phone)];
     return raw.map((phone) => (phone ? parsePhone(phone) : undefined)).filter((phone): phone is string => !!phone);
-  }
-
-  /** The saved host, and every other person the property texts, as E.164. */
-  phonesOnProperty(): Promise<{ host?: string; people: string[] }> {
-    return this.serial(async () => {
-      const host = this.file.host ? parsePhone(this.file.host) : undefined;
-      const raw = [this.file.cleaner, this.file.observer, ...(this.file.contacts ?? []).map((contact) => contact.phone)];
-      const people = [...new Set(raw.map((phone) => (phone ? parsePhone(phone) : undefined)).filter((phone): phone is string => !!phone && phone !== host))];
-      return { ...(host ? { host } : {}), people };
-    });
   }
 
   /** True when the saved host is the account's confirmed landlord, so this property's texts may go. */
@@ -2429,7 +2391,10 @@ export class LiveDesk {
     });
   }
 
-  /** What keeps this number on cleaning, for the shared service's switch. Sends nothing. */
+  /**
+   * What keeps this number on cleaning. Sends nothing. Only tests call it, to see what is live:
+   * set_flows replaced the shared service's switch that used it.
+   */
   liveWork(): Promise<{ live: string[]; inProgress: boolean }> {
     return this.serial(async () => {
       this.resume();
@@ -2462,11 +2427,7 @@ export class LiveDesk {
         const next = `Stand down cleaning at ${this.place.address ?? "this property"}? This calls off:\n${stops}\n${goes}\nThe setup is kept. Reply yes to stand down.`;
         return this.reply({ next, texts, confirmation: this.approvals.issue(STAND_DOWN_ACTION, CLEANING_TARGET, fingerprint, next) });
       }
-      try {
-        this.approvals.redeem(code, STAND_DOWN_ACTION, CLEANING_TARGET, fingerprint);
-      } catch {
-        return this.fail(APPROVAL_STALE);
-      }
+      if (!this.redeemed(this.approvals, code, STAND_DOWN_ACTION, CLEANING_TARGET, fingerprint)) return this.fail(APPROVAL_STALE);
       await this.engine.hostStandDown(`stand-down-${randomUUID()}`);
       this.syncHold();
       this.persist();
@@ -2489,11 +2450,7 @@ export class LiveDesk {
       const next = `Resume the cleaning at ${address}? Cleaning texts and the door code can go out again under the usual rules. Reply yes to resume.`;
       return this.reply({ next, confirmation: this.approvals.issue(RESUME_ACTION, CLEANING_TARGET, fingerprint, next) });
     }
-    try {
-      this.approvals.redeem(code, RESUME_ACTION, CLEANING_TARGET, fingerprint);
-    } catch {
-      return this.fail(APPROVAL_STALE);
-    }
+    if (!this.redeemed(this.approvals, code, RESUME_ACTION, CLEANING_TARGET, fingerprint)) return this.fail(APPROVAL_STALE);
     await this.engine.resumeJob();
     this.syncHold();
     this.persist();
@@ -2628,11 +2585,7 @@ export class LiveDesk {
       const question = input.remove ? `Forget the saved answer for ${topic}?` : `Save for next time, ${topic}: "${answer}"?`;
       return this.reply({ preview: input.remove ? { topic, remove: true } : { topic, answer }, confirmation: this.approvals.issue(SAVE_ANSWER_ACTION, "answers", fingerprint, question) });
     }
-    try {
-      this.approvals.redeem(code, SAVE_ANSWER_ACTION, "answers", fingerprint);
-    } catch {
-      return this.fail(APPROVAL_STALE);
-    }
+    if (!this.redeemed(this.approvals, code, SAVE_ANSWER_ACTION, "answers", fingerprint)) return this.fail(APPROVAL_STALE);
     const others = saved.filter((item) => item.topic.toLowerCase() !== key);
     const next = input.remove ? others : [...others, { topic, answer }];
     if (next.length > 0) this.file.savedAnswers = next;
@@ -2702,11 +2655,7 @@ export class LiveDesk {
       const issued = this.draftApprovals.issue(SEND_ACTION, recipient.key, fingerprint, question, draft.id);
       return this.reply({ preview: { to: recipient.name, text: draft.text }, confirmation: issued });
     }
-    try {
-      this.draftApprovals.redeem(code, SEND_ACTION, recipient.key, fingerprint);
-    } catch {
-      return this.fail(APPROVAL_STALE);
-    }
+    if (!this.redeemed(this.draftApprovals, code, SEND_ACTION, recipient.key, fingerprint)) return this.fail(APPROVAL_STALE);
     let sent: CleanerText | null;
     try {
       sent = await engine.sendHostMessage({ to: recipient.send, body: draft.text });
@@ -2743,11 +2692,7 @@ export class LiveDesk {
       const question = `Send to ${recipient.name}: "${text}"?`;
       return this.reply({ preview: { to: recipient.name, text }, confirmation: this.approvals.issue(SEND_ACTION, recipient.key, fingerprint, question) });
     }
-    try {
-      this.approvals.redeem(code, SEND_ACTION, recipient.key, fingerprint);
-    } catch {
-      return this.fail(APPROVAL_STALE);
-    }
+    if (!this.redeemed(this.approvals, code, SEND_ACTION, recipient.key, fingerprint)) return this.fail(APPROVAL_STALE);
     let sent: CleanerText | null;
     try {
       sent = await engine.sendHostMessage({ to: recipient.send, body: text });
@@ -2824,11 +2769,7 @@ export class LiveDesk {
       const next = `This resets Cleaner Core for ${address}. It deletes the setup, jobs, messages, everyone's YES and STOP replies, the saved door code, the alert routine connection, and the group text on Twilio. Your Twilio settings and Grok logins stay.${kept} Reply yes to reset.`;
       return this.reply({ next, confirmation: this.approvals.issue(RESET_ACTION, RESET_TARGET, fingerprint, next) });
     }
-    try {
-      this.approvals.redeem(code, RESET_ACTION, RESET_TARGET, fingerprint);
-    } catch {
-      return this.fail(APPROVAL_STALE);
-    }
+    if (!this.redeemed(this.approvals, code, RESET_ACTION, RESET_TARGET, fingerprint)) return this.fail(APPROVAL_STALE);
     // Twilio first. A group that can't be removed stops everything, so the next try starts from the same state.
     if (group && !(await deleteLiveGroup(this.env(), group))) return this.fail(RESET_GROUP_KEPT);
     // Secrets before files: if the store can't delete them, nothing else is touched.
@@ -3173,7 +3114,7 @@ export class LiveDesk {
    * read. Every run of 4 or more digits is redacted, even split like "80-88", so the door code never
    * reaches a message even when this desk doesn't hold it in memory. The last 200 are kept.
    */
-  private keepMessage(from: string, input: Inbound, handled: MessageHandled, downloads: readonly { bytes: Buffer; ext: string }[] = []): void {
+  private keepMessage(from: string, input: Inbound, handled: MessageHandled, downloads: readonly { bytes: Buffer; ext: string }[]): void {
     const who = this.speaker(from, input.channel);
     if (!who) return;
     const words = this.messageText(input.text);
@@ -3212,7 +3153,7 @@ export class LiveDesk {
    * Messages as check_now returns them. A message with kept photos gets a link to each, good for one
    * hour, like get_job_photos. Without a public address or a key, it keeps only its [photo] mark.
    */
-  private messagesOut(messages: readonly Message[], save?: (values: { CLEANER_CORE_PHOTO_KEY: string }) => void): Record<string, unknown>[] {
+  private messagesOut(messages: readonly Message[], save?: SavePhotoKey): Record<string, unknown>[] {
     const withPhotos = messages.some((message) => message.photos);
     const base = withPhotos ? publicBaseUrl(this.env()) : undefined;
     const key = base ? photoKey(this.env(), save) : undefined;
@@ -3382,7 +3323,7 @@ export class LiveDesk {
     return {
       done,
       next,
-      ...(ask && asking ? { ask: assistant === "muse" ? museAsk(ask) : assistant === "chatgpt" ? chatGptAsk(ask) : assistant === "claude" ? claudeAsk(ask) : ask } : {}),
+      ...(ask && asking ? { ask: askFor(assistant, ask) } : {}),
       ...(draft && drafting && next === DRAFT_NEXT ? { draft } : {}),
       ...(task && (next === this.words().routineAsk || warning) ? { routine: task } : {}),
       ...(warning ? { warning } : {}),
@@ -3472,7 +3413,7 @@ export class LiveDesk {
     if (!this.file.payments) needsYou.push(PAYMENTS_STEP);
     if (!this.file.suppliesAsked && this.offersSupplies()) needsYou.push(SUPPLIES_STEP);
     const assistant = this.assistant();
-    const shown = (step: SetupAsk) => (assistant === "muse" ? museAsk(step) : assistant === "chatgpt" ? chatGptAsk(step) : assistant === "claude" ? claudeAsk(step) : step) as SetupAsk;
+    const shown = (step: SetupAsk) => askFor(assistant, step);
     // Only the steps still missing are drafted, so a saved step (a setup already under way) isn't saved over.
     const missingTools = new Set(needsYou.map((step) => step.tool));
     const fill = DRAFT_FILL.filter((part) => !part.tool || missingTools.has(part.tool));
@@ -3503,8 +3444,7 @@ export class LiveDesk {
   /** Open turnovers the host hasn't timed yet. */
   private untimedTurns(): number {
     if (!this.engine) return 0;
-    const closed = new Set(["canceled", "declined", "in_progress", "done"]);
-    return this.engine.jobs().filter((job) => !closed.has(job.status) && !job.checkoutTime).length;
+    return this.engine.jobs().filter((job) => !CLOSED_STATUSES.has(job.status) && !job.checkoutTime).length;
   }
 
   private peopleLine(): string {
@@ -3633,12 +3573,18 @@ export class LiveDesk {
     return contactsOf(this.file).map((contact) => ({ phone: contact.phone, name: contact.name }));
   }
 
-  /** Sets a saved field, or removes it when the value is undefined. */
   /** The property's details, from its hub. A getter, so a check narrows the next read. */
   private get place(): HubProperty {
     return this.hub.property();
   }
 
+  /** A checkout date as the property's local day, like "Sunday, Oct 18". UTC when no time zone is saved. */
+  private checkoutDay(date: string): string {
+    const zone = this.place.timeZone ?? "UTC";
+    return formatWhen(zonedInstant(date, "12:00", zone), zone).day;
+  }
+
+  /** Sets a saved field, or removes it when the value is undefined. */
   private keep<K extends keyof LiveFile>(key: K, value: LiveFile[K] | undefined): void {
     if (value === undefined) delete this.file[key];
     else this.file[key] = value;
@@ -3691,11 +3637,6 @@ export class LiveDesk {
     if (seen.includes(id)) return;
     this.file.seenInbound = [...seen, id];
     this.persist();
-  }
-
-  private pinSends(): number {
-    if (!this.engine) return 0;
-    return this.engine.outbox().filter((item) => item.kind === "pin" && item.status === "sent").length;
   }
 
   private openEngine(): CleanerCore {
@@ -3908,19 +3849,19 @@ export class LiveDesk {
     if (!ids.includes(id)) this.file.routineConnections = [...ids, id];
   }
 
-  /** True on a Claude deployment (CLEANER_CORE_ASSISTANT=claude). */
+  /** True when this reply goes to Claude: the calling connection's chat, else the primary's. */
   claude(): boolean {
     return this.assistant() === "claude";
   }
 
   /** The replies that name the chat or its tools, for this deployment. */
   private words(): DeskWording {
-    return { grok: GROK_DESK_WORDING, claude: CLAUDE_DESK_WORDING, chatgpt: CHATGPT_DESK_WORDING, muse: MUSE_DESK_WORDING }[this.assistant()];
+    return DESK_WORDING[this.assistant()];
   }
 
   /** The words in texts to the host and cleaner, which always name the primary chat. */
   private hostWords(): DeskWording {
-    return { grok: GROK_DESK_WORDING, claude: CLAUDE_DESK_WORDING, chatgpt: CHATGPT_DESK_WORDING, muse: MUSE_DESK_WORDING }[this.primaryAssistant()];
+    return DESK_WORDING[this.primaryAssistant()];
   }
 
   /**
@@ -3972,6 +3913,19 @@ export class LiveDesk {
   private fail(error: string): ToolReply {
     if (this.leaks(error)) return { ok: false, error: "That didn't work. Try again." };
     return { ok: false, error };
+  }
+
+  /**
+   * Redeems a host approval code. False when the code is wrong, used or expired, or when the book
+   * couldn't save, so every caller answers with APPROVAL_STALE as before.
+   */
+  private redeemed(book: ConfirmationBook, code: string, action: string, target: string, fingerprint: string): boolean {
+    try {
+      book.redeem(code, action, target, fingerprint);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private failWith(error: string, result: Record<string, unknown>): ToolReply {
@@ -4082,8 +4036,7 @@ export class LiveDesk {
       this.syncHold();
       return { sent: result.sent, ...this.handledBy(result) };
     }
-    const phrase = stripFiller(normalize(text)).replace(/^the\s+/, "");
-    if (!DEPARTURES.has(phrase)) {
+    if (!isDeparture(text)) {
       if (!this.groupOn()) return { sent: [], handled: "none" };
       this.resume();
       if (!this.engine) return { sent: [], handled: "none" };

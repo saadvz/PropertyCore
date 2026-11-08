@@ -10,6 +10,7 @@ import { operatorPausedBookingRefuse } from "../setup/availability";
 import { SetupInputError } from "../setup/setupActions";
 import { oneOffBlockReason } from "../visitor/oneOffGate";
 import { SmsConsentDirectory } from "../visitor/smsConsent";
+import { ask, redeem } from "./availability";
 import type { ConfirmationBook } from "./confirmations";
 import { requireUnit, resolvePropertyId } from "./resolve";
 import { persistSession, type OperatorServices } from "./services";
@@ -21,21 +22,6 @@ interface Ctx {
   services: OperatorServices;
   confirmations: ConfirmationBook;
   now: () => Date;
-}
-
-function ask(ctx: Ctx, action: string, target: string, fingerprint: string, question: string, details: Record<string, unknown> = {}) {
-  const confirmation = ctx.confirmations.issue(action, target, fingerprint, question);
-  return {
-    status: "needs-confirmation" as const,
-    summary: question,
-    confirmation,
-    instructions: "Ask the operator exactly this question. Call this tool again with confirmationCode only if they clearly say yes.",
-    ...details,
-  };
-}
-
-function redeem(ctx: Ctx, code: string, action: string, target: string, fingerprint: string): void {
-  ctx.confirmations.redeem(code, action, target, fingerprint);
 }
 
 export async function findTimeRequest(services: OperatorServices, id: string): Promise<{ tour: TourSnapshot; request: TourTimeRequest } | undefined> {
@@ -57,7 +43,7 @@ function visitorTextNote(name: string, confirm: boolean, outside: boolean): stri
   return `${name} gets a text ${action}.`;
 }
 
-function moveFromTo(from: Date, to: Date, _now: Date, tz: string, _outside: boolean): string {
+function moveFromTo(from: Date, to: Date, tz: string): string {
   return `from ${formatTime(from, tz)} on ${formatDay(from, tz)} to ${formatTime(to, tz)} on ${formatDay(to, tz)}`;
 }
 
@@ -111,9 +97,9 @@ async function expirePassedOnLiveTours(services: OperatorServices): Promise<void
   }
 }
 
-function moveConfirmQuestion(input: { who: string; from?: Date; to: Date; now: Date; tz: string; outside: boolean; confirm: boolean }): string {
+function moveConfirmQuestion(input: { who: string; from?: Date; to: Date; tz: string; outside: boolean; confirm: boolean }): string {
   const lead = input.from
-    ? `Move ${midSentence(input.who)}'s tour ${moveFromTo(input.from, input.to, input.now, input.tz, input.outside)}?`
+    ? `Move ${midSentence(input.who)}'s tour ${moveFromTo(input.from, input.to, input.tz)}?`
     : `Book ${input.who} for ${timeOnDay(input.to, input.tz)}?`;
   const extra = input.outside ? " That's outside your tour hours." : "";
   const verb = input.from ? "Move it?" : "Book it?";
@@ -263,7 +249,6 @@ export async function approveTourTimeRequest(ctx: Ctx, input: { tourTimeRequestI
       who: name,
       ...(reservation?.slotStart ? { from: new Date(reservation.slotStart) } : {}),
       to: start,
-      now: ctx.now(),
       tz,
       outside,
       confirm: false,
@@ -431,7 +416,6 @@ export async function rescheduleTour(
       who: name,
       from: new Date(reservation.slotStart),
       to: resolved.start,
-      now: ctx.now(),
       tz,
       outside,
       confirm: false,

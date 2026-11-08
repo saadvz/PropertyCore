@@ -10,6 +10,7 @@ import { checkMessaging, createDurin, createStore, createVerificationProvider } 
 import { DemoMessagingAdapter } from "../messaging/Messenger";
 import type { MessagingCheck } from "../messaging/sendblue/readiness";
 import { probeRuntimeStore, type RuntimeStore } from "../storage/runtimeStore";
+import { joinList as listWords } from "../operator/tourDayWords";
 
 export type ReadinessCheckId = "property" | "units" | "hours" | "routes" | "verification" | "messaging" | "storage" | "progress" | "access" | "audit";
 
@@ -173,10 +174,6 @@ export async function runReadinessCheck(
     ? []
     : ["No visitor help number is set, so stuck visitors can only text back."];
   return { ...result, messaging: messagingChecks, advisories };
-}
-
-function listWords(words: string[]): string {
-  return words.length <= 1 ? (words[0] ?? "") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 }
 
 async function probe(

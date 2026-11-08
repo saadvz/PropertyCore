@@ -65,14 +65,14 @@ export class RecordStore {
     return resolveStorageModel({
       deploymentMode: this.deps.deploymentMode(),
       env: this.deps.env(),
-      manifestProvider: this.safeManifest()?.storageProvider,
+      manifestProvider: this.deps.files.readableManifest()?.storageProvider,
     });
   }
 
   provider(): "NOT_CONFIGURED" | "LOCAL_DEMO" | "HOSTED_VOLUME" | "GOOGLE_DRIVE_CONNECTING" | "GOOGLE_DRIVE_READY" | "ERROR" {
     if (this.model() === "HOSTED_P0_VOLUME") return "HOSTED_VOLUME";
     const state = this.deps.files.state().storage;
-    const manifest = this.safeManifest();
+    const manifest = this.deps.files.readableManifest();
     if (state?.phase === "MIGRATING") return "GOOGLE_DRIVE_CONNECTING";
     if (state?.phase === "ERROR" || state?.error) return "ERROR";
     if (manifest?.storageProvider === "GOOGLE_DRIVE" && this.refreshToken()) return "GOOGLE_DRIVE_READY";
@@ -199,8 +199,8 @@ export class RecordStore {
     if (query.get("error")) return { ok: false, summary: "Google Drive wasn't approved. Nothing was connected." };
     const code = query.get("code") ?? "";
     const config = googleClientConfig(this.deps.env(), (name) => this.deps.secrets.get(name as SettingName));
-    const token = await exchangeCode(config, pending!, code, this.deps.fetch() as never);
-    const email = await googleEmail(token.accessToken, this.deps.fetch() as never).catch(() => undefined);
+    const token = await exchangeCode(config, pending!, code, this.deps.fetch());
+    const email = await googleEmail(token.accessToken, this.deps.fetch()).catch(() => undefined);
     const now = new Date(this.deps.now());
     this.deps.secrets.set(
       {
@@ -334,7 +334,7 @@ export class RecordStore {
     this.remote = remote;
     const identity = { ...this.ensureHost(), storeId };
     const claimed = await claimLease(remote, identity, this.deps.now(), LEASE_TTL_MS, explicit);
-    if (claimed.tookOver) this.audit(claimed.expired ? "STORE_TAKEOVER" : "STORE_TAKEOVER", claimed.expired ? "The previous writer's lease had expired." : "The operator took over writing this Google Drive folder.");
+    if (claimed.tookOver) this.audit("STORE_TAKEOVER", claimed.expired ? "The previous writer's lease had expired." : "The operator took over writing this Google Drive folder.");
     else this.audit("STORE_WRITER_ACQUIRED", "This Tour Core computer is the writer for that Google Drive folder.");
     const restored = await restoreCanonical(remote, this.deps.root, this.secretValues());
     const now = new Date(this.deps.now());
@@ -355,7 +355,7 @@ export class RecordStore {
     const host = this.deps.files.state().storage?.hostId;
     if (remote && host) await releaseLease(remote, host).catch(() => undefined);
     const refresh = this.refreshToken();
-    if (refresh) await revokeToken(refresh, this.deps.fetch() as never).catch(() => undefined);
+    if (refresh) await revokeToken(refresh, this.deps.fetch()).catch(() => undefined);
     this.deps.secrets.delete(["GOOGLE_OAUTH_REFRESH_TOKEN", "GOOGLE_OAUTH_ACCESS_TOKEN", "GOOGLE_OAUTH_ACCESS_EXPIRES_AT"], new Date(this.deps.now()));
     const now = new Date(this.deps.now());
     this.deps.files.update({ storageProvider: "LOCAL_DEMO" }, now);
@@ -450,7 +450,7 @@ export class RecordStore {
       const refresh = this.refreshToken();
       if (!refresh) throw new StorageUnavailableError("Google Drive isn't connected.");
       const config = googleClientConfig(this.deps.env(), (name) => this.deps.secrets.get(name as SettingName));
-      const token = await refreshAccess(config, refresh, this.deps.fetch() as never);
+      const token = await refreshAccess(config, refresh, this.deps.fetch());
       this.deps.secrets.set({ GOOGLE_OAUTH_ACCESS_TOKEN: token.accessToken, GOOGLE_OAUTH_ACCESS_EXPIRES_AT: String(token.expiresAt), ...(token.refreshToken ? { GOOGLE_OAUTH_REFRESH_TOKEN: token.refreshToken } : {}) }, new Date(this.deps.now()));
       return token.accessToken;
     }, this.deps.fetch() as never);
@@ -472,7 +472,7 @@ export class RecordStore {
 
   private ensureHost(): { storeId: string; writerHostId: string; installationId: string } {
     const state = this.deps.files.state();
-    const installationId = this.safeManifest()?.installationId ?? "inst_local";
+    const installationId = this.deps.files.readableManifest()?.installationId ?? "inst_local";
     const storeId = state.storage?.storeId ?? `store_${randomBytes(6).toString("hex")}`;
     const writerHostId = state.storage?.hostId ?? `host_${randomBytes(6).toString("hex")}`;
     if (state.storage?.storeId !== storeId || state.storage?.hostId !== writerHostId) {
@@ -491,13 +491,5 @@ export class RecordStore {
 
   private secretValues(): string[] {
     return SECRET_SETTING_NAMES.map((name) => this.deps.secrets.get(name)).filter((value): value is string => !!value);
-  }
-
-  private safeManifest() {
-    try {
-      return this.deps.files.manifest();
-    } catch {
-      return undefined;
-    }
   }
 }

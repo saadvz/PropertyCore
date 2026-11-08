@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { refuseCards } from "../hub/cards";
-import type { SupplyDesk, SupplyReply } from "./desk";
+import { CARD_REFUSAL, type SupplyDesk, type SupplyReply } from "./desk";
 
 /**
  * Supply Core's MCP tools: names, descriptions, and strict inputs. Every call is checked for
@@ -192,8 +192,6 @@ export const SUPPLY_TOOLS: SupplyTool[] = [
 ];
 
 export const SUPPLY_TOOL_NAMES: ReadonlySet<string> = new Set(SUPPLY_TOOLS.map((tool) => tool.name));
-
-export const CARD_REFUSAL = "That looks like a card number. Supply Core never takes card details: keep them in your Vault.";
 
 /** The tools as tools/list shows them, in Grok's words. src/hosted/supplyWording.ts words them for Muse. */
 export function listedSupplyTools(names: readonly string[], describe: (tool: SupplyTool) => string = (tool) => tool.description): Record<string, unknown>[] {

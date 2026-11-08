@@ -61,7 +61,7 @@ export function vagueTimeRequest(normalized: string): boolean {
   return /\b(later time|another time|different time|need a later|something later|come later|later today|move it later|a later one)\b/.test(normalized);
 }
 
-const WEEKDAY_WORD: Record<string, Weekday> = {
+export const WEEKDAY_WORD: Readonly<Record<string, Weekday>> = {
   monday: "MON",
   mon: "MON",
   tuesday: "TUE",
@@ -130,7 +130,7 @@ export function dayReference(normalized: string, today?: LocalDate): DayReferenc
   return undefined;
 }
 
-const MONTH_NUMBER: Record<string, number> = {
+export const MONTH_NUMBER: Readonly<Record<string, number>> = {
   january: 1,
   jan: 1,
   february: 2,

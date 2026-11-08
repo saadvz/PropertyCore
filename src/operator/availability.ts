@@ -5,10 +5,10 @@ import { claimVisitorSms } from "../sms/templates";
 import { pauseConfirmQuestion, PROPERTY_REMOVED_REFUSE, REMOVE_REFUSED_LIVE_TOUR, removeConfirmQuestion, removeSetupConfirmQuestion, removedPropertySummary, removedSetupSummary, resumeConfirmQuestion, toursAreBackText } from "../core/availabilityCopy";
 import { normalizePhone } from "../core/phone";
 import { newId, type AuditEvent, type AuditEventType, type Reservation } from "../domain/model";
-import { isRunningReservation, TERMINAL } from "../domain/stateMachine";
+import { isRunningReservation } from "../domain/stateMachine";
 import { operatorFacingPropertyName, SetupInputError } from "../setup/setupActions";
 import { visitorSubject } from "../visitor/identity";
-import { isEffectivelyPaused, isRemoved, isUnitPaused } from "../setup/availability";
+import { isEffectivelyPaused, isRemoved } from "../setup/availability";
 import { dropUnitWaiters, dropWaiters, rememberWaiter, uniquePhones, waitersFor } from "../setup/pauseWaiters";
 import type { PropertyState, TourRecord } from "../setup/workspace";
 import { writeJsonAtomic } from "../storage/atomicWrite";
@@ -25,7 +25,7 @@ interface Ctx {
   now: () => Date;
 }
 
-function ask(ctx: Ctx, action: string, target: string, fingerprint: string, question: string, details: Record<string, unknown> = {}) {
+export function ask(ctx: Ctx, action: string, target: string, fingerprint: string, question: string, details: Record<string, unknown> = {}) {
   const confirmation = ctx.confirmations.issue(action, target, fingerprint, question);
   return {
     status: "needs-confirmation" as const,
@@ -36,12 +36,8 @@ function ask(ctx: Ctx, action: string, target: string, fingerprint: string, ques
   };
 }
 
-function redeem(ctx: Ctx, code: string, action: string, target: string, fingerprint: string): void {
+export function redeem(ctx: Ctx, code: string, action: string, target: string, fingerprint: string): void {
   ctx.confirmations.redeem(code, action, target, fingerprint);
-}
-
-export function isBookedReservation(reservation: Reservation | undefined): reservation is Reservation {
-  return !!reservation?.slotStart && !isRunningReservation(reservation.status) && !TERMINAL.includes(reservation.status);
 }
 
 function labelOf(services: OperatorServices, propertyId: string): string {
@@ -345,16 +341,4 @@ export async function removeProperty(ctx: Ctx, input: { property?: string; confi
     cancelled,
     removed: true,
   };
-}
-
-export function pauseFlags(state: PropertyState, unitIds: string[]): { paused: boolean; removed: boolean; pausedUnitIds: string[] } {
-  return {
-    paused: isEffectivelyPaused(state, unitIds),
-    removed: isRemoved(state),
-    pausedUnitIds: state.pausedUnitIds ?? [],
-  };
-}
-
-export function unitPausedFlag(state: PropertyState | undefined, unitId: string): boolean {
-  return isUnitPaused(state, unitId);
 }

@@ -2,7 +2,7 @@ import { spokenClockTime, WEEKDAYS, type Weekday } from "../core/timezone";
 import { tourWindows } from "../core/tourWindows";
 import type { TourWindow } from "../config/tourCoreConfig";
 import { isGeneralTourHoursQuestion } from "../intent/tourHoursAsk";
-import { describeTourDays } from "../operator/tourDayWords";
+import { DAY_NAME as EXAMPLE_NAME, describeTourDays } from "../operator/tourDayWords";
 import { renderSms } from "../sms/templates";
 
 export { isGeneralTourHoursQuestion };
@@ -14,16 +14,6 @@ export function savedTourHours(hours: { days?: readonly string[]; start?: string
 } {
   return !!hours && Array.isArray(hours.days) && hours.days.length > 0 && !!hours.start && !!hours.end;
 }
-
-const EXAMPLE_NAME: Record<Weekday, string> = {
-  MON: "Monday",
-  TUE: "Tuesday",
-  WED: "Wednesday",
-  THU: "Thursday",
-  FRI: "Friday",
-  SAT: "Saturday",
-  SUN: "Sunday",
-};
 
 const NAMED_FILL: readonly Weekday[] = ["SAT", "MON", "TUE", "WED", "THU", "FRI", "SUN"];
 

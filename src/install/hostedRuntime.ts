@@ -1,6 +1,5 @@
-import { isAbsolute, relative, resolve } from "node:path";
 import type { DeploymentMode } from "./deployment";
-import { allowEphemeralStorage } from "./persistentVolume";
+import { allowEphemeralStorage, pathIsInside } from "./persistentVolume";
 
 /**
  * HOSTED_RAILWAY_P0 runtime decisions. Railway injects PORT and
@@ -86,11 +85,6 @@ export function listenPort(env: NodeJS.ProcessEnv, mode: DeploymentMode, fallbac
   return { port };
 }
 
-function inside(child: string, parent: string): boolean {
-  const rel = relative(resolve(parent), resolve(child));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
 /**
  * Where hosted secrets and cache live. Prefer the Railway volume. Refuse to
  * start on the default relative folder, which does not survive a deploy.
@@ -99,7 +93,7 @@ export function hostedStateDir(env: NodeJS.ProcessEnv): { dir: string } | { prob
   const mount = env.RAILWAY_VOLUME_MOUNT_PATH?.trim();
   const home = env.TOURCORE_HOME?.trim();
   const allow = allowEphemeralStorage(env);
-  if (mount && home && !inside(home, mount) && !allow) {
+  if (mount && home && !pathIsInside(home, mount) && !allow) {
     return { problem: "TOURCORE_HOME must be on the Railway volume (RAILWAY_VOLUME_MOUNT_PATH). The container disk is not durable." };
   }
   const dir = home || mount;

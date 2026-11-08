@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { OperatorTool, ToolContext } from "../operator/tools";
+import type { OperatorTool } from "../operator/tools";
+import { tool } from "../operator/defineTool";
 import { SetupInputError } from "../setup/setupActions";
 import {
   hostedDemoFingerprint,
@@ -24,17 +25,6 @@ const REFUSAL = {
   unauthenticated: "Only the current hosted Tour Core owner can reset this demo.",
   "not-owner": "Only the current hosted Tour Core owner can reset this demo.",
 } as const;
-
-function tool<S extends z.ZodObject>(def: {
-  name: string;
-  title: string;
-  description: string;
-  kind: "read" | "change" | "consequential";
-  input: S;
-  run: (ctx: ToolContext, input: z.infer<S>) => Promise<Record<string, unknown>>;
-}): OperatorTool {
-  return def as unknown as OperatorTool;
-}
 
 export function hostedResetToolVisible(ctx: { installation?: Installation; caller?: { clientId?: string } } | undefined): boolean {
   return hostedResetAccess(ctx?.installation, ctx?.caller) === "ok";

@@ -24,7 +24,6 @@ const railwayMountinfo = [OVERLAY_ROOT, PROC, DATA_EXT4].join("\n");
 
 function io(mountinfo: string | undefined, devices: Record<string, number> = {}): PersistentVolumeIo {
   return {
-    platform: "linux",
     readMountinfo: mountinfo === undefined ? undefined : () => mountinfo,
     stat: (path) => {
       const resolved = resolve(path);

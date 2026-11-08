@@ -17,11 +17,10 @@ import { LOCAL_WEBHOOK_PATH } from "../messaging/local/provider";
 import { resetLocalSmsOutbox } from "../messaging/local/outbox";
 import { PHOTON_WEBHOOK_PATH } from "../messaging/photon/provider";
 import { readTwilioEnv, TWILIO_WEBHOOK_PATH } from "../messaging/twilio/provider";
-import { cleanerCoreEnabled, cleanerMultiTenant, supplyCoreOn, tourCoreTenants } from "../cleaner-core/flag";
+import { cleanerCoreEnabled, cleanerMultiTenant, tourCoreTenants } from "../cleaner-core/flag";
 import type { TouringFront } from "../hosted/serviceTools";
 import type { OperatorServices } from "../operator/services";
 import { DeliveryError } from "../alerts/operatorEvents";
-import { serviceChoices, type ServicePick } from "../hosted/serviceChoice";
 import { deliverTouringEvent, refreshTouringAlerts } from "../hosted/touringAlerts";
 import { buildTouringEnv, touringScratch } from "../hosted/touringEnv";
 import { standDownTouring, TOURING_LIVE_PATH, TOURING_STAND_DOWN_PATH, touringLiveWork } from "../hosted/touringLive";
@@ -237,14 +236,6 @@ function publicRouteAllowed(method: string, path: string, oauth: boolean, hosted
 
 const forwardedProto = (req: IncomingMessage) => String(req.headers["x-forwarded-proto"] ?? "").split(",")[0]?.trim().toLowerCase();
 
-function safeManifestProvider(installation: Installation) {
-  try {
-    return installation.files.manifest()?.messagingProvider;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * The local setup app plus the two things a real phone needs: the messaging
  * receive webhook and the identity-form page. Operator pages and APIs answer
@@ -258,6 +249,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
   visitors.usePauseWaiters((id, waiter) => rememberWaiter(workspace.root, id, waiter));
   const dev = options.dev ?? false;
   const log = options.log ?? ((line: string) => console.log(`  ${line}`));
+  const clock = () => options.now?.() ?? new Date();
   const runtime = options.installation?.runtime ?? new FileRuntimeStore(join(workspace.root, "runtime"));
   const installation = options.installation ?? new Installation({ root: workspace.root, runtime, log });
   workspace.useInstalledMessaging(() => ({ provider: selectionFromInstallation(installation).provider }));
@@ -267,7 +259,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     env: installation.env(),
     sendblue: installation.sendblueEnv(),
     choice: installation.files.state().messagingProviderChoice,
-    manifestProvider: safeManifestProvider(installation),
+    manifestProvider: installation.files.readableManifest()?.messagingProvider,
   }));
   const ledger = new MessagingLedger(join(workspace.root, "runtime", "messaging-ledger", "ledger.json"), 5000, join(workspace.root, "messaging", "ledger.json"));
   const links = new VerificationLinks({ baseUrl: () => installation.publicBaseUrl() ?? publicBaseUrl(installation.env()), now: options.realNow, store: runtime });
@@ -396,25 +388,25 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
   // Tenants move into their properties before any desk opens, so no desk is ever cached at a tenant's old folder.
   if (multiTenant()) {
     try {
-      const { migrated } = migrateRegistry(installation.root, () => options.now?.() ?? new Date());
+      const { migrated } = migrateRegistry(installation.root, clock);
       if (migrated > 0) log(`Moved ${migrated} tenant${migrated === 1 ? "" : "s"} into their first property.`);
     } catch (err) {
       if (err instanceof MigrationError) log(err.message);
       throw err;
     }
   }
-  const tenants = new TenantRegistry(installation.root, () => options.now?.() ?? new Date());
+  const tenants = new TenantRegistry(installation.root, clock);
   // Each property's details and calendars move into its hub before any desk opens, with its own
   // cleaning switch picking the calendar list when both flows saved one.
-  if (multiTenant()) migrateHubs(installation.root, tenants.list(), () => options.now?.() ?? new Date(), log);
+  if (multiTenant()) migrateHubs(installation.root, tenants.list(), clock, log);
   const serviceOrigin = () => {
     const base = installation.publicBaseUrl();
     return base ? new URL(base).origin : undefined;
   };
   // Touring tenants on the multi-tenant service: one Tour Core process each, and the texts waiting for them.
-  const touringFront: TouringFront | undefined = cleanerMultiTenant(installation.env())
+  const touringFront: TouringFront | undefined = multiTenant()
     ? (() => {
-        const inbox = new TouringInbox(installation.root, () => options.now?.() ?? new Date());
+        const inbox = new TouringInbox(installation.root, clock);
         const authToken = () => installation.env().CLEANER_CORE_TWILIO_AUTH_TOKEN?.trim() || undefined;
         const supervisor = new TouringSupervisor({
           spawn: forkTouringWorker,
@@ -481,17 +473,14 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     registry: tenants,
     secrets: new TenantSecrets(installation.root),
     dataRoot: installation.root,
-    origin: () => {
-      const base = installation.publicBaseUrl();
-      return base ? new URL(base).origin : undefined;
-    },
+    origin: serviceOrigin,
     baseEnv: () => installation.env(),
     grantLive: (grantId) => {
       const store = new OAuthGrantStore(installation.runtime, options.authNow);
       const grant = store.get(grantId);
       return Boolean(grant && store.isLive(grant));
     },
-    now: () => options.now?.() ?? new Date(),
+    now: clock,
     log,
   });
   // Sign in and Create account on the connect page. Off until CLEANER_CORE_SIGNUP and its settings are set.
@@ -500,7 +489,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     codes: () => phoneCodesFor(installation.env()),
     openAccount: (input) => openAccount(hostedCleanerService, input),
     env: () => installation.env(),
-    now: () => (options.now?.() ?? new Date()).getTime(),
+    now: () => clock().getTime(),
     log,
   });
   const oauth =
@@ -536,12 +525,12 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           },
           approvalPlace: () => (hostedMode() ? "hosted" : "computer"),
           cleanerAssistant: () => cleanerAssistant(installation.env()),
-          ...(cleanerMultiTenant(installation.env())
+          ...(multiTenant()
             ? {
                 invites: {
                   claim: (code: string) => tenants.claimInvite(code),
                   connected: (tenantId: string, grantId: string, assistant: CleanerAssistant) =>
-                    tenants.connect(tenantId, { grantId, assistant, connectedAt: (options.now?.() ?? new Date()).toISOString() }),
+                    tenants.connect(tenantId, { grantId, assistant, connectedAt: clock().toISOString() }),
                   refusal: (reason: InviteRefusal) => INVITE_REFUSALS[reason],
                   accounts: accountDoor(signUp),
                 },
@@ -606,14 +595,6 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
       playbookClients.delete(oldest);
     }
   };
-  /** A read refreshes the entry. The Map's order is least-recently-read first. */
-  const touchPlaybookClient = (key: string): ReportedClient | undefined => {
-    const client = playbookClients.get(key);
-    if (!client) return undefined;
-    playbookClients.delete(key);
-    playbookClients.set(key, client);
-    return client;
-  };
   // A touring process never sees the sign-in. The shared service, which checked the key, says which chat it is.
   const clientFromWorker = (req: IncomingMessage): ReportedClient | undefined => {
     const raw = req.headers[WORKER_CLIENT_HEADER];
@@ -630,7 +611,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     const value = (Array.isArray(raw) ? raw[0] : raw)?.trim();
     return value || undefined;
   };
-  const fallbackKey = (caller?: { clientId?: string }) => (caller?.clientId ? `caller:${caller.clientId}` : "static");
+  const fallbackKey = (caller?: { clientId?: string }) => (caller?.clientId ? `caller:${caller.clientId}` : staticFallbackKey);
   const sessionKey = (id: string) => `session:${id}`;
   const isInitialize = (message: unknown): boolean => {
     if (Array.isArray(message)) return message.some((item) => isInitialize(item));
@@ -639,7 +620,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
   const tools: ToolContext = {
     services: api,
     confirmations,
-    now: () => options.now?.() ?? new Date(),
+    now: clock,
     localUrl: () => {
       const address = server?.address();
       return typeof address === "object" && address ? `http://localhost:${address.port}` : undefined;
@@ -653,10 +634,11 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
       conversations.dropLive();
       confirmations.clear();
       oauth?.provider.discardPending();
-      installation.approvals.discard();
       resetLocalSmsOutbox();
     },
   };
+  // What every single-tenant Cleaner Core handler is given.
+  const cleanerDeps = { env: () => installation.env(), root: installation.root, now: clock };
 
   server = createServer(async (req, res) => {
     const send = (status: number, type: string, body: string, extra: Record<string, string | string[]> = {}) => {
@@ -720,7 +702,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
       // The shared service asks a touring process what's live, and stands it down, before a switch.
       if (workerMode && (url.pathname === TOURING_LIVE_PATH || url.pathname === TOURING_STAND_DOWN_PATH)) {
         const json = "application/json; charset=utf-8";
-        const now = options.now?.() ?? new Date();
+        const now = clock();
         const work = await touringLiveWork(api, now);
         if (url.pathname === TOURING_LIVE_PATH) return send(200, json, JSON.stringify(work));
         if (work.inProgress) return send(409, json, JSON.stringify({ error: "in-progress" }));
@@ -890,16 +872,12 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
             : (seen ?? cached)
           : preferPlaybookClient(cached, storedClient);
         const callerKey = fallbackKey(caller);
-        const remember = (slot: string, client: ReportedClient) => {
-          if (playbookClients.get(slot) === client) touchPlaybookClient(slot);
-          else rememberPlaybookClient(slot, client);
-        };
         if (reportedClient) {
           const latestStaticInitialize = initializing && !knownPlaybook(storedClient);
-          if (knownPlaybook(reportedClient) || !knownPlaybook(cached) || latestStaticInitialize) remember(key, reportedClient);
-          if (knownPlaybook(reportedClient) || !knownPlaybook(playbookClients.get(callerKey)) || latestStaticInitialize) remember(callerKey, reportedClient);
+          if (knownPlaybook(reportedClient) || !knownPlaybook(cached) || latestStaticInitialize) rememberPlaybookClient(key, reportedClient);
+          if (knownPlaybook(reportedClient) || !knownPlaybook(playbookClients.get(callerKey)) || latestStaticInitialize) rememberPlaybookClient(callerKey, reportedClient);
         }
-        if (!initializing && incomingSession && !knownSession && reportedClient) remember(sessionKey(incomingSession), reportedClient);
+        if (!initializing && incomingSession && !knownSession && reportedClient) rememberPlaybookClient(sessionKey(incomingSession), reportedClient);
         const scoped = connectorPath !== "landlord" || toolSurface !== "all";
         const reply = await handleMcpMessage(
           {
@@ -918,6 +896,18 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
         }
         return send(reply.status, json, JSON.stringify(reply.body), sessionHeaders);
       }
+      // The address a webhook was signed for: the public address, then the path and query this request came to.
+      const signedUrlFor = () => {
+        const base = installation.publicBaseUrl();
+        return base ? `${base}${url.pathname}${url.search}` : undefined;
+      };
+      // A refused body may still be arriving. Close so the rest isn't read as the next request.
+      const sendUpload = (result: { status: number; body: string }) => send(result.status, "application/json; charset=utf-8", result.body, result.status === 413 ? { Connection: "close" } : {});
+      // A text to the cleaning number, answered by Cleaner Core.
+      const answerCleanerText = async (rawBody: Buffer, signedUrl: string | undefined) => {
+        const result = await handleCleanerTwilioWebhook({ rawBody, headers: req.headers, url: signedUrl, ...cleanerDeps });
+        return send(result.status, result.contentType ?? "application/json; charset=utf-8", result.body);
+      };
       if (url.pathname === CLEANER_MCP_PATH) {
         const result = await handleCleanerMcpHttp({
           method,
@@ -925,9 +915,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           pinKeyHeader: req.headers["x-cleaner-core-pin-key"],
           contentType: String(req.headers["content-type"] ?? ""),
           readBody: () => readRaw(req),
-          env: () => installation.env(),
-          root: installation.root,
-          now: () => options.now?.() ?? new Date(),
+          ...cleanerDeps,
           saveSecrets: (values) => installation.secrets.set(values),
           deleteSecrets: (names) => installation.secrets.delete(names),
           // Token checked before the body is read; failures have already been answered (401/403/503).
@@ -944,9 +932,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           method,
           contentType: String(req.headers["content-type"] ?? ""),
           readBody: () => readCapped(req, ALERT_UPLOAD_MAX_BYTES),
-          env: () => installation.env(),
-          root: installation.root,
-          now: () => options.now?.() ?? new Date(),
+          ...cleanerDeps,
           saveSecrets: (values) => installation.secrets.set(values),
         });
         return send(result.status, result.headers["Content-Type"] ?? "text/html; charset=utf-8", result.body, { ...result.headers, ...(result.status === 413 ? { Connection: "close" } : {}) });
@@ -958,13 +944,10 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           code: uploadCode,
           contentType: String(req.headers["content-type"] ?? ""),
           readBody: () => readCapped(req, ALERT_UPLOAD_MAX_BYTES),
-          env: () => installation.env(),
-          root: installation.root,
-          now: () => options.now?.() ?? new Date(),
+          ...cleanerDeps,
           saveSecrets: (values) => installation.secrets.set(values),
         });
-        // A refused body may still be arriving. Close so the rest isn't read as the next request.
-        return send(result.status, "application/json; charset=utf-8", result.body, result.status === 413 ? { Connection: "close" } : {});
+        return sendUpload(result);
       }
       const calendarCode = method === "POST" ? calendarUploadCode(url.pathname) : undefined;
       if (calendarCode) {
@@ -973,11 +956,9 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           code: calendarCode,
           contentType: String(req.headers["content-type"] ?? ""),
           readBody: () => readCapped(req, ALERT_UPLOAD_MAX_BYTES),
-          env: () => installation.env(),
-          root: installation.root,
-          now: () => options.now?.() ?? new Date(),
+          ...cleanerDeps,
         });
-        return send(result.status, "application/json; charset=utf-8", result.body, result.status === 413 ? { Connection: "close" } : {});
+        return sendUpload(result);
       }
       const doorCode = method === "POST" ? doorCodeUploadCode(url.pathname) : undefined;
       if (doorCode) {
@@ -986,51 +967,30 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           code: doorCode,
           contentType: String(req.headers["content-type"] ?? ""),
           readBody: () => readCapped(req, ALERT_UPLOAD_MAX_BYTES),
-          env: () => installation.env(),
-          root: installation.root,
-          now: () => options.now?.() ?? new Date(),
+          ...cleanerDeps,
         });
-        return send(result.status, "application/json; charset=utf-8", result.body, result.status === 413 ? { Connection: "close" } : {});
+        return sendUpload(result);
       }
       if (method === "GET" && url.pathname.startsWith(CLEANER_PHOTO_PREFIX)) {
         // A cleaner photo for Grok. Public, but only with a signed token that hasn't expired.
         const env = installation.env();
         if (!cleanerOn()) return send(404, "text/plain", "Not found");
-        const photo = servePhoto(installation.root, url.pathname.slice(CLEANER_PHOTO_PREFIX.length), photoKey(env), options.now?.() ?? new Date());
+        const photo = servePhoto(installation.root, url.pathname.slice(CLEANER_PHOTO_PREFIX.length), photoKey(env), clock());
         if (photo.status !== 200) return send(404, "text/plain", "Not found", { "Cache-Control": "no-store" });
         res.writeHead(200, { ...photo.headers, "Content-Length": String(photo.body.length) });
         return res.end(photo.body);
       }
-      if (method === "POST" && url.pathname === CLEANER_TWILIO_STATUS_PATH) {
+      if (method === "POST" && (url.pathname === CLEANER_TWILIO_STATUS_PATH || url.pathname === CLEANER_TWILIO_GROUP_PATH)) {
+        const handle = url.pathname === CLEANER_TWILIO_STATUS_PATH ? handleCleanerTwilioStatus : handleCleanerGroupWebhook;
         const rawBody = await readRaw(req);
-        const signedUrl = installation.publicBaseUrl() ? `${installation.publicBaseUrl()}${url.pathname}${url.search}` : undefined;
-        const result = await handleCleanerTwilioStatus({
-          rawBody,
-          headers: req.headers,
-          url: signedUrl,
-          env: () => installation.env(),
-          root: installation.root,
-          now: () => options.now?.() ?? new Date(),
-        });
-        return send(result.status, "application/json; charset=utf-8", result.body);
-      }
-      if (method === "POST" && url.pathname === CLEANER_TWILIO_GROUP_PATH) {
-        const rawBody = await readRaw(req);
-        const signedUrl = installation.publicBaseUrl() ? `${installation.publicBaseUrl()}${url.pathname}${url.search}` : undefined;
-        const result = await handleCleanerGroupWebhook({
-          rawBody,
-          headers: req.headers,
-          url: signedUrl,
-          env: () => installation.env(),
-          root: installation.root,
-          now: () => options.now?.() ?? new Date(),
-        });
+        const signedUrl = signedUrlFor();
+        const result = await handle({ rawBody, headers: req.headers, url: signedUrl, ...cleanerDeps });
         return send(result.status, "application/json; charset=utf-8", result.body);
       }
       if (method === "POST" && url.pathname === CLEANER_TWILIO_PATH) {
         const rawBody = await readRaw(req);
         const env = installation.env();
-        const signedUrl = installation.publicBaseUrl() ? `${installation.publicBaseUrl()}${url.pathname}${url.search}` : undefined;
+        const signedUrl = signedUrlFor();
         const tourNumber = readTwilioEnv(env).fromNumber;
         const cleanerNumber = env.CLEANER_CORE_TWILIO_PHONE_NUMBER;
         // A text sent to the touring number is handled by Tour Core, even on this path.
@@ -1046,37 +1006,19 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           });
           return send(result.status, "application/json; charset=utf-8", JSON.stringify(result.body));
         }
-        const result = await handleCleanerTwilioWebhook({
-          rawBody,
-          headers: req.headers,
-          url: signedUrl,
-          env: () => installation.env(),
-          root: installation.root,
-          now: () => options.now?.() ?? new Date(),
-        });
-        return send(result.status, result.contentType ?? "application/json; charset=utf-8", result.body);
+        return await answerCleanerText(rawBody, signedUrl);
       }
       if (method === "POST" && (url.pathname === SENDBLUE_WEBHOOK_PATH || url.pathname === TWILIO_WEBHOOK_PATH || url.pathname === PHOTON_WEBHOOK_PATH || url.pathname === LOCAL_WEBHOOK_PATH)) {
         const rawBody = await readRaw(req);
         const providerId = url.pathname === TWILIO_WEBHOOK_PATH ? "twilio" : url.pathname === PHOTON_WEBHOOK_PATH ? "photon" : url.pathname === LOCAL_WEBHOOK_PATH ? "local" : "sendblue";
         const selection = selectionFromInstallation(installation);
-        const signedUrl = installation.publicBaseUrl() ? `${installation.publicBaseUrl()}${url.pathname}${url.search}` : undefined;
+        const signedUrl = signedUrlFor();
         if (providerId === "twilio") {
           const env = installation.env();
           const tourNumber = readTwilioEnv(env).fromNumber;
           const cleanerNumber = env.CLEANER_CORE_TWILIO_PHONE_NUMBER;
           // A text sent to the cleaning number is handled by Cleaner Core, even on this path.
-          if (cleanerOn() && textAddressedTo(rawBody, cleanerNumber) && !textAddressedTo(rawBody, tourNumber)) {
-            const result = await handleCleanerTwilioWebhook({
-              rawBody,
-              headers: req.headers,
-              url: signedUrl,
-              env: () => installation.env(),
-              root: installation.root,
-              now: () => options.now?.() ?? new Date(),
-            });
-            return send(result.status, result.contentType ?? "application/json; charset=utf-8", result.body);
-          }
+          if (cleanerOn() && textAddressedTo(rawBody, cleanerNumber) && !textAddressedTo(rawBody, tourNumber)) return await answerCleanerText(rawBody, signedUrl);
         }
         const provider = createMessagingProvider(providerId, { env: () => installation.env(), sendblue: () => installation.sendblueEnv(), ledger, now: options.now });
         if (providerId === "sendblue") {
@@ -1148,7 +1090,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
       .then(() => {
         if (!cleanerOn()) return undefined;
         if (multiTenant()) return drainAllTenants(hostedCleanerService);
-        return drainCleanerAlerts(installation.root, () => installation.env(), () => options.now?.() ?? new Date());
+        return drainCleanerAlerts(installation.root, () => installation.env(), clock);
       })
       .catch(() => undefined);
   }, options.alertRetryMs ?? 15_000);
@@ -1311,13 +1253,7 @@ if (!touringProcess && process.argv[1] && import.meta.url === pathToFileURL(proc
   const open = hosted ? false : !args.includes("--no-open") && !process.env.CI;
   const workspace = new PropertyWorkspace();
   const installation = new Installation({ root: workspace.root, runtime: new FileRuntimeStore(join(workspace.root, "runtime")) });
-  const recorded = (() => {
-    try {
-      return installation.files.manifest();
-    } catch {
-      return undefined;
-    }
-  })();
+  const recorded = installation.files.readableManifest();
   const deployment = resolveDeploymentMode(process.env, recorded?.deploymentMode);
   const { manifest } = installation.files.ensure({ deploymentMode: deployment.mode });
   if (hosted) {

@@ -5,10 +5,10 @@ import { parsePhone } from "../../core/phone";
 import { forgetLiveDesk, liveDeskFor } from "../liveDesk";
 import { forgetPeople } from "../../hub/people";
 import { setFlows } from "../../hosted/service";
-import { findProperty, propertyFolder } from "./properties";
+import { propertyFolder } from "./properties";
 import { refreshTouringAlerts as tellTouringAlerts } from "../../hosted/touringAlerts";
 import { ADMIN_HEADERS, invitePage, loginPage, messagePage, poolPage, tenantPage, tenantsPage, type PoolRow, type TenantHealth } from "./adminPages";
-import { attachTypedLine, closeLine, numberPool, openAccount, recordAccountLines, releasePooled, repointLine, topUp, type LineClosed, type TopUpRefusal } from "./lines";
+import { attachTypedLine, closeLine, numberPool, openAccount, recordAccountLines, releasePooled, repointLine, topUp, type CloseLine, type LineClosed, type TopUpRefusal } from "./lines";
 import { PoolError } from "./numberPool";
 import { RegistryError, tenantFolder, type Tenant } from "./registry";
 import { propertyContext, type HostedCleaner } from "./router";
@@ -211,16 +211,15 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
   const verb = path.slice(`/admin/tenants/${tenant.id}/`.length);
   const back = `/admin/tenants/${tenant.id}`;
   const grantId = form.get("grantId") ?? "";
+  if ((verb === "primary" || verb === "disconnect") && !tenant.connections.some((c) => c.grantId === grantId)) return html(400, page(h, tenant, live.csrf, "That connection isn't on this tenant."));
   switch (verb) {
     case "invite":
       return html(200, invitePage(tenant, h.registry.invite(tenant.id), connectorUrl(h)));
     case "primary":
-      if (!tenant.connections.some((c) => c.grantId === grantId)) return html(400, page(h, tenant, live.csrf, "That connection isn't on this tenant."));
       h.registry.setPrimary(tenant.id, grantId);
       refreshTouringAlerts(h, tenant.id);
       return redirect(back);
     case "disconnect":
-      if (!tenant.connections.some((c) => c.grantId === grantId)) return html(400, page(h, tenant, live.csrf, "That connection isn't on this tenant."));
       deps.revokeGrant(grantId);
       h.secrets.deleteConnection(tenant.id, grantId);
       h.registry.disconnect(tenant.id, grantId);
@@ -239,8 +238,8 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
       const flow = form.get("flow");
       if (flow !== "cleaning" && flow !== "supplies") return html(400, page(h, tenant, live.csrf, "Pick cleaning or supplies."));
       // The form names its property every time; one that names none, or another's, changes nothing.
-      const property = findProperty(tenant, form.get("property") ?? "");
-      if (!property || property.id !== (form.get("property") ?? "").trim()) return html(400, page(h, tenant, live.csrf, REGISTRY_WORDS["unknown-property"]));
+      const property = tenant.properties.find((p) => p.id === (form.get("property") ?? "").trim());
+      if (!property) return html(400, page(h, tenant, live.csrf, REGISTRY_WORDS["unknown-property"]));
       const reply = await setFlows({ h, tenant, actor: "admin", noteToolsChanged: () => {} }, { property: property.id, [flow]: false, force: true });
       if (reply.isError) return html(400, page(h, h.registry.get(tenant.id) ?? tenant, live.csrf, reply.text));
       return redirect(back);
@@ -250,7 +249,7 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
       try {
         h.registry.setTouring(tenant.id);
       } catch (err) {
-        if (err instanceof RegistryError) return html(400, page(h, tenant, live.csrf, "This account has properties, so it can't run touring."));
+        if (err instanceof RegistryError) return html(400, page(h, tenant, live.csrf, REGISTRY_WORDS["has-properties"]));
         throw err;
       }
       await h.touring?.start(h.registry.get(tenant.id)!);
@@ -391,7 +390,7 @@ function healthOf(h: HostedCleaner, tenant: Tenant): TenantHealth {
   return { service, process: "—", restartsLastDay: 0, queuedTexts: 0, alerts, perProperty };
 }
 
-async function deleteTenant(deps: AdminDeps, tenant: Tenant, line: "return" | "release"): Promise<LineClosed> {
+async function deleteTenant(deps: AdminDeps, tenant: Tenant, line: CloseLine): Promise<LineClosed> {
   const { h } = deps;
   for (const connection of tenant.connections) deps.revokeGrant(connection.grantId);
   // Off first, so no request or drain starts work on the folder while it goes, and no touring process writes to it.

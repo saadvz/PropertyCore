@@ -214,7 +214,7 @@ export const REUSE_DAYS_RANGE = "Pick a number of days from 1 to 365.";
 
 export function reuseDaysRefusal(days: number | undefined): string | undefined {
   if (days === undefined) return undefined;
-  if (!Number.isInteger(days) || days < 1 || days > 365) return REUSE_DAYS_RANGE;
+  if (!Number.isInteger(days) || !within(days, POLICY_LIMITS.verificationValidForDays)) return REUSE_DAYS_RANGE;
   return undefined;
 }
 

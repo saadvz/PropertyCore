@@ -19,7 +19,6 @@ import { consentPage, PAGE_HEADERS, problemPage } from "./pages";
 import { hashSecret, newSecret, type OAuthGrantStore } from "./store";
 import { assistantForRedirect, type CleanerAssistant } from "../../cleaner-core/assistant";
 import type { InviteRefusal } from "../../cleaner-core/hosted/registry";
-import { servicePick, type ServiceChoice, type ServicePick } from "../../hosted/serviceChoice";
 
 /**
  * Tour Core's authorization server, behind the official MCP SDK's OAuth
@@ -136,12 +135,6 @@ export interface InviteBook {
   claim(code: string): { tenantId: string } | { refused: InviteRefusal };
   /** The grant now exists. */
   connected(tenantId: string, grantId: string, assistant: CleanerAssistant): void;
-  /** The host picked a service on the shared address's page. Sets it only when the number has none yet. */
-  choose?(tenantId: string, service: ServicePick): void;
-  /** Whether the shared address's page offers the pick: more than one service runs here. */
-  offersPick?(assistant?: CleanerAssistant): boolean;
-  /** The services on offer to this chat, when the page shows the pick. */
-  choices?(assistant?: CleanerAssistant): readonly ServiceChoice[];
   /** The words for each refusal. */
   refusal(reason: InviteRefusal): string;
   /** Sign in and Create account with a phone code. Unset or closed: the page takes only an invite code. */
@@ -378,7 +371,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
       label: ep.label,
       // On the multi-tenant service every address takes an invite code.
       ...(this.options.invites
-        ? { assistant: assistantForRedirect(request.redirectUri), invite: true, ...accountPage(this.options.invites), services: ep.label === "Tour Core and Cleaner Core" && (this.options.invites.offersPick?.(assistantForRedirect(request.redirectUri)) ?? false), ...(this.options.invites.choices ? { serviceChoices: this.options.invites.choices(assistantForRedirect(request.redirectUri)) } : {}) }
+        ? { assistant: assistantForRedirect(request.redirectUri), invite: true, ...accountPage(this.options.invites) }
         : ep.label === "Cleaner Core" && this.options.cleanerAssistant
           ? { assistant: this.options.cleanerAssistant() }
           : {}),
@@ -404,7 +397,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
    * Allow with the invite code from the multi-tenant Cleaner Core's page. The match code is checked
    * first, then the invite is used up and the request remembers its tenant.
    */
-  approveWithInvite(id: string, matchCodeGiven: string, inviteCode: string, service?: unknown): { ok: true } | { ok: false; message: string } {
+  approveWithInvite(id: string, matchCodeGiven: string, inviteCode: string): { ok: true } | { ok: false; message: string } {
     const invites = this.options.invites;
     const refused = { ok: false as const, message: "That connection can't be approved from here." };
     if (!invites) return refused;
@@ -417,24 +410,19 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
       this.log(`Refused a Cleaner Core approval: the invite code was ${claim.refused}.`);
       return { ok: false, message: invites.refusal(claim.refused) };
     }
-    if (!this.bind(request, invites, claim.tenantId, service)) return refused;
+    if (!this.bind(request, claim.tenantId)) return refused;
     this.log(`A Cleaner Core approval used an invite for ${claim.tenantId}.`);
     return { ok: true };
   }
 
-  /** The request's tenant is known: approve it, and set the service the host picked on the shared address. */
-  private bind(request: ApprovalRequest, invites: InviteBook, tenantId: string, service: unknown): boolean {
+  /** The request's tenant is known: approve it. */
+  private bind(request: ApprovalRequest, tenantId: string): boolean {
     request.tenantId = tenantId;
-    if (!this.decide(request.id, "approved")) return false;
-    // Only the shared address offers the pick, and only while both services run.
-    const pick = servicePick(service, invites.choices?.(assistantForRedirect(request.redirectUri)));
-    const shared = this.options.endpoints()?.find((ep) => ep.path === request.resourcePath)?.label === "Tour Core and Cleaner Core";
-    if (pick && shared && invites.offersPick?.(assistantForRedirect(request.redirectUri))) invites.choose?.(tenantId, pick);
-    return true;
+    return this.decide(request.id, "approved");
   }
 
   /** The open account door and the pending request the page's match code names. */
-  private accountRequest(id: string, matchCodeGiven: string): { door: AccountDoor; invites: InviteBook; request: ApprovalRequest } | undefined {
+  private accountRequest(id: string, matchCodeGiven: string): { door: AccountDoor; request: ApprovalRequest } | undefined {
     const invites = this.options.invites;
     const door = invites?.accounts;
     if (!invites || !door?.open()) return undefined;
@@ -442,7 +430,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
     const request = this.requests.get(id);
     if (!request || request.status !== "pending") return undefined;
     if (!codesMatch(matchCodeGiven, request.matchCode)) return undefined;
-    return { door, invites, request };
+    return { door, request };
   }
 
   /** Texts the landlord a code from the connect page. */
@@ -456,7 +444,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
    * Allow after Sign in or Create account. The phone code is checked first; the grant then binds to
    * the account that phone owns, or to the new one.
    */
-  async approveWithAccount(id: string, matchCodeGiven: string, mode: "sign-in" | "sign-up", body: Record<string, unknown>, service?: unknown): Promise<{ ok: true } | { ok: false; message: string }> {
+  async approveWithAccount(id: string, matchCodeGiven: string, mode: "sign-in" | "sign-up", body: Record<string, unknown>): Promise<{ ok: true } | { ok: false; message: string }> {
     const refused = { ok: false as const, message: "That connection can't be approved from here." };
     const found = this.accountRequest(id, matchCodeGiven);
     if (!found) return refused;
@@ -469,7 +457,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
     if (found.request.status !== "pending" || found.request.expiresAt <= this.now()) {
       return mode === "sign-up" ? { ok: false, message: "Your account is set up, but this page timed out. Reconnect, then choose Sign in." } : refused;
     }
-    if (!this.bind(found.request, found.invites, answer.tenantId, service)) return refused;
+    if (!this.bind(found.request, answer.tenantId)) return refused;
     this.log(`A connect-page ${mode} approved a connection for ${answer.tenantId}.`);
     return { ok: true };
   }

@@ -6,11 +6,10 @@ import { PortableBackups } from "../backup/service";
 import type { RuntimeStore } from "../storage/runtimeStore";
 import type { DriveClient } from "../storage/googleDrive";
 import { RecordStore } from "../storage/recordStore";
-import { ApprovalSessions } from "./approvalSessions";
 import { resolveDeploymentMode, type DeploymentMode } from "./deployment";
-import { InstallationFiles } from "./manifest";
-import { LocalSecretStore, type SecretStore, type SettingName } from "./secretStore";
-import { effectiveEnv, secretValues, settingSource, type SettingsSource } from "./settings";
+import { InstallationFiles, installationPaths } from "./manifest";
+import { LocalSecretStore, type SecretStore } from "./secretStore";
+import { effectiveEnv, secretValues, type SettingsSource } from "./settings";
 import { SetupSessions } from "./setupSessions";
 
 export const TOURCORE_VERSION = "0.4.0";
@@ -47,7 +46,6 @@ export class Installation {
   readonly files: InstallationFiles;
   readonly secrets: SecretStore;
   readonly sessions: SetupSessions;
-  readonly approvals: ApprovalSessions;
   readonly outbox: OperatorEventOutbox;
   readonly grants: OAuthGrantStore;
   readonly records: RecordStore;
@@ -57,10 +55,9 @@ export class Installation {
 
   constructor(readonly options: InstallationOptions) {
     const now = options.now ?? Date.now;
-    this.secrets = options.secrets ?? new LocalSecretStore(new InstallationFiles(options.root).paths.secrets, now);
+    this.secrets = options.secrets ?? new LocalSecretStore(installationPaths(options.root).secrets, now);
     this.files = new InstallationFiles(options.root, () => secretValues(this.rawEnv(), { secrets: this.secrets }));
     this.sessions = new SetupSessions(options.runtime, now);
-    this.approvals = new ApprovalSessions(options.runtime, now);
     this.grants = new OAuthGrantStore(options.runtime, now);
     this.outbox = new OperatorEventOutbox(options.runtime, () => this.sink(), {
       ...options.outbox,
@@ -117,12 +114,7 @@ export class Installation {
   }
 
   deployment() {
-    let recorded: DeploymentMode | undefined;
-    try {
-      recorded = this.files.manifest()?.deploymentMode;
-    } catch {
-      recorded = undefined;
-    }
+    const recorded = this.files.readableManifest()?.deploymentMode;
     return resolveDeploymentMode(this.rawEnv(), recorded);
   }
 
@@ -134,17 +126,13 @@ export class Installation {
     return this.sendblueEnv().publicBaseUrl;
   }
 
-  settingSource(name: SettingName) {
-    return settingSource(name, this.rawEnv(), { secrets: this.secrets });
-  }
-
   /** Where operator events go: the Grok Routine once its address and key are set, otherwise nowhere yet. */
   sink(): OperatorNotificationSink {
     if (this.options.notificationSink) return this.options.notificationSink();
     const env = () => this.env();
     const routine = new GrokRoutineWebhookSink(
       { url: () => env().TOURCORE_GROK_ROUTINE_URL?.trim() || undefined, key: () => env().TOURCORE_GROK_ROUTINE_KEY?.trim() || undefined },
-      { fetch: this.options.fetch as never },
+      { fetch: this.options.fetch },
     );
     return routine.configured() ? routine : new NoopOperatorNotificationSink();
   }

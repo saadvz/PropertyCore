@@ -13,6 +13,7 @@ import { publishGuards, visitorTexting } from "../operator/setupFlow";
 import { LOCAL_TEST_TEXTING, localTestModeSentence, modeSentence, visitorsTextLine } from "../setup/setupActions";
 import { isCurrent, type PropertyWorkspace } from "../setup/workspace";
 import { probeRuntimeStore } from "../storage/runtimeStore";
+import { routineCredentialsChangedAt } from "./checks";
 import { DEPLOYMENT_MODE_LABELS, isTenantWorker, type DeploymentMode } from "./deployment";
 import type { Installation } from "./installation";
 import { activeFromNumber, createMessagingProvider, ensureMessagingSelection, MESSAGING_PROVIDER_CATALOG, selectionFromInstallation } from "../messaging/registry";
@@ -331,12 +332,7 @@ function grokStatus(inst: Installation): ComponentStatus {
         });
   }
   if (!connector) return component("GROK_OPERATOR", "NOT_CONFIGURED", "Grok can connect once Tour Core has a secure public connection.");
-  let connections: ReturnType<Installation["grants"]["connections"]> = [];
-  try {
-    connections = inst.grants.connections();
-  } catch {
-    connections = [];
-  }
+  const connections = safe(() => inst.grants.connections()) ?? [];
   const technical = [`Connector address: ${connector}`];
   if (connections.some((c) => c.address === connector)) return component("GROK_OPERATOR", "READY", "Grok is connected.", { technical });
   if (connections.length) {
@@ -577,9 +573,10 @@ function accessStatus(): ComponentStatus {
 }
 
 /**
- * The property onboarding works on. An unfinished property wins, so a second
- * building can be set up while another stays published. Otherwise the
- * published one, else the most recently saved, else a draft.
+ * The property onboarding works on. An unfinished property wins (the most
+ * recently saved one), so a second building can be set up while another
+ * stays published. Otherwise a property that is only a draft, else the
+ * first published one.
  */
 export function primaryProperty(ws: PropertyWorkspace): { id: string; saved: boolean } | undefined {
   const ids = ws.propertyIds().filter((id) => !ws.has(id) || !ws.load(id).state.removedAt);
@@ -593,8 +590,6 @@ export function primaryProperty(ws: PropertyWorkspace): { id: string; saved: boo
   if (draftOnly) return { id: draftOnly, saved: false };
   const published = saved.find((p) => p.state.status === "PUBLISHED_FOR_DEMO");
   if (published) return { id: published.config.property.id, saved: true };
-  const recent = [...saved].sort((a, b) => (b.state.savedAt ?? "").localeCompare(a.state.savedAt ?? ""))[0];
-  if (recent) return { id: recent.config.property.id, saved: true };
   return { id: ids[0]!, saved: false };
 }
 
@@ -714,7 +709,7 @@ function alertsStatus(inst: Installation, propertyReady: boolean, client?: Repor
     }
     return component("OPERATOR_ALERTS", "ACTION_REQUIRED", "Tour updates aren't turned on yet.", { provider: "GROK_ROUTINE", next: offer });
   }
-  const changedAt = latest(inst.secrets.updatedAt("TOURCORE_GROK_ROUTINE_URL"), inst.secrets.updatedAt("TOURCORE_GROK_ROUTINE_KEY"));
+  const changedAt = routineCredentialsChangedAt(inst);
   const test = step("OPERATOR_ALERTS", "TEST_OPERATOR_ALERTS", "GROK", "I'm sending a test update.", { tool: "test_operator_alerts" });
   // A polled task (ChatGPT, Muse) can't be woken, so connecting it is its test.
   if (worker && !inst.sink().polled?.()) {

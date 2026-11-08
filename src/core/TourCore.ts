@@ -33,7 +33,7 @@ import { approvedAnswerText, approvedFacts, type ApprovedFact } from "./facts";
 import { formatPhone, looksLikePhone, normalizePhone } from "./phone";
 import { resolveQuestion } from "./questions";
 import { closestOpenSlots, intervalsOverlap, occupiedInterval, overlapSummary, placementOf, relativeWhen, releasedWhen, tourInterval, touringHoursLabel, type OccupiedWindow, type TimeInterval } from "./customSlot";
-import { DOOR_AFTER_T, LATE_ARRIVAL_EXPIRED, landlordRepliedAfterClose, landlordWho, tourFinishedFollowUp, visitorRepliedAfterClose } from "./overstayCopy";
+import { DOOR_AFTER_T, knownFirstName, LATE_ARRIVAL_EXPIRED, landlordRepliedAfterClose, landlordWho, tourFinishedFollowUp, visitorRepliedAfterClose } from "./overstayCopy";
 import { withPropertySlotLock } from "./slotLock";
 import { BOOKING_HORIZON_DAYS, isoDate, nextTourDay, slotsOn, tourWindow, type TourSlot } from "./schedule";
 import { bookedTourCalledOffText, laterCancelConfirm, laterCancelDone, laterCancelKept, tourMovedToText } from "./availabilityCopy";
@@ -2867,10 +2867,4 @@ export class TourCore {
 
 function firstName(name: string): string {
   return name.trim().split(/\s+/)[0] ?? name;
-}
-
-function knownFirstName(name: string): string | undefined {
-  const trimmed = name.trim();
-  if (!trimmed || trimmed === UNNAMED_VISITOR) return undefined;
-  return firstName(trimmed);
 }

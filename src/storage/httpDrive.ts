@@ -107,11 +107,4 @@ export class HttpDriveClient implements DriveClient {
     const body = JSON.parse(res.text) as { files?: Record<string, unknown>[] };
     return (body.files ?? []).map((file) => this.meta(file));
   }
-
-  async getMeta(id: string): Promise<DriveFileMeta | undefined> {
-    const res = await this.request(`${DRIVE}/files/${encodeURIComponent(id)}?fields=${FIELDS}`);
-    if (res.status === 404) return undefined;
-    if (res.status !== 200) throw new DriveStatusError(res.status, "Drive file wasn't read.");
-    return this.meta(JSON.parse(res.text) as Record<string, unknown>);
-  }
 }

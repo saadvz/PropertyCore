@@ -3,11 +3,9 @@ import {
   occupantFromReservation,
   occupantFromTimeRequest,
   extensionAvailability,
-  EXTENSION_MS,
   type Occupant,
 } from "../core/extensionAvailability";
 import {
-  DOOR_AFTER_T,
   EXTENSION_AFTER_T,
   extensionAlreadyUsed,
   extensionGranted,
@@ -487,5 +485,3 @@ function clockLabel(core: TourCore, reservation: Reservation, at: string | undef
   const zone = bookedClockZone(core.config.property.timezone, reservation);
   return zone ? formatTime(new Date(at), zone) : undefined;
 }
-
-export { DOOR_AFTER_T };

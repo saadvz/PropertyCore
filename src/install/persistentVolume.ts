@@ -11,8 +11,6 @@ import { isHostedRailway, type DeploymentMode } from "./deployment";
  * compares st_dev of the path against its parent and against /.
  */
 
-export const ALLOW_EPHEMERAL_STORAGE = "TOURCORE_ALLOW_EPHEMERAL_STORAGE";
-
 const EPHEMERAL_FS = new Set(["overlay", "overlayfs", "tmpfs", "rootfs", "aufs", "squashfs"]);
 
 export interface MountEntry {
@@ -29,7 +27,6 @@ export interface PersistentVolumeIo {
   readMountinfo?: () => string | undefined;
   stat?: (path: string) => PathStat;
   realpath?: (path: string) => string;
-  platform?: NodeJS.Platform;
 }
 
 export interface VolumeDetection {
@@ -102,7 +99,6 @@ export function isPersistentMount(mount: MountEntry | undefined): boolean {
 
 export function defaultPersistentVolumeIo(): PersistentVolumeIo {
   return {
-    platform: process.platform,
     readMountinfo: () => {
       try {
         return readFileSync("/proc/self/mountinfo", "utf8");

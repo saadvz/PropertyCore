@@ -87,8 +87,8 @@ export interface SignUpDeps {
   registry: TenantRegistry;
   /** Undefined when the Verify service isn't set. */
   codes: () => PhoneCodes | undefined;
-  /** The pool's call. Sign-up stays off without it. */
-  openAccount?: OpenAccount;
+  /** The pool's call. */
+  openAccount: OpenAccount;
   env: () => NodeJS.ProcessEnv;
   now: () => number;
   log: (line: string) => void;
@@ -156,12 +156,12 @@ export class SignUpDesk {
   constructor(private readonly deps: SignUpDeps) {}
 
   /**
-   * The terms when sign-up is fully set up: the flag, live texts, the Verify service, the terms,
-   * and the pool. A code is a text, so it waits for CLEANER_CORE_LIVE_SMS like every other text.
+   * The terms when sign-up is fully set up: the flag, live texts, the Verify service and the terms.
+   * A code is a text, so it waits for CLEANER_CORE_LIVE_SMS like every other text.
    */
   open(): SignUpTerms | undefined {
     const env = this.deps.env();
-    if (!signUpFlag(env) || !liveSmsOn(env) || !this.deps.codes() || !this.deps.openAccount) return undefined;
+    if (!signUpFlag(env) || !liveSmsOn(env) || !this.deps.codes()) return undefined;
     return signUpTerms(env);
   }
 
@@ -236,7 +236,7 @@ export class SignUpDesk {
   }
 
   private async openFor(phone: string, email: string, terms: SignUpTerms): Promise<Answer> {
-    const opened = await this.deps.openAccount!({ label: email });
+    const opened = await this.deps.openAccount({ label: email });
     if ("refused" in opened) return { ok: false, refused: opened.refused === "no-line" ? "no-line" : "bad-email" };
     const at = new Date(this.deps.now()).toISOString();
     const owner: TenantOwner = { phone, email, phoneVerifiedAt: at, terms: { version: terms.version, acceptedAt: at } };
@@ -292,17 +292,16 @@ export class SignUpDesk {
 
   private prune(t: number): void {
     const recent = (times: number[]) => times.filter((at) => t - at < HOUR);
+    const pruneTimes = (map: Map<string, number[]>) => {
+      for (const [phone, times] of map) {
+        const kept = recent(times);
+        if (kept.length) map.set(phone, kept);
+        else map.delete(phone);
+      }
+    };
     this.serviceSends = recent(this.serviceSends);
-    for (const [phone, times] of this.phoneSends) {
-      const kept = recent(times);
-      if (kept.length) this.phoneSends.set(phone, kept);
-      else this.phoneSends.delete(phone);
-    }
-    for (const [phone, times] of this.wrong) {
-      const kept = recent(times);
-      if (kept.length) this.wrong.set(phone, kept);
-      else this.wrong.delete(phone);
-    }
+    pruneTimes(this.phoneSends);
+    pruneTimes(this.wrong);
     for (const [phone, until] of this.locked) if (until <= t) this.locked.delete(phone);
     // An approval request lives 10 minutes; its sends are kept an hour, like the rest.
     for (const [id, page] of this.sentFor) if (t - page.at >= HOUR) this.sentFor.delete(id);

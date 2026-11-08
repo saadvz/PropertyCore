@@ -17,7 +17,6 @@ export const BasicFormResponseSchema = z.object({
     phone: z.string().trim().min(7),
   }),
 });
-export type BasicFormResponse = z.infer<typeof BasicFormResponseSchema>;
 
 export type VerificationOutcome =
   | { passed: true; reference: string; claimed: { firstName: string; lastName: string; email: string; phone: string } }

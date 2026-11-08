@@ -71,7 +71,7 @@ const BY_STATE: Record<ToolState, FrontTool[]> = {
   properties: [],
 };
 
-/** Every name the front answers for touring. A call to one of them on an account of properties is refused, never forwarded. */
+/** Every name the front answers for touring. */
 export const FRONT_TOOL_NAMES = new Set([SAVE_ALERT_ROUTINE, SAVE_HOST_TEXTS, GET_UPDATES, ...SCRATCH].map((tool) => tool.name));
 
 /** True when a touring tenant gets the Scratch tools: the flag is on and its number is a 555 number. */
@@ -131,7 +131,6 @@ export interface FrontContext {
   h: HostedCleaner;
   tenant: Tenant;
   caller: { grantId: string; assistant: CleanerAssistant };
-  noteToolsChanged(): void;
 }
 
 export interface FrontReply {

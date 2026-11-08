@@ -35,7 +35,6 @@ export const OperatorEventSchema = z.strictObject({
 });
 export type OperatorEvent = z.infer<typeof OperatorEventSchema>;
 
-export const isTourEvent = (t: OperatorEventType): t is TourEventType => (TOUR_EVENT_TYPES as readonly string[]).includes(t);
 export const isIssueEvent = (t: OperatorEventType): t is IssueEventType => (ISSUE_EVENT_TYPES as readonly string[]).includes(t);
 
 /**
@@ -140,6 +139,20 @@ export class NoopOperatorNotificationSink implements OperatorNotificationSink {
 
 type Fetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number }>;
 
+/** One JSON POST that wakes a routine. Anything but a 2xx throws a DeliveryError in that routine's words. */
+async function wake(doFetch: Fetch, url: string, headers: Record<string, string>, body: string, timeoutMs: number | undefined, words: { unreachable: string; refused: string; notFound: string; rejected: (status: number) => string }): Promise<void> {
+  let status: number;
+  try {
+    ({ status } = await doFetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(timeoutMs ?? 10_000) }));
+  } catch {
+    throw new DeliveryError(words.unreachable, true);
+  }
+  if (status >= 200 && status < 300) return;
+  if (status === 401 || status === 403) throw new DeliveryError(words.refused, true);
+  if (status === 404) throw new DeliveryError(words.notFound, true);
+  throw new DeliveryError(words.rejected(status), status >= 500 || status === 429);
+}
+
 /**
  * Wakes a Grok Routine through its authenticated webhook: one JSON POST with
  * the routine's key as a bearer token. The address and key come from the
@@ -164,21 +177,12 @@ export class GrokRoutineWebhookSink implements OperatorNotificationSink {
     if (!url || !key) throw new DeliveryError("Operator alerts aren't connected yet.", true);
     const body = JSON.stringify(OperatorEventSchema.parse(event));
     const doFetch: Fetch = this.options.fetch ?? ((u, init) => fetch(u, init));
-    let status: number;
-    try {
-      ({ status } = await doFetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "User-Agent": "tour-core" },
-        body,
-        signal: AbortSignal.timeout(this.options.timeoutMs ?? 10_000),
-      }));
-    } catch {
-      throw new DeliveryError("Couldn't reach the Grok Routine right now.", true);
-    }
-    if (status >= 200 && status < 300) return;
-    if (status === 401 || status === 403) throw new DeliveryError("The Grok Routine refused the connection details. Re-enter them on the secure setup page.", true);
-    if (status === 404) throw new DeliveryError("The Grok Routine address wasn't found. Check it on the secure setup page.", true);
-    throw new DeliveryError(`The Grok Routine didn't accept the update (status ${status}).`, status >= 500 || status === 429);
+    await wake(doFetch, url, { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "User-Agent": "tour-core" }, body, this.options.timeoutMs, {
+      unreachable: "Couldn't reach the Grok Routine right now.",
+      refused: "The Grok Routine refused the connection details. Re-enter them on the secure setup page.",
+      notFound: "The Grok Routine address wasn't found. Check it on the secure setup page.",
+      rejected: (status) => `The Grok Routine didn't accept the update (status ${status}).`,
+    });
   }
 }
 
@@ -261,27 +265,19 @@ export class ClaudeRoutineFireSink implements OperatorNotificationSink {
     if (!url || !key) throw new DeliveryError("Alerts aren't connected yet.", true);
     const body = JSON.stringify({ text: JSON.stringify(OperatorEventSchema.parse(event)) });
     const doFetch: Fetch = this.options.fetch ?? ((u, init) => fetch(u, init));
-    let status: number;
-    try {
-      ({ status } = await doFetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${key}`,
-          "anthropic-version": "2023-06-01",
-          "anthropic-beta": CLAUDE_ROUTINE_BETA,
-          "User-Agent": "tour-core",
-        },
-        body,
-        signal: AbortSignal.timeout(this.options.timeoutMs ?? 10_000),
-      }));
-    } catch {
-      throw new DeliveryError("Couldn't reach the Claude scheduled task right now.", true);
-    }
-    if (status >= 200 && status < 300) return;
-    if (status === 401 || status === 403) throw new DeliveryError("The Claude scheduled task refused its token. Make a new token and save it again.", true);
-    if (status === 404) throw new DeliveryError("The Claude scheduled task's Fire URL wasn't found. Check it and save it again.", true);
-    throw new DeliveryError(`The Claude scheduled task didn't accept the update (status ${status}).`, status >= 500 || status === 429);
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+      "anthropic-version": "2023-06-01",
+      "anthropic-beta": CLAUDE_ROUTINE_BETA,
+      "User-Agent": "tour-core",
+    };
+    await wake(doFetch, url, headers, body, this.options.timeoutMs, {
+      unreachable: "Couldn't reach the Claude scheduled task right now.",
+      refused: "The Claude scheduled task refused its token. Make a new token and save it again.",
+      notFound: "The Claude scheduled task's Fire URL wasn't found. Check it and save it again.",
+      rejected: (status) => `The Claude scheduled task didn't accept the update (status ${status}).`,
+    });
   }
 }
 

@@ -124,6 +124,12 @@ export function planStores(file: SupplyFile): string[] {
   return plan ? [plan.primary.name, ...(plan.fast ? [plan.fast.name] : [])] : [];
 }
 
+/** The plan's stores not yet checked for checkout, in plan order. */
+export function unreadyStores(file: SupplyFile): string[] {
+  const ready = file.settings.storesReady ?? [];
+  return planStores(file).filter((name) => !ready.some((r) => r.toLowerCase() === name.toLowerCase()));
+}
+
 /** The next setup question. The property and the booking calendars are the hub's: a step another flow finished is skipped. */
 export function supplySetupAsk(file: SupplyFile, hub: Hub): SupplyAsk | undefined {
   if (file.settings.activatedAt) return undefined;
@@ -223,7 +229,7 @@ export function supplySetupAsk(file: SupplyFile, hub: Hub): SupplyAsk | undefine
       ],
     };
   }
-  const unready = planStores(file).filter((name) => !(s.storesReady ?? []).some((ready) => ready.toLowerCase() === name.toLowerCase()));
+  const unready = unreadyStores(file);
   if (unready.length > 0) {
     return {
       step: "accounts",

@@ -7,6 +7,7 @@ import { isPlainLanguageStop, keywordOf } from "../intent";
 import { normalize, stripFiller } from "../intent/normalize";
 import { spokenTimes } from "../core/spokenTime";
 import { parsePhone } from "../core/phone";
+import { formatClockTime } from "../core/timezone";
 import { smsStopAck } from "../visitor/smsConsent";
 import { writeFileAtomic } from "../storage/atomicWrite";
 import { addCalendarDays, formatWhen, interpretFeed, zonedInstant, type FeedBlock, type Turnover } from "../hub/calendar";
@@ -24,14 +25,14 @@ import {
   type SourceConflict,
   type SourceSnapshot,
 } from "../hub/sources";
-import { fingerprintOf, freshnessOf, GUESTY_POLL_MS, staleAfterMs, type SourceRecord } from "./freshness";
+import { fingerprintOf, freshnessOf, GUESTY_POLL_MS, staleAfterMs, type FreshnessStatus, type SourceRecord } from "./freshness";
 import { containsCodeToken, redactLine, redactPhone } from "./redact";
-import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, SUPPLY_DONE_ASK, SUPPLY_NOTED, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
+import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, SUPPLY_DONE_ASK, SUPPLY_NOTED, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, schedulerOptInBody, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
 import { codeRoute, GroupNotConfirmed, type GroupSeat } from "./groupThread";
 import { GROK_HELPER } from "./assistant";
-import { codeHandlingText, HEALTH_NOTE, isReviewKind, reviewAlert, reviewId, type AuditEvent, type ReviewDetail, type ReviewItem, type ReviewKind } from "./review";
+import { codeHandlingText, HEALTH_NOTE, reviewAlert, reviewId, type AuditEvent, type ReviewDetail, type ReviewItem, type ReviewKind } from "./review";
 import { mirrorStore, restoreTenantSlice, snapshotStore } from "./sqliteStore";
-import { isOtherScratchTenantPhone, SCRATCH_TENANTS } from "./tenants";
+import { isOtherScratchTenantPhone, isTenantPhone, SCRATCH_TENANTS } from "./tenants";
 
 export type TextKind =
   | "host-checkout"
@@ -453,7 +454,11 @@ export interface CleanerCore {
   updateDueAt(): string | undefined;
   /** Sends a held checkout update whose hold has ended. */
   sendDueUpdates(): Promise<CleanerText[]>;
-  /** confirmOpenTimes with minutes after midnight. Group setups only. */
+  /**
+   * Times every open turnover the host hasn't timed yet with the same checkout and check-in, in
+   * minutes after midnight, in a group setup. Turnovers that already have a host time keep it.
+   * Offers still go one at a time.
+   */
   setOpenTimes(input: { checkout: number; checkIn: number }): Promise<{ timed: number; sent: CleanerText[] }>;
   /** The host told Grok the guests have left. The door code goes out under the same rules as before. */
   hostDeparture(id: string): Promise<ReceiveResult>;
@@ -470,11 +475,6 @@ export interface CleanerCore {
   standDownTexts(): { jobId: string; to: "cleaner" | "host"; body: string }[];
   /** Calls off every offered or confirmed job the host's stand-down covers, and sends each canceled update once. */
   hostStandDown(id: string): Promise<ReceiveResult>;
-  /**
-   * Times every open turnover the host hasn't timed yet with the same checkout and check-in, in a
-   * group setup. Turnovers that already have a host time keep it. Offers still go one at a time.
-   */
-  confirmOpenTimes(input: { checkout: string; checkIn: string }): Promise<{ timed: number; sent: CleanerText[] }>;
   resumeJob(): Promise<CleanerText | null>;
   groupPinSettled(): boolean;
   jobOnHold(): boolean;
@@ -530,8 +530,6 @@ export interface CleanerCore {
   sourceHealth(): SourceRecord[];
   revealPin(role: "cleaner" | "observer" | "owner" | "manager"): string | undefined;
   stampFetchedAt(iso: string): void;
-  /** Marks an accepted door-code text undelivered so the next departure can send it again. Sends nothing. */
-  markPinUndelivered(): void;
   /** One record of whether this door-code text was accepted, delivered, or failed. */
   reportPin(id: string, status: string): Promise<void>;
   /** True when the current door-code text was accepted and has not failed. */
@@ -573,9 +571,9 @@ const DECLINED = "Okay, that turnover is not scheduled.";
 const HOST_INJURY = "If someone is hurt, call 911 now.";
 const CLEANER_HURT = "If someone is hurt, call 911 now. I've let the host know.";
 const CLEANER_HURT_MISSED = "If someone is hurt, call 911 now. I couldn't reach the host, so please call them too.";
+/** The host's line when the door code text failed, unless the options give their own. */
+const PIN_FAILED_BODY = "The door code didn't reach the cleaner. We'll try again in a few minutes.";
 export const SAFETY = new Set<TextKind>(["stop", "start", "emergency"]);
-
-export { joinSplitDigits };
 
 /** Every run of 4 or more digits, even split by spaces, dots, dashes, underscores, or slashes, as [redacted]. */
 export function redactDigitRuns(text: string): string {
@@ -623,11 +621,11 @@ const TEST_TURN_NEXT = "scratch-test-next";
  *   const core = openCleanerCore({ enabled: cleanerCoreEnabled(env), property, ownerPhone, cleaner, consented: true, sink, now, dataDir });
  *   await core.pollFeed(icalText);
  *   await core.receive({ id, from: ownerPhone, text: "YES" });
- * With a pin, the opted-in cleaner receives the offer, the scheduled confirmation, and the reminder.
+ * With door access (`access`), the opted-in cleaner receives the offer, the scheduled confirmation, and the reminder.
  * That cleaner's YES confirms the job. The host's YES confirms times, not the offer.
  *   await core.runReminders();
- * Flag off returns reason "disabled" and sends nothing. With no pin, no door code is sent.
- * With a pin, the approved cleaner must opt in and the host must confirm departure first.
+ * Flag off returns reason "disabled" and sends nothing. With no door access, no door code is sent.
+ * With door access, the approved cleaner must opt in and the host must confirm departure first.
  */
 export function openCleanerCore(options: CleanerCoreOptions): CleanerCore {
   return new Engine(options);
@@ -724,15 +722,7 @@ interface ActionLease {
   state: "open" | "committed" | "uncertain" | "expired" | "revoked";
 }
 
-interface OutboxItem {
-  id: string;
-  to: string;
-  body: string;
-  kind: TextKind;
-  status: "sent" | "failed" | "canceled" | "uncertain" | "unsent";
-  jobId?: string;
-  /** Posted to the group, not texted one-to-one. */
-  group?: true;
+interface OutboxItem extends OutboxView {
   lease?: ActionLease;
 }
 
@@ -775,35 +765,7 @@ interface Stored {
 }
 
 /** One file can hold several tenants. A single-tenant file stays the flat step D shape. */
-interface StoreFile {
-  schemaVersion: 1;
-  tenantId?: string;
-  tenants?: Record<string, Stored>;
-  jobs?: Job[];
-  hostFacts?: HostFact[];
-  tombstones?: Tombstone[];
-  outbox?: OutboxItem[];
-  inboundIds?: string[];
-  transcript?: string[];
-  optedOut?: boolean;
-  injurySent?: string[];
-  blocks?: FeedBlock[];
-  cleanerConsent?: "pending" | "in" | "out";
-  clearances?: Clearance[];
-  pin?: unknown;
-  onboarding?: OnboardingSession;
-  origin?: "onboarding";
-  activated?: boolean;
-  quietFrom?: string;
-  quietUntil?: string;
-  isolate?: boolean;
-  participantConsent?: { phone: string; consent: "pending" | "in" | "out" }[];
-  sourceRecords?: SourceRecord[];
-  snapshots?: Record<string, SourceSnapshot>;
-  reviews?: ReviewItem[];
-  audit?: AuditEvent[];
-  counters?: Counters;
-}
+type StoreFile = Partial<Stored> & { schemaVersion: 1; tenants?: Record<string, Stored>; pin?: unknown };
 
 interface Draft {
   id: string;
@@ -964,21 +926,15 @@ class Engine implements CleanerCore {
   }
 
   private refuseSnapshot(snapshot: SourceSnapshot, conversation: "closed" | "open"): (PollResult & SyncState) | undefined {
+    const refuse = (reason: "wrong-tenant" | "permission-denied") => this.withSync(this.noteSync({ polled: false, reason, sent: [], jobs: this.jobs(), blocks: this.blocks() }, conversation));
     const permission = snapshot.permission ?? "granted";
     if (permission !== "granted") {
-      if (snapshot.tenantId !== "" && snapshot.tenantId !== this.tenantId) {
-        this.syncState = { reason: "wrong-tenant", conversation, sources: this.sourceNames(), conflicts: this.conflictState };
-        return this.withSync({ polled: false, reason: "wrong-tenant", sent: [], jobs: this.jobs(), blocks: this.blocks() });
-      }
+      if (snapshot.tenantId !== "" && snapshot.tenantId !== this.tenantId) return refuse("wrong-tenant");
       this.fallbackText = snapshot.fallback;
       this.counters.pollFails += 1;
-      this.syncState = { reason: "permission-denied", conversation, sources: this.sourceNames(), conflicts: this.conflictState };
-      return this.withSync({ polled: false, reason: "permission-denied", sent: [], jobs: this.jobs(), blocks: this.blocks() });
+      return refuse("permission-denied");
     }
-    if (snapshot.tenantId !== this.tenantId) {
-      this.syncState = { reason: "wrong-tenant", conversation, sources: this.sourceNames(), conflicts: this.conflictState };
-      return this.withSync({ polled: false, reason: "wrong-tenant", sent: [], jobs: this.jobs(), blocks: this.blocks() });
-    }
+    if (snapshot.tenantId !== this.tenantId) return refuse("wrong-tenant");
     return undefined;
   }
 
@@ -1412,14 +1368,6 @@ class Engine implements CleanerCore {
     return sent;
   }
 
-  async confirmOpenTimes(input: { checkout: string; checkIn: string }): Promise<{ timed: number; sent: CleanerText[] }> {
-    if (!this.groupChat) return { timed: 0, sent: [] };
-    const checkout = clockMinutes(input.checkout);
-    const checkIn = clockMinutes(input.checkIn);
-    if (checkout === undefined || checkIn === undefined) return { timed: 0, sent: [] };
-    return this.setOpenTimes({ checkout, checkIn });
-  }
-
   async setOpenTimes(input: { checkout: number; checkIn: number }): Promise<{ timed: number; sent: CleanerText[] }> {
     if (!this.groupChat) return { timed: 0, sent: [] };
     const { checkout, checkIn } = input;
@@ -1618,7 +1566,7 @@ class Engine implements CleanerCore {
         id: `opt-in:${phone}`,
         to: phone,
         kind: "opt-in",
-        body: `Hi, this is ${this.hostName}'s cleaning scheduler for ${this.options.property.address}. Reply YES to get cleaning texts, or STOP to opt out.`,
+        body: schedulerOptInBody(this.hostName, this.options.property.address),
       });
       if (text) sent.push(text);
     }
@@ -1690,7 +1638,7 @@ class Engine implements CleanerCore {
     if (phone === this.owner || phone === this.cleanerPhone) return false;
     if (isOtherScratchTenantPhone(this.tenantId, phone)) return true;
     if (!this.isolate) return false;
-    return SCRATCH_TENANTS.some((tenant) => phone === tenant.ownerPhone || phone === tenant.cleanerPhone || phone === tenant.unapprovedPhone);
+    return SCRATCH_TENANTS.some((tenant) => isTenantPhone(tenant, phone));
   }
 
   private freshnessView(): SourceFreshness[] {
@@ -1698,16 +1646,19 @@ class Engine implements CleanerCore {
     for (const snapshot of this.latest.values()) {
       if (snapshot.kind !== "notion") continue;
       const fetchedAt = snapshot.fetchedAt ?? null;
-      rows.push({ kind: snapshot.kind, fetchedAt, stale: this.isStale(fetchedAt ?? undefined) });
+      rows.push({ kind: snapshot.kind, fetchedAt, stale: this.isStale(fetchedAt) });
     }
     return rows;
   }
 
-  private isStale(fetchedAt: string | undefined): boolean {
-    if (!fetchedAt) return true;
-    const readAt = Date.parse(fetchedAt);
-    if (Number.isNaN(readAt)) return true;
-    return this.now().getTime() - readAt > this.thresholdMs;
+  /** A read time's freshness by this engine's clock. A missing or unreadable time is "unknown". */
+  private freshness(at: string | null | undefined): FreshnessStatus {
+    return freshnessOf(at, this.now().getTime(), this.thresholdMs);
+  }
+
+  /** Stale unless the read time is known and fresh. */
+  private isStale(fetchedAt: string | null | undefined): boolean {
+    return this.freshness(fetchedAt) !== "fresh";
   }
 
   private inQuietHours(): boolean {
@@ -1746,7 +1697,7 @@ class Engine implements CleanerCore {
       this.latest.set(snapshot.sourceId, snapshot);
       this.rememberSource(snapshot, "ok");
     }
-    const freshness = snapshots.map((snapshot) => freshnessOf(snapshot.fetchedAt, this.now().getTime(), this.thresholdMs));
+    const freshness = snapshots.map((snapshot) => this.freshness(snapshot.fetchedAt));
     if (freshness.length > 0 && freshness.every((status) => status === "fresh")) this.resolveKind("stale-source");
     const normalized = normalizeSnapshots(this.orderedSnapshots());
     this.conflictState = normalized.conflicts;
@@ -1770,9 +1721,7 @@ class Engine implements CleanerCore {
       for (const invite of await this.sendGroupInvites()) sent.push(invite);
     }
     this.save();
-    const result: PollResult = { polled: true, reason: "read", sent, jobs: this.jobs(), blocks: this.blocks() };
-    this.syncState = { reason: "read", conversation, sources: this.sourceNames(), conflicts: this.conflictState };
-    return result;
+    return this.noteSync({ polled: true, reason: "read", sent, jobs: this.jobs(), blocks: this.blocks() }, conversation);
   }
 
   private sourceNames(): string[] {
@@ -1857,7 +1806,7 @@ class Engine implements CleanerCore {
     const to = this.cleanerRecord()?.phone;
     if (!checkout || !to) return [];
     const when = this.clock(job.checkoutDate, checkout.minutes);
-    const id = `confirm:${job.id}:${job.checkoutDate}:${checkout.minutes}:${job.nextCheckInDate ?? ""}`;
+    const id = confirmId(job, checkout.minutes);
     const text = await this.emit({
       id,
       jobId: job.id,
@@ -1922,7 +1871,7 @@ class Engine implements CleanerCore {
     if (this.groupChat && this.cleanerPhone) {
       return groupInviteBody(this.groupChat.hostName, this.options.property.address);
     }
-    return this.options.optInBody ?? `Hi, this is ${this.hostName}'s cleaning scheduler for ${this.options.property.address}. Reply YES to get cleaning texts, or STOP to opt out.`;
+    return this.options.optInBody ?? schedulerOptInBody(this.hostName, this.options.property.address);
   }
 
   private async optInCleaner(id: string): Promise<ReceiveResult> {
@@ -2256,7 +2205,7 @@ class Engine implements CleanerCore {
         jobId: job.id,
         to: this.owner,
         kind: "pin-failed",
-        body: this.options.pinFailedBody ?? "The door code didn't reach the cleaner. We'll try again in a few minutes.",
+        body: this.options.pinFailedBody ?? PIN_FAILED_BODY,
       });
       if (failed) sent.push(failed);
     }
@@ -2465,7 +2414,7 @@ class Engine implements CleanerCore {
     const checkin = this.latestFact(job.id, "checkin");
     if (!checkout) {
       if (this.groupChat) return null;
-      const id = `host-checkout:${job.id}:${job.checkoutDate}:${this.defaultCheckout}`;
+      const id = this.hostCheckoutId(job);
       if (this.delivery(id) === "sent") return null;
       const when = this.clock(job.checkoutDate, this.defaultCheckout);
       return {
@@ -2765,7 +2714,7 @@ class Engine implements CleanerCore {
     if (!name || !job?.checkInDate) return undefined;
     const zone = this.options.property.timeZone;
     const day = (ymd: string) => formatWhen(zonedInstant(ymd, "12:00", zone), zone).day;
-    return usualTimesAsk(name, day(job.checkInDate), day(job.checkoutDate), clockLabel(this.defaultCheckout), clockLabel(this.defaultCheckIn));
+    return usualTimesAsk(name, day(job.checkInDate), day(job.checkoutDate), formatClockTime(hm(this.defaultCheckout)), formatClockTime(hm(this.defaultCheckIn)));
   }
 
   hostNoteEntries(): { id: string; body: string }[] {
@@ -3285,8 +3234,6 @@ class Engine implements CleanerCore {
     if (job.nextCheckInDate && !checkin) return "awaiting_checkin";
     if (!job.announced) return "host_confirmed";
     if (this.confirmSent(job) && !this.stale(job)) {
-      if (job.done) return "done";
-      if (job.started) return "in_progress";
       if (this.pinDelivered(job)) return "cleared";
       if (this.pin && this.checkoutReached(job)) return "awaiting_departure";
       return "confirmed";
@@ -3318,7 +3265,7 @@ class Engine implements CleanerCore {
       version: job.version,
       hostCheckoutVersion: checkout?.version ?? 0,
       hostCheckInVersion: checkin?.version ?? 0,
-      asking: status === "discovered" && this.delivery(`host-checkout:${job.id}:${job.checkoutDate}:${this.defaultCheckout}`) === "sent" ? "checkout" : status === "awaiting_checkin" ? "checkin" : null,
+      asking: status === "discovered" && this.delivery(this.hostCheckoutId(job)) === "sent" ? "checkout" : status === "awaiting_checkin" ? "checkin" : null,
       ...(job.arrivalAt ? { arrivalTime: formatWhen(job.arrivalAt, this.options.property.timeZone).time } : {}),
       ...(job.startedAt ? { startedAt: job.startedAt } : {}),
       ...(job.doneAt ? { doneAt: job.doneAt } : {}),
@@ -3394,7 +3341,7 @@ class Engine implements CleanerCore {
   private confirmSent(job: Job): boolean {
     const checkout = this.latestFact(job.id, "checkout");
     if (!checkout) return false;
-    return this.delivery(`confirm:${job.id}:${job.checkoutDate}:${checkout.minutes}:${job.nextCheckInDate ?? ""}`) === "sent";
+    return this.delivery(confirmId(job, checkout.minutes)) === "sent";
   }
 
   private canRemind(job: Job): boolean {
@@ -3505,30 +3452,24 @@ class Engine implements CleanerCore {
 
   private pinKey(job: Job): string | undefined {
     const checkout = this.latestFact(job.id, "checkout");
-    const clearance = [...this.clearances].reverse().find((item) => item.jobId === job.id);
-    if (!checkout || !clearance) return undefined;
-    if (clearance.checkoutDate !== job.checkoutDate || clearance.minutes !== checkout.minutes || clearance.hostVersion !== checkout.version) return undefined;
+    if (!checkout || !this.cleared(job, checkout)) return undefined;
     return `pin:${job.id}:${job.checkoutDate}:${checkout.minutes}:${checkout.version}`;
+  }
+
+  /** True when the job's latest clearance matches its current checkout. */
+  private cleared(job: Job, checkout: HostFact): boolean {
+    const clearance = [...this.clearances].reverse().find((item) => item.jobId === job.id);
+    return Boolean(clearance && clearance.checkoutDate === job.checkoutDate && clearance.minutes === checkout.minutes && clearance.hostVersion === checkout.version);
+  }
+
+  /** The host's checkout question's outbox id. It is stored, so it must stay the same. */
+  private hostCheckoutId(job: Job): string {
+    return `host-checkout:${job.id}:${job.checkoutDate}:${this.defaultCheckout}`;
   }
 
   private pinDelivered(job: Job): boolean {
     const key = this.pinKey(job);
     return Boolean(key && this.delivery(key) === "sent");
-  }
-
-  markPinUndelivered(): void {
-    let changed = false;
-    for (const item of this.outboxState) {
-      if (item.kind !== "pin" || item.status !== "sent") continue;
-      item.status = "failed";
-      if (item.lease) item.lease.state = "open";
-      this.pinPhase.set(item.id, "failed");
-      changed = true;
-    }
-    if (changed) {
-      this.pinFailurePending = true;
-      this.save();
-    }
   }
 
   async reportPin(id: string, status: string): Promise<void> {
@@ -3559,7 +3500,7 @@ class Engine implements CleanerCore {
       ...(item.jobId ? { jobId: item.jobId } : {}),
       to: this.owner,
       kind: "pin-failed",
-      body: this.options.pinFailedBody ?? "The door code didn't reach the cleaner. We'll try again in a few minutes.",
+      body: this.options.pinFailedBody ?? PIN_FAILED_BODY,
     });
     this.save();
   }
@@ -3642,9 +3583,7 @@ class Engine implements CleanerCore {
 
   private recordClearance(job: Job): void {
     const checkout = this.latestFact(job.id, "checkout");
-    if (!checkout) return;
-    const current = [...this.clearances].reverse().find((item) => item.jobId === job.id);
-    if (current && current.checkoutDate === job.checkoutDate && current.minutes === checkout.minutes && current.hostVersion === checkout.version) return;
+    if (!checkout || this.cleared(job, checkout)) return;
     this.clearances.push({ jobId: job.id, checkoutDate: job.checkoutDate, minutes: checkout.minutes, hostVersion: checkout.version });
   }
 
@@ -3843,7 +3782,7 @@ class Engine implements CleanerCore {
       sends: false,
       note: HEALTH_NOTE,
       openReviews: this.reviewItems.filter((item) => item.status === "open").length,
-      staleSources: this.sourceRecords.filter((record) => freshnessOf(record.fetchedAt, this.now().getTime(), this.thresholdMs) === "stale").length,
+      staleSources: this.sourceRecords.filter((record) => this.freshness(record.fetchedAt) === "stale").length,
       counters: { ...this.counters },
       codeHandling: codeHandlingText(this.options.property.address),
     };
@@ -3860,7 +3799,7 @@ class Engine implements CleanerCore {
   sourceHealth(): SourceRecord[] {
     return this.sourceRecords.map((record) => ({
       ...record,
-      freshness: freshnessOf(record.fetchedAt, this.now().getTime(), this.thresholdMs),
+      freshness: this.freshness(record.fetchedAt),
     }));
   }
 
@@ -3893,7 +3832,7 @@ class Engine implements CleanerCore {
       kind: snapshot.sourceId,
       fetchedAt: snapshot.fetchedAt ?? null,
       fingerprint: fingerprintOf(parts),
-      freshness: freshnessOf(snapshot.fetchedAt, this.now().getTime(), this.thresholdMs),
+      freshness: this.freshness(snapshot.fetchedAt),
       interpretation,
     };
     this.sourceRecords = [...this.sourceRecords.filter((item) => item.kind !== snapshot.sourceId), record];
@@ -3901,11 +3840,11 @@ class Engine implements CleanerCore {
 
   private sourceFeedStale(): boolean {
     if (!this.watchFreshness) return false;
-    return this.sourceRecords.some((record) => freshnessOf(record.fetchedAt, this.now().getTime(), this.thresholdMs) === "stale");
+    return this.sourceRecords.some((record) => this.freshness(record.fetchedAt) === "stale");
   }
 
   private async alertStale(): Promise<CleanerText | null> {
-    const stale = this.sourceRecords.find((record) => freshnessOf(record.fetchedAt, this.now().getTime(), this.thresholdMs) === "stale");
+    const stale = this.sourceRecords.find((record) => this.freshness(record.fetchedAt) === "stale");
     return this.openReview("stale-source", `${stale?.kind ?? "feed"}:${stale?.fetchedAt ?? "none"}`, true);
   }
 
@@ -4057,12 +3996,6 @@ function hm(minutes: number): string {
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
-/** Minutes after midnight as "10:30 AM", with a plain space. */
-function clockLabel(minutes: number): string {
-  const hour = Math.floor(minutes / 60);
-  return `${hour % 12 || 12}:${String(minutes % 60).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`;
-}
-
 function localDate(instant: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(instant);
 }
@@ -4114,7 +4047,7 @@ function isDone(text: string): boolean {
   return stripFiller(normalize(text)) === "done";
 }
 
-function isDeparture(text: string): boolean {
+export function isDeparture(text: string): boolean {
   const phrase = stripFiller(normalize(text)).replace(/^the\s+/, "");
   return phrase === "guests have left" || phrase === "guests left" || phrase === "they have left" || phrase === "they left" || phrase === "departed" || phrase === "left";
 }
@@ -4132,7 +4065,7 @@ function sliceOwnedBy(slice: Stored, tenantId: string): boolean {
   const phones = slice.outbox.map((item) => item.to);
   if (phones.length === 0) return true;
   const other = phones.some((phone) => isOtherScratchTenantPhone(tenantId, phone));
-  const own = phones.some((phone) => phone === known.ownerPhone || phone === known.cleanerPhone || phone === known.unapprovedPhone);
+  const own = phones.some((phone) => isTenantPhone(known, phone));
   return !(other && !own);
 }
 
@@ -4145,6 +4078,11 @@ function foreignTenantId(slice: Stored): string {
 
 function aliasesOf(job: Job): string[] {
   return job.aliases && job.aliases.includes(job.id) ? job.aliases : [job.id, ...(job.aliases ?? [])];
+}
+
+/** The confirm text's outbox id. It is stored, and confirmSent finds the confirm by it, so it must stay the same. */
+function confirmId(job: Job, minutes: number): string {
+  return `confirm:${job.id}:${job.checkoutDate}:${minutes}:${job.nextCheckInDate ?? ""}`;
 }
 
 /** The read lists this job's booking: a stay or a merged source UID is one the job was read under. */

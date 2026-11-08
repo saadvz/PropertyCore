@@ -1,6 +1,5 @@
 import type { MessagingLedger } from "../ledger";
 import type { DeliveryChannel, DeliveryReceipt, OutgoingMessage } from "../Messenger";
-import { providerConsentRecommendation } from "../consentPolicy";
 import type { MessagingCapabilities, MessagingCheck, MessagingConfigField, MessagingProvider, ProviderConnectContext, ProviderConnectResult, WebhookHttpRequest } from "../provider";
 import { SendblueMessagingAdapter } from "./adapter";
 import { connectSendblue } from "./connect";
@@ -69,10 +68,6 @@ export class SendblueMessagingProvider implements MessagingProvider {
 
   credentialNames(): string[] {
     return ["SENDBLUE_API_API_KEY", "SENDBLUE_API_API_SECRET", "SENDBLUE_FROM_NUMBER"];
-  }
-
-  defaultConsentMode(): "keyword_confirm" | "disabled" {
-    return providerConsentRecommendation("sendblue").mode;
   }
 
   webhookPath(): string {
