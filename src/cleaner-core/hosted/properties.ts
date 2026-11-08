@@ -8,7 +8,6 @@ import { tenantFolder, type Tenant } from "./registry";
  */
 
 export type FlowName = "cleaning" | "supplies" | "fixer";
-export const FLOW_NAMES: readonly FlowName[] = ["cleaning", "supplies", "fixer"];
 
 export interface Flow {
   on: boolean;
