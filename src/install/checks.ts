@@ -64,7 +64,7 @@ export interface PublicHealth extends StorageVolumeHealth {
 }
 
 export function publicHealth(inst: Installation): PublicHealth {
-  const id = safe(() => inst.files.manifest()?.installationId);
+  const id = inst.files.readableManifest()?.installationId;
   const fingerprint = installationFingerprint(id);
   return {
     ok: true,
@@ -183,13 +183,18 @@ export async function testVisitorMessaging(inst: Installation, options: { onConn
   };
 }
 
-/** Sends one test event to the operator alert channel and records whether it was accepted. */
-export async function testOperatorAlerts(inst: Installation) {
-  const sink = inst.sink();
-  const credentialsChangedAt = [inst.secrets.updatedAt("TOURCORE_GROK_ROUTINE_URL"), inst.secrets.updatedAt("TOURCORE_GROK_ROUTINE_KEY")]
+/** When the Grok Routine's address or key last changed. The alert test records it and the status compares it, so an old test doesn't vouch for new settings. */
+export function routineCredentialsChangedAt(inst: Installation): string | undefined {
+  return [inst.secrets.updatedAt("TOURCORE_GROK_ROUTINE_URL"), inst.secrets.updatedAt("TOURCORE_GROK_ROUTINE_KEY")]
     .filter((v): v is string => !!v)
     .sort()
     .at(-1);
+}
+
+/** Sends one test event to the operator alert channel and records whether it was accepted. */
+export async function testOperatorAlerts(inst: Installation) {
+  const sink = inst.sink();
+  const credentialsChangedAt = routineCredentialsChangedAt(inst);
   const at = new Date(inst.now());
   if (!sink.configured()) {
     return { ok: false, message: "Operator alerts aren't connected yet. The Grok Routine's details go in on the secure setup page." };
@@ -259,12 +264,4 @@ export async function testAccess(inst: Installation) {
     accessSystem: "Demo",
     message: health.healthy ? "Access system: Demo. It's answering, and no real doors open." : "Access system: Demo, but it isn't answering.",
   };
-}
-
-function safe<T>(read: () => T): T | undefined {
-  try {
-    return read();
-  } catch {
-    return undefined;
-  }
 }

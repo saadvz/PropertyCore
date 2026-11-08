@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { describeOperatorUpdate } from "../alerts/describeUpdate";
 import { choosePreferences, describeUpdates, enabledUpdates, PROBLEMS_ONLY, RECOMMENDED_UPDATES, UPDATE_KINDS, UPDATE_LABELS } from "../alerts/preferences";
-import type { OperatorTool, ToolContext, ToolKind } from "../operator/tools";
+import type { OperatorTool, ToolContext } from "../operator/tools";
+import { tool } from "../operator/defineTool";
 import { SetupInputError } from "../setup/setupActions";
 import { checkPublicEndpoint, deployedCommitLabel, runtimeHealth, testAccess, testOperatorAlerts, testStorage, testVisitorMessaging } from "./checks";
 import { toE164 } from "../messaging/Messenger";
@@ -25,10 +26,6 @@ import { LOCAL_TEST_TEXTING } from "../setup/setupActions";
  * computer (get_secure_setup_url). There is deliberately no tool that sets an
  * API key, sender key or webhook secret, and none that runs a shell command.
  */
-
-function tool<S extends z.ZodObject>(def: { name: string; title: string; description: string; kind: ToolKind; input: S; run: (ctx: ToolContext, input: z.infer<S>) => Promise<Record<string, unknown>> }): OperatorTool {
-  return def as unknown as OperatorTool;
-}
 
 function installation(ctx: ToolContext): Installation {
   if (!ctx.installation) throw new SetupInputError("INSTALLATION_UNAVAILABLE", "Installation tools aren't available on this Tour Core.");
