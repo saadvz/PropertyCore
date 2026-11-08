@@ -21,18 +21,19 @@ run_log() {
   printf '%s\n' "$name ok"
 }
 
+# The checks that take seconds go first, so a failure there shows before the test suite runs.
+printf '%s\n' "== SETUP_PROMPT unchanged"
+git fetch origin master --depth=1
+git diff --exit-code origin/master -- grok-template/SETUP_PROMPT.md
+printf '%s\n' "SETUP_PROMPT ok"
+
+run_log tracked-scan node scripts/scan-cleaner-secrets.mjs --tracked
 run_log typecheck npm run typecheck
 run_log build npm run build
 # The cleaner-core flag tests set CLEANER_CORE_ENABLED themselves and clear it after each test,
 # so they run on and off inside the full suite.
 run_log test-default npm test
 run_log secret-scan node scripts/scan-cleaner-secrets.mjs ci-logs
-run_log tracked-scan node scripts/scan-cleaner-secrets.mjs --tracked
 run_log test-eval npm run test:eval
-
-printf '%s\n' "== SETUP_PROMPT unchanged"
-git fetch origin master --depth=1
-git diff --exit-code origin/master -- grok-template/SETUP_PROMPT.md
-printf '%s\n' "SETUP_PROMPT ok"
 
 printf '%s\n' "test-default $(grep -E 'Tests[[:space:]]+[0-9]+ passed' ci-logs/test-default.log | tail -n 1)"
