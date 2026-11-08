@@ -2,7 +2,7 @@
   "name": "tour-core",
   "version": "0.1.0",
   "private": true,
-  "description": "Open-source self-touring tool. Requests scoped access through Durin; never controls locks directly.",
+  "description": "Property Core for remote short-term rental hosts: Cleaner Core and Supply Core, run from the host's own agent.",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {

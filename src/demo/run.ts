@@ -64,8 +64,8 @@ async function main(): Promise<void> {
   const doorName = (id: string) => config.doors.find((d) => d.id === id)?.name ?? id;
 
   console.log(bold("\nTOUR CORE DEMO"));
-  console.log(dim("Tour Core never unlocks a door. It asks Durin for access, and only after its own policy says yes."));
-  console.log(dim(`Durin is mocked in this demo. Simulated day: ${formatLocalDate(tourDay, TZ)} (${TZ}).`));
+  console.log(dim("Tour Core never unlocks a door. It asks the door system for a scoped grant, and only after its own policy says yes."));
+  console.log(dim(`Door access is in demo mode, so no real doors open. Simulated day: ${formatLocalDate(tourDay, TZ)} (${TZ}).`));
 
   section("Property");
   console.log(`  ${bold(config.property.name)}`);
@@ -127,9 +127,9 @@ async function main(): Promise<void> {
     const out = await core.requestAccess({ reservationId: reservation.id, prospectId: prospect.id, doorId });
     const policy = out.decision.allowed ? green(out.decision.code) : red(out.decision.code);
     console.log(`  Policy:     ${policy}  ${dim(`(${out.decision.reason})`)}`);
-    if (out.reusedGrant) console.log(`  Durin Mock: ${yellow("NOT CALLED AGAIN")} ${dim("(grant already active, no duplicate)")}`);
-    else if (!out.durinCalled) console.log(`  Durin Mock: ${yellow("NOT CALLED")} ${dim("(policy denied first)")}`);
-    else console.log(`  Durin Mock: ${out.grant ? green("ACCESS GRANTED") : red("FAILED")}`);
+    if (out.reusedGrant) console.log(`  Door access: ${yellow("NOT ASKED AGAIN")} ${dim("(grant already active, no duplicate)")}`);
+    else if (!out.durinCalled) console.log(`  Door access: ${yellow("NOT ASKED")} ${dim("(policy denied first)")}`);
+    else console.log(`  Door access: ${out.grant ? green("ACCESS GRANTED") : red("FAILED")}`);
     flush(durinLines);
     flush(textLines);
     return out;

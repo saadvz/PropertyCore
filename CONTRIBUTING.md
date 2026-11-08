@@ -22,7 +22,7 @@ npm test
 
 If the change affects behavior, tools, environment variables, or setup, update:
 
-- `README.md`
+- `README.md`, `docs/environment-variables.md` for settings, and `docs/tour-core/README.md` for touring
 - Grok instructions as needed: `GROK_BOOTSTRAP.md`, grok-template context / tool catalog / bot profile, `.grok/skills`, and `src/operator/tools.ts`
 
 Do **not** edit `grok-template/SETUP_PROMPT.md`.

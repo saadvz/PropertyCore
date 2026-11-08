@@ -140,7 +140,7 @@ unchanged.
 ## Connection and operator demo
 
 Not part of `npm test`. Needs a Grok Bot account, the Tour Core computer with
-Sendblue and a tunnel (README), and one real phone that's a verified Sendblue
+Sendblue and a tunnel ([Tour Core guide](tour-core/README.md)), and one real phone that's a verified Sendblue
 contact. Use a fresh `TOURCORE_HOME` so earlier properties don't interfere:
 
 ```powershell
@@ -198,7 +198,7 @@ wildcards. Everything else is unchanged:
 - owner approval on this computer with the matching code
 - PKCE S256, `state`, exact redirect match and single-use codes
 - token lifetime, scope and revocation
-- Tour Core's confirmation codes, policy and Durin
+- Tour Core's confirmation codes, policy and door access
 
 `api2.cursor.sh` is **not** allowed. If a refusal line names it, copy that
 whole `refused redirect: ...` line into the test notes. Only if the real flow

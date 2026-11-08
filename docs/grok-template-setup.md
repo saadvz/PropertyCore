@@ -33,7 +33,7 @@ and developer installs.
 **Tour Core computer** (the machine that runs Tour Core)
 
 - Node.js 20+, this repository, `npm install`.
-- Real texting set up as in the README's "Real phones with Sendblue" section:
+- Real texting set up as in the Tour Core guide's [Sendblue section](tour-core/README.md#sendblue-one-adapter):
   `.env` with the Sendblue values, a secure tunnel, `PUBLIC_BASE_URL` set to the
   tunnel's https address, and `npm run sendblue:configure` done.
 - Grok Bot runs in the cloud, so it can only reach Tour Core through that

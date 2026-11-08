@@ -62,7 +62,7 @@ export class MockDurinAccessAdapter implements DurinAccessAdapter {
 
     let grantRef = this.grantsByKey.get(request.idempotencyKey);
     if (!grantRef) {
-      grantRef = `durin_mock_grant_${++this.counter}`;
+      grantRef = `demo_grant_${++this.counter}`;
       this.grantsByKey.set(request.idempotencyKey, grantRef);
     }
     this.print("Access granted", doorName, `grant ${grantRef}, until ${formatTime(new Date(request.validUntil), this.options.timeZone ?? "UTC")}`);
@@ -75,6 +75,6 @@ export class MockDurinAccessAdapter implements DurinAccessAdapter {
   }
 
   private print(title: string, door: string, detail: string): void {
-    this.log(`    [DURIN MOCK] ${title}: ${door} (${detail})`);
+    this.log(`    [DOOR ACCESS DEMO] ${title}: ${door} (${detail})`);
   }
 }

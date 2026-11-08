@@ -183,7 +183,7 @@ export interface ComponentStatus {
   requirement: Requirement;
   /** One plain sentence for the operator. */
   summary: string;
-  /** Provider role, e.g. LOCAL_DEMO or DURIN_DEMO. Never a credential. For Grok, not the operator. */
+  /** Provider role, e.g. LOCAL_DEMO or DEMO. Never a credential. For Grok, not the operator. */
   provider?: string;
   /** Technical details for Grok's own actions or troubleshooting. Never repeat them to the operator. */
   technical?: string[];
@@ -285,7 +285,7 @@ function endpointStatus(inst: Installation, mode: DeploymentMode): ComponentStat
           })
         : step("PUBLIC_ENDPOINT", "ESTABLISH_PUBLIC_ENDPOINT", "OPERATOR", "Tour Core needs a secure public connection before it can be reached.", {
             grokInstructions:
-              mode === "SELF_HOSTED" ? "Set PUBLIC_BASE_URL to the server's stable https address and restart Tour Core." : "Start a secure tunnel and set PUBLIC_BASE_URL (README, developer path).",
+              mode === "SELF_HOSTED" ? "Set PUBLIC_BASE_URL to the server's stable https address and restart Tour Core." : "Start a secure tunnel and set PUBLIC_BASE_URL (docs/tour-core/README.md, developer path).",
           });
   if (!url) {
     if (raw) return component("PUBLIC_ENDPOINT", "ERROR", "Tour Core's public connection isn't set up correctly.", { technical: ["PUBLIC_BASE_URL isn't https."], next: establish() });
@@ -573,7 +573,7 @@ function hostNumberStatus(inst: Installation): ComponentStatus {
 }
 
 function accessStatus(): ComponentStatus {
-  return component("ACCESS", "READY", "Demo. No real doors open.", { provider: "DURIN_DEMO" });
+  return component("ACCESS", "READY", "Demo. No real doors open.", { provider: "DEMO" });
 }
 
 /**

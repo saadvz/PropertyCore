@@ -2112,7 +2112,7 @@ export class TourCore {
           idempotencyKey: `${reservation.id}:${grant.doorId}:ext:${newEnd.toISOString()}`,
         });
       } catch (err) {
-        result = { ok: false as const, reason: err instanceof Error ? err.message : "Durin request failed" };
+        result = { ok: false as const, reason: err instanceof Error ? err.message : "Door access request failed" };
       }
       if (!result.ok) continue;
       await this.deps.store.put("accessGrants", { ...grant, validUntil: newEnd.toISOString(), durinGrantRef: result.grantRef });
@@ -2120,7 +2120,7 @@ export class TourCore {
         reservationId: reservation.id,
         prospectId: reservation.prospectId,
         doorId: grant.doorId,
-        detail: `extension; Durin grant ${result.grantRef} until ${this.clockLabel(newEnd, reservation)}`,
+        detail: `extension; door access grant ${result.grantRef} until ${this.clockLabel(newEnd, reservation)}`,
       });
     }
   }
@@ -2175,7 +2175,7 @@ export class TourCore {
       (g) => g.reservationId === approved.id && g.doorId === request.doorId && g.status === "ACTIVE" && Date.parse(g.validUntil) > now.getTime(),
     );
     if (existing) {
-      await this.record("ACCESS_ALLOWED", { ...base, code: decision.code, detail: `duplicate request; reused grant ${existing.durinGrantRef}, Durin not called again` });
+      await this.record("ACCESS_ALLOWED", { ...base, code: decision.code, detail: `duplicate request; reused grant ${existing.durinGrantRef}, door access not asked again` });
       return { decision, durinCalled: false, grant: existing, reusedGrant: true };
     }
 
@@ -2209,11 +2209,11 @@ export class TourCore {
         idempotencyKey: `${approved.id}:${request.doorId}`,
       });
     } catch (err) {
-      result = { ok: false, reason: err instanceof Error ? err.message : "Durin request failed" };
+      result = { ok: false, reason: err instanceof Error ? err.message : "Door access request failed" };
     }
 
     if (!result.ok) {
-      const failed: AccessDecision = { allowed: false, code: "DENY_PROVIDER_FAILURE", reason: `Durin could not grant access: ${result.reason}` };
+      const failed: AccessDecision = { allowed: false, code: "DENY_PROVIDER_FAILURE", reason: `Door access could not grant access: ${result.reason}` };
       const paused = await this.move(approved, "PROVIDER_FAILURE", "PROVIDER_FAILURE", { doorId: request.doorId, detail: result.reason });
       await this.record("ACCESS_DENIED", { ...base, code: failed.code, detail: failed.reason });
       await this.explainDenial(failed.code, paused, prospect, request.doorId);
@@ -2245,7 +2245,7 @@ export class TourCore {
       throw err;
     }
     const until = isValidTimeZone(config.property.timezone) ? this.time(new Date(grant.validUntil)) : grant.validUntil;
-    await this.record("ACCESS_ALLOWED", { ...base, code: decision.code, detail: `Durin grant ${result.grantRef} until ${until}` });
+    await this.record("ACCESS_ALLOWED", { ...base, code: decision.code, detail: `door access grant ${result.grantRef} until ${until}` });
 
     if (approved.status === "READY") {
       await this.move(approved, "TOURING", "TOUR_STARTED", { detail: `entered via ${door?.name ?? request.doorId}` });
