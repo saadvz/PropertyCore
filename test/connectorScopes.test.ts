@@ -197,7 +197,7 @@ describe("connector scopes", () => {
 
     const toolsDoc = readFileSync(new URL("../grok-template/integrations/tour-core-tools.md", import.meta.url), "utf8");
     const qaTable = toolsDoc.slice(toolsDoc.indexOf("## QA connector"));
-    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const readme = readFileSync(new URL("../docs/tour-core/README.md", import.meta.url), "utf8");
     const connectorSection = readme.slice(readme.indexOf("### Ops and QA connectors"), readme.indexOf("## Getting started"));
     for (const [qaTool, landlordTool] of QA_LIVE_CHECK_MAP) {
       const row = qaTable.split("\n").find((line) => line.startsWith(`| \`${qaTool}\` |`));

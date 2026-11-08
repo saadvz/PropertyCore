@@ -140,7 +140,7 @@ unchanged.
 ## Connection and operator demo
 
 Not part of `npm test`. Needs a Grok Bot account, the Tour Core computer with
-Sendblue and a tunnel (README), and one real phone that's a verified Sendblue
+Sendblue and a tunnel ([Tour Core guide](tour-core/README.md)), and one real phone that's a verified Sendblue
 contact. Use a fresh `TOURCORE_HOME` so earlier properties don't interfere:
 
 ```powershell

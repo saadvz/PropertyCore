@@ -78,7 +78,7 @@ async function configure(): Promise<void> {
 
   const url = webhookUrlFor(env);
   if (!url) {
-    bad("PUBLIC_BASE_URL isn't set to an https address. Start a tunnel (see README) and set it in .env first.");
+    bad("PUBLIC_BASE_URL isn't set to an https address. Start a tunnel (see docs/tour-core/README.md) and set it in .env first.");
     process.exit(1);
   }
 

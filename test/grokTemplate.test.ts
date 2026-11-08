@@ -127,7 +127,7 @@ describe("Grok template package", () => {
 
 describe("landlord docs keep sample phone numbers out", () => {
   it("has no formatted phone number outside the grok-template examples", () => {
-    const roots = [join(ROOT, "README.md"), join(ROOT, "GROK_BOOTSTRAP.md"), join(ROOT, ".grok"), TEMPLATE];
+    const roots = [join(ROOT, "README.md"), join(ROOT, "docs", "tour-core", "README.md"), join(ROOT, "GROK_BOOTSTRAP.md"), join(ROOT, ".grok"), TEMPLATE];
     const paths = roots.flatMap((p) => (statSync(p).isDirectory() ? filesUnder(p) : [p]));
     const phone = /\(\d{3}\) \d{3}-\d{4}/;
     for (const path of paths) {
