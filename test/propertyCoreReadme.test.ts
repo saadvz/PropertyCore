@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { REPO_ROOT } from "./files";
 
 /**
- * saadvz/TourCore#177: a new reader, or an agent, lands on Property Core first. Tour Core is parked
+ * saadvz/PropertyCore#177: a new reader, or an agent, lands on Property Core first. Tour Core is parked
  * in docs/tour-core/ and stays reachable.
  */
 
@@ -101,5 +101,15 @@ describe("the package and the plugin marketplace", () => {
     const market = JSON.parse(read(".claude-plugin/marketplace.json")) as { owner: { name: string }; metadata: { description: string } };
     expect(market.owner.name).toBe("Property Core");
     expect(market.metadata.description).toMatch(/Property Core/);
+  });
+
+  it("are named property-core, and the docs install the plugins from that marketplace (#179)", () => {
+    expect((JSON.parse(read("package.json")) as { name: string }).name).toBe("property-core");
+    expect((JSON.parse(read("package-lock.json")) as { name: string }).name).toBe("property-core");
+    expect((JSON.parse(read(".claude-plugin/marketplace.json")) as { name: string }).name).toBe("property-core");
+    for (const rel of ["property-core-template/claude/SETUP_GUIDE.md", "claude-template/SETUP_GUIDE.md", "claude-template/README.md", "docs/property-core-claude-setup.html"]) {
+      expect(read(rel), rel).not.toMatch(/@tour-core\b/);
+      expect(read(rel), rel).toContain("/plugin marketplace add saadvz/PropertyCore");
+    }
   });
 });
