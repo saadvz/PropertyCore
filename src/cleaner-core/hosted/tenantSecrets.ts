@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeJsonAtomic } from "../../storage/atomicWrite";
 import { tenantFolder } from "./registry";
@@ -73,9 +73,5 @@ export class TenantSecrets {
     if (!(grantId in doc.connections)) return;
     delete doc.connections[grantId];
     this.write(id, doc);
-  }
-
-  removeTenant(id: string): void {
-    rmSync(this.path(id), { force: true });
   }
 }

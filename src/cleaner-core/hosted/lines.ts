@@ -11,9 +11,6 @@ import { findIncomingNumber, pointSmsWebhook, releaseNumber } from "./twilioNumb
  * service, and records it. Closing the account gives it back to rest, or releases it from Twilio.
  */
 
-/** Where every account's line sends its texts. The `To` number picks the account. */
-export const LINE_WEBHOOK_PATH = CLEANER_TWILIO_PATH;
-
 export function numberPool(h: HostedCleaner): NumberPool {
   return new NumberPool(h.dataRoot, () => h.now());
 }
@@ -34,8 +31,9 @@ export function recordAccountLines(h: HostedCleaner): void {
   numberPool(h).record(h.registry.list().map((t) => ({ number: t.twilioNumber, tenantId: t.id })));
 }
 
+/** Where every account's line sends its texts. The `To` number picks the account. */
 export function lineWebhookUrl(h: HostedCleaner): string {
-  return `${h.origin() ?? ""}${LINE_WEBHOOK_PATH}`;
+  return `${h.origin() ?? ""}${CLEANER_TWILIO_PATH}`;
 }
 
 export type OpenRefusal = "bad-label" | "no-line";
@@ -88,9 +86,14 @@ export async function attachTypedLine(h: HostedCleaner, tenant: Tenant, sid: str
 /** Points the account's line at this service again, after Twilio refused it once. */
 export async function repointLine(h: HostedCleaner, tenant: Tenant): Promise<boolean> {
   const pool = numberPool(h);
-  const sid = pool.get(tenant.twilioNumber)?.sid || (await findIncomingNumber(h.baseEnv(), tenant.twilioNumber))?.sid;
+  const sid = await lineSid(h.baseEnv(), pool, tenant.twilioNumber);
   if (!sid) return false;
   return pointLine(h, pool, tenant.twilioNumber, sid);
+}
+
+/** A line's Twilio sid: the pool's, else Twilio's own. The pool records an unknown sid as "", which falls through. */
+async function lineSid(env: NodeJS.ProcessEnv, pool: NumberPool, number: string): Promise<string | undefined> {
+  return pool.get(number)?.sid || (await findIncomingNumber(env, number))?.sid;
 }
 
 async function pointLine(h: HostedCleaner, pool: NumberPool, number: string, sid: string): Promise<boolean> {
@@ -113,7 +116,7 @@ export type LineClosed = "returned" | "released" | "release-refused" | "not-foun
 export async function closeLine(h: HostedCleaner, tenant: Tenant, how: CloseLine): Promise<LineClosed> {
   const env = h.baseEnv();
   const pool = numberPool(h);
-  const sid = pool.get(tenant.twilioNumber)?.sid || (await findIncomingNumber(env, tenant.twilioNumber))?.sid;
+  const sid = await lineSid(env, pool, tenant.twilioNumber);
   if (!sid) {
     h.log(`${tenant.id}'s line wasn't found on the Twilio account, or Twilio couldn't be reached. Clear its webhook in the Twilio console.`);
     return "not-found";
@@ -164,10 +167,14 @@ export async function topUp(h: HostedCleaner, raws: string[]): Promise<{ added: 
   const refused: { raw: string; reason: TopUpRefusal }[] = [];
   for (const raw of raws) {
     const e164 = parsePhone(raw);
+    if (!e164) {
+      refused.push({ raw, reason: "bad-number" });
+      continue;
+    }
     const otherLine = OTHER_LINES.some((key) => parsePhone(h.baseEnv()[key] ?? "") === e164);
-    const reason: TopUpRefusal | undefined = !e164 ? "bad-number" : h.registry.byNumber(e164) || otherLine ? "in-use" : pool.get(e164) ? "already-pooled" : undefined;
-    if (reason || !e164) {
-      refused.push({ raw, reason: reason ?? "bad-number" });
+    const reason: TopUpRefusal | undefined = h.registry.byNumber(e164) || otherLine ? "in-use" : pool.get(e164) ? "already-pooled" : undefined;
+    if (reason) {
+      refused.push({ raw, reason });
       continue;
     }
     const number = await findIncomingNumber(h.baseEnv(), e164);
@@ -188,7 +195,7 @@ export async function topUp(h: HostedCleaner, raws: string[]): Promise<{ added: 
 }
 
 /** After every take, the log says so once ready numbers are at or below POOL_LOW_AT. */
-export function warnIfLow(h: HostedCleaner, pool: NumberPool = numberPool(h)): void {
+function warnIfLow(h: HostedCleaner, pool: NumberPool): void {
   const { ready, low } = pool.summary();
   if (low) h.log(`The number pool is low: ${ready} ready (alert at ${POOL_LOW_AT} or fewer). Add registered numbers on /admin.`);
 }
