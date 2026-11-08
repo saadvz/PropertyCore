@@ -7,6 +7,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 mkdir -p ci-logs
 
+# GitHub Actions turns colour on for the test runner. Plain logs keep the secret scan's
+# timing patterns and the test-count line at the end matching the same text as locally.
+export NO_COLOR=1
+
 node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 13)) { console.error(`Cleaner Core SQLite backups need Node 22.13 or newer. This process is Node ${process.version}.`); process.exit(1); }'
 
 run_log() {
