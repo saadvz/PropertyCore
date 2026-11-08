@@ -15,7 +15,7 @@ const SKILL = join(TEMPLATE, "skills/cleaner-core/SKILL.md");
 const TASK = join(TEMPLATE, "skills/cleaner-core/references/cleaner-core-task.md");
 const SUPPLY_SKILL = join(TEMPLATE, "skills/supply-core/SKILL.md");
 const SUPPLY_TASK = join(TEMPLATE, "skills/supply-core/references/supply-core-task.md");
-const REPO = "https://github.com/saadvz/TourCore";
+const REPO = "https://github.com/saadvz/PropertyCore";
 
 /** LF bytes, so the pin matches on a Windows (CRLF) checkout and on CI. */
 const read = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
