@@ -43,8 +43,11 @@ export interface RedirectPolicy {
   exact: readonly string[];
 }
 
+/** TOURCORE_GROK_LEGACY_OAUTH_COMPAT, trimmed and in lower case. */
+const legacyCompatSetting = (env: NodeJS.ProcessEnv) => env.TOURCORE_GROK_LEGACY_OAUTH_COMPAT?.trim().toLowerCase();
+
 /** True only when the variable is exactly `true`. Does not apply the hosted default. */
-export const grokLegacyCompatFromEnv = (env: NodeJS.ProcessEnv = process.env) => env.TOURCORE_GROK_LEGACY_OAUTH_COMPAT?.trim().toLowerCase() === "true";
+export const grokLegacyCompatFromEnv = (env: NodeJS.ProcessEnv = process.env) => legacyCompatSetting(env) === "true";
 
 /**
  * Whether the narrow legacy callback list is active.
@@ -52,7 +55,7 @@ export const grokLegacyCompatFromEnv = (env: NodeJS.ProcessEnv = process.env) =>
  * or set to anything other than false.
  */
 export function grokLegacyCompatEnabled(env: NodeJS.ProcessEnv = process.env, mode?: DeploymentMode): boolean {
-  const raw = env.TOURCORE_GROK_LEGACY_OAUTH_COMPAT?.trim().toLowerCase();
+  const raw = legacyCompatSetting(env);
   if (raw === "true") return true;
   if (raw === "false") return false;
   return mode === "HOSTED_RAILWAY_P0";
@@ -62,7 +65,7 @@ export function grokLegacyCompatEnabled(env: NodeJS.ProcessEnv = process.env, mo
 export function hostedCompatStartupLine(env: NodeJS.ProcessEnv, mode: DeploymentMode | undefined): string | undefined {
   if (mode !== "HOSTED_RAILWAY_P0") return undefined;
   if (grokLegacyCompatEnabled(env, mode)) return "Grok legacy OAuth compatibility active for HOSTED_RAILWAY_P0.";
-  if (env.TOURCORE_GROK_LEGACY_OAUTH_COMPAT?.trim().toLowerCase() === "false") return "Grok legacy OAuth compatibility is off (TOURCORE_GROK_LEGACY_OAUTH_COMPAT=false).";
+  if (legacyCompatSetting(env) === "false") return "Grok legacy OAuth compatibility is off (TOURCORE_GROK_LEGACY_OAUTH_COMPAT=false).";
   return undefined;
 }
 
@@ -113,23 +116,18 @@ export interface RedirectProblem {
 /** Undefined when the redirect URI is acceptable; otherwise why not. */
 export function checkRedirectUri(uri: string, policy: RedirectPolicy, applicationType?: "web" | "native"): RedirectProblem | undefined {
   if (typeof uri === "string" && policy.exact.includes(uri)) return undefined;
-  let parts: Pick<RedirectProblem, "scheme" | "host" | "path"> = {};
+  let url: URL | undefined;
   try {
-    const u = new URL(uri);
-    parts = { scheme: u.protocol.replace(/:$/, ""), host: u.host.toLowerCase() || undefined, path: u.pathname || "/" };
+    url = new URL(uri);
   } catch {
     // Reported below as not a web address.
   }
+  const parts: Pick<RedirectProblem, "scheme" | "host" | "path"> = url ? { scheme: url.protocol.replace(/:$/, ""), host: url.host.toLowerCase() || undefined, path: url.pathname || "/" } : {};
   const problem = (reason: string): RedirectProblem => ({ uri, reason, ...parts });
   const hosts = policy.hosts;
   if (typeof uri !== "string" || !uri || uri.length > 2000) return problem("isn't a web address");
   if (uri.includes("*")) return problem("uses a wildcard");
-  let url: URL;
-  try {
-    url = new URL(uri);
-  } catch {
-    return problem("isn't a web address");
-  }
+  if (!url) return problem("isn't a web address");
   if (url.hash || uri.includes("#")) return problem("has a fragment");
   if (url.username || url.password) return problem("contains credentials");
   const hostname = url.hostname.toLowerCase();
@@ -155,7 +153,7 @@ export class ClientMetadataError extends Error {
 }
 
 const GRANTS = new Set(["authorization_code", "refresh_token"]);
-const AUTH_METHODS = new Set(["none", "client_secret_post", "client_secret_basic"]);
+export const AUTH_METHODS = new Set(["none", "client_secret_post", "client_secret_basic"]);
 
 type Metadata = Record<string, unknown>;
 const stringArray = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
@@ -263,7 +261,7 @@ export function parseMetadataDocument(clientId: string, document: unknown, polic
     throw new ClientMetadataError("invalid_client_metadata", "A client metadata document can't carry a client secret.");
   }
   // A client may prefer a stronger method but list "none" among those it supports (ChatGPT's does).
-  // This server advertises only "none", so that is the method such a client uses here.
+  // A metadata-document client shares no secret with this server, so "none" is the only method it can use here.
   const supported = (doc as { token_endpoint_auth_methods_supported?: unknown }).token_endpoint_auth_methods_supported;
   const publicToo = Array.isArray(supported) && supported.includes("none");
   const checked = checkClientMetadata({ ...doc, token_endpoint_auth_method: publicToo ? "none" : (doc.token_endpoint_auth_method ?? "none") }, policy, new Set(["none"]));
