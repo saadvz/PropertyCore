@@ -101,19 +101,39 @@ function doorReason(reason: RevealRefusal): string {
   return COPY.codeRefused;
 }
 
-export async function handleVisitRequest(desk: FixerDesk, req: VisitRequest): Promise<VisitResponse> {
-  const page = req.sub === "";
-  const refuse = (status: number, message: string, extra: Record<string, string> = {}) => refusal(req.sub, status, message, extra);
+const ACTIONS = ["door", "photo", "done", "quote"];
+
+/** True when the request is one whose body the page reads: a POST to one of its actions. */
+export function visitReadsBody(method: string, sub: string): boolean {
+  return method === "POST" && ACTIONS.includes(sub);
+}
+
+/**
+ * A request's first step, before any body is read: the link is counted and its live visit found, or
+ * the page's refusal (a malformed, unknown or ended link, or too many requests to it).
+ */
+export function openVisit(desk: FixerDesk, req: { sub: string; token: string }): { view: VisitView } | { refusal: VisitResponse } {
   // Every request to a known link counts, the page and its 404s included.
   const hit = desk.visitHit(req.token);
-  if (hit === "limited") return refuse(429, COPY.tooMany, { "Retry-After": "3600" });
+  if (hit === "limited") return { refusal: refusal(req.sub, 429, COPY.tooMany, { "Retry-After": "3600" }) };
   const view = hit === "ok" ? desk.visitByToken(req.token) : undefined;
-  if (!view) return refuse(404, VISIT_ENDED);
+  return view ? { view } : { refusal: refusal(req.sub, 404, VISIT_ENDED) };
+}
+
+export async function handleVisitRequest(desk: FixerDesk, req: VisitRequest): Promise<VisitResponse> {
+  const opened = openVisit(desk, req);
+  return "refusal" in opened ? opened.refusal : answerVisit(desk, req, opened.view);
+}
+
+/** The rest of a request to a live visit, with its body read. */
+export async function answerVisit(desk: FixerDesk, req: VisitRequest, view: VisitView): Promise<VisitResponse> {
+  const page = req.sub === "";
+  const refuse = (status: number, message: string, extra: Record<string, string> = {}) => refusal(req.sub, status, message, extra);
   if (page) {
     if (req.method !== "GET") return refuse(405, COPY.notFound, { Allow: "GET" });
     return html(200, (nonce) => visitPage(view, nonce), view.phase === "during");
   }
-  if (!["door", "photo", "done", "quote"].includes(req.sub)) return refuse(404, COPY.notFound);
+  if (!ACTIONS.includes(req.sub)) return refuse(404, COPY.notFound);
   if (req.method !== "POST") return refuse(405, COPY.notFound, { Allow: "POST" });
   const hash = tokenHash(req.token);
   if (req.sub === "door") {

@@ -3,7 +3,7 @@ import type { InboundMedia } from "../cleaner-core/photos";
 import { FIXER_AGENTS_ONLY, runsFixer, type CleanerAssistant } from "../cleaner-core/assistant";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { sendLiveSms } from "../cleaner-core/liveSms";
-import { photoKey } from "../cleaner-core/photos";
+import { photoFolder, photoKey } from "../cleaner-core/photos";
 import { propertyBasePath, propertyFolder, type Property } from "../cleaner-core/hosted/properties";
 import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/router";
@@ -242,21 +242,46 @@ export async function tickFixer(h: HostedCleaner, tenant: Tenant, property: Prop
   await fixerDesk(h, tenant, property).tick();
 }
 
+/** How strongly a property's record says a text from `phone` is about it: 3 a visit under way, 2 a booked one that has started, 1 any booked one, else 0. */
+function visitRank(file: FixerFile | undefined, phone: string, now: number): number {
+  const pro = file?.pros.find((entry) => entry.status === "saved" && entry.reach.phone === phone);
+  if (!file || !pro) return 0;
+  const mine = file.jobs.filter((job) => job.booking?.proId === pro.id);
+  if (mine.some((job) => job.state === "in-progress")) return 3;
+  const booked = mine.filter((job) => job.state === "booked");
+  if (booked.some((job) => now >= Date.parse(job.booking!.from))) return 2;
+  return booked.length > 0 ? 1 : 0;
+}
+
 /**
- * A pro's text on the shared line, for one of `properties` (proRoute's): the one where the pro's own
- * visit is booked or under way, else the first. The desk ignores anything that isn't theirs to say.
+ * A pro's text on the shared line, for one of `properties` (proRoute's): the one with their visit
+ * under way, then a booked one that has started, then any booked one, else the first. The desk
+ * ignores anything that isn't theirs to say.
  */
 export async function fixerProText(h: HostedCleaner, tenant: Tenant, properties: Property[], input: { id: string; from: string; text: string; media: InboundMedia[] }): Promise<void> {
-  const visiting = properties.find((property) => {
-    const file = readOrNone(propertyFolder(h.dataRoot, tenant.id, property));
-    const pro = file?.pros.find((entry) => entry.status === "saved" && entry.reach.phone === input.from);
-    return !!pro && file!.jobs.some((job) => job.booking?.proId === pro.id && (job.state === "booked" || job.state === "in-progress"));
-  });
-  const property = visiting ?? properties[0]!;
+  const now = h.now().getTime();
+  const ranked = properties.map((property) => ({ property, rank: visitRank(readOrNone(propertyFolder(h.dataRoot, tenant.id, property)), input.from, now) }));
+  const property = ranked.reduce((best, next) => (next.rank > best.rank ? next : best)).property;
   try {
     await fixerDesk(h, tenant, property).proInbound({ id: input.id, from: input.from, text: input.text, ...(input.media.length > 0 ? { media: input.media } : {}) });
   } catch {
     // Never the text: it can hold a price or anything the pro wrote.
     h.log(`Fixer Core couldn't take a pro's text for ${tenant.id}/${property.id}.`);
+  }
+}
+
+/** The photo folders of the property's repair jobs: the only photos its links serve while Cleaner Core is off there. */
+export function fixerPhotoFolders(h: HostedCleaner, tenant: Tenant, property: Property): Set<string> {
+  const file = readOrNone(propertyFolder(h.dataRoot, tenant.id, property));
+  return new Set((file?.jobs ?? []).map((job) => photoFolder(`fixer:${job.id}`)));
+}
+
+/** After the property's door code was saved through its upload link: Fixer Core stops asking about the old one. */
+export async function fixerCodeChanged(h: HostedCleaner, tenant: Tenant, property: Property): Promise<void> {
+  if (!current(h, tenant, property).property.flows.fixer.on) return;
+  try {
+    await fixerDesk(h, tenant, property).doorCodeChanged();
+  } catch {
+    h.log(`Fixer Core couldn't note ${tenant.id}/${property.id}'s new door code.`);
   }
 }

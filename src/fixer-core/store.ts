@@ -146,7 +146,8 @@ export interface Job {
   news: { kind: string; at: string; text?: string; toldAt?: string }[];
   preferredAsked?: { at: string; answer?: "yes" | "no" };
   /** The open or last rotation question; `proId` is the pro who saw the code that it names. */
-  rotationAsked?: { at: string; answer?: "yes" | "no"; proId?: string };
+  /** `changedAt`: when a new door code was saved after the question, so it is settled. */
+  rotationAsked?: { at: string; answer?: "yes" | "no"; proId?: string; changedAt?: string };
   /** The pros the door code was shown or texted to, on any visit of this job, kept across a reschedule. */
   codeShownTo?: string[];
   /** The pros a rotation question was asked about, so each one is asked once. */

@@ -293,6 +293,8 @@ export class FixerDesk {
   private readonly approvals: ConfirmationBook;
   /** Requests to each visit link in its current hour, by token hash. In memory: a restart counts from zero. */
   private readonly visitHits = new Map<string, { start: number; count: number }>();
+  /** Links a lookup found live, by token hash, until the link ends. In memory: after a restart, the first lookup fills it again. */
+  private readonly liveLinks = new Map<string, number>();
 
   constructor(
     readonly root: string,
@@ -1913,6 +1915,33 @@ export class FixerDesk {
     });
   }
 
+  /**
+   * A new door code was saved through the property's upload link. The pros who saw the old one need
+   * no question about it any more: an open rotation question is settled as changed, a "yes" waiting
+   * for the new code is marked done, and those pros aren't asked about the old code again.
+   */
+  doorCodeChanged(): Promise<void> {
+    return this.serial(async () => {
+      const file = this.read();
+      const at = this.deps.now().toISOString();
+      let changed = false;
+      for (const job of file.jobs) {
+        const asked = job.rotationAsked;
+        if (asked && !asked.changedAt && asked.answer !== "no") {
+          job.rotationAsked = { ...asked, answer: "yes", changedAt: at };
+          changed = true;
+        }
+        const before = job.rotationAskedFor ?? [];
+        const all = [...new Set([...before, ...shownTo(job)])];
+        if (all.length > before.length) {
+          job.rotationAskedFor = all;
+          changed = true;
+        }
+      }
+      if (changed) this.write(file);
+    });
+  }
+
   /** Links to the job's photos, each good for an hour. */
   jobPhotos(jobId: string): Promise<FixerReply> {
     return this.guarded({ jobId }, () => {
@@ -2004,10 +2033,16 @@ export class FixerDesk {
     const hash = tokenHash(token);
     const now = this.deps.now().getTime();
     for (const [key, entry] of this.visitHits) if (now - entry.start >= HOUR_MS || now < entry.start) this.visitHits.delete(key);
+    for (const [key, end] of this.liveLinks) if (now >= end) this.liveLinks.delete(key);
     let entry = this.visitHits.get(hash);
     if (!entry) {
-      const file = this.readForPage();
-      if (!file || !this.jobByVisitHash(file, hash)) return "unknown";
+      // A link already found live needs no read until it ends; any other is looked up, and remembered when live.
+      if (!this.liveLinks.has(hash)) {
+        const file = this.readForPage();
+        if (!file || !this.jobByVisitHash(file, hash)) return "unknown";
+        const live = this.liveVisit(file, hash);
+        if (live) this.liveLinks.set(hash, this.endOf(live.booking!) + PAGE_AFTER_MS);
+      }
       entry = { start: now, count: 0 };
       this.visitHits.set(hash, entry);
     }
@@ -2016,13 +2051,16 @@ export class FixerDesk {
   }
 
   /**
-   * True when counting this token would read fixer.json: it is well formed and no request to it was
-   * counted in its current hour. The route limits these lookups across every account.
+   * True when counting this token would read fixer.json: it is well formed, not a link already found
+   * live (kept until the link ends), and not counted in its current hour. The route limits these lookups.
    */
   visitNeedsLookup(token: string): boolean {
     if (!VISIT_TOKEN.test(token)) return false;
-    const entry = this.visitHits.get(tokenHash(token));
+    const hash = tokenHash(token);
     const now = this.deps.now().getTime();
+    const end = this.liveLinks.get(hash);
+    if (end !== undefined && now < end) return false;
+    const entry = this.visitHits.get(hash);
     return !entry || now - entry.start >= HOUR_MS || now < entry.start;
   }
 

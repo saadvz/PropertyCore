@@ -1,13 +1,14 @@
 import { randomBytes } from "node:crypto";
 import { request } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { setCleanerPhotoFetch } from "../src/cleaner-core/photos";
+import { LiveDesk } from "../src/cleaner-core/liveDesk";
+import { photoKey, photoLinks, setCleanerPhotoFetch, storePhoto } from "../src/cleaner-core/photos";
 import { propertyBasePath, propertyFolder, type Property } from "../src/cleaner-core/hosted/properties";
 import { propertyContext, tickAllFixers } from "../src/cleaner-core/hosted/router";
 import type { Tenant } from "../src/cleaner-core/hosted/registry";
 import { FixerDesk, resetFixerDesks } from "../src/fixer-core/desk";
 import { readFixer } from "../src/fixer-core/store";
-import { resetVisitLookups, VISIT_LOOKUPS_PER_MINUTE } from "../src/hosted/fixerVisit";
+import { resetVisitLookups, VISIT_LOOKUPS_PER_MINUTE, VISIT_LOOKUPS_PER_PROPERTY } from "../src/hosted/fixerVisit";
 import { hubFor } from "../src/hub/hub";
 import { BASE, closeHostedApps, DOMAIN } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
@@ -121,11 +122,16 @@ function expectStrict(headers: Record<string, string | string[] | undefined>) {
   expect(String(headers["content-security-policy"])).toContain("default-src 'none'");
 }
 
-/** A POST that declares `declared` bytes but sends only the first chunk, and the answer the server gives without the rest. */
-function partialPost(m: MultiTenantApp, path: string, type: string, declared: number): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string }> {
+/**
+ * A POST that never finishes: it declares `declared` bytes (or is chunked when undefined), sends only
+ * `sent` bytes, and resolves with the server's answer. An answer at all means the server didn't wait
+ * for, or keep, the rest.
+ */
+function partialPost(m: MultiTenantApp, path: string, type: string, declared: number | undefined, sent = 1024): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string }> {
   const port = (m.app.server.address() as { port: number }).port;
   return new Promise((resolve, reject) => {
-    const req = request({ host: "127.0.0.1", port, path, method: "POST", headers: { host: DOMAIN, "x-forwarded-proto": "https", "content-type": type, "content-length": String(declared) } }, (res) => {
+    const headers: Record<string, string> = { host: DOMAIN, "x-forwarded-proto": "https", "content-type": type, ...(declared !== undefined ? { "content-length": String(declared) } : {}) };
+    const req = request({ host: "127.0.0.1", port, path, method: "POST", headers }, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (chunk: Buffer) => chunks.push(chunk));
       res.on("end", () => {
@@ -133,10 +139,14 @@ function partialPost(m: MultiTenantApp, path: string, type: string, declared: nu
         req.destroy();
       });
     });
-    req.on("error", reject);
-    req.write(Buffer.alloc(1024, 0x61));
+    // The server may close first; only its answer matters.
+    req.on("error", () => undefined);
+    req.on("close", () => reject(new Error("closed without an answer")));
+    for (let left = sent; left > 0; left -= 1024) req.write(Buffer.alloc(Math.min(1024, left), 0x61));
   });
 }
+
+const made = () => Array.from({ length: 64 }, () => "abcdefghijklmnop"[Math.floor(Math.random() * 16)]).join("");
 
 describe("a repair visit end to end on the shared service", () => {
   it("opens, books with the host's yes, shows the page, gives the code only at the door, takes the pro's DONE text with a photo, and records the cost", SLOW, async () => {
@@ -255,28 +265,73 @@ describe("the visit page route", () => {
     expect(m.app.logs.some((line) => line.includes(visitToken) || line.includes("/fixer-core/visit/") || line.includes("Sink"))).toBe(false);
   });
 
-  it("looks up at most 120 new links a minute across accounts, and a link already seen keeps working", SLOW, async () => {
+  it("lets a real pro through a flood of made-up links: 30 lookups a minute per property, and a link found live needs no more", SLOW, async () => {
     const m = await start();
     const a = await account(m, "grok", LANE);
     const b = await account(m, "grok", COURT);
-    await m.toolAt(PATH, b.token, "set_flows", { property: b.property.id, fixer: true });
-    const w = watcher(m, a.token, a.property);
-    const { path } = await bookedVisit(m, a.tenant, a.property, w);
-    expect((await m.app.http(path)).status).toBe(200);
-    const made = () => Array.from({ length: 64 }, () => "abcdefghijklmnop"[Math.floor(Math.random() * 16)]).join("");
-    const bases = [propertyBasePath(a.tenant.id, a.property), propertyBasePath(b.tenant.id, b.property)];
-    // The real link's first request was this minute's first lookup.
-    for (let i = 1; i < VISIT_LOOKUPS_PER_MINUTE; i++) expect((await m.app.http(`${bases[i % 2]}/fixer-core/visit/${made()}`)).status).toBe(404);
-    const limited = await m.app.http(`${bases[1]}/fixer-core/visit/${made()}`);
+    const wa = watcher(m, a.token, a.property);
+    const wb = watcher(m, b.token, b.property);
+    const onA = await bookedVisit(m, a.tenant, a.property, wa);
+    const onB = await bookedVisit(m, b.tenant, b.property, wb);
+    // A's pro opened their link; after a restart, that first request finds it live again and remembers it.
+    expect((await m.app.http(onA.path)).status).toBe(200);
+    resetFixerDesks();
+    expect((await m.app.http(onA.path)).status).toBe(200);
+    // Two hours on, past the per-link hour: the remembered link still costs no lookup.
+    clock = new Date(clock.getTime() + 2 * 60 * 60_000);
+    const baseA = propertyBasePath(a.tenant.id, a.property);
+    for (let i = 0; i < VISIT_LOOKUPS_PER_PROPERTY; i++) expect((await m.app.http(`${baseA}/fixer-core/visit/${made()}`)).status).toBe(404);
+    const limited = await m.app.http(`${baseA}/fixer-core/visit/${made()}`);
     expect(limited.status).toBe(429);
     expectStrict(limited.headers);
     expect(limited.headers["retry-after"]).toBe("60");
-    // A badly formed token costs no lookup, and the link counted this hour still opens.
-    expect((await m.app.http(`${bases[0]}/fixer-core/visit/not-a-token`)).status).toBe(404);
-    expect((await m.app.http(path)).status).toBe(200);
-    // The next minute looks up again.
+    expect(JSON.stringify(await limited.text())).not.toContain("Sink");
+    // The flood on A never reaches A's pro, or B's pro opening their link for the first time.
+    expect((await m.app.http(onA.path)).status).toBe(200);
+    expect((await m.app.http(onB.path)).status).toBe(200);
+    // A malformed token costs nothing. The next minute looks up again.
+    expect((await m.app.http(`${baseA}/fixer-core/visit/not-a-token`)).status).toBe(404);
     clock = new Date(clock.getTime() + 61_000);
-    expect((await m.app.http(`${bases[1]}/fixer-core/visit/${made()}`)).status).toBe(404);
+    expect((await m.app.http(`${baseA}/fixer-core/visit/${made()}`)).status).toBe(404);
+  });
+
+  it("stops new lookups at 120 a minute across every account", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    const properties = [property, ...["8 Scratch Court", "3 Scratch Road", "5 Scratch Way", "9 Scratch Row"].map((label) => m.registry.addProperty(tenant.id, label))];
+    for (const p of properties) await m.toolAt(PATH, token, "set_flows", { property: p.id, fixer: true });
+    const bases = properties.map((p) => propertyBasePath(tenant.id, p));
+    for (const base of bases.slice(0, VISIT_LOOKUPS_PER_MINUTE / VISIT_LOOKUPS_PER_PROPERTY)) {
+      for (let i = 0; i < VISIT_LOOKUPS_PER_PROPERTY; i++) expect((await m.app.http(`${base}/fixer-core/visit/${made()}`)).status).toBe(404);
+    }
+    expect((await m.app.http(`${bases[4]}/fixer-core/visit/${made()}`)).status).toBe(429);
+  });
+
+  it("answers a malformed or unknown link without reading the body it sends", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    await m.toolAt(PATH, token, "set_flows", { property: property.id, fixer: true });
+    const base = propertyBasePath(tenant.id, property);
+    for (const tok of ["not-a-token", made()]) {
+      // 5 MB declared as chunks, of which 64 KB are sent and the rest never comes.
+      const res = await partialPost(m, `${base}/fixer-core/visit/${tok}/photo`, "image/jpeg", undefined, 64 * 1024);
+      expect(res.status).toBe(404);
+      expectStrict(res.headers);
+      expect(res.headers.connection).toBe("close");
+    }
+  });
+
+  it("caps a chunked body for a live visit at 4096 bytes", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    const w = watcher(m, token, property);
+    const { path } = await bookedVisit(m, tenant, property, w);
+    clock = new Date(TUE.from);
+    const res = await partialPost(m, `${path}/done`, "application/json", undefined, 8 * 1024);
+    expect(res.status).toBe(413);
+    expectStrict(res.headers);
+    expect(JSON.parse(res.body)).toEqual({ error: "That request is too large." });
+    expect(readFixer(propertyFolder(m.app.root, tenant.id, property)).jobs[0]!.state).not.toBe("done");
   });
 });
 
@@ -290,6 +345,75 @@ describe("the pro's texts on the shared line", () => {
     expect(res.status).toBe(200);
     expect(m.app.logs).toContain(`A text reached ${tenant.id}'s line from someone on no property. Nothing was sent.`);
     expect(readFixer(propertyFolder(m.app.root, tenant.id, property)).seenInbound ?? []).toEqual([]);
+  });
+
+  it("refuse a pro's DONE with a forged signature, and change nothing", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    const w = watcher(m, token, property);
+    await bookedVisit(m, tenant, property, w);
+    await m.text(LANE, JOE, "YES", "SMforgeyes01");
+    clock = new Date(Date.parse(TUE.from) + 30 * 60_000);
+    const forged = await m.twilio("/webhooks/twilio/cleaner-core", { MessageSid: "SMforged01", From: JOE, To: LANE, Body: "DONE", SmsStatus: "received" }, "/webhooks/twilio/elsewhere");
+    expect(forged.status).toBe(403);
+    const file = readFixer(propertyFolder(m.app.root, tenant.id, property));
+    expect(file.seenInbound).toEqual(["SMforgeyes01"]);
+    expect(file.jobs[0]!.state).toBe("booked");
+  });
+
+  it("go to the property with the pro's visit under way, over an earlier booked one", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    const court = m.registry.addProperty(tenant.id, "8 Scratch Court");
+    const lane = watcher(m, token, property);
+    await bookedVisit(m, tenant, property, lane);
+    // Joe also books on Court, on Tuesday at 8:00, before Lane's visit.
+    const ctx = propertyContext(m.hosted(), fresh(m, tenant), court);
+    expect(hubFor(ctx.root, { now: () => clock }).doorAccess(ctx.env).save(NEW_CODE, undefined, undefined).ok).toBe(true);
+    const call = async (name: string, args: Record<string, unknown> = {}) => {
+      const reply = await m.toolAt(PATH, token, name, { property: court.id, ...args });
+      expect(reply.isError, `${name}: ${reply.text}`).toBe(false);
+      return reply;
+    };
+    await call("set_flows", { fixer: true });
+    await call("save_fixer_property", { ...PLACE, address: "8 Scratch Court, Teaneck, NJ 07666" });
+    await call("save_fixer_sources", { done: true });
+    const joe = await call("save_pro", { ...JOES, shared: true });
+    for (const settings of [{ prosDone: true }, { costLineCents: null }, { upkeepDone: true }]) await call("save_fixer_settings", settings);
+    await call("activate_fixer");
+    const courtJob = (await call("open_job", { trade: "plumbing", what: "Tub drains slowly", urgency: "soon", source: "host" })).structured!.jobId as string;
+    const contactToken = (await call("contact_pro", { jobId: courtJob, to: joe.structured!.proId, how: "call" })).structured!.contactToken as string;
+    await call("record_contact", { contactToken, outcome: "booked", from: "2026-11-10T13:00:00.000Z", until: "2026-11-10T14:00:00.000Z" });
+    const ask = await call("approve_booking", { jobId: courtJob });
+    await call("approve_booking", { jobId: courtJob, confirmation: codeOf(ask) });
+    // Joe is at Court; Lane's later visit is booked and hasn't started.
+    clock = new Date("2026-11-10T13:15:00.000Z");
+    await tickAllFixers(m.hosted());
+    await m.text(LANE, JOE, "YES", "SMpickyes01");
+    expect((await m.text(LANE, JOE, "DONE", "SMpickdone01")).status).toBe(200);
+    const atCourt = readFixer(propertyFolder(m.app.root, tenant.id, court));
+    expect(atCourt.jobs[0]).toMatchObject({ id: courtJob, state: "done" });
+    expect(atCourt.seenInbound).toContain("SMpickdone01");
+    expect(readFixer(propertyFolder(m.app.root, tenant.id, property)).jobs[0]!.state).not.toBe("done");
+  });
+
+  it("leave a cleaner who is also a pro with Cleaner Core, through the real webhook", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    const call = async (name: string, args: Record<string, unknown> = {}) => {
+      const reply = await m.toolAt(PATH, token, name, { property: property.id, ...args });
+      expect(reply.isError, `${name}: ${reply.text}`).toBe(false);
+      return reply;
+    };
+    await call("set_flows", { cleaning: true });
+    await call("set_flows", { fixer: true });
+    await call("save_property", { business: "Lane Stays", ...PLACE });
+    await call("save_people", { host: "+15555550101", cleaner: JOE });
+    await call("save_pro", JOES);
+    const cleanerInbound = vi.spyOn(LiveDesk.prototype, "inbound");
+    expect((await m.text(LANE, JOE, "DONE", "SMcleanerpro01")).status).toBe(200);
+    expect(readFixer(propertyFolder(m.app.root, tenant.id, property)).seenInbound ?? []).toEqual([]);
+    expect(cleanerInbound.mock.calls.map(([input]) => input.id)).toEqual(["SMcleanerpro01"]);
   });
 });
 
@@ -321,6 +445,19 @@ describe("Fixer Core's links on a property without Cleaner Core", () => {
     expect(m.app.logs.some((line) => holds(line, CODE) || holds(line, NEW_CODE))).toBe(false);
   });
 
+  it("serves only repair job photos there", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    await m.toolAt(PATH, token, "set_flows", { property: property.id, fixer: true });
+    const root = propertyFolder(m.app.root, tenant.id, property);
+    const ctx = propertyContext(m.hosted(), fresh(m, tenant), property);
+    // A cleaning job's photo, kept from when Cleaner Core ran here, with a link signed by the same key.
+    expect(storePhoto(root, "job_cleaning1", { bytes: JPEG, ext: "jpg" }, 20)).toBe(true);
+    const key = photoKey(ctx.env(), ctx.saveSecrets)!;
+    const [link] = photoLinks(root, "job_cleaning1", `${BASE}${propertyBasePath(tenant.id, property)}`, key, clock);
+    expect((await m.app.http(pathOf(link!.url))).status).toBe(404);
+  });
+
   it("serves no Cleaner Core link there", SLOW, async () => {
     const m = await start();
     const { tenant, property, token } = await account(m);
@@ -328,5 +465,54 @@ describe("Fixer Core's links on a property without Cleaner Core", () => {
     const base = propertyBasePath(tenant.id, property);
     expect((await m.app.http(`${base}/cleaner-core/alert-routine/${"a".repeat(43)}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(404);
     expect((await m.app.http(`${base}/door-code/${"a".repeat(43)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: NEW_CODE }) })).status).toBe(404);
+  });
+});
+
+describe("a new door code through change_door_code's link", () => {
+  /** A visit where Joe opened the code, then cancelled: the host is asked about changing it, says yes, and gets the link. */
+  async function codeChangeLink(m: MultiTenantApp, tenant: Tenant, property: Property, w: ReturnType<typeof watcher>) {
+    const { jobId, path } = await bookedVisit(m, tenant, property, w);
+    clock = new Date(Date.parse(TUE.from) - 10 * 60_000);
+    expect((await m.app.http(`${path}/door`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(200);
+    const ask = await w.call("cancel_job", { jobId });
+    const cancelled = await w.call("cancel_job", { jobId, confirmation: codeOf(ask) });
+    expect(cancelled.structured?.rotationAsk).toMatchObject([{ jobId }]);
+    const link = await w.call("change_door_code", { jobId });
+    return { jobId, path: pathOf(String(link.structured!.uploadUrl)) };
+  }
+
+  async function expectSettled(m: MultiTenantApp, tenant: Tenant, property: Property, w: ReturnType<typeof watcher>, jobId: string, path: string) {
+    expect(readFixer(propertyFolder(m.app.root, tenant.id, property)).jobs[0]!.rotationAsked?.changedAt).toBeUndefined();
+    const saved = await m.app.http(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: NEW_CODE }) });
+    const body = await saved.text();
+    expect(saved.status, body).toBe(200);
+    expect(holds(body, NEW_CODE), "the save repeats the code").toBe(false);
+    const job = readFixer(propertyFolder(m.app.root, tenant.id, property)).jobs.find((entry) => entry.id === jobId)!;
+    expect(job.rotationAsked).toMatchObject({ answer: "yes", changedAt: clock.toISOString() });
+    const ctx = propertyContext(m.hosted(), fresh(m, tenant), property);
+    expect(hubFor(ctx.root, { now: () => clock }).doorAccess(ctx.env).codeForChecks() === NEW_CODE, "the new code is saved").toBe(true);
+    const state = await w.call("get_fixer_state");
+    expect(state.raw).not.toContain("knows the door code");
+    expect(m.app.logs.some((line) => holds(line, NEW_CODE) || holds(line, CODE))).toBe(false);
+  }
+
+  it("on a Fixer-only property, is saved and settles Fixer Core's question", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    const w = watcher(m, token, property);
+    const { jobId, path } = await codeChangeLink(m, tenant, property, w);
+    await expectSettled(m, tenant, property, w, jobId, path);
+  });
+
+  it("with Cleaner Core on, is accepted by Cleaner Core's desk and settles Fixer Core's question", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    const w = watcher(m, token, property);
+    await w.call("set_flows", { cleaning: true });
+    await w.call("save_property", { business: "Lane Stays", ...PLACE });
+    const upload = vi.spyOn(LiveDesk.prototype, "uploadDoorCode");
+    const { jobId, path } = await codeChangeLink(m, tenant, property, w);
+    await expectSettled(m, tenant, property, w, jobId, path);
+    expect(upload).toHaveBeenCalledTimes(1);
   });
 });

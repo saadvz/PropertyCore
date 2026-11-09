@@ -289,8 +289,8 @@ export function photoLinks(root: string, jobId: string, baseUrl: string, key: Bu
 
 export type ServedPhoto = { status: 404 } | { status: 200; body: Buffer; headers: Record<string, string> };
 
-/** The photo a valid, unexpired token names, sent with no-store. Anything else is not found. */
-export function servePhoto(root: string, token: string, key: Buffer | undefined, now: Date): ServedPhoto {
+/** The photo a valid, unexpired token names, sent with no-store. Anything else, or a folder outside `onlyFolders`, is not found. */
+export function servePhoto(root: string, token: string, key: Buffer | undefined, now: Date, onlyFolders?: ReadonlySet<string>): ServedPhoto {
   const missing: ServedPhoto = { status: 404 };
   if (!key || token.length <= SIGNATURE_LETTERS) return missing;
   const payload = fromLetters(token.slice(0, -SIGNATURE_LETTERS))?.toString("utf8");
@@ -298,6 +298,7 @@ export function servePhoto(root: string, token: string, key: Buffer | undefined,
   const match = payload ? /^([a-z]{16})\.(\d{1,2})\.(\d{1,15})$/.exec(payload) : null;
   if (!signature || !match?.[1] || !match[2] || !match[3]) return missing;
   const folder = match[1];
+  if (onlyFolders && !onlyFolders.has(folder)) return missing;
   const n = Number(match[2]);
   const expiry = Number(match[3]);
   const expected = sign(key, folder, n, expiry);
