@@ -22,7 +22,7 @@ const TEMPLATE_LINK = "https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ";
  * Base64, so a hex digest never holds a run of digits the door-code scan mistakes for a code.
  */
 const PROMPT_PINS: Record<string, string> = {
-  [`${ENTRY}/SETUP_PROMPT.md`]: "Z8aV4bPoo8PSq6SEjSo+awz9NWuDS61EJFI6+jalgeE=",
+  [`${ENTRY}/SETUP_PROMPT.md`]: "Z6ciZHJZVW6BYg+bk10gjZjFs3KCp3TFY3mowm72ypY=",
   [`${ENTRY}/muse/SETUP_PROMPT.md`]: "DrYvPEjdIv2tSPwHMDd6WHA3WbHZPqc5HNtkHl+krIc=",
 };
 
@@ -62,6 +62,14 @@ describe("the entry prompts", () => {
     expect(prompt).toMatch(/Never ask me for the invite code in chat/);
     expect(prompt).toMatch(/card details, or door codes into chat/);
     expect(prompt).toMatch(/Start now\.$/);
+  });
+
+  it("tell the host to come back and say done after Allow, since Grok isn't told when the page finishes", () => {
+    const prompt = promptOf(`${ENTRY}/SETUP_PROMPT.md`);
+    expect(prompt).toContain("then come back here and say done");
+    const profile = read(`${ENTRY}/bot-profile.md`).replace(/\s+/g, " ");
+    expect(profile).toContain("When you've clicked Allow, come back here and say done.");
+    expect(profile).toContain("call `get_state` right away");
   });
 
   it("send Grok to the Property Core bot profile and Muse to the Property Core skill", () => {

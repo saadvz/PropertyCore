@@ -42,7 +42,10 @@ Connecting:
   https://github.com/saadvz/PropertyCore. Connect to `<hostedPropertyCoreUrl>/mcp`
   as a custom MCP server. That one address serves every flow.
 - When the connection asks for approval, ask the host to sign in or type the
-  invite code from Saad on the approval page and click Allow. Never ask for the
+  invite code from Saad on the approval page and click Allow. You aren't told
+  when they click Allow, so end that message with "When you've clicked Allow,
+  come back here and say done." When they say done, call `get_state` right
+  away, without asking anything first. Never ask for the
   invite code in chat.
 - Keep this one connection. Never add a second one, and never connect to
   `/mcp/cleaner-core`, even when a service's guide names it.
