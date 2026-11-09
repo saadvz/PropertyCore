@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ASSISTANT_PROFILES, CHATGPT_INSTRUCTIONS, CLAUDE_INSTRUCTIONS, runsSupplies, type CleanerAssistant } from "../src/cleaner-core/assistant";
+import { ASSISTANT_PROFILES, CHATGPT_INSTRUCTIONS, CLAUDE_INSTRUCTIONS, runsFixer, runsSupplies, type CleanerAssistant } from "../src/cleaner-core/assistant";
+import { listedFixerFront } from "../src/hosted/fixer";
 import { listedChooseSupplies, listedSupplyFront } from "../src/hosted/supplies";
 import { REPO_ROOT } from "./files";
 
@@ -9,7 +10,7 @@ import { REPO_ROOT } from "./files";
 
 const read = (rel: string) => readFileSync(join(REPO_ROOT, rel), "utf8").replace(/\r\n/g, "\n");
 const AGENTS = Object.keys(ASSISTANT_PROFILES) as CleanerAssistant[];
-const FLAGS = ["privatePages", "photoImages", "polledTask", "supplies"] as const;
+const FLAGS = ["privatePages", "photoImages", "polledTask", "supplies", "fixer"] as const;
 
 /** The rows of the markdown table under a heading, as cells. */
 function table(doc: string, heading: string): string[][] {
@@ -39,9 +40,16 @@ describe("the client matrix", () => {
     expect(flows.find((row) => row[0] === "**Cleaner Core**")).toEqual(["**Cleaner Core**", "Yes", "Yes", "Yes", "Yes"]);
   });
 
-  it("never tells a plain chat to set up or run Supply Core", () => {
+  it("names Grok Bot and Muse as the agents that run Fixer Core, and only those", () => {
+    expect(AGENTS.filter(runsFixer).sort()).toEqual(["grok", "muse"]);
+    for (const agent of AGENTS) expect(listedFixerFront(agent).length > 0, agent).toBe(runsFixer(agent));
+    const flows = table(doc, "Property Core flows");
+    expect(flows.find((row) => row[0] === "**Fixer Core**")).toEqual(["**Fixer Core**", "Yes", "Yes", "No", "No"]);
+  });
+
+  it("never tells a plain chat to set up or run Supply Core or Fixer Core", () => {
     for (const [agent, instructions] of [["claude", CLAUDE_INSTRUCTIONS], ["chatgpt", CHATGPT_INSTRUCTIONS]] as const) {
-      expect(instructions, agent).not.toMatch(/choose_supplies|Supply Core skill|check_cart/);
+      expect(instructions, agent).not.toMatch(/choose_supplies|Supply Core skill|check_cart|check_fixes|approve_booking/);
     }
   });
 

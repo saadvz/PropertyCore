@@ -109,6 +109,28 @@ export const CHECKLIST_ASK = "Before I mark it done: is everything on the checkl
 
 /** The done text when Supply Core is on: the cleaner is asked once what's running low. */
 export const SUPPLY_DONE_ASK = "Thanks, cleaning marked done. Anything running low? Reply with what's low, or NONE.";
+
+/** The first word of the cleaner's saved name, or undefined when none is saved. */
+export function firstNameOf(name: string | undefined): string | undefined {
+  return name?.trim().split(/\s+/)[0] || undefined;
+}
+
+/** The ask after the question: "{First name}, reply with ..." or, with no name saved, "Reply with ...". */
+function replyAsk(firstName: string | undefined): string {
+  const name = firstNameOf(firstName);
+  return `${name ? `${name}, reply` : "Reply"} with what you noticed (a photo helps), or NONE.`;
+}
+
+/** The done text when Fixer Core asks the cleaner about repairs and Supply Core is off. */
+export function repairDoneAsk(firstName?: string): string {
+  return `Thanks, cleaning marked done. Anything broken? ${replyAsk(firstName)}`;
+}
+
+/** The done text when the cleaner is asked about both supplies and repairs. */
+export function supplyRepairDoneAsk(firstName?: string): string {
+  return `Thanks, cleaning marked done. Anything running low or broken? ${replyAsk(firstName)}`;
+}
+
 /** The reply to the cleaner's supplies answer. */
 export const SUPPLY_NOTED = "Thanks, noted.";
 

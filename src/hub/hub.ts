@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
+import { isValidTimeZone } from "../core/timezone";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import {
   CALENDAR_COUNT_REFUSED,
@@ -15,7 +16,7 @@ import {
   type SavedCalendar,
   type StoredCalendar,
 } from "./calendars";
-import { interpretFeed } from "./calendar";
+import { interpretFeed, type FeedBlock, type Turnover } from "./calendar";
 import { calendarFetch } from "./calendarFetch";
 import { calendarUrlAllowed, readPublicCalendar } from "./fetchLimits";
 import { googleCalendarSource, type GoogleEventList, type SourceSnapshot } from "./sources";
@@ -23,7 +24,7 @@ import { DoorAccess } from "./doorAccess";
 import { sameHash, UPLOAD_GONE, UPLOAD_MINUTES, uploadHash } from "./uploadCode";
 import { folderNeedsMove, migrateFolder } from "./migrate";
 import { HUB_CALENDAR_PREFIX } from "./paths";
-import { emptyHub, hubPath, readHubFile, type HubCaller, type HubFile, type HubProperty } from "./store";
+import { emptyHub, hubPath, readHubFile, type HubCaller, type HubFile, type HubProperty, type Stay } from "./store";
 
 /**
  * One property's hub: its details and booking calendars, kept in hub.json in the property's folder.
@@ -55,6 +56,26 @@ export interface HubDeps {
 }
 
 export type HubSave = { ok: true } | { ok: false; error: string; reason: CalendarRefusal };
+
+/** The property's address, time zone and optional name, as a flow's setup saves them. */
+export interface PropertyDetails {
+  address: string;
+  timeZone: string;
+  name?: string;
+}
+
+/** A sources step's answer: a one-time upload link, the saved calendar names, or the plain reason it is refused. */
+export type SourcesSave = { ok: true; upload: { uploadUrl: string; expiresInMinutes: number } } | { ok: true; calendars: string[] } | { ok: false; error: string };
+
+const isText = (s: unknown, max: number): s is string => typeof s === "string" && s.trim().length > 0 && s.length <= max;
+
+/** Why a property's address, time zone and name can't be saved, or undefined. Every flow checks them the same way. */
+export function propertyDetailsProblem(input: { address?: unknown; timeZone?: unknown; name?: unknown }): string | undefined {
+  if (!isText(input.address, 200)) return "The property needs its delivery address.";
+  if (input.name !== undefined && !isText(input.name, 80)) return "Keep the property's name under 80 characters.";
+  if (typeof input.timeZone !== "string" || !isValidTimeZone(input.timeZone)) return "That time zone isn't one I know. Use a name like America/New_York.";
+  return undefined;
+}
 
 export { UPLOAD_GONE, UPLOAD_MINUTES };
 export const CALENDAR_UPLOAD_REFUSED = "Send the calendar's public https link as url.";
@@ -139,6 +160,31 @@ export class Hub {
     this.save();
     this.propertySaves += 1;
     return { ok: true };
+  }
+
+  /** Saves a setup's address, time zone and name. Without a name the property reads as its street address. */
+  saveDetails(details: PropertyDetails): HubSave {
+    return this.saveProperty({ address: details.address.trim(), timeZone: details.timeZone, nickname: details.name?.trim() || undefined });
+  }
+
+  /**
+   * A flow's sources step: uploadLink { name } gives a one-time link under `base` (the asking flow's
+   * public base for this property), google: true saves Google Calendar, and done: true says that's
+   * all, once there is at least one calendar.
+   */
+  saveSources(input: { uploadLink?: { name?: string }; google?: boolean; done?: true }, base: string | undefined): SourcesSave {
+    if (input.uploadLink) {
+      const name = input.uploadLink.name?.trim() ?? "";
+      if (!isText(name, 40)) return { ok: false, error: "Give the calendar a short name, like Airbnb." };
+      if (!base) return { ok: false, error: "I can't make an upload link until the server's public address is saved." };
+      const made = this.issueCalendarUpload({ name, base, ...(input.google ? { google: true } : {}) });
+      if ("error" in made) return { ok: false, error: made.error };
+      return { ok: true, upload: made };
+    }
+    if (input.done && this.calendars().length === 0 && !this.google() && !input.google) return { ok: false, error: "Save at least one booking calendar first." };
+    const saved = this.setCalendars({ ...(input.google ? { google: true } : {}), ...(input.done ? { done: true } : {}) });
+    if (!saved.ok) return { ok: false, error: saved.error };
+    return { ok: true, calendars: [...this.calendars().map((c) => c.name), ...(this.google() ? ["Google Calendar"] : [])] };
   }
 
   /** Changes each time the property's details are saved, by either flow. */
@@ -315,7 +361,16 @@ export class Hub {
       const dates = new Set<string>();
       for (const link of links) if (link.read.ok) for (const turn of interpretFeed(link.read.body).turnovers) dates.add(turn.checkoutDate);
       for (const turn of google?.turnovers ?? []) dates.add(turn.checkoutDate);
-      this.file = { ...this.file, checkouts: { dates: [...dates].sort(), at } };
+      const stays = new Map<string, Stay>();
+      const addStay = (checkIn: string, checkout: string, kind: Stay["kind"]) => stays.set(`${checkIn}|${checkout}|${kind}`, { checkIn, checkout, kind });
+      const addFeed = (feed: { turnovers: Turnover[]; blocks: FeedBlock[] }) => {
+        for (const turn of feed.turnovers) addStay(turn.checkInDate, turn.checkoutDate, "stay");
+        for (const block of feed.blocks) if (block.checkInDate && block.checkoutDate) addStay(block.checkInDate, block.checkoutDate, "block");
+      };
+      for (const link of links) if (link.read.ok) addFeed(interpretFeed(link.read.body));
+      if (google) addFeed(google);
+      const sorted = [...stays.values()].sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.checkout.localeCompare(b.checkout) || a.kind.localeCompare(b.kind));
+      this.file = { ...this.file, checkouts: { dates: [...dates].sort(), at }, stays: sorted };
     } else {
       this.file = { ...this.file, checkouts: { dates: last?.dates ?? [], ...(last?.at ? { at: last.at } : {}), failedAt: at } };
     }
@@ -327,6 +382,11 @@ export class Hub {
   checkouts(): { dates: string[]; at?: string; failedAt?: string } | undefined {
     const checkouts = this.file.checkouts;
     return checkouts ? { ...checkouts, dates: [...checkouts.dates] } : undefined;
+  }
+
+  /** Stays and blocks from the last read where every calendar read cleanly; kept after a failed read. */
+  stays(): Stay[] | undefined {
+    return this.file.stays?.map((stay) => ({ ...stay }));
   }
 
   /** The saved list with this upload's link: replacing the calendar of the same name, else added last. */

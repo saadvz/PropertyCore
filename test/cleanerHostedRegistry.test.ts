@@ -162,10 +162,11 @@ describe("an account's properties", () => {
     expect(reg.addProperty(other.id, "12 Scratch Lane").label).toBe("12 Scratch Lane");
   });
 
-  it("refuses fixer", () => {
+  // FIXER_CORE and the chat are set_flows' checks (test/fixerHosted.test.ts): the registry only saves the switch.
+  it("switches fixer on and off", () => {
     const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
     const lane = reg.addProperty(tenant.id, "12 Scratch Lane");
-    expect(() => reg.setFlow(tenant.id, lane.id, "fixer", true)).toThrow(expect.objectContaining({ reason: "fixer-not-yet" }));
+    expect(reg.setFlow(tenant.id, lane.id, "fixer", true).flows.fixer.on).toBe(true);
     expect(reg.setFlow(tenant.id, lane.id, "fixer", false).flows.fixer.on).toBe(false);
   });
 

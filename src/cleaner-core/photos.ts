@@ -215,11 +215,11 @@ export async function downloadPhoto(media: InboundMedia, fetchImpl: PhotoFetch, 
   }
 }
 
-/** Writes a downloaded photo as the job's next number. False once the job has 10. */
-export function storePhoto(root: string, jobId: string, photo: { bytes: Buffer; ext: string }): boolean {
+/** Writes a downloaded photo as the job's next number. False once the job has `max` (10 unless a caller keeps two sets). */
+export function storePhoto(root: string, jobId: string, photo: { bytes: Buffer; ext: string }, max = MAX_JOB_PHOTOS): boolean {
   const dir = join(photosDir(root), photoFolder(jobId));
   const files = photoFiles(dir);
-  if (files.length >= MAX_JOB_PHOTOS) return false;
+  if (files.length >= max) return false;
   const n = (files.at(-1)?.n ?? 0) + 1;
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${n}.${photo.ext}`), photo.bytes);
@@ -237,6 +237,21 @@ export function storePhotos(root: string, jobId: string, photos: readonly { byte
   let saved = 0;
   for (const photo of photos) if (storePhoto(root, jobId, photo)) saved += 1;
   return saved;
+}
+
+/** Copies the photos kept under one id into another id's folder, numbered after what is there, while there is room. Returns how many were copied. */
+export function copyPhotos(root: string, fromId: string, toId: string): number {
+  const from = join(photosDir(root), photoFolder(fromId));
+  const to = join(photosDir(root), photoFolder(toId));
+  let copied = 0;
+  for (const photo of photoFiles(from)) {
+    const have = photoFiles(to);
+    if (have.length >= MAX_JOB_PHOTOS) break;
+    mkdirSync(to, { recursive: true });
+    writeFileSync(join(to, `${(have.at(-1)?.n ?? 0) + 1}.${photo.ext}`), readFileSync(join(from, photo.file)));
+    copied += 1;
+  }
+  return copied;
 }
 
 /**
@@ -274,8 +289,8 @@ export function photoLinks(root: string, jobId: string, baseUrl: string, key: Bu
 
 export type ServedPhoto = { status: 404 } | { status: 200; body: Buffer; headers: Record<string, string> };
 
-/** The photo a valid, unexpired token names, sent with no-store. Anything else is not found. */
-export function servePhoto(root: string, token: string, key: Buffer | undefined, now: Date): ServedPhoto {
+/** The photo a valid, unexpired token names, sent with no-store. Anything else, or a folder outside `onlyFolders`, is not found. */
+export function servePhoto(root: string, token: string, key: Buffer | undefined, now: Date, onlyFolders?: ReadonlySet<string>): ServedPhoto {
   const missing: ServedPhoto = { status: 404 };
   if (!key || token.length <= SIGNATURE_LETTERS) return missing;
   const payload = fromLetters(token.slice(0, -SIGNATURE_LETTERS))?.toString("utf8");
@@ -283,6 +298,7 @@ export function servePhoto(root: string, token: string, key: Buffer | undefined,
   const match = payload ? /^([a-z]{16})\.(\d{1,2})\.(\d{1,15})$/.exec(payload) : null;
   if (!signature || !match?.[1] || !match[2] || !match[3]) return missing;
   const folder = match[1];
+  if (onlyFolders && !onlyFolders.has(folder)) return missing;
   const n = Number(match[2]);
   const expiry = Number(match[3]);
   const expected = sign(key, folder, n, expiry);

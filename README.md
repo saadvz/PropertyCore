@@ -14,12 +14,12 @@ works from their agent, and the text line is for the cleaner and the other peopl
 | --- | --- | --- |
 | **Cleaner Core** | Reads the host's booking calendars and texts the cleaner for each turnover. The cleaner gets the door code only after the host says the guests have left. It collects the cleaning photos and can offer the cleaner's pay as a Venmo link. | Live |
 | **Supply Core** | Keeps the property stocked. The host picks each product once. Supply Core says what's due, the agent shops and checks out with its own tools, and Supply Core decides go or hold on every cart, keeps the order log, and enforces the spending caps. It never sees a card number. | Live |
-| **Fixer Core** | Repairs and upkeep: the host's preferred pros asked first, a shortlist, booking, access for the visit, and the cost logged. | Next |
+| **Fixer Core** | Repairs and upkeep: the host's preferred pros asked first, a shortlist, booking, access for the visit, and the cost logged. | Built; off until Saad turns it on |
 
 ## Connect your agent
 
 Every agent starts in one place: [`property-core-template/`](property-core-template/README.md). Grok Bot
-and Muse are the supported agents. Both are always on and run Cleaner Core and Supply Core end to end. Your
+and Muse are the supported agents. Both are always on and run Cleaner Core, Supply Core and Fixer Core end to end. Your
 agent clones this repository only to read its setup guide, then connects to the hosted service. Nothing runs
 on your computer.
 
@@ -42,7 +42,7 @@ Claude and ChatGPT, as plain chats, run Cleaner Core at a basic level, without S
 
 For each flow, the agent then follows that flow's guide: [`CLEANER_CORE_BOOTSTRAP.md`](CLEANER_CORE_BOOTSTRAP.md)
 with [`cleaner-template/`](cleaner-template/), and [`SUPPLY_CORE_BOOTSTRAP.md`](SUPPLY_CORE_BOOTSTRAP.md)
-with [`supply-template/`](supply-template/). On Muse, those are the skills in
+with [`supply-template/`](supply-template/), and [`FIXER_CORE_BOOTSTRAP.md`](FIXER_CORE_BOOTSTRAP.md). On Muse, those are the skills in
 [`muse-template/`](muse-template/). These are guides the agent reads, not separate ways to start.
 
 ## Safety gates
@@ -59,6 +59,10 @@ them. CI runs those checks on every pull request.
   every cart to `check_cart` before it places the order. Caps and price jumps are decided in code, the
   agent's words can't turn a hold into go, no order is recorded without a go or the host's approval, and no
   tool accepts card details.
+
+- **Fixer Core:** [`docs/fixer-core-safety-gates.md`](docs/fixer-core-safety-gates.md). The agent contacts
+  only a pro the host approved. A booking waits for the host's yes, and the door code goes only to the pro's
+  own phone for the visit. Nothing is paid or taken by card.
 
 How the hosted service keeps accounts apart is in
 [`docs/hosted-multitenancy.md`](docs/hosted-multitenancy.md).
@@ -86,6 +90,7 @@ settings are in [`docs/environment-variables.md`](docs/environment-variables.md)
 | `src/hub/` | The property hub every flow reads: properties, booking calendars, door access, and people |
 | `src/cleaner-core/` | Cleaner Core: turnovers, texts to the cleaner, door codes, photos, and pay |
 | `src/supply-core/` | Supply Core: the list, schedules, the cart check, and the order log |
+| `src/fixer-core/` | Fixer Core: pros, repair jobs, the booking check, visit pages, and the cost log |
 | `src/hosted/`, `src/cleaner-core/hosted/`, `src/mcp/` | The hosted multi-tenant service: accounts, text lines, the connect page, and the connector |
 | `property-core-template/` | The one way to start: the Grok bot, and its Muse, Claude, and ChatGPT versions |
 | `cleaner-template/`, `supply-template/`, `muse-template/` | The Cleaner Core and Supply Core guides and routines that Grok Bot and Muse read |

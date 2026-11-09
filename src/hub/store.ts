@@ -22,6 +22,13 @@ export interface HubProperty {
   checkInTime?: string;
 }
 
+/** One stay or block, with local dates (YYYY-MM-DD). */
+export interface Stay {
+  checkIn: string;
+  checkout: string;
+  kind: "stay" | "block";
+}
+
 export interface HubFile {
   schemaVersion: 1;
   property: HubProperty;
@@ -34,6 +41,8 @@ export interface HubFile {
   calendarUpload?: { hash: string; expiresAt: string; name: string; by?: HubCaller };
   /** Checkout dates from the last read where every calendar read cleanly. */
   checkouts?: { dates: string[]; at?: string; failedAt?: string };
+  /** Merged stays and blocks from the last read where every calendar read cleanly. Kept after a failed read. */
+  stays?: Stay[];
   /** Calendars only one flow had when the data moved. Never read; names shown, links never. */
   calendarsSetAside?: StoredCalendar[];
 }

@@ -3,6 +3,9 @@ import { dateFormat } from "../core/timezone";
 export interface FeedBlock {
   uid: string;
   summary: string;
+  /** Local dates of the block. Optional: a block read without them has none. */
+  checkInDate?: string;
+  checkoutDate?: string;
 }
 
 export interface Turnover {
@@ -36,7 +39,7 @@ export function interpretFeed(ical: string): FeedRead {
     const parsed = parseEvent(body);
     if (parsed) events.push(parsed);
   }
-  const blocks = events.filter((event) => event.kind === "block").map((event) => ({ uid: event.uid, summary: event.summary }));
+  const blocks = events.filter((event) => event.kind === "block").map((event) => ({ uid: event.uid, summary: event.summary, checkInDate: event.checkInDate, checkoutDate: event.checkOutDate }));
   const stays = events.filter((event) => event.kind === "stay").sort(byCheckout);
   const turnovers: Turnover[] = stays.map((stay) => {
     const next = stays

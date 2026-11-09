@@ -1,5 +1,6 @@
 import { REPLY_INSTRUCTIONS, ROUTINE_REPLY_SENTENCE } from "./replyWording";
 import type { SetupAsk } from "./setupAsk";
+import { PLAIN_CHAT } from "../fixer-core/texts";
 
 /**
  * Which chat Cleaner Core speaks to. Grok is the default, and its wording stays exactly as it was.
@@ -68,6 +69,8 @@ export interface AssistantProfile {
    * Cleaner Core only.
    */
   supplies: boolean;
+  /** An always-on agent that finds, calls and books repair pros itself, so it runs Fixer Core: Grok Bot and Muse. */
+  fixer: boolean;
   /** The names on the approval page. */
   consent: ConsentWho;
 }
@@ -79,6 +82,7 @@ export const ASSISTANT_PROFILES: Readonly<Record<CleanerAssistant, AssistantProf
     photoImages: false,
     polledTask: false,
     supplies: true,
+    fixer: true,
     consent: { chat: "your Grok Bot", connect: "Connect Grok" },
   },
   claude: {
@@ -88,6 +92,7 @@ export const ASSISTANT_PROFILES: Readonly<Record<CleanerAssistant, AssistantProf
     photoImages: true,
     polledTask: false,
     supplies: false,
+    fixer: false,
     consent: { chat: "Claude", connect: "Connect Claude" },
   },
   // Photos stay links on ChatGPT until it is shown to read image content in a tool result.
@@ -98,6 +103,7 @@ export const ASSISTANT_PROFILES: Readonly<Record<CleanerAssistant, AssistantProf
     photoImages: false,
     polledTask: true,
     supplies: false,
+    fixer: false,
     consent: { chat: "ChatGPT", connect: "Connect ChatGPT" },
   },
   // Muse opens the private page in its own browser for the host, and opens photo links there too.
@@ -108,6 +114,7 @@ export const ASSISTANT_PROFILES: Readonly<Record<CleanerAssistant, AssistantProf
     photoImages: false,
     polledTask: true,
     supplies: true,
+    fixer: true,
     consent: { chat: "Muse", connect: "Connect Muse" },
   },
 };
@@ -120,6 +127,14 @@ export function runsSupplies(assistant: CleanerAssistant): boolean {
 /** Said to a plain chat that asks for Supply Core. Cleaner Core keeps working there. */
 export const SUPPLIES_AGENTS_ONLY =
   "Supply Core works with Grok Bot and Muse for now: they shop and check out at the store themselves. In this chat, Cleaner Core works without Supply Core.";
+
+/** True for an always-on agent that runs Fixer Core: Grok Bot and Muse. */
+export function runsFixer(assistant: CleanerAssistant): boolean {
+  return ASSISTANT_PROFILES[assistant].fixer;
+}
+
+/** Said to a plain chat that asks for Fixer Core. Cleaner Core keeps working there. */
+export const FIXER_AGENTS_ONLY = PLAIN_CHAT;
 
 /** This deployment's profile. */
 export function assistantProfile(env: NodeJS.ProcessEnv = process.env): AssistantProfile {
@@ -343,7 +358,7 @@ export const MUSE_TASK_PROMPT = [
   "You are the host's Cleaner Core assistant. This run started on its schedule. Cleaner Core sends every text. You never text anyone yourself.",
   "1. If the host uses Google Calendar, read only the bookings calendar the host named at setup with the Google Calendar connector, from 7 days ago to 60 days ahead, with recurring events expanded. Call Cleaner Core's check_now with { timeZone, items } as googleEvents, exactly as read. If the read failed, call check_now without googleEvents. Never send an empty list for a failed read. Without Google Calendar, call check_now without googleEvents.",
   "2. If check_now says Cleaner Core isn't active yet, reply \"Nothing new.\" and stop.",
-  `3. Write a short summary for the host in your own words: each line in alerts, and each message that needs them (running late, a question, a problem, supplies, an arrival time, a decline, STOP, or an injury). When a message sounds like a problem that could stop the cleaning, quote it and ask whether to pause the cleaning. ${ROUTINE_REPLY_SENTENCE} Stay quiet on routine replies. Put anything urgent first, in one plain line: an injury, a problem that could stop the cleaning, STOP, a decline, or a text that may not have gone out. If nothing needs the host, reply "Nothing new." If the reply has payDue, add one line per item: the cleaner, the amount, and the day, with the link exactly as returned (with payInVenmo, ask the host to pay in Venmo themselves), and ask the host to tell you when they've paid. A reminder above 0 says it still shows unpaid. A message handled checklist-asked means the cleaner said DONE and was asked to confirm the checklist: tell the host the cleaning isn't marked done until the cleaner replies YES. With checklist-not-done, tell the host the cleaner said the checklist isn't finished.`,
+  `3. Write a short summary for the host in your own words: each line in alerts, and each message that needs them (running late, a question, a problem, supplies, repairs, an arrival time, a decline, STOP, or an injury). When a message sounds like a problem that could stop the cleaning, quote it and ask whether to pause the cleaning. ${ROUTINE_REPLY_SENTENCE} Stay quiet on routine replies. Put anything urgent first, in one plain line: an injury, a problem that could stop the cleaning, STOP, a decline, or a text that may not have gone out. If nothing needs the host, reply "Nothing new." If the reply has payDue, add one line per item: the cleaner, the amount, and the day, with the link exactly as returned (with payInVenmo, ask the host to pay in Venmo themselves), and ask the host to tell you when they've paid. A reminder above 0 says it still shows unpaid. A message handled checklist-asked means the cleaner said DONE and was asked to confirm the checklist: tell the host the cleaning isn't marked done until the cleaner replies YES. With checklist-not-done, tell the host the cleaner said the checklist isn't finished.`,
   "4. When a message gives an arrival time, call save_arrival with it as 24-hour HH:MM, like 11:30.",
   "5. If the reply has completed, call get_job_photos, open each photo link in your browser, and compare the photos with the checklist. Summarize the cleaning: arrival, start and done times, checklist, what the photos show, and notes.",
   "6. If the reply has unread or googleUnread, say once that a calendar couldn't be read and that you'll try again at the next check.",
@@ -351,7 +366,7 @@ export const MUSE_TASK_PROMPT = [
   "8. Never pause, edit, or cancel this recurring task, even when Cleaner Core answers with an error. Report the error in one line and stop. The next run tries again.",
   "9. No host is here when this run starts, and this prompt is never their yes. Call confirm_times, mark_guests_left, mark_paid, retry_send, send_message, hold_job, or resume_job only after the host replies yes in this conversation. Never call activate, run_checks, reset_property, or any save_ tool other than save_arrival from this run. Never call approve_cart with a code from this run. Never use your browser in this run except to open photo links, or to shop for what the cleaner reported low as step 11 says.",
   "10. Never show a door code, an id, or a phone number.",
-  `11. A message handled supply-report is the cleaner's answer to "Anything running low?" after DONE. When Supply Core is on for the property, match their words to the list from get_supply_state yourself, call report_low with those item ids and source "cleaner", then follow the every-run steps of your Supply Core skill for those items. Tell the host about anything not on the list and ask whether to add it. Never pass the cleaner's words to Supply Core.`,
+  `11. A message handled supply-report is the cleaner's answer to "Anything running low?" after DONE. When Supply Core is on for the property, match their words to the list from get_supply_state yourself, call report_low with those item ids and source "cleaner", then follow the every-run steps of your Supply Core skill for those items. Tell the host about anything not on the list and ask whether to add it. Never pass the cleaner's words to Supply Core. A message handled repair-report is the cleaner's answer to "Anything broken?" after DONE (with Supply Core on too, to "Anything running low or broken?"). When Fixer Core is on for the property, call open_job with source "cleaner", the cleaner's words as what, and the message's photo ids as photoMessageIds, and call report_low for any supplies they named when Supply Core is on. Then tell the host a repair is waiting for their approval. Never open a job for NONE.`,
 ].join("\n");
 
 /** What get_state hands Muse for the routine step. Muse makes the task itself from the chat. */

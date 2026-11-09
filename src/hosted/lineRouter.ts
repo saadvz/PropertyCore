@@ -13,8 +13,10 @@ import { hubFor } from "../hub/hub";
 import type { People } from "../hub/people";
 import { keywordOf } from "../intent/ruleBased";
 import { formParams, verifyTwilioSignature } from "../messaging/twilio/signature";
+import { proRoute } from "../fixer-core/proLine";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { isStartText, isStopText, TenantOptOuts } from "./crossService";
+import { fixerProText } from "./fixer";
 import { LineAsks } from "./lineAsks";
 import { accountPeople } from "./sharedPeople";
 import { answerOf, bareAnswer, businessFor, droppedNote, lineStartText, lineStopText, namedProperty, whichPropertyText, type Named } from "./sharedRoute";
@@ -203,6 +205,13 @@ export async function handleLineText(h: HostedCleaner, r: HostedRequest, tenant:
   const from = parsePhone(fields.From ?? "") ?? "";
   const text = fields.Body ?? "";
   const people = await accountPeople(h, tenant);
+  // A pro, and nothing else on the account, texts Fixer Core: their DONE, a price, photos, or YES and STOP.
+  const pros = proRoute(tenant, people, from);
+  if (pros) {
+    h.registry.touch(tenant.id);
+    await fixerProText(h, tenant, pros, { id: fields.MessageSid ?? "", from, text, media: mediaOf(fields) });
+    return r.send(200, "text/xml", EMPTY_TWIML);
+  }
   const route = routeLineText(tenant, from, text, people);
   const landlord = !!from && isLandlord(tenant, people, from);
   const toDesk = (property: Property) => {

@@ -99,10 +99,14 @@ Made on 2026-11-08.
    question asks whether the pro comes before or after the cleaner (Part 2,
    Visit windows).
 8. **Asking the cleaner** is the host's choice in setup. With it on, the DONE
-   text's question becomes `Anything running low or broken? Reply with what,
-   or NONE.` One answer can mark supplies low and open a repair. With it off,
+   text becomes `Thanks, cleaning marked done. Anything running low or broken?
+   Maria, reply with what you noticed (a photo helps), or NONE.` with Supply
+   Core on, and `Thanks, cleaning marked done. Anything broken? Maria, reply
+   with what you noticed (a photo helps), or NONE.` with the repair question
+   only (the cleaner's first name before "reply"; approved in the design
+   pass). One answer can mark supplies low and open a repair. With it off,
    the DONE text stays as it is, and only problems the cleaner reports on
-   their own open jobs. The new wording needs a design pass.
+   their own open jobs.
 9. **Booking hours:** any time between stays, never within
    `checkInBufferMinutes` (default 1 hour) of the next check-in.
 10. **Pros in the people list.** Every saved pro with a phone is a person in
@@ -414,8 +418,12 @@ Core's `get_state` gain one line (`Repairs: on, 4 pros, 1 job open.`, or
    the order to call them, which is each pro's `preferredFor` rank.
 2. **The cost line** (Decision 3), optional: "Want a cost line? Any repair
    over it needs your yes, and so does a price raised on site."
-3. **Asking the cleaner** (Decision 8), only with Cleaner Core on: "Should
-   your cleaner be asked 'Anything broken?' after every cleaning?"
+3. **Asking the cleaner** (Decision 8), only with Cleaner Core on. With
+   Supply Core on: "After each cleaning, your cleaner is already asked
+   'Anything running low?'. Should that become 'Anything running low or
+   broken?', so they can report repairs too?" With Supply Core off: "Should
+   your cleaner be asked 'Anything broken?' after every cleaning? What they
+   report opens a repair for you to approve."
 4. **Upkeep**, optional: "Want reminders for regular upkeep?" Suggested
    items: gutters spring and fall, HVAC filters every 3 months, smoke
    detectors twice a year. For each: the schedule (read back through

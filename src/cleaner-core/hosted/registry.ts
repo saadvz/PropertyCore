@@ -57,7 +57,7 @@ export type InviteRefusal = "invalid" | "expired" | "used" | "disabled";
 
 export class RegistryError extends Error {
   constructor(
-    readonly reason: "bad-label" | "bad-number" | "number-taken" | "unknown-tenant" | "needs-migration" | "unknown-property" | "has-properties" | "fixer-not-yet" | "duplicate-label" | "owner-taken",
+    readonly reason: "bad-label" | "bad-number" | "number-taken" | "unknown-tenant" | "needs-migration" | "unknown-property" | "has-properties" | "duplicate-label" | "owner-taken",
   ) {
     super(reason);
     this.name = "RegistryError";
@@ -287,9 +287,8 @@ export class TenantRegistry {
     });
   }
 
-  /** Switches one flow on one property. Fixer Core can't be turned on yet. */
+  /** Switches one flow on one property. Whether a flow may turn on (FIXER_CORE, the chat) is set_flows' check. */
   setFlow(tenantId: string, propertyId: string, flow: FlowName, on: boolean): Property {
-    if (flow === "fixer" && on) throw new RegistryError("fixer-not-yet");
     return this.update(tenantId, (tenant) => {
       const property = tenant.properties.find((p) => p.id === propertyId);
       if (!property) throw new RegistryError("unknown-property");

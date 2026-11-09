@@ -124,8 +124,9 @@ export async function draftPeople(h: HostedCleaner, tenant: Tenant, property: Pr
   const label = (id: string) => others.find((p) => p.id === id)?.label;
   const listed: DraftPerson[] = [];
   for (const person of people.everyone()) {
-    if (person.where.some((w) => w.propertyId === property.id)) continue;
+    if (person.where.some((w) => w.propertyId === property.id && w.role !== "pro")) continue;
     const on = person.where.flatMap((w) => {
+      if (w.role === "pro") return [];
       const name = label(w.propertyId);
       return name ? [{ label: name, role: w.role }] : [];
     });

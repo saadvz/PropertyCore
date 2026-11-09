@@ -1,4 +1,4 @@
-import { runsSupplies, type CleanerAssistant } from "../cleaner-core/assistant";
+import { runsFixer, runsSupplies, type CleanerAssistant } from "../cleaner-core/assistant";
 import { supplyReplyFor } from "./supplyWording";
 import { handleCleanerMcpHttp } from "../cleaner-core/http";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
@@ -17,6 +17,7 @@ import { FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsF
 import { setFlows, type FlowInput } from "./service";
 import { accountState, accountTools, addProperty, flowOff, resolveProperty, withPropertyArg, type PropertyStates } from "./propertyTools";
 import { listedChooseSupplies, listedSupplyFront, SUPPLY_FRONT_NAMES, suppliesLine, supplyCall, supplyDesk } from "./supplies";
+import { FIXER_FRONT_NAMES, fixerCall, fixerDesk, fixerPhotos, fixerPreview, listedFixerFront, namesRepairJob, repairsLine } from "./fixer";
 import { taskWarning } from "./touringAlerts";
 import { callWorkerMcp, forwardMcp, type WorkerTarget } from "./touringForward";
 
@@ -73,7 +74,7 @@ export function trackedConnections(): { initializes: string[]; introduced: strin
 
 /** A tool of Cleaner Core or the property front on a touring account: refused, never forwarded. */
 function refusedHere(name: string): boolean {
-  return (FRONT_TOOL_NAMES.has(name) || CLEANING_TOOLS.has(name) || SUPPLY_FRONT_NAMES.has(name) || name === "add_property" || name === "set_flows") && !TOURING_TOOLS.has(name);
+  return (FRONT_TOOL_NAMES.has(name) || CLEANING_TOOLS.has(name) || SUPPLY_FRONT_NAMES.has(name) || FIXER_FRONT_NAMES.has(name) || name === "add_property" || name === "set_flows") && !TOURING_TOOLS.has(name);
 }
 
 const rpcResult = (id: RpcMessage["id"], result: unknown) => JSON.stringify({ jsonrpc: "2.0", id: id ?? null, result });
@@ -145,7 +146,7 @@ type Caller = { grantId: string; assistant: CleanerAssistant };
 
 /**
  * An account of properties. The service answers every message itself: the account's tools, and each
- * Cleaner Core or Supply Core call handed to the desk of the property it names.
+ * Cleaner Core, Supply Core or Fixer Core call handed to the desk of the property it names.
  */
 async function propertiesAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller, sessionKey: string): Promise<void> {
   if (r.method === "GET") {
@@ -173,7 +174,7 @@ async function propertiesAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tena
 
 /** Said on initialize before Cleaner Core's own instructions. */
 export const PROPERTY_INSTRUCTIONS =
-  "This connection runs Property Core for the host's properties: Cleaner Core for turnover cleanings and Supply Core for supplies. Call get_state first. When the account has more than one property, name the property in every property tool call with its id from get_state. Use set_flows to turn Cleaner Core or Supply Core on or off for a property. The host runs everything from this chat.";
+  "This connection runs Property Core for the host's properties: Cleaner Core for turnover cleanings, Supply Core for supplies, and Fixer Core for repairs. Call get_state first. When the account has more than one property, name the property in every property tool call with its id from get_state. Use set_flows to turn Cleaner Core, Supply Core or Fixer Core on or off for a property. The host runs everything from this chat.";
 
 async function propertyToolList(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller): Promise<Record<string, unknown>[]> {
   const required = tenant.properties.length > 1;
@@ -186,6 +187,11 @@ async function propertyToolList(h: HostedCleaner, r: HostedRequest, tenant: Tena
     tools.push(...listedChooseSupplies(caller.assistant).map((tool) => withPropertyArg(tool, required)));
   }
   if (tenant.properties.some((p) => p.flows.supplies.on)) tools.push(...listedSupplyFront(caller.assistant).map((tool) => withPropertyArg(tool, required)));
+  if (tenant.properties.some((p) => p.flows.fixer.on)) {
+    // preview_schedule and get_job_photos come once, from the flow that listed them first.
+    const listed = new Set(tools.map((tool) => tool.name));
+    tools.push(...listedFixerFront(caller.assistant).filter((tool) => !listed.has(tool.name)).map((tool) => withPropertyArg(tool, required)));
+  }
   return tools;
 }
 
@@ -202,6 +208,14 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
     // A property that turns cleaning on starts with the account's routine connected.
     if (!reply.isError) await shareRoutine(h, tenant.id);
     return reply;
+  }
+  const fixer = FIXER_FRONT_NAMES.has(name);
+  const shared = name === "preview_schedule" || name === "get_job_photos";
+  if (fixer || shared) {
+    const resolved = resolveProperty(tenant, args);
+    if ("refusal" in resolved) return { text: resolved.refusal, isError: true };
+    const answered = await repairCall(h, tenant, resolved.property, caller, name, resolved.args);
+    if (answered) return answered;
   }
   const supply = SUPPLY_FRONT_NAMES.has(name);
   if (!supply && !CLEANING_TOOLS.has(name)) return { text: `There's no tool named ${name || "that"} here. Call get_state.`, isError: true };
@@ -231,6 +245,21 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
   const reply = await cleaningTool(h, r, tenant, property, caller, name, resolved.args);
   if (name === "save_people" && !reply.isError) await afterPeopleSaved(h, tenant, property);
   return reply;
+}
+
+/**
+ * A Fixer Core call, or a shared one Fixer Core answers here: preview_schedule when Supply Core doesn't
+ * run at the property, and get_job_photos for a repair job. Undefined hands it on to Supply Core or Cleaner Core.
+ */
+async function repairCall(h: HostedCleaner, tenant: Tenant, property: Property, caller: Caller, name: string, args: Record<string, unknown>): Promise<FrontReply | undefined> {
+  const fixerOn = property.flows.fixer.on && runsFixer(caller.assistant);
+  if (name === "preview_schedule") return !(property.flows.supplies.on && runsSupplies(caller.assistant)) && fixerOn ? fixerPreview(h, tenant, property, args) : undefined;
+  if (name === "get_job_photos") {
+    if (!namesRepairJob(args)) return undefined;
+    return fixerOn ? fixerPhotos(h, tenant, property, args) : { text: flowOff("fixer", property.label), isError: true };
+  }
+  if (!property.flows.fixer.on) return { text: flowOff("fixer", property.label), isError: true };
+  return (await fixerCall(h, tenant, property, caller.assistant, name, args)) ?? { text: "Fixer Core couldn't answer that.", isError: true };
 }
 
 /** Adds draft.knownPeople to a property's setup draft, when the account has people on other properties. */
@@ -287,22 +316,39 @@ function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, call
     const reply = await withDraftPeople(h, tenant, property, desk);
     // Cleaner Core's get_state carries one Supply Core line while Supply Core is on for the property.
     const line = !reply.isError && reply.structured ? suppliesLine(h, tenant, property) : undefined;
-    if (!line || !reply.structured) return reply;
-    const structured = { ...reply.structured, supplies: line };
-    return { ...reply, text: JSON.stringify(structured), structured };
+    return withRepairs(property, line && reply.structured ? withField(reply, "supplies", line) : reply);
   };
-  const supplies = async (property: Property): Promise<FrontReply> => supplyReplyFor(caller.assistant, "get_supply_state", await supplyDesk(h, tenant, property).state());
+  // Cleaner Core's and Supply Core's get_state carry one Fixer Core line while Fixer Core is on for the property.
+  const withRepairs = (property: Property, reply: FrontReply): FrontReply => {
+    const line = !reply.isError && reply.structured ? repairsLine(h, tenant, property, caller.assistant) : undefined;
+    return line ? withField(reply, "repairs", line) : reply;
+  };
+  const supplies = async (property: Property): Promise<FrontReply> => withRepairs(property, supplyReplyFor(caller.assistant, "get_supply_state", await supplyDesk(h, tenant, property).state()));
+  const fixer = async (property: Property): Promise<FrontReply> => fixerDesk(h, tenant, property).state();
   return {
     cleaning,
     supplies,
+    fixer,
     next: async (property) => {
-      const reply = property.flows.cleaning.on ? await cleaning(property, {}) : property.flows.supplies.on && runsSupplies(caller.assistant) ? await supplies(property) : undefined;
+      const reply = property.flows.cleaning.on
+        ? await cleaning(property, {})
+        : property.flows.supplies.on && runsSupplies(caller.assistant)
+          ? await supplies(property)
+          : property.flows.fixer.on && runsFixer(caller.assistant)
+            ? await fixer(property)
+            : undefined;
       // A setup still in its draft (#166) has no ask yet: its next step is the draft.
       if (reply?.structured?.draft) return "draft";
       const ask = reply?.structured?.ask as { step?: unknown } | undefined;
       return typeof ask?.step === "string" ? ask.step : undefined;
     },
   };
+}
+
+/** A reply with one more field in its structured content and JSON text. */
+function withField(reply: FrontReply, key: string, value: unknown): FrontReply {
+  const structured = { ...(reply.structured ?? {}), [key]: value };
+  return { ...reply, text: JSON.stringify(structured), structured };
 }
 
 /** True when touring's get_state says the publish milestone is done. */

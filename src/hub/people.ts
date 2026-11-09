@@ -12,7 +12,7 @@ import { writeJsonAtomic } from "../storage/atomicWrite";
 
 export const PEOPLE_FILE = "people.json";
 
-export type Role = "cleaner" | "co-host" | "assistant" | "observer";
+export type Role = "cleaner" | "co-host" | "assistant" | "observer" | "pro";
 
 export interface Person {
   phone: string;
@@ -24,6 +24,7 @@ export interface Person {
   stopped?: { at: string };
   /** The property whose invite is out, until the YES. */
   invitedFrom?: string;
+  /** One entry per property and role: a person can be a pro and, say, the cleaner on the same property. */
   where: { propertyId: string; role: Role }[];
 }
 
@@ -149,12 +150,26 @@ export class People {
     return this.file.people.map((person) => ({ ...person, where: [...person.where] }));
   }
 
+  /** The properties the person is on in a Cleaner Core role, once each. A pro-only entry is not listed. */
   propertiesOf(phone: string): string[] {
-    return this.file.people.find((p) => p.phone === phone)?.where.map((w) => w.propertyId) ?? [];
+    const where = this.file.people.find((p) => p.phone === phone)?.where ?? [];
+    return [...new Set(where.filter((w) => w.role !== "pro").map((w) => w.propertyId))];
   }
 
+  /** The person's first non-pro role on the property, else "pro" when they are only a pro there. */
   roleOn(phone: string, propertyId: string): Role | undefined {
-    return this.file.people.find((p) => p.phone === phone)?.where.find((w) => w.propertyId === propertyId)?.role;
+    const roles = this.rolesOn(phone, propertyId);
+    return roles.find((role) => role !== "pro") ?? roles[0];
+  }
+
+  /** Every role the person holds on the property, in the order saved. */
+  rolesOn(phone: string, propertyId: string): Role[] {
+    return this.file.people.find((p) => p.phone === phone)?.where.filter((w) => w.propertyId === propertyId).map((w) => w.role) ?? [];
+  }
+
+  /** True when the phone is the host of any property on the account. */
+  isHost(phone: string): boolean {
+    return Object.values(this.file.hosts).includes(phone);
   }
 
   hostOf(propertyId: string): string | undefined {
@@ -178,22 +193,42 @@ export class People {
     return person.where.some((w) => w.propertyId === person.invitedFrom);
   }
 
-  /** Sets who is on this property. Anyone not in `people` comes off it; their entry stays. */
+  /**
+   * Sets who is on this property in the non-pro roles. Anyone not in `people` loses those roles here; their
+   * entry stays. Every pro entry is left alone, and a pro passed in `people` is ignored: pros are saved
+   * through saveRolePeople.
+   */
   savePropertyPeople(propertyId: string, host: string | undefined, people: { phone: string; role: Role; name?: string }[]): void {
     if (host) this.file.hosts[propertyId] = host;
     else delete this.file.hosts[propertyId];
-    const wanted = new Map(people.filter((p) => p.phone !== host).map((p) => [p.phone, p]));
+    const wanted = new Map(people.filter((p) => p.phone !== host && p.role !== "pro").map((p) => [p.phone, p]));
     for (const person of this.file.people) {
       if (wanted.has(person.phone)) continue;
-      person.where = person.where.filter((w) => w.propertyId !== propertyId);
-      if (person.invitedFrom === propertyId) delete person.invitedFrom;
+      person.where = person.where.filter((w) => w.propertyId !== propertyId || w.role === "pro");
+      if (person.invitedFrom === propertyId && !person.where.some((w) => w.propertyId === propertyId)) delete person.invitedFrom;
     }
     for (const saved of wanted.values()) {
       const person = this.entry(saved.phone);
       if (saved.name) person.name = saved.name;
-      const here = person.where.find((w) => w.propertyId === propertyId);
+      const here = person.where.find((w) => w.propertyId === propertyId && w.role !== "pro");
       if (here) here.role = saved.role;
       else person.where.push({ propertyId, role: saved.role });
+    }
+    this.save();
+  }
+
+  /** Replaces exactly this role's entries on the property with `people`. Other roles are left alone. */
+  saveRolePeople(propertyId: string, role: "pro", people: { phone: string; name?: string }[]): void {
+    const host = this.file.hosts[propertyId];
+    const wanted = new Map(people.filter((p) => p.phone !== host).map((p) => [p.phone, p]));
+    for (const person of this.file.people) {
+      if (wanted.has(person.phone)) continue;
+      person.where = person.where.filter((w) => !(w.propertyId === propertyId && w.role === role));
+    }
+    for (const saved of wanted.values()) {
+      const person = this.entry(saved.phone);
+      if (saved.name) person.name = saved.name;
+      if (!person.where.some((w) => w.propertyId === propertyId && w.role === role)) person.where.push({ propertyId, role });
     }
     this.save();
   }
@@ -230,7 +265,7 @@ export class People {
     person.optedIn = { at: this.at(), propertyId };
     delete person.invitedFrom;
     this.save();
-    return { phone, kind: "opted-in", from: propertyId, properties: person.where.map((w) => w.propertyId) };
+    return { phone, kind: "opted-in", from: propertyId, properties: [...new Set(person.where.map((w) => w.propertyId))] };
   }
 
   stop(phone: string): PersonChange | undefined {
@@ -238,7 +273,7 @@ export class People {
     if (person.stopped) return undefined;
     person.stopped = { at: this.at() };
     this.save();
-    return { phone, kind: "stopped", properties: person.where.map((w) => w.propertyId) };
+    return { phone, kind: "stopped", properties: [...new Set(person.where.map((w) => w.propertyId))] };
   }
 
   start(phone: string): PersonChange | undefined {
@@ -246,7 +281,7 @@ export class People {
     if (!person?.stopped) return undefined;
     delete person.stopped;
     this.save();
-    return { phone, kind: "started", properties: person.where.map((w) => w.propertyId) };
+    return { phone, kind: "started", properties: [...new Set(person.where.map((w) => w.propertyId))] };
   }
 
   /** The hosted layer's relay, which tells every property's desk about a change. The last one set wins. */

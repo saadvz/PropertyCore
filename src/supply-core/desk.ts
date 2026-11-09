@@ -1,9 +1,9 @@
 import { createHash, randomInt } from "node:crypto";
 import { join } from "node:path";
 import { setAsideLine } from "../hub/calendars";
-import { hubFor, type Hub, type UploadResult } from "../hub/hub";
+import { hubFor, propertyDetailsProblem, type Hub, type UploadResult } from "../hub/hub";
 import type { GoogleEventList } from "../hub/sources";
-import { isValidTimeZone, localDateOf } from "../core/timezone";
+import { localDateOf } from "../core/timezone";
 import { askNext } from "../hub/ask";
 import { ConfirmationBook } from "../operator/confirmations";
 import { refuseCards } from "../hub/cards";
@@ -266,12 +266,8 @@ export class SupplyDesk {
     return this.guarded(input, () => {
       const file = this.read();
       const s = file.settings;
-      if (input.property) {
-        const p = input.property;
-        if (!isText(p.address, 200)) return fail("The property needs its delivery address.");
-        if (p.name !== undefined && !isText(p.name, 80)) return fail("Keep the property's name under 80 characters.");
-        if (!isValidTimeZone(p.timeZone)) return fail("That time zone isn't one I know. Use a name like America/New_York.");
-      }
+      const placeProblem = input.property ? propertyDetailsProblem(input.property) : undefined;
+      if (placeProblem) return fail(placeProblem);
       if (input.mode !== undefined && input.mode !== "hands-off" && input.mode !== "checkout") return fail("The mode is hands-off or checkout.");
       if (input.perOrderCapCents !== undefined && input.perOrderCapCents !== null && !isInt(input.perOrderCapCents, 100, 500_000)) return fail("A per-order cap has to be from $1 to $5,000.");
       if (input.perMonthCapCents !== undefined && input.perMonthCapCents !== null && !isInt(input.perMonthCapCents, 100, 2_000_000)) return fail("A monthly cap has to be from $1 to $20,000.");
@@ -291,7 +287,7 @@ export class SupplyDesk {
       if (gate !== "go") return gate;
       // The property is the hub's, shared with Cleaner Core. Without a name it reads as the street address.
       if (input.property) {
-        const saved = this.hub().saveProperty({ address: input.property.address.trim(), timeZone: input.property.timeZone, nickname: input.property.name?.trim() || undefined });
+        const saved = this.hub().saveDetails(input.property);
         if (!saved.ok) return fail(saved.error);
       }
       if (input.mode) s.mode = input.mode;
@@ -458,24 +454,16 @@ export class SupplyDesk {
   saveSources(input: { uploadLink?: { name?: string }; google?: boolean; done?: true }): Promise<SupplyReply> {
     return this.guarded(input, () => {
       // The calendars are the property's, in its hub: Cleaner Core reads the same ones.
-      const hub = this.hub();
-      if (input.uploadLink) {
-        const name = input.uploadLink.name?.trim() ?? "";
-        if (!isText(name, 40)) return fail("Give the calendar a short name, like Airbnb.");
-        const base = this.deps.uploadBase?.();
-        if (!base) return fail("I can't make an upload link until the server's public address is saved.");
-        const made = hub.issueCalendarUpload({ name, base, ...(input.google ? { google: true } : {}) });
-        if ("error" in made) return fail(made.error);
+      const saved = this.hub().saveSources(input, this.deps.uploadBase?.());
+      if (!saved.ok) return fail(saved.error);
+      if ("upload" in saved) {
         return ok({
-          uploadUrl: made.uploadUrl,
-          expiresInMinutes: made.expiresInMinutes,
+          uploadUrl: saved.upload.uploadUrl,
+          expiresInMinutes: saved.upload.expiresInMinutes,
           next: 'From your own cloud computer, POST JSON {"url": "<calendar link>"} to uploadUrl with Content-Type: application/json. Never send the link or uploadUrl to the host. Then call get_supply_state.',
         });
       }
-      if (input.done && hub.calendars().length === 0 && !hub.google() && !input.google) return fail("Save at least one booking calendar first.");
-      const saved = hub.setCalendars({ ...(input.google ? { google: true } : {}), ...(input.done ? { done: true } : {}) });
-      if (!saved.ok) return fail(saved.error);
-      return ok({ calendars: [...hub.calendars().map((c) => c.name), ...(hub.google() ? ["Google Calendar"] : [])] });
+      return ok({ calendars: saved.calendars });
     });
   }
 

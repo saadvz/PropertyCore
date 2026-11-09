@@ -1,3 +1,4 @@
+import type { DoorAccess } from "../../hub/doorAccess";
 import { hubFor, type Hub } from "../../hub/hub";
 import { hubCalendarCode } from "../../hub/paths";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -28,6 +29,8 @@ import { isPropertyId, propertyFolder, type Property } from "./properties";
 import { isTenantId, tenantFolder, type Tenant, type TenantRegistry } from "./registry";
 import { screenText } from "../../hosted/crossService";
 import { handleTenantMcp } from "../../hosted/frontMcp";
+import { fixerCodeChanged, fixerPhotoFolders, tickFixer } from "../../hosted/fixer";
+import { isVisitPath, serveFixerVisit } from "../../hosted/fixerVisit";
 import { handleLineText } from "../../hosted/lineRouter";
 import type { TouringFront } from "../../hosted/serviceTools";
 import { handleTouringAlertUpload, refreshTouringAlerts, touringAlertFormReply, touringAlertPage, touringAlertUploadCode } from "../../hosted/touringAlerts";
@@ -310,12 +313,20 @@ async function touringText(h: HostedCleaner, r: HostedRequest, tenant: Tenant, r
 
 async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tenant, property: Property, rest: string, signedUrl: string | undefined, now: () => Date): Promise<boolean> {
   const { method } = r;
+  const { cleaning, supplies, fixer } = property.flows;
+  // The pro's visit page is Fixer Core's, for this path's property only. Its path holds the link's token, so it is never logged.
+  if (isVisitPath(rest)) {
+    if (!fixer.on) return false;
+    await serveFixerVisit(h, r, tenant, property, rest);
+    return true;
+  }
   const ctx = propertyContext(h, tenant, property);
-  // A calendar link is the property's, in its hub: it works while any flow is on. Every other link needs cleaning on.
-  const calendarCode = hubCalendarCode(rest);
-  if (calendarCode ? !property.flows.cleaning.on && !property.flows.supplies.on : !property.flows.cleaning.on) return false;
   const contentType = String(r.req.headers["content-type"] ?? "");
-  if (calendarCode) return handleHubCalendar(h, r, tenant, property, ctx, calendarCode, contentType, now);
+  // A calendar link is the property's, in its hub: it works while any flow is on.
+  const calendarCode = hubCalendarCode(rest);
+  if (calendarCode) return cleaning.on || supplies.on || fixer.on ? handleHubCalendar(h, r, tenant, property, ctx, calendarCode, contentType, now) : false;
+  // Without Cleaner Core, Fixer Core's own links still work: its job photos and the door code link. Every other link needs cleaning on.
+  if (!cleaning.on) return fixer.on ? handleFixerOnlyPath(h, r, tenant, property, ctx, rest, contentType, now) : false;
   if (method === "POST" && rest === CLEANER_TWILIO_STATUS_PATH) {
     const result = await handleCleanerTwilioStatus({ rawBody: await r.readRaw(), headers: r.req.headers, url: signedUrl, env: ctx.env, root: ctx.root, now });
     r.send(result.status, JSON_TYPE, result.body);
@@ -326,17 +337,12 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
     r.send(result.status, JSON_TYPE, result.body);
     return true;
   }
-  if (method === "GET" && rest.startsWith(CLEANER_PHOTO_PREFIX)) {
-    const env = ctx.env();
-    const photo = servePhoto(ctx.root, rest.slice(CLEANER_PHOTO_PREFIX.length), photoKey(env), now());
-    if (photo.status !== 200) return false;
-    r.res.writeHead(200, { ...photo.headers, "Content-Length": String(photo.body.length) });
-    r.res.end(photo.body);
-    return true;
-  }
+  if (method === "GET" && rest.startsWith(CLEANER_PHOTO_PREFIX)) return sendPhoto(r, ctx, rest, now);
   const page = uploadPageOf(rest);
   if (page && (method === "GET" || (method === "POST" && isFormPost(contentType)))) {
-    await sendUploadPage(h, r, tenant, ctx, page, contentType, now);
+    const status = await sendUploadPage(h, r, tenant, ctx, page, contentType, now);
+    // A new door code, whichever flow gave the link: Fixer Core stops asking about the old one.
+    if (page.kind === "door-code" && method === "POST" && status === 200) await fixerCodeChanged(h, tenant, property);
     return true;
   }
   if (method !== "POST") return false;
@@ -349,12 +355,56 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
       ? await handleCleanerDoorCodeUpload({ ...upload, code: door })
       : undefined;
   if (!result) return false;
+  if (door && result.status === 200) await fixerCodeChanged(h, tenant, property);
   r.send(result.status, JSON_TYPE, result.body, result.status === 413 ? { Connection: "close" } : {});
   return true;
 }
 
-/** A private upload page, or its form post, for one property. A calendar link's page saves through `hub`. */
-async function sendUploadPage(h: HostedCleaner, r: HostedRequest, tenant: Tenant, ctx: TenantContext, link: { kind: UploadPageKind; code: string }, contentType: string, now: () => Date, hub?: Hub): Promise<void> {
+/** A photo link's photo, or false when the link isn't valid or has expired, or names a folder outside `onlyFolders`. */
+function sendPhoto(r: HostedRequest, ctx: TenantContext, rest: string, now: () => Date, onlyFolders?: ReadonlySet<string>): boolean {
+  const photo = servePhoto(ctx.root, rest.slice(CLEANER_PHOTO_PREFIX.length), photoKey(ctx.env()), now(), onlyFolders);
+  if (photo.status !== 200) return false;
+  r.res.writeHead(200, { ...photo.headers, "Content-Length": String(photo.body.length) });
+  r.res.end(photo.body);
+  return true;
+}
+
+/**
+ * A property where Fixer Core runs without Cleaner Core: the job photo links get_job_photos gives,
+ * and the door code link from change_door_code, which saves to the hub's door access. Grok's own
+ * computer posts JSON; other chats use the private page. The door code is never repeated or logged.
+ */
+async function handleFixerOnlyPath(h: HostedCleaner, r: HostedRequest, tenant: Tenant, property: Property, ctx: TenantContext, rest: string, contentType: string, now: () => Date): Promise<boolean> {
+  const { method } = r;
+  // Only a repair job's photos: Cleaner Core's, from when it ran here, stay off with it.
+  if (method === "GET" && rest.startsWith(CLEANER_PHOTO_PREFIX)) return sendPhoto(r, ctx, rest, now, fixerPhotoFolders(h, tenant, property));
+  const code = doorCodeUploadCode(rest);
+  if (!code) return false;
+  const door = hubFor(ctx.root, { now }).doorAccess(ctx.env);
+  if (method === "GET" || (method === "POST" && isFormPost(contentType))) {
+    const status = await sendUploadPage(h, r, tenant, ctx, { kind: "door-code", code }, contentType, now, { door });
+    if (method === "POST" && status === 200) await fixerCodeChanged(h, tenant, property);
+    return true;
+  }
+  if (method !== "POST") return false;
+  const read = await uploadBody(contentType, () => r.readCapped(ALERT_UPLOAD_MAX_BYTES));
+  const saved = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : door.upload(code, read.parsed);
+  if (saved.status === 200) await fixerCodeChanged(h, tenant, property);
+  r.send(saved.status, JSON_TYPE, JSON.stringify(saved.body), saved.status === 413 ? { Connection: "close" } : {});
+  return true;
+}
+
+/** A private upload page, or its form post, for one property, and its status. A calendar link's page saves through `hub`; a Fixer-only property's door code link through `door`. */
+async function sendUploadPage(
+  h: HostedCleaner,
+  r: HostedRequest,
+  tenant: Tenant,
+  ctx: TenantContext,
+  link: { kind: UploadPageKind; code: string },
+  contentType: string,
+  now: () => Date,
+  store: { hub?: Hub; door?: DoorAccess } = {},
+): Promise<number> {
   const result = await handleCleanerUploadPage({
     ...link,
     method: r.method,
@@ -365,9 +415,11 @@ async function sendUploadPage(h: HostedCleaner, r: HostedRequest, tenant: Tenant
     now,
     saveSecrets: ctx.saveSecrets,
     multiTenant: { fallback: pageAssistant(h, tenant) },
-    ...(hub ? { hub } : {}),
+    ...(store.hub ? { hub: store.hub } : {}),
+    ...(store.door ? { door: store.door } : {}),
   });
   r.send(result.status, result.headers["Content-Type"] ?? "text/html; charset=utf-8", result.body, { ...result.headers, ...(result.status === 413 ? { Connection: "close" } : {}) });
+  return result.status;
 }
 
 /**
@@ -380,7 +432,7 @@ async function handleHubCalendar(h: HostedCleaner, r: HostedRequest, tenant: Ten
   const hub = hubFor(ctx.root, { now });
   const { method } = r;
   if (method === "GET" || (method === "POST" && isFormPost(contentType))) {
-    await sendUploadPage(h, r, tenant, ctx, { kind: "calendar-link", code }, contentType, now, hub);
+    await sendUploadPage(h, r, tenant, ctx, { kind: "calendar-link", code }, contentType, now, { hub });
     return true;
   }
   if (method !== "POST") return false;
@@ -446,6 +498,39 @@ export async function drainAllTenants(h: HostedCleaner): Promise<void> {
         await drainCleanerAlerts(ctx.root, ctx.env, () => h.now());
       } catch {
         h.log(`Cleaner Core couldn't deliver ${tenant.id}/${property.id}'s alerts this round.`);
+      }
+    }
+  }
+}
+
+/** True while a round of Fixer Core's clock runs, so the next tick skips rather than overlaps it. */
+let fixerRound = false;
+
+/**
+ * Fixer Core's clock: one pass for each property with Fixer Core on, on the same tick as the alerts.
+ * One property's failure never stops the rest, and the log line names only the property. A round
+ * still running when the next tick comes makes that tick skip.
+ */
+export async function tickAllFixers(h: HostedCleaner): Promise<void> {
+  if (fixerRound) return;
+  fixerRound = true;
+  try {
+    await fixerPass(h);
+  } finally {
+    fixerRound = false;
+  }
+}
+
+async function fixerPass(h: HostedCleaner): Promise<void> {
+  for (const listed of h.registry.list()) {
+    const tenant = h.registry.get(listed.id);
+    if (!tenant || tenant.disabled) continue;
+    for (const property of tenant.properties) {
+      if (!property.flows.fixer.on) continue;
+      try {
+        await tickFixer(h, tenant, property);
+      } catch {
+        h.log(`Fixer Core couldn't run ${tenant.id}/${property.id}'s clock this round.`);
       }
     }
   }

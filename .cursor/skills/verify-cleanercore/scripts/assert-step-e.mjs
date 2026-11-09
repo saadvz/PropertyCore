@@ -103,7 +103,7 @@ if (journey === "source-read") {
   same(first.sent, [{ to: OWNER, body: LANE_Q, kind: "host-checkout" }]);
   same(recipients(first), [OWNER]);
 } else if (journey === "block") {
-  same(first.blocks, [{ uid: "google:evt-block", summary: "Owner block" }]);
+  same(first.blocks, [{ uid: "google:evt-block", summary: "Owner block", checkInDate: "2026-10-18", checkoutDate: "2026-10-19" }]);
   same(first.jobs.map((job) => ({ id: job.id, checkoutDate: job.checkoutDate })), [{ id: "google:evt-stay", checkoutDate: "2026-10-18" }]);
   if (first.jobs.some((job) => job.id === "google:evt-block" || job.checkoutDate === "2026-10-19")) fail("a block became a departure");
   same(first.sent, [{ to: OWNER, body: LANE_Q, kind: "host-checkout" }]);

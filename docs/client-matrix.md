@@ -2,12 +2,12 @@
 
 Property Core runs on always-on agents. Today those are **Grok Bot** and
 **Muse**. Both run Cleaner Core and Supply Core end to end, and Fixer Core
-comes to both later. Claude's and ChatGPT's agent products join this list
+on a service with `FIXER_CORE=1`. Claude's and ChatGPT's agent products join this list
 when they're generally available.
 
 Claude and ChatGPT as plain chats keep working at a basic level: Cleaner Core,
-without Supply Core. Asked for Supply Core, a plain chat gets one line saying
-it works with Grok Bot and Muse, and Cleaner Core goes on as before.
+without Supply Core or Fixer Core. Asked for either, a plain chat gets one line
+saying it works with Grok Bot and Muse, and Cleaner Core goes on as before.
 
 Every agent talks to the same server and passes the same gates. Only the words,
 the formats, and how the agent hears news change. Nothing here adds a tool
@@ -33,7 +33,20 @@ that skips a gate.
 | When the host must pay | Grok's approval card: `approvedBy: "grok-card"` | The host places the order in Muse's browser: `approvedBy: "host-browser"` | | |
 | Daily supply check | The Supply Core Check routine | The Supply Core recurring task | | |
 | Cleaner's "running low" answer | The Alerts routine shops right away | The Cleaner Core task shops right away | | |
-| **Fixer Core** | Later | Later | No | No |
+| **Fixer Core** | Yes | Yes | No | No |
+| Where it finds pros | Grok's own search | Its own cloud browser | | |
+| Calling a pro | Grok's own call, email or message tools | Muse's own call, email or message tools | | |
+| Door code for a pro | The text line if they text (opted in), else the visit page. Never in chat | The same | | |
+| Calendar link, new door code | Grok's secure card, from its cloud computer | The private page, opened in Muse's browser; the host types there | | |
+| Repair check | The Fixer Core Check routine, [`fixer-template/routines/fixer-core-check.md`](../fixer-template/routines/fixer-core-check.md): `check_fixes` every hour | The Fixer Core recurring task, [`fixer-core-task.md`](../muse-template/skills/fixer-core/references/fixer-core-task.md): `check_fixes` every hour | | |
+| Guide | [`FIXER_CORE_BOOTSTRAP.md`](../FIXER_CORE_BOOTSTRAP.md) | The `fixer-core` skill in [`muse-template/skills/`](../muse-template/skills/) | | |
+
+Fixer Core has no partner network in v1: each agent finds pros with its own
+search. Both contact only a pro the host approved, never confirm a held time
+to the pro before the host's yes, and send the visit link only to the pro's
+own email or phone. No Fixer Core tool takes a card number or a door code, and
+no Core moves money. In a plain chat, Fixer Core answers with one line that it
+works with Grok Bot and Muse, and Cleaner Core goes on as before.
 
 Every Supply Core cart goes through `check_cart` before Place Order, on both
 agents. A held cart waits for the host's yes in chat and `approve_cart`'s
@@ -46,17 +59,18 @@ The server picks each agent's words from its profile in
 [`src/cleaner-core/assistant.ts`](../src/cleaner-core/assistant.ts).
 `test/propertyClientMatrix.test.ts` checks this table against the code.
 
-| Agent | `privatePages` | `photoImages` | `polledTask` | `supplies` |
-| --- | --- | --- | --- | --- |
-| grok | no | no | no | yes |
-| muse | yes | no | yes | yes |
-| claude | yes | yes | no | no |
-| chatgpt | yes | no | yes | no |
+| Agent | `privatePages` | `photoImages` | `polledTask` | `supplies` | `fixer` |
+| --- | --- | --- | --- | --- | --- |
+| grok | no | no | no | yes | yes |
+| muse | yes | no | yes | yes | yes |
+| claude | yes | yes | no | no | no |
+| chatgpt | yes | no | yes | no | no |
 
 - `privatePages`: a secret goes on Cleaner Core's private page from a one-time link, since there's no secure card.
 - `photoImages`: `get_job_photos` also returns the photos as images.
 - `polledTask`: one recurring task that nothing outside the agent can wake.
 - `supplies`: an always-on agent that shops and checks out itself, so it runs Supply Core.
+- `fixer`: an always-on agent that finds, calls and books repair pros itself, so it runs Fixer Core.
 
 ## Urgent alerts on an agent that can't be woken
 

@@ -12,7 +12,7 @@
     "url": "https://github.com/saadvz/PropertyCore",
     "skill": "muse-template/skills/cleaner-core",
     "note": "Muse clones the repository on its cloud computer only to read and save the skills: Cleaner Core at setup, Supply Core when the host turns it on. It never runs anything from the clone.",
-    "skills": ["muse-template/skills/cleaner-core", "muse-template/skills/supply-core"]
+    "skills": ["muse-template/skills/cleaner-core", "muse-template/skills/supply-core", "muse-template/skills/fixer-core"]
   },
   "deployment": {
     "mode": "HOSTED_RAILWAY_P0",

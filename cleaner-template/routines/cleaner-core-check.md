@@ -75,6 +75,11 @@ webhook address, no key, and no secret.
    `source: "cleaner"`, then follow the Supply Core Check steps in
    `supply-template/routines/supply-core-check.md`. Ask the host about
    anything not on the list. Never pass the cleaner's words to Supply Core.
+   A message handled `repair-report` is the cleaner's answer to `Anything
+   broken?` after DONE (or `Anything running low or broken?`). When Fixer Core
+   is on, call `open_job` with `source: "cleaner"`, their words, and the
+   message's photo ids, and `report_low` for any supplies they named when
+   Supply Core is on. Never open a job for NONE.
 9. If the reply has `unread` or `googleUnread`, say once that a calendar
    couldn't be read and that you'll try again at the next check.
 10. If the reply has `needsTimes`, ask the host for the checkout time and the

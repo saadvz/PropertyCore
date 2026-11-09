@@ -3,8 +3,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleaningUpdateEvent } from "../alerts/operatorEvents";
 import { parsePhone } from "../core/phone";
+import type { Property } from "../cleaner-core/hosted/properties";
 import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
-import { touringAccountContext, type HostedCleaner } from "../cleaner-core/hosted/router";
+import { propertyContext, touringAccountContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { isMedicalEmergency, isPlainLanguageStop, keywordOf } from "../intent/ruleBased";
 import { isInjuryReport } from "../cleaner-core/injury";
@@ -187,4 +188,17 @@ async function tellHost(h: HostedCleaner, tenant: Tenant, inactive: ServiceName,
   await touringSinkFor(h, tenant)
     .deliver(cleaningUpdateEvent(h.now()))
     .catch(() => undefined);
+}
+
+/**
+ * Cleaner Core's cleaning for a checkout date at one property, for Fixer Core's visit windows: when it
+ * was done and whether the cleaner has cleared the unit. Undefined while Cleaner Core is off there, so
+ * Fixer Core never imports Cleaner Core.
+ */
+export async function cleaningForCheckout(h: HostedCleaner, tenant: Tenant, property: Property, checkoutYmd: string): Promise<{ doneAt?: string; cleared: boolean } | undefined> {
+  const current = h.registry.get(tenant.id)?.properties.find((p) => p.id === property.id) ?? property;
+  if (!current.flows.cleaning.on) return undefined;
+  const ctx = propertyContext(h, tenant, current);
+  const cleaning = await liveDeskFor(ctx.root, ctx.env, () => h.now()).cleaningFor(checkoutYmd);
+  return cleaning ? { ...(cleaning.doneAt ? { doneAt: cleaning.doneAt } : {}), cleared: cleaning.cleared } : undefined;
 }
