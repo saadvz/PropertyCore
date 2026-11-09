@@ -1,6 +1,6 @@
 import { parsePhone } from "../../core/phone";
 import { CLEANER_TWILIO_PATH } from "../twilioHook";
-import { NumberPool, PoolError, POOL_LOW_AT } from "./numberPool";
+import { NumberPool, PoolError, POOL_LOW_AT, poolRestMs } from "./numberPool";
 import type { Tenant } from "./registry";
 import type { HostedCleaner } from "./router";
 import { findIncomingNumber, pointSmsWebhook, releaseNumber } from "./twilioNumbers";
@@ -12,7 +12,7 @@ import { findIncomingNumber, pointSmsWebhook, releaseNumber } from "./twilioNumb
  */
 
 export function numberPool(h: HostedCleaner): NumberPool {
-  return new NumberPool(h.dataRoot, () => h.now());
+  return new NumberPool(h.dataRoot, () => h.now(), poolRestMs(h.baseEnv()));
 }
 
 /** Every number the service owns, the pool's too. Never throws, so one bad pool file can't stop an account's texts. */
