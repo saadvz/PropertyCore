@@ -4,7 +4,7 @@ import { resetLiveDesks, setCleanerAlertFetch, setCleanerCalendarFetch } from ".
 import { setCleanerGroupFetch, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import { CHATGPT_INSTRUCTIONS, CLAUDE_INSTRUCTIONS, MUSE_INSTRUCTIONS } from "../src/cleaner-core/assistant";
 import { GROK_INSTRUCTIONS } from "../src/cleaner-core/mcp";
-import { DRAFT_CONFIRM, DRAFT_NEXT, type SetupAsk } from "../src/cleaner-core/setupAsk";
+import { DRAFT_CONFIRM, DRAFT_NEXT, PREFERENCES_STEP, type SetupAsk } from "../src/cleaner-core/setupAsk";
 import { PUBLIC } from "./fakeSendblue";
 import { filesUnder } from "./files";
 import { ADDRESS, BUSINESS, CALENDAR_URL, CLEANER, CLEANER_TOKEN, DOOR_CODE, HOST, OBSERVER, startWiredApp, type WiredApp } from "./wiringProof";
@@ -256,5 +256,12 @@ describe("the draft is confirmed one item at a time, never as one summary", () =
     expect(DRAFT_NEXT).toMatch(/Do not show the host a summary/);
     expect(DRAFT_NEXT).toMatch(/draft\.confirm/);
     expect(DRAFT_NEXT).toMatch(/drafted: true/);
+  });
+});
+
+describe("the preferences step", () => {
+  it("doesn't ask for a note sent with the door code", () => {
+    expect(PREFERENCES_STEP.questions.map((q) => q.field)).not.toContain("instructions");
+    expect(JSON.stringify(PREFERENCES_STEP)).not.toMatch(/with the door code/);
   });
 });

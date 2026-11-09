@@ -233,7 +233,6 @@ export const PREFERENCES_STEP: SetupAsk = {
       ],
     },
     { field: "checklist", ask: "checklist items", required: false, when: "any is some" },
-    { field: "instructions", ask: "a note for the cleaner, sent with the door code", required: false, when: "any is some" },
   ],
 };
 
