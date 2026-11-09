@@ -30,7 +30,7 @@ const STORE_QUESTIONS: AskQuestion[] = [
     ask: "which one store to buy the whole list from",
     required: true,
     how:
-      "Before searching for products, look at the whole draft list, the delivery address, and how soon things are needed. The property is usually empty, so offer only stores that ship to the door from their own site (like Walmart, Target, Sam's Club, or Costco) or same-day services whose driver can leave it at the door (like Instacart, Uber Eats, DoorDash, or Walmart and Target same-day). Never offer pickup, anything that needs a signature, a third-party seller inside a marketplace, or a local store that doesn't deliver to the address. Offer only stores you can actually check out with now, through a connector or the store's own checkout. Suggest the one store that covers the whole list in time; if none does, the fewest that do. Name any membership it needs and ask whether the host has it. Save its name and channel: shipping or same-day.",
+      "Before searching for products, look at the whole draft list, the delivery address, and how soon things are needed. The property is usually empty, so offer only stores that ship to the door from their own site (like Amazon, Walmart, Target, Sam's Club, or Costco) or same-day services whose driver can leave it at the door (like Instacart and Uber Eats). From Amazon, only items shipped and sold by Amazon. Before you suggest Walmart, Target, Sam's Club or Costco, check with your own search that there's one near the address, and leave out any that isn't. Never offer pickup, anything that needs a signature, a third-party seller inside a marketplace, or a local store that doesn't deliver to the address. Offer only stores you can actually check out with now, through a connector or the store's own checkout. Suggest the one store that covers the whole list in time; if none does, the fewest that do. Name any membership it needs and ask whether the host has it. Save its name and channel: shipping or same-day. When the host picks Walmart or Target, they also deliver same-day from a store near the address, so save that store's same-day as fast too and don't ask the next question.",
   },
   {
     field: "fast",
@@ -41,7 +41,8 @@ const STORE_QUESTIONS: AskQuestion[] = [
       { value: "no", label: "No, just the main store" },
     ],
     default: "yes",
-    how: "Use the same rules. Save it as fast with channel same-day.",
+    when: "the main store isn't Walmart or Target",
+    how: "Use the same rules. Offer Instacart and Uber Eats, and any other same-day service that delivers to the address. Save it as fast with channel same-day.",
   },
 ];
 

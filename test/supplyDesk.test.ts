@@ -332,6 +332,19 @@ describe("address first, the whole list, then where to buy", () => {
     expect(ask.questions[0]!.how).toContain("leave it at the door");
   });
 
+  it("offers Amazon, checks the big stores are near the address, offers Uber Eats with Instacart, and skips the same-day question for Walmart or Target", async () => {
+    const { desk } = cleaning();
+    await desk.saveList({ names: ["Paper towels", "Coffee pods"] });
+    const ask = (await desk.state()).structured?.ask as { questions: { field: string; how?: string; when?: string }[] };
+    const [primary, fast] = ask.questions;
+    expect(primary!.how).toContain("Amazon");
+    expect(primary!.how).toMatch(/search that there's one near the address/);
+    expect(primary!.how).toMatch(/Instacart and Uber Eats/);
+    expect(fast!.when).toMatch(/isn't Walmart or Target/);
+    expect(fast!.how).toMatch(/Instacart and Uber Eats/);
+    expect(primary!.how).toMatch(/Walmart or Target.*same-day/);
+  });
+
   it("saves a main store and an optional same-day store, and refuses a store with no delivery channel", async () => {
     const { desk, root } = cleaning();
     await desk.saveList({ names: ["Paper towels"] });

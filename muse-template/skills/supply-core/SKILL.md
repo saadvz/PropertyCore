@@ -53,12 +53,17 @@ Then call the step's tool.
    once, and call `save_supply_list` with the names.
 2. **Where to buy**, before any product search, with `save_supply_stores`.
    The property is usually empty, so offer only stores that ship to the door
-   from their own site (like Walmart, Target, or Costco) or same-day services
-   whose driver can leave it at the door (like Instacart or DoorDash). Never
-   offer pickup, anything that needs a signature, or a third-party seller
-   inside a marketplace. Suggest the one store that covers the whole list in
-   time, or the fewest that do, and name any membership it needs. Then ask
-   whether to add a same-day store for deadlines the main store can't make.
+   from their own site (like Amazon, Walmart, Target, or Costco) or same-day
+   services whose driver can leave it at the door (like Instacart and Uber
+   Eats). From Amazon, only items shipped and sold by Amazon. Before you
+   suggest Walmart, Target or Costco, check with a search that there's one
+   near the address. Never offer pickup, anything that needs a signature, or
+   a third-party seller inside a marketplace. Suggest the one store that
+   covers the whole list in time, or the fewest that do, and name any
+   membership it needs. When the host picks Walmart or Target, save its
+   same-day as the same-day store too and don't ask about one. Otherwise ask
+   whether to add a same-day store for deadlines the main store can't make,
+   and offer Instacart and Uber Eats.
 3. **One schedule?** With two or more items, ask once whether one schedule
    fits everything. A schedule is **Every…** (days, or a day of the month),
    **By bookings** (once every so many stays), or **Other**: for Other, write
