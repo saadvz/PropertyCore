@@ -106,7 +106,7 @@ Each tenant is an **account** with one text line and one or more
 `/data/tenants/<id>/properties/<pid>/`, which is the root of an ordinary
 Cleaner Core and Supply Core desk, and switches each flow on or off on its own:
 Cleaner Core (`cleaning`), Supply Core (`supplies`), and Fixer Core (`fixer`,
-refused until Phase 1). The account keeps the line, the secrets, the chats, and
+refused without `FIXER_CORE=1`). The account keeps the line, the secrets, the chats, and
 their alert routines.
 
 - **Migration.** At startup, a `tenants.json` older than version 3 moves each
@@ -133,6 +133,21 @@ their alert routines.
   at most once in 12 hours. Every text to the landlord starts with the
   property's label. A STOP from someone on no property holds for the whole line.
 - **Gates.** `docs/cleaner-core-safety-gates.md` ("Own property only").
+
+## Fixer Core
+
+Fixer Core (`fixer`) gets a property's repairs and upkeep done. It turns on for
+a property only with `FIXER_CORE=1` on the service, and only for Grok Bot and
+Muse; Claude and ChatGPT get one plain line saying so. A property with it off
+behaves exactly as before, and the host can turn it off, which cancels open
+jobs after their yes. Each property keeps its pros, jobs, costs and visit
+pages in its own folder, and the visit page answers only on its own property's
+path. A pro on two properties needs the host's `shared: true`, and a pro who
+texts is held in `people.json` beside the cleaner, with their own YES and STOP
+for the account. The agent finds pros with its own search, since there's no
+partner network in v1. Fixer Core never pays or takes a card, and the door
+code reaches only the pro's own phone for the visit.
+**Gates.** `docs/fixer-core-safety-gates.md`.
 
 ## Touring (parked)
 

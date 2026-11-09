@@ -34,6 +34,19 @@ that skips a gate.
 | Daily supply check | The Supply Core Check routine | The Supply Core recurring task | | |
 | Cleaner's "running low" answer | The Alerts routine shops right away | The Cleaner Core task shops right away | | |
 | **Fixer Core** | Yes | Yes | No | No |
+| Where it finds pros | Grok's own search | Its own cloud browser | | |
+| Calling a pro | Grok's own call, email or message tools | Muse's own call, email or message tools | | |
+| Door code for a pro | The text line if they text (opted in), else the visit page. Never in chat | The same | | |
+| Calendar link, new door code | Grok's secure card, from its cloud computer | The private page, opened in Muse's browser; the host types there | | |
+| Repair check | `check_fixes` on every run of the Alerts routine | `check_fixes` on every run of the recurring task | | |
+| Guide | [`FIXER_CORE_BOOTSTRAP.md`](../FIXER_CORE_BOOTSTRAP.md) | The `fixer-core` skill in [`muse-template/skills/`](../muse-template/skills/) | | |
+
+Fixer Core has no partner network in v1: each agent finds pros with its own
+search. Both contact only a pro the host approved, never confirm a held time
+to the pro before the host's yes, and send the visit link only to the pro's
+own email or phone. No Fixer Core tool takes a card number or a door code, and
+no Core moves money. In a plain chat, Fixer Core answers with one line that it
+works with Grok Bot and Muse, and Cleaner Core goes on as before.
 
 Every Supply Core cart goes through `check_cart` before Place Order, on both
 agents. A held cart waits for the host's yes in chat and `approve_cart`'s

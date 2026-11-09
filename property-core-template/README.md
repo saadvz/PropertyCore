@@ -20,7 +20,8 @@ The flows:
 - **Supply Core:** the property kept stocked. The host picks each product
   once, the agent shops and checks out with its own tools, and Supply Core
   decides go or hold on every cart.
-- **Fixer Core** (repairs and upkeep) comes next. It isn't offered yet.
+- **Fixer Core:** repairs and upkeep. The agent finds, calls and books the host's pros, and Fixer Core holds the
+  rules and the door access. It is offered only on a service with `FIXER_CORE=1`.
 
 ```
 Host ─► Grok Bot or Muse ─► hosted service (hostedPropertyCoreUrl/mcp) ─┬─► Cleaner Core ─► the cleaner's phone
@@ -36,6 +37,7 @@ skipping the guide's connect step, since it's already connected:
 | --- | --- | --- |
 | Cleaner Core | [`CLEANER_CORE_BOOTSTRAP.md`](../CLEANER_CORE_BOOTSTRAP.md) and [`cleaner-template/`](../cleaner-template/) | [`muse-template/skills/cleaner-core`](../muse-template/skills/cleaner-core/SKILL.md) |
 | Supply Core | [`SUPPLY_CORE_BOOTSTRAP.md`](../SUPPLY_CORE_BOOTSTRAP.md) and [`supply-template/`](../supply-template/) | [`muse-template/skills/supply-core`](../muse-template/skills/supply-core/SKILL.md) |
+| Fixer Core | [`FIXER_CORE_BOOTSTRAP.md`](../FIXER_CORE_BOOTSTRAP.md) | [`muse-template/skills/fixer-core`](../muse-template/skills/fixer-core/SKILL.md) |
 
 Those folders hold the flow guides and routine docs the agents read. They are
 not separate ways to start, and their old paste-in prompts point back here.
