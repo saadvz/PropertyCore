@@ -48,6 +48,15 @@ export const POOL_LOW_AT = 3;
  */
 export const REST_MS = 30 * 24 * 60 * 60_000;
 
+/**
+ * The rest from CLEANER_CORE_POOL_REST_DAYS, a whole number of days. 0 turns it off, for testing with
+ * numbers no real cleaner has. Unset or anything else keeps the 30 days.
+ */
+export function poolRestMs(env: NodeJS.ProcessEnv): number {
+  const raw = env.CLEANER_CORE_POOL_REST_DAYS?.trim();
+  return raw && /^\d+$/.test(raw) ? Number(raw) * 24 * 60 * 60_000 : REST_MS;
+}
+
 export class PoolError extends Error {
   constructor(readonly reason: "bad-number" | "already-pooled" | "in-use" | "not-pooled") {
     super(reason);
@@ -61,6 +70,7 @@ export class NumberPool {
   constructor(
     dataRoot: string,
     private readonly now: () => Date,
+    private readonly restMs: number = REST_MS,
   ) {
     this.file = join(dataRoot, "number-pool.json");
   }
@@ -81,14 +91,14 @@ export class NumberPool {
 
   stateOf(entry: PoolNumber): PoolState {
     if (entry.tenantId) return "in-use";
-    if (entry.returnedAt && this.now().getTime() - Date.parse(entry.returnedAt) < REST_MS) return "resting";
+    if (entry.returnedAt && this.now().getTime() - Date.parse(entry.returnedAt) < this.restMs) return "resting";
     return "ready";
   }
 
   /** When a resting line can be handed out again. */
   readyAt(entry: PoolNumber): string | undefined {
     if (this.stateOf(entry) !== "resting") return undefined;
-    return new Date(Date.parse(entry.returnedAt!) + REST_MS).toISOString();
+    return new Date(Date.parse(entry.returnedAt!) + this.restMs).toISOString();
   }
 
   list(): PoolNumber[] {

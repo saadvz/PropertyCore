@@ -602,6 +602,7 @@ Tour Core service's.
 | `CLEANER_CORE_SIGNUP` | `1` to offer Sign in and Create account on the connect page. Needs live texts on and the three below. Codes go only to phones the allowlist allows. Create account needs ready numbers in the pool, or it says no line is free |
 | `CLEANER_CORE_TWILIO_VERIFY_SERVICE_SID` | The Twilio Verify service (`VA…`) that texts the sign-in code, on the same Twilio account. In Twilio, limit the service's Geo Permissions to the United States and Canada |
 | `CLEANER_CORE_TERMS_URL`, `CLEANER_CORE_TERMS_VERSION` | Saad's terms page (`https://`) and the version a new account records |
+| `CLEANER_CORE_POOL_REST_DAYS` | Leave unset (30 days). `0` only while testing with numbers no real cleaner has texted |
 | `NODE_ENV`, `RAILPACK_NODE_NPM_INSTALL`, `NPM_CONFIG_PRODUCTION`, `RAILPACK_NODE_VERSION` | As in `.railway/railway.ts` |
 
 Do not set `CLEANER_CORE_TWILIO_PHONE_NUMBER`, `CLEANER_CORE_ASSISTANT`, or

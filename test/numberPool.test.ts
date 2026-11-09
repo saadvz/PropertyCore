@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeLine, lineWebhookUrl, openAccount, releasePooled, repointLine, topUp } from "../src/cleaner-core/hosted/lines";
-import { NumberPool, POOL_LOW_AT, REST_MS } from "../src/cleaner-core/hosted/numberPool";
+import { NumberPool, POOL_LOW_AT, REST_MS, poolRestMs } from "../src/cleaner-core/hosted/numberPool";
 import { TenantRegistry } from "../src/cleaner-core/hosted/registry";
 import { propertyContext, type HostedCleaner } from "../src/cleaner-core/hosted/router";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
@@ -262,5 +262,29 @@ describe("the number pool", () => {
     const property = h.registry.addProperty(opened.tenant.id, "12 Scratch Lane");
     const lines = propertyContext(h, h.registry.get(opened.tenant.id)!, property).env().CLEANER_CORE_SERVICE_LINES?.split(",");
     expect(new Set(lines)).toEqual(new Set([A, B]));
+  });
+});
+
+describe("the rest before a returned line is handed out again (CLEANER_CORE_POOL_REST_DAYS)", () => {
+  it("is 30 days unless the setting is a whole number of days, and 0 turns it off", () => {
+    expect(poolRestMs({})).toBe(REST_MS);
+    expect(poolRestMs({ CLEANER_CORE_POOL_REST_DAYS: "" })).toBe(REST_MS);
+    expect(poolRestMs({ CLEANER_CORE_POOL_REST_DAYS: "0" })).toBe(0);
+    expect(poolRestMs({ CLEANER_CORE_POOL_REST_DAYS: " 7 " })).toBe(7 * 24 * 60 * 60_000);
+    for (const bad of ["-1", "1.5", "abc", "7d"]) expect(poolRestMs({ CLEANER_CORE_POOL_REST_DAYS: bad })).toBe(REST_MS);
+  });
+
+  it("with 0, a closed account's line is ready for the next sign-up at once", async () => {
+    fakeTwilio({ [A]: "PNa" });
+    const base = h.baseEnv;
+    h = { ...h, baseEnv: () => ({ ...base(), CLEANER_CORE_POOL_REST_DAYS: "0" }) };
+    await topUp(h, [A]);
+    const lane = await openAccount(h, { label: "Lane" });
+    if ("refused" in lane) throw new Error(lane.refused);
+    await closeLine(h, lane.tenant, "return");
+    h.registry.remove(lane.tenant.id);
+    expect(pool().stateOf(pool().get(A)!)).toBe("resting");
+    expect(new NumberPool(dir, () => new Date(now), 0).stateOf(pool().get(A)!)).toBe("ready");
+    expect(await openAccount(h, { label: "Court" })).toMatchObject({ number: A });
   });
 });
