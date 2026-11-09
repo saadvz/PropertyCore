@@ -319,9 +319,16 @@ const GROUP_SEND_TOPICS = new Map<string, string>([
 
 /** Twilio wouldn't add this phone to the group. Only the last four digits are shown. */
 export function groupRefusedLine(refused: { phone: string; code?: number }): string {
+  // Twilio allows one group text per line and set of phones. No phone is at fault.
+  if (refused.code === 50438) return "This text line already has a group text with the same people, so a second one can't start. Texts for this property go to the cleaner alone.";
   const digits = refused.phone.replace(/\D/g, "").slice(-4);
   const code = refused.code !== undefined ? ` (Twilio error ${refused.code})` : "";
   return `Twilio wouldn't add the number ending in ${digits} to the group text${code}. Check that number with Twilio support, or use another mobile number for that person.`;
+}
+
+/** The group couldn't start, and the text reached the cleaner one-to-one instead. */
+export function groupFellBackLine(kind: string): string {
+  return `The group text couldn't start, so I texted the cleaner the ${GROUP_SEND_TOPICS.get(kind) ?? "text"} directly.`;
 }
 
 export function groupUnconfirmedLine(kind: string): string {

@@ -3,6 +3,7 @@ import { CLEANER_TWILIO_PATH } from "../twilioHook";
 import { NumberPool, PoolError, POOL_LOW_AT, poolRestMs } from "./numberPool";
 import type { Tenant } from "./registry";
 import type { HostedCleaner } from "./router";
+import { clearLineGroups } from "../liveSms";
 import { findIncomingNumber, pointSmsWebhook, releaseNumber } from "./twilioNumbers";
 
 /**
@@ -122,6 +123,9 @@ export async function closeLine(h: HostedCleaner, tenant: Tenant, how: CloseLine
     return "not-found";
   }
   await pointSmsWebhook(env, sid, "");
+  // A group text left on the line would stop the next account's group with the same phones.
+  const groups = await clearLineGroups(env, tenant.twilioNumber);
+  if (groups > 0) h.log(`Removed ${groups} group text${groups === 1 ? "" : "s"} from ${tenant.id}'s line.`);
   // Resting from here on, so no sign-up picks it while Twilio releases it.
   pool.giveBack(tenant.twilioNumber, sid);
   if (how === "return") {

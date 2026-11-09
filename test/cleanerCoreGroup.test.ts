@@ -331,10 +331,12 @@ describe("group thread", () => {
     await job.receive({ id: "cleaner-yes-marker", from: CLEANER, text: "YES" });
     await job.confirmHostTimes({ checkout: "11:00 AM", checkIn: "4:00 PM" });
     await job.receive({ id: "schedule-marker", from: CLEANER, text: "YES" });
-    expect(job.hostNotes().filter((line) => line.startsWith("I couldn't send"))).toEqual([
-      "I couldn't send the cleaning offer to the group.",
+    // The offer fell back to the cleaner alone, so the note says it reached them. The checkout time went nowhere.
+    expect(job.hostNotes().filter((line) => line.startsWith("I couldn't send") || line.startsWith("The group text"))).toEqual([
+      "The group text couldn't start, so I texted the cleaner the cleaning offer directly.",
       "I couldn't send the checkout time to the group.",
     ]);
+    expect(sent.some((text) => text.kind === "offer" && text.to === CLEANER)).toBe(true);
     expect(job.hostNotes().join("\n").includes(marker)).toBe(false);
     expect(job.hostNotes().join("\n").includes("Gate")).toBe(false);
     expect(sent.filter((text) => text.channel === "group")).toEqual([]);

@@ -250,11 +250,92 @@ async function sameGroup(api: GroupApi, conversationSid: string, audience: strin
   return addresses.length === audience.length && new Set(addresses).size === audience.length && audience.every((phone) => addresses.includes(phone));
 }
 
+/** Twilio's answer when the line already has a group text with exactly these phones. Its message names that conversation. */
+const GROUP_EXISTS = 50438;
+
+/**
+ * A new group, or the one Twilio says is in the way. Twilio allows one group text per line and set
+ * of phones, so a group left behind on this line stops a new one. One with this property's own
+ * reply webhook is this property's group, and is used again. One whose webhook is another account's
+ * is a leftover from the account that had the line before: it is removed and the group is made
+ * again. Any other, like another property's on this account, is left alone and the refusal stands.
+ */
+async function makeGroup(api: GroupApi, audience: string[], from: string, hookUrl: string): Promise<string> {
+  try {
+    return await makeNewGroup(api, audience, from, hookUrl);
+  } catch (err) {
+    if (!(err instanceof GroupNotConfirmed) || err.refused?.code !== GROUP_EXISTS) throw err;
+    const old = /\bCH[0-9a-f]{32}\b/i.exec(err.refused.message ?? "")?.[0];
+    const whose = old ? await groupInTheWay(api, old, audience, from, hookUrl).catch(() => "unknown" as const) : "unknown";
+    if (old && whose === "ours") return old;
+    if (old && whose === "leftover") {
+      const res = await request(api, "DELETE", conversationUrl(old));
+      if (!res || (!res.ok && res.status !== 404)) await emptyConversation(api, old);
+      return makeNewGroup(api, audience, from, hookUrl);
+    }
+    throw err;
+  }
+}
+
+/** The account part of one of this service's addresses: everything up to and including /t/<account>/. */
+function accountPrefix(url: string): string | undefined {
+  return /^https:\/\/[^/]+\/t\/[^/]+\//.exec(url)?.[0];
+}
+
+/** Whose group this is: this property's, a leftover from another account, or one to leave alone. */
+async function groupInTheWay(api: GroupApi, conversationSid: string, audience: string[], from: string, hookUrl: string): Promise<"ours" | "leftover" | "unknown"> {
+  // Only Cleaner Core's own group on this line with exactly these phones is ever touched.
+  if (!(await sameGroup(api, conversationSid, audience, from))) return "unknown";
+  const res = await request(api, "GET", conversationPath(conversationSid, "Webhooks"));
+  if (!res?.ok) return "unknown";
+  const body = (await res.json().catch(() => undefined)) as { webhooks?: { configuration?: { url?: unknown } | null }[] } | undefined;
+  const urls = (body?.webhooks ?? []).flatMap((hook) => (typeof hook.configuration?.url === "string" ? [hook.configuration.url] : []));
+  if (urls.length === 0) return "unknown";
+  if (urls.includes(hookUrl)) return "ours";
+  const mine = accountPrefix(hookUrl);
+  // The line is this account's alone, so a group that reports to another account is from before.
+  return mine && urls.every((url) => !url.startsWith(mine)) ? "leftover" : "unknown";
+}
+
+/**
+ * Removes every Cleaner Core group text on a line, when its account closes. The line goes back to
+ * the pool, and a group left on it would stop the next account's group with the same phones. The
+ * count removed; 0 with live texts off or without the Twilio login. Never throws.
+ */
+export async function clearLineGroups(env: NodeJS.ProcessEnv, line: string): Promise<number> {
+  const number = parsePhone(line);
+  const api = liveSmsOn(env) && number ? groupApi(env) : undefined;
+  if (!api) return 0;
+  const found = new Set<string>();
+  let url: string | undefined = `${CONVERSATIONS_ROOT}/ParticipantConversations?Identity=${encodeURIComponent(CLEANER_GROUP_IDENTITY)}&PageSize=50`;
+  const seen = new Set<string>();
+  while (url && !seen.has(url) && url.startsWith("https://conversations.twilio.com/")) {
+    seen.add(url);
+    const res = await request(api, "GET", url);
+    if (!res?.ok) break;
+    const body = (await res.json().catch(() => undefined)) as
+      | { conversations?: { conversation_sid?: string; participant_messaging_binding?: { projected_address?: string | null } | null }[]; meta?: { next_page_url?: string | null } }
+      | undefined;
+    for (const item of body?.conversations ?? []) {
+      if (item.conversation_sid && parsePhone(item.participant_messaging_binding?.projected_address ?? "") === number) found.add(item.conversation_sid);
+    }
+    const next = body?.meta?.next_page_url;
+    url = typeof next === "string" && next.length > 0 ? next : undefined;
+  }
+  let removed = 0;
+  for (const sid of found) {
+    const res = await request(api, "DELETE", conversationUrl(sid));
+    const gone = res && (res.ok || res.status === 404) ? true : await emptyConversation(api, sid).then(() => true, () => false);
+    if (gone) removed += 1;
+  }
+  return removed;
+}
+
 /**
  * A new conversation with its reply webhook, the chat participant, then each phone. Anything that
  * fails empties it, so no half-made group keeps a phone.
  */
-async function makeGroup(api: GroupApi, audience: string[], from: string, hookUrl: string): Promise<string> {
+async function makeNewGroup(api: GroupApi, audience: string[], from: string, hookUrl: string): Promise<string> {
   let created: { sid?: string };
   try {
     created = await call(api, `${CONVERSATIONS_ROOT}/Conversations`, { FriendlyName: "Cleaning group" });
