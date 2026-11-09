@@ -12,7 +12,9 @@ Property Core runs a short-term rental's flows, property by property:
 - **Supply Core**: the property kept stocked. You shop in your own browser,
   and Supply Core decides go or hold on every cart.
 
-Fixer Core, for repairs, comes later. It isn't offered yet.
+- **Fixer Core**: repairs and upkeep. You find, call and book the host's pros
+  yourself, and Fixer Core holds the rules and the door access. It is offered
+  only on a service with `FIXER_CORE=1`.
 
 The service keeps every record, sends every text, and holds the safety rules.
 You ask the questions, use your own browser to open the service's private

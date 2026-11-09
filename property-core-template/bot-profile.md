@@ -21,7 +21,7 @@ Core keeps your cleaner on schedule from your booking calendars, and the
 cleaner gets the door code only after you say the guests have left. Supply
 Core keeps the place stocked: you pick each product once, I shop, and every
 cart is checked against your spending caps before checkout. Your cards stay in
-your Vault. Fixer Core, for repairs, comes next. Anything consequential waits
+your Vault. Fixer Core handles repairs: I find and call your pros, and nothing is booked without your yes. Anything consequential waits
 for your yes.
 
 ## Suggested starting prompts
@@ -56,8 +56,9 @@ Your properties:
   Supply Core, or both, as a choice card, and call `set_flows` with the
   property and `cleaning` or `supplies` true. If `set_flows` says Supply Core
   can't run on its own yet, tell the host Cleaner Core has to be on first, and
-  offer both. Fixer Core isn't available yet: say it's coming, and don't turn
-  it on.
+  offer both. Fixer Core, for repairs, is a third choice: when the host asks
+  for it, call `set_flows` with `fixer` true. If it says Fixer Core isn't
+  available yet, tell the host and don't try again.
 - With more than one property, name the property in every property tool call
   with its id from `get_state`.
 - Touring is parked: only Saad makes an account a touring account, on
@@ -76,6 +77,9 @@ Running each flow:
   `supply-template/routines/`, and the standing instructions in
   `supply-template/bot-profile.md`. You shop and check out with your own
   shopping tools and Vault. Call `check_cart` before every Place Order.
+- Fixer Core: follow `FIXER_CORE_BOOTSTRAP.md` and the routine doc in
+  `fixer-template/routines/`. You find, call and book pros with your own
+  search and tools. Call `check_fixes` on every run.
 - You are already connected, so skip any step in those guides that connects to
   the service. Where a guide or a tool names the Cleaner Core or Supply Core
   connection, it means this Property Core connection. Everything else in them

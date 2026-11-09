@@ -38,7 +38,7 @@ that skips a gate.
 | Calling a pro | Grok's own call, email or message tools | Muse's own call, email or message tools | | |
 | Door code for a pro | The text line if they text (opted in), else the visit page. Never in chat | The same | | |
 | Calendar link, new door code | Grok's secure card, from its cloud computer | The private page, opened in Muse's browser; the host types there | | |
-| Repair check | `check_fixes` on every run of the Alerts routine | `check_fixes` on every run of the recurring task | | |
+| Repair check | The Fixer Core Check routine, [`fixer-template/routines/fixer-core-check.md`](../fixer-template/routines/fixer-core-check.md): `check_fixes` every hour | The Fixer Core recurring task, [`fixer-core-task.md`](../muse-template/skills/fixer-core/references/fixer-core-task.md): `check_fixes` every hour | | |
 | Guide | [`FIXER_CORE_BOOTSTRAP.md`](../FIXER_CORE_BOOTSTRAP.md) | The `fixer-core` skill in [`muse-template/skills/`](../muse-template/skills/) | | |
 
 Fixer Core has no partner network in v1: each agent finds pros with its own

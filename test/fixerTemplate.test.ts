@@ -12,6 +12,8 @@ const read = (path: string) => readFileSync(join(ROOT, path), "utf8").replace(/\
 const BOOTSTRAP = "FIXER_CORE_BOOTSTRAP.md";
 const SKILL = "muse-template/skills/fixer-core/SKILL.md";
 const GATES = "docs/fixer-core-safety-gates.md";
+const ROUTINE = "fixer-template/routines/fixer-core-check.md";
+const TASK = "muse-template/skills/fixer-core/references/fixer-core-task.md";
 
 /** The front answers these two for every flow; they are not in Fixer Core's own list. */
 const FRONT_TOOLS = ["get_job_photos", "preview_schedule"];
@@ -39,6 +41,15 @@ const NOT_TOOLS = new Set(["no_reply"]);
 
 describe("Fixer Core agent instructions", () => {
   for (const file of [BOOTSTRAP, SKILL]) {
+    it(`${file} sets up the routine, and says a stay overlap is never booked and visit_link is refused for a text pro`, () => {
+      const text = read(file).replace(/\s+/g, " ");
+      expect(text).toMatch(/fixer-core-(check|task)\.md/);
+      expect(text).toContain("confirm with the host that it's set");
+      expect(text).toContain("overlaps a guest stay is never booked");
+      expect(text).toContain("refused for a pro who gets the door code by text");
+      expect(text).toContain("`confirmed: true`");
+    });
+
     it(`${file} names only tools that exist, and every Fixer Core tool`, () => {
       const text = read(file);
       const known = new Set([...FIXER_TOOL_NAMES, ...FRONT_TOOLS, ...OTHER_TOOLS]);
@@ -70,13 +81,34 @@ describe("Fixer Core agent instructions", () => {
     });
   }
 
+  for (const file of [ROUTINE, TASK]) {
+    it(`${file} names only tools that exist, runs check_fixes, and stops with Nothing new.`, () => {
+      const text = read(file);
+      const known = new Set([...FIXER_TOOL_NAMES, ...FRONT_TOOLS, ...OTHER_TOOLS]);
+      for (const name of toolsNamed(text)) expect(known.has(name), `${file}: ${name}`).toBe(true);
+      for (const name of text.match(/\b[a-z]+(?:_[a-z]+)+\b/g) ?? []) expect(known.has(name), `${file}: ${name}`).toBe(true);
+      expect(text).toContain("check_fixes");
+      expect(text).toContain("googleEvents");
+      expect(text).toContain("more than one property");
+      expect(text).toContain("Nothing new.");
+      expect(text).toContain("Never confirm a held time to the pro");
+    });
+  }
+
+  it("the client matrix points at the real routine and task", () => {
+    const matrix = read("docs/client-matrix.md");
+    expect(matrix).toContain("fixer-template/routines/fixer-core-check.md");
+    expect(matrix).toContain("muse-template/skills/fixer-core/references/fixer-core-task.md");
+    expect(existsSync(join(ROOT, ROUTINE)) && existsSync(join(ROOT, TASK))).toBe(true);
+  });
+
   it("the Muse template lists the skill, and the skill's front matter names it", () => {
     expect(existsSync(join(ROOT, SKILL))).toBe(true);
     expect(read("muse-template/template.json")).toContain("muse-template/skills/fixer-core");
     expect(read(SKILL)).toMatch(/^---\nname: fixer-core\n/);
   });
 
-  it("the docs name only tools that exist and carry the rules word for word", () => {
+  it("the environment, README, matrix and hosting docs mention Fixer Core and its flag", () => {
     expect(read("docs/environment-variables.md")).toContain("`FIXER_CORE`");
     expect(read("README.md")).toContain("FIXER_CORE_BOOTSTRAP.md");
     expect(read("docs/client-matrix.md")).toContain("FIXER_CORE_BOOTSTRAP.md");
@@ -86,10 +118,11 @@ describe("Fixer Core agent instructions", () => {
   it("every test the safety gates name exists in its file", () => {
     const gates = read(GATES);
     const cited = [...gates.matchAll(/`(test\/[A-Za-z]+\.test\.ts)` \("((?:[^"\\]|\\.)*)"\)/g)];
+    const titled = (file: string, name: string) => new RegExp(`\\b(?:it|test)(?:\\.each\\([^)]*\\))?\\(\\s*(["'\`])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\1`).test(read(file));
     expect(cited.length).toBeGreaterThan(30);
     for (const [, file, name] of cited) {
       expect(existsSync(join(ROOT, file!)), file).toBe(true);
-      expect(read(file!), `${file}: ${name}`).toContain(name!);
+      expect(titled(file!, name!), `${file}: ${name}`).toBe(true);
     }
   });
 });

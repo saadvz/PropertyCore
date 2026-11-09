@@ -21,8 +21,8 @@ Host ─► Muse ─► hosted Cleaner Core (/mcp/cleaner-core) ─► the clean
 ```
 
 **Status: beta.** Grok Bot and Muse are the supported agents: both are
-always on and run Cleaner Core and Supply Core end to end (Fixer Core comes
-later). Claude and ChatGPT are plain chats: Cleaner Core works there at a
+always on and run Cleaner Core, Supply Core and Fixer Core end to end (Fixer Core
+only on a service with `FIXER_CORE=1`). Claude and ChatGPT are plain chats: Cleaner Core works there at a
 basic level, without Supply Core. See
 [`docs/client-matrix.md`](../docs/client-matrix.md).
 

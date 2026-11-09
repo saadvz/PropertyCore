@@ -62,7 +62,7 @@ Then call the step's tool.
    electrical, handyman, gutters, pest control, appliance, locksmith). If you
    can see the host's contacts or receipts, draft pros from them with
    `save_pro` and `draft: true`, and confirm them with the host
-   (`confirm: [ids]`). Save each pro with their trades, the order to call them
+   (`confirm: [ids]`). A phone already on another of the host's properties needs the host's yes, then `shared: true`. Save each pro with their trades, the order to call them
    in for each trade (`preferredFor`, rank 1 first), how to reach them (phone
    in +1 form, email, website, booking page), and whether they prefer text.
    When the list is final, `save_fixer_settings` with `prosDone: true`.
@@ -78,7 +78,12 @@ Then call the step's tool.
    month, or another rule: call `preview_schedule` and read the next 3 dates
    back first), and `leadDays`. Then `save_fixer_settings` with
    `upkeepDone: true`.
-7. **Review and Activate:** summarize the pros, cost line, and upkeep in your
+7. **Recurring task:** create the **Fixer Core** recurring task yourself, every
+   hour unless the host picks another, from
+   [`references/fixer-core-task.md`](references/fixer-core-task.md), with its
+   prompt word for word. One task covers every property with Fixer Core on, so
+   reuse it if it's already there. Then confirm with the host that it's set.
+8. **Review and Activate:** summarize the pros, cost line, and upkeep in your
    own words. On the host's Activate, call `activate_fixer`.
 
 To drop a pro or an upkeep item, use `remove_pro` or `remove_upkeep`. After Activate, every change (a pro, upkeep, a setting, the address) takes the
@@ -90,21 +95,21 @@ code, ask the host, and call again with the code only after their yes.
 You search in your own browser and call, email or message pros yourself.
 
 - Before you call, email, text, fill in a form or booking page, or message
-  anyone, call `contact_pro`. It gives a `contactToken`, or a refusal to tell
-  the host. Contact only a pro the host approved.
+  anyone, call `contact_pro` with `how`: `call`, `email`, `form`, `booking-page`,
+  `text`, or `network`. It gives a `contactToken`, or a refusal to tell the host. Contact only a pro the host approved.
 - With no preferred pro, search for the trade and the address. `add_candidates`
   with up to 8: name, where you found them, rating and reviews, licensed,
   background checked, a price range, the earliest they can come, and how to
   reach them. Show the shortlist as a choice card, then `pick_pros` in two
-  calls with the host's pick, in order.
+  calls with the host's pick, in order. If the host asks for more choices while someone is being contacted, `add_candidates` with `options: true`.
 - Never sign in to a pro's site or booking page with a password you know. Hand
   the browser to the host. Never type a card number or a password, and never
   pay a pro or a booking fee.
 
 ## Every run
 
-Run this whenever the host mentions something broken, and on your recurring
-task. Call `check_fixes` on every run and act on everything it returns:
+The Fixer Core recurring task runs this every hour, and you run it whenever
+the host mentions something broken. Call `check_fixes` on every run and act on everything it returns:
 `needsGo`, `contactNext`, `unconfirmed`, `followUps`, `held`, `delays`,
 `preferredAsk`, `rotationAsk`, `news`. When Google Calendar is saved for the
 property, read the calendar's events and pass them as `googleEvents` to
@@ -138,14 +143,16 @@ the open times between stays, over the cost line, or no estimate with a cost
 line set. Those are the holds sentences in the booking question; the host's
 yes accepts them.
 
+0. **A time that overlaps a guest stay is never booked.** `record_contact`
+   gives no question then. Tell the host, and ask the pro for another time.
 1. Ask the host. Do not tell the pro the time is settled.
 2. On the host's yes, `approve_booking` without `confirmation`, then with the
-   code, passing `access` (`code` or `host`) and `cleaningOrder` when the
+   code, passing `proId` to choose another pro's held yes on the job, and `access` (`code` or `host`) and `cleaningOrder` when the
    visit shares a day with a cleaning. If the stays changed or the time has
    passed, it refuses with a plain reason, and nothing is booked.
 3. Only then confirm the time to the pro.
 4. `visit_link` gives the private visit page link, once. Send it to the pro's
-   own email or phone.
+   own email or phone. It is refused for a pro who gets the door code by text: that pro has no visit page, unless the code text failed. Tell the host and keep going by text.
 
 **Door access.** A pro gets the door code by the text line if they text (they
 said YES to the opt-in text), else by the visit page. It goes out only in the
@@ -153,6 +160,8 @@ said YES to the opt-in text), else by the visit page. It goes out only in the
 guests have left (`guests_left`, after you ask) or the cleaner's DONE. A
 locksmith job on the door-code lock defaults to the host letting them in. You
 never see or pass the code, and you never type one anywhere.
+
+**Access.** On a property with no saved door code (a Fixer-only property), the booking's access is `host`: the host lets them in. `guests_left` takes `confirmed: true`, only after you ask the host.
 
 **Changes.** `reschedule_job`, `extend_visit` and `cancel_job` take the host's
 yes in two calls. Reschedule, extend and cancel end the old link: a new time or
@@ -165,7 +174,7 @@ yes: ask `{Pro} says the fix is {$new}, not {$old}. Go ahead?`, then
 `approve_booking` with `revised: true`.
 
 **After the visit.** The pro's photos and done arrive on the visit page or by
-text. `get_job_photos` shows the photos. `record_done` and `record_cost` log
+text. `get_job_photos` shows the photos. The visit page stays open after the visit until the pro marks done, at most 24 hours. `record_done` and `record_cost` log
 what it cost. Costs are logged, not paid.
 
 **Questions after a visit.**
