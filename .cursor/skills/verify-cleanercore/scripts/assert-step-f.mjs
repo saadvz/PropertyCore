@@ -80,7 +80,7 @@ if (journey === "notion-permission-denied") {
 } else if (journey === "notion-source-read") {
   same(first.tenant, "scratch-lane");
   same(first.sent, [{ to: OWNER, body: LANE_Q, kind: "host-checkout" }]);
-  same(first.blocks, [{ uid: "notion:row-block", summary: "Owner block" }]);
+  same(first.blocks, [{ uid: "notion:row-block", summary: "Owner block", checkInDate: "2026-10-19", checkoutDate: "2026-10-20" }]);
   same(first.jobs.map((job) => ({ id: job.id, checkoutDate: job.checkoutDate, live: job.live })), [
     { id: "notion:row-anita", checkoutDate: "2026-10-18", live: true },
   ]);
