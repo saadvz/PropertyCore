@@ -103,6 +103,35 @@ export function codeTextUnsureNote(f: { proName: string }): string {
   return `The door code text to ${f.proName} may not have gone out. Check with them, or let them in yourself.`;
 }
 
+/** A stay read after the booking now overlaps the visit: the code is held, and the host decides. */
+export function stayOverBookingNews(f: { proName: string; from: string; timeZone: string }): string {
+  return `A stay on the calendar now overlaps ${f.proName}'s repair visit ${formatWeekday(new Date(f.from), f.timeZone)} ${hourOf(f.from, f.timeZone)}. The door code won't go out for it. Reschedule or cancel the visit?`;
+}
+
+/** With the visit in held: what the agent asks the host. */
+export const STAY_OVER_NEXT = "A stay now overlaps this booked visit, so the door code won't go out. Ask the host: reschedule_job or cancel_job?";
+
+/** The pro gets the code by text, but texts can't go out from this property (Fixer only, or the host isn't confirmed). */
+export function codeTextOffNote(f: { proName: string }): string {
+  return `Texts can't go out from this property yet, so ${f.proName} won't get the door code by text. Send them the visit link, or let them in yourself.`;
+}
+
+/** check_fixes while calendars are saved but none has been read: no visit times. */
+export const STAYS_UNREAD = "The booking calendars haven't been read yet, so there are no visit times. Call check_fixes again (with googleEvents when the bookings are in Google Calendar), or check_now where Cleaner Core runs.";
+
+/** A booking or the host's yes while calendars are saved but none has been read. */
+export const STAYS_UNREAD_BOOK = "The booking calendars haven't been read yet, so this time can't be checked against the stays. Call check_fixes first, then try again.";
+
+/** remove_pro while the pro has a visit booked or waiting on the host. */
+export function removeBookedPro(f: { proName: string }): string {
+  return `${f.proName} has a repair visit on a job. Cancel or reschedule their visit first.`;
+}
+
+/** remove_pro while the pro is still being contacted. */
+export function removeContactedPro(f: { proName: string }): string {
+  return `${f.proName} is still being contacted for a job. Record what they said with record_contact first.`;
+}
+
 /** The visit's end passed with no done. */
 export function visitOverNews(f: { proName: string; until: string; timeZone: string }): string {
   return `${f.proName}'s visit was due to end at ${clock(f.until, f.timeZone)}, and there's no done yet. Mark it done, give more time, rebook or cancel.`;
@@ -195,8 +224,11 @@ export function rescheduleQuestion(f: { proName: string }): string {
   return `Move the repair visit with ${f.proName} to a new time? I'll tell them this time is off.`;
 }
 
-/** The reply to a pro who texts that someone is hurt. It names no property and no host detail. */
+/** The reply to a pro who texts that someone is hurt, once the host's note was kept or sent. It names no property and no host detail. */
 export const PRO_HURT = "If someone is hurt, call 911 now. I've let the host know.";
+
+/** The same reply when no note for the host could be kept or sent. */
+export const PRO_HURT_CALL = "If someone is hurt, call 911 now.";
 
 /** Told to the host when a pro texts that someone is hurt. */
 export function proHurtNews(f: { proName: string; street: string }): string {

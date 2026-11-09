@@ -97,7 +97,7 @@ function doorReason(reason: RevealRefusal): string {
   if (reason === "before-visit") return COPY.codeNotYet;
   if (reason === "after-visit" || reason === "window-over") return COPY.codeOver;
   if (reason === "guests-not-left") return COPY.guestsHere;
-  if (reason === "host-access") return COPY.hostLetsIn;
+  if (reason === "host-access" || reason === "overlaps-stay") return COPY.hostLetsIn;
   return COPY.codeRefused;
 }
 

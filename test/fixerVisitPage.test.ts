@@ -107,6 +107,8 @@ async function setup(opts: { costLine?: number; lockLocation?: string; requestKe
   expect((await desk().activate()).isError).toBe(false);
   serve();
   await keep(desk().openJob({ trade: "plumbing", what: opts.what ?? "Sink leaks", urgency: "soon", source: "host" }));
+  // The first check reads the calendars, so the stays are known before anyone books.
+  await keep(desk().checkFixes({}));
   const state = () => readFixer(root);
   const job = () => state().jobs.at(-1)!;
   const pro = (name: string) => state().pros.find((p) => p.name.startsWith(name))!;

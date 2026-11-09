@@ -129,9 +129,13 @@ property, read the calendar's events and pass them as `googleEvents` to
   `record_contact`.
 - **followUps:** a pro who said they'd get back and hasn't. Contact them
   again, or the next pro.
-- **held:** a booking that waits for the host. Show the host why.
+- **held:** a booking that waits for the host. Show the host why. One with
+  `overlapsStay` is a booked visit a stay now covers: the door code won't go
+  out, so ask the host whether to `reschedule_job` or `cancel_job`.
 - **delays:** a visit that ran late or a job that is stuck. Tell the host.
-- **news:** tell the host once, in your own words.
+- **news:** tell the host once, in your own words, the `urgent` ones first (a
+  pro said someone is hurt). When the calendars haven't been read,
+  `windowsNext` says so and there are no times to offer.
 
 ## Booking
 
@@ -165,12 +169,15 @@ never see or pass the code, and you never type one anywhere.
 
 **Changes.** `reschedule_job`, `extend_visit` and `cancel_job` take the host's
 yes in two calls. Reschedule, extend and cancel end the old link: a new time or
-more time gives a new `visit_link`, and a cancel gives none. Tell the pro.
+more time gives a new `visit_link`, and a cancel gives none. Tell the pro. A
+reschedule gives back the pro's `contactToken`: ask them for a new time and
+`record_contact` with it. Every time a pro offered before it is off.
 `revoke_visit` ends a link on the host's word.
 
-**On site.** A raised price comes from the pro on the visit page or by text.
-Over the cost line, or more than 20% over the estimate, it waits for the host's
-yes: ask `{Pro} says the fix is {$new}, not {$old}. Go ahead?`, then
+**On site.** A raised price comes from the pro on the visit page or by text,
+or the pro tells you: then call `raise_price` with the job and the new amount
+in cents. Over the cost line, or more than 20% over the estimate, it waits for
+the host's yes: ask `{Pro} says the fix is {$new}, not {$old}. Go ahead?`, then
 `approve_booking` with `revised: true`.
 
 **After the visit.** The pro's photos and done arrive on the visit page or by

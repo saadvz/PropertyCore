@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { fixerDeskFor, resetFixerDesks, type FixerDeps, type FixerDesk, type RevealResult } from "../src/fixer-core/desk";
-import { codeText } from "../src/fixer-core/texts";
+import { codeText, codeTextOffNote, stayOverBookingNews } from "../src/fixer-core/texts";
 import { readFixer, writeFixer } from "../src/fixer-core/store";
 import { photoLinks, storePhoto } from "../src/cleaner-core/photos";
 import { setCalendarFetch } from "../src/hub/calendarFetch";
@@ -28,6 +28,7 @@ const HOST = "+15555550100";
 const PROPERTY_ID = "prop_scratch";
 const JOE = "+15555550142";
 const SAM = "+15555550145";
+const CARA = "+15555550146";
 /** Tuesday 10 to 12 local. */
 const TUE = { from: "2026-11-10T15:00:00.000Z", until: "2026-11-10T17:00:00.000Z" };
 const MIN = 60_000;
@@ -559,5 +560,135 @@ describe("after the visit", () => {
     w.at(Date.parse(TUE.until) + 30 * 24 * 60 * MIN);
     await w.desk().tick();
     expect(links()).toHaveLength(0);
+  });
+});
+
+describe("final review fixes: new stays, the text path, candidates, photos", () => {
+  const overlapNotes = (w: World) => w.notes.filter((n) => n.id.includes(":stay-over-booking"));
+
+  it("re-checks a booked visit against a new stay: no code text, no code from the page, one host note", async () => {
+    const w = await setup();
+    await book(w);
+    const tag = w.job().booking!.fingerprint;
+    // A guest books Monday to Thursday after the Tuesday visit was booked.
+    serve(ics(["20261109", "20261112"]));
+    const fixes = await w.desk().checkFixes({});
+    const held = (fixes.structured as { held: Record<string, unknown>[] }).held;
+    expect(held).toEqual([expect.objectContaining({ jobId: w.job().id, overlapsStay: true, next: expect.stringContaining("reschedule_job or cancel_job") })]);
+    expect(overlapNotes(w)).toHaveLength(1);
+    expect(overlapNotes(w)[0]!.text).toBe(stayOverBookingNews({ proName: "Joe's Plumbing", from: TUE.from, timeZone: PROPERTY.timeZone }));
+    expect(overlapNotes(w)[0]!.text).toBe("A stay on the calendar now overlaps Joe's Plumbing's repair visit Tuesday 10. The door code won't go out for it. Reschedule or cancel the visit?");
+    expect(w.job().booking!.fingerprint).toBe(tag);
+    w.at(Date.parse(TUE.from) - 10 * MIN);
+    await w.desk().tick();
+    await w.desk().tick();
+    await w.desk().checkFixes({});
+    expect(w.sent).toEqual([]);
+    expect(w.job().codeTextAt).toBeUndefined();
+    expect(outcome(await w.desk().revealCode(w.job().id))).toBe("overlaps-stay");
+    expect(overlapNotes(w)).toHaveLength(1);
+    expect(w.job().news.filter((n) => n.kind === "stay-over-booking")).toHaveLength(1);
+  });
+
+  it("the clock pass alone tells the host when another flow's read shows a stay over the visit", async () => {
+    const w = await setup();
+    await book(w);
+    serve(ics(["20261109", "20261112"]));
+    await hubFor(w.root, { now: () => NOW }).readCalendars({ tenantId: "cleaner" });
+    w.at(Date.parse(TUE.from) - 10 * MIN);
+    await w.desk().tick();
+    await w.desk().tick();
+    expect(w.sent).toEqual([]);
+    expect(overlapNotes(w)).toHaveLength(1);
+  });
+
+  it("gives a text-path pro the visit page when texts can't go out here (host not confirmed)", async () => {
+    const w = await setup({ textsAllowed: false });
+    await book(w);
+    const link = await w.desk().visitLink({ jobId: w.job().id });
+    expect(link.isError, link.text).toBe(false);
+    w.at(Date.parse(TUE.from) - 10 * MIN);
+    await w.desk().tick();
+    await w.desk().tick();
+    expect(w.sent).toEqual([]);
+    expect(outcome(await w.desk().revealCode(w.job().id))).toBe("opened");
+  });
+
+  it("tells the host once when the code would have gone by text but texts can't go out here", async () => {
+    for (const deps of [{ textsAllowed: false }, { fixerOnly: true }]) {
+      const w = await setup(deps.textsAllowed === false ? { textsAllowed: false } : {});
+      if ("fixerOnly" in deps) delete w.deps.textsAllowed;
+      await book(w);
+      w.at(Date.parse(TUE.from) - 10 * MIN);
+      await w.desk().tick();
+      await w.desk().tick();
+      expect(w.sent).toEqual([]);
+      expect(w.notes.map((n) => n.text)).toEqual([codeTextOffNote({ proName: "Joe's Plumbing" })]);
+      expect(w.notes[0]!.id).toMatch(/:code-text-off$/);
+      expect((await w.desk().visitLink({ jobId: w.job().id })).isError).toBe(false);
+      resetFixerDesks();
+      resetHubs();
+      resetPeople();
+    }
+    expect(codeTextOffNote({ proName: "Joe" })).toBe("Texts can't go out from this property yet, so Joe won't get the door code by text. Send them the visit link, or let them in yourself.");
+  });
+
+  /** Books a found candidate (Cara, with a phone) for the setup's job, with the host's yes. */
+  async function bookCandidate(w: World) {
+    const added = await w.desk().addCandidates({ jobId: w.job().id, candidates: [{ name: "Cara Pipes", reach: { phone: CARA } }] });
+    const id = (added.structured!.candidates as { candidateId: string }[])[0]!.candidateId;
+    const pick = await w.desk().pickPros({ jobId: w.job().id, ids: [id] });
+    await w.desk().pickPros({ jobId: w.job().id, ids: [id], confirmation: codeOf(pick) });
+    const token = (await w.desk().contactPro({ jobId: w.job().id, to: id, how: "call" })).structured!.contactToken as string;
+    await w.desk().recordContact({ contactToken: token, outcome: "booked", ...TUE, estimateCents: 18000 });
+    const first = await w.desk().approveBooking({ jobId: w.job().id });
+    expect((await w.desk().approveBooking({ jobId: w.job().id, confirmation: codeOf(first) })).isError).toBe(false);
+    return id;
+  }
+
+  it("lists a booked candidate with a phone as a pro in people.json while the booking is live", async () => {
+    const w = await setup();
+    expect(w.people().rolesOn(CARA, PROPERTY_ID)).toEqual([]);
+    await bookCandidate(w);
+    expect(w.people().rolesOn(CARA, PROPERTY_ID)).toEqual(["pro"]);
+    const ask = await w.desk().cancelJob({ jobId: w.job().id });
+    await w.desk().cancelJob({ jobId: w.job().id, confirmation: codeOf(ask) });
+    expect(w.people().rolesOn(CARA, PROPERTY_ID)).toEqual([]);
+  });
+
+  it("asks no rotation question once the host adds a booked candidate to the preferred list", async () => {
+    const w = await setup();
+    await bookCandidate(w);
+    w.at(Date.parse(TUE.from) - 10 * MIN);
+    expect(outcome(await w.desk().revealCode(w.job().id))).toBe("opened");
+    await w.desk().recordDone({ jobId: w.job().id });
+    expect(w.people().rolesOn(CARA, PROPERTY_ID)).toEqual([]);
+    const input = { name: "Cara Pipes", trades: ["plumbing" as const], reach: { phone: CARA }, preferredFor: [{ trade: "plumbing" as const, rank: 2 }], jobId: w.job().id };
+    const first = await w.desk().savePro(input);
+    const saved = await w.desk().savePro({ ...input, confirmation: codeOf(first) });
+    expect(saved.isError, saved.text).toBe(false);
+    expect(saved.structured!.rotationAsk).toBeUndefined();
+    expect(((await w.desk().checkFixes({})).structured as { rotationAsk: unknown[] }).rotationAsk).toEqual([]);
+  });
+
+  it("drops a cancelled job's photos 30 days after the cancel", async () => {
+    const w = await setup();
+    storePhoto(w.root, `fixer:${w.job().id}`, { bytes: Buffer.from("photo"), ext: "jpg" });
+    await w.desk().cancelJob({ jobId: w.job().id });
+    const links = () => photoLinks(w.root, `fixer:${w.job().id}`, BASE, PHOTO_KEY, NOW);
+    w.at(NOW.getTime() + 29 * 24 * 60 * MIN);
+    await w.desk().tick();
+    expect(links()).toHaveLength(1);
+    w.at(NOW.getTime() + 30 * 24 * 60 * MIN);
+    await w.desk().tick();
+    expect(links()).toHaveLength(0);
+  });
+
+  it("keeps a held raised price in check_fixes' news for the job", async () => {
+    const w = await setup({ costLine: 30_000 });
+    await book(w);
+    await w.desk().raisePrice(w.job().id, 42_000, "pro");
+    const news = ((await w.desk().checkFixes({})).structured as { news: Record<string, unknown>[] }).news;
+    expect(news).toEqual([expect.objectContaining({ jobId: w.job().id, kind: "raised-price-held", text: "Joe's Plumbing says the fix is $420.00, not $180.00. Go ahead?" })]);
   });
 });

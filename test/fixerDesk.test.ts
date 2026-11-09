@@ -663,8 +663,12 @@ describe("check_fixes", () => {
     const count = async (url: string) => (reads++, { status: 200, url, async text() { return ics(); } });
     const cleaning = await withPlumber({ cleaningOn: () => true });
     setCalendarFetch(count);
+    // Stays never read are unknown, so the first check reads them even so; after that Cleaner Core reads.
     await check(cleaning.desk);
-    expect(reads).toBe(0);
+    expect(reads).toBe(1);
+    await check(cleaning.desk);
+    expect(reads).toBe(1);
+    reads = 0;
     const plain = await withPlumber();
     setCalendarFetch(count);
     await check(plain.desk);

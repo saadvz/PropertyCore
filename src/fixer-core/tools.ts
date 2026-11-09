@@ -263,6 +263,12 @@ export const FIXER_TOOLS: FixerTool[] = [
     input: z.object({ jobId: Id, reason: z.string().max(200).optional(), confirmation: Confirmation }).strict(),
   },
   {
+    name: "raise_price",
+    title: "A raised price from the pro",
+    description: `A higher price the pro told you on site, in cents, for a booked visit. Over the cost line, or more than 20% over the estimate, it waits for the host's yes: ask the question it gives, then approve_booking with revised: true. Otherwise the host is told. ${NO_CARDS}`,
+    input: z.object({ jobId: Id, cents: Cents }).strict(),
+  },
+  {
     name: "skip_question",
     title: "The host says no to a question",
     description: "The host says no to the question after a visit: preferred (add the pro to the preferred list) or rotate (change the door code).",
@@ -349,6 +355,10 @@ export async function handleFixerTool(desk: FixerDesk, name: string, args: unkno
       return desk.cancelJob(input);
     case "reschedule_job":
       return desk.rescheduleJob(input);
+    case "raise_price": {
+      const { jobId, cents } = parsed.data as { jobId: string; cents: number };
+      return desk.raisePrice(jobId, cents, "agent");
+    }
     case "skip_question":
       return desk.skipQuestion(input);
     case "change_door_code":

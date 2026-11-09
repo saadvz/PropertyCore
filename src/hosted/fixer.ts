@@ -73,9 +73,8 @@ export function fixerDesk(h: HostedCleaner, tenant: Tenant, property: Property):
     send: async (to, body) => (await sendLiveSms(ctx().env(), { to, body })) !== undefined,
     textsAllowed: async () => (await cleaningDesk(h, tenant, property)?.textsAllowed()) ?? false,
     business: async () => cleaningDesk(h, tenant, property)?.businessName(),
-    notifyHost: async (noteId, text) => {
-      await cleaningDesk(h, tenant, property)?.noteForHost(noteId, text);
-    },
+    // Without Cleaner Core at the property, nothing takes the note: it waits in check_fixes' news.
+    notifyHost: async (noteId, text) => (await cleaningDesk(h, tenant, property)?.noteForHost(noteId, text)) === true,
     photoKey: () => {
       const c = ctx();
       return photoKey(c.env(), c.saveSecrets);
@@ -120,11 +119,12 @@ export async function turnOnFixer(h: HostedCleaner, tenant: Tenant, property: Pr
 }
 
 /**
- * Turns Fixer Core off for the property. With `cancel`, every job still going is cancelled and the
- * reply lists the pros to tell and any door-code question. The pros and upkeep are kept.
+ * Turns Fixer Core off for the property. The reply lists the pros still being contacted, whose
+ * contacts close; with `cancel`, every job still going is cancelled and it lists the booked pros and
+ * any door-code question too. `forced` (from /admin) changes nothing but the flag. The pros and upkeep are kept.
  */
-export async function turnOffFixer(h: HostedCleaner, tenant: Tenant, property: Property, cancel: boolean): Promise<FixerReply> {
-  const reply = await fixerDesk(h, tenant, property).turnOff(cancel);
+export async function turnOffFixer(h: HostedCleaner, tenant: Tenant, property: Property, cancel: boolean, forced = false): Promise<FixerReply> {
+  const reply = await fixerDesk(h, tenant, property).turnOff(cancel, forced);
   // A record that can't be read still lets the host turn the flow off: nothing more runs for it.
   if (reply.isError) h.log(`${tenant.id}/${property.id}'s Fixer Core record couldn't be read while turning it off.`);
   h.registry.setFlow(tenant.id, property.id, "fixer", false);
@@ -154,10 +154,12 @@ export function jobsToCancel(h: HostedCleaner, tenant: Tenant, property: Propert
     });
 }
 
-/** What the host's yes to turning Fixer Core off is bound to: the jobs and each booking as it stands. */
+/** What the host's yes to turning Fixer Core off is bound to: the jobs and each booking as it stands, with its yes and any extension. */
 export function cancelFingerprint(h: HostedCleaner, tenant: Tenant, property: Property): string {
   const file = readOrNone(propertyFolder(h.dataRoot, tenant.id, property));
-  const open = (file?.jobs ?? []).filter((job) => job.state !== "done" && job.state !== "cancelled").map((job) => [job.id, job.state, job.booking?.fingerprint ?? ""]);
+  const open = (file?.jobs ?? [])
+    .filter((job) => job.state !== "done" && job.state !== "cancelled")
+    .map((job) => [job.id, job.state, job.booking?.fingerprint ?? "", job.booking?.hostYes?.at ?? "", job.booking?.extendedUntil ?? ""]);
   return createHash("sha256").update(JSON.stringify(["fixer-off", property.id, open])).digest("hex");
 }
 
@@ -223,16 +225,20 @@ export async function fixerPhotos(h: HostedCleaner, tenant: Tenant, property: Pr
   return fixerDesk(h, tenant, property).jobPhotos(String(args.job));
 }
 
-/** Within this long of a done, a job's photos may still be due to go. */
+/** Within this long of a done or a cancel, a job's photos may still be due to go. */
 const PHOTO_WATCH_MS = 31 * 24 * 60 * 60_000;
 
-/** True when the clock pass has something to do: a booked visit, or a done job whose photos may be due to go. */
+/** True when the clock pass has something to do: a booked visit, or a done or cancelled job whose photos may be due to go. */
 function needsTick(root: string, now: Date): boolean {
   const file = readOrNone(root);
   // A record that can't be read is left to the desk, which skips it.
   if (!file) return true;
   if (!file.settings.activatedAt) return false;
-  return file.jobs.some((job) => (liveBooking(job) && job.booking?.hostYes) || (job.done && now.getTime() - Date.parse(job.done.at) < PHOTO_WATCH_MS));
+  const closedAt = (job: FixerFile["jobs"][number]) => job.done?.at ?? (job.state === "cancelled" ? job.cancelledAt : undefined);
+  return file.jobs.some((job) => {
+    const closed = closedAt(job);
+    return (liveBooking(job) && job.booking?.hostYes) || (closed !== undefined && now.getTime() - Date.parse(closed) < PHOTO_WATCH_MS);
+  });
 }
 
 /** One clock pass for one property with Fixer Core on. Skipped when nothing is booked or due. */

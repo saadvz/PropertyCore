@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 /** Every tool with a small valid input, and the desk method it must reach with that same input. */
-const SAMPLES: Record<string, { method: keyof FixerDesk; args: Record<string, unknown>; passes?: "none" }> = {
+const SAMPLES: Record<string, { method: keyof FixerDesk; args: Record<string, unknown>; passes?: "none" | unknown[] }> = {
   get_fixer_state: { method: "state", args: {}, passes: "none" },
   save_fixer_property: { method: "saveProperty", args: { address: "12 Scratch Lane, Teaneck, NJ 07666", timeZone: "America/New_York" } },
   save_fixer_sources: { method: "saveSources", args: { done: true } },
@@ -64,6 +64,7 @@ const SAMPLES: Record<string, { method: keyof FixerDesk; args: Record<string, un
   reschedule_job: { method: "rescheduleJob", args: { jobId: "job_abcdefghij" } },
   skip_question: { method: "skipQuestion", args: { jobId: "job_abcdefghij", question: "preferred" } },
   change_door_code: { method: "changeDoorCode", args: { jobId: "job_abcdefghij" } },
+  raise_price: { method: "raisePrice", args: { jobId: "job_abcdefghij", cents: 42000 }, passes: ["job_abcdefghij", 42000, "agent"] },
 };
 
 /** A desk that records each call and answers ok. */
@@ -81,7 +82,7 @@ function spyDesk() {
 describe("Fixer Core's tool table", () => {
   it("has the spec's tools and the extras, and leaves the front's and the page's out", () => {
     const spec = ["get_fixer_state", "save_fixer_settings", "save_pro", "remove_pro", "save_upkeep", "remove_upkeep", "activate_fixer", "check_fixes", "open_job", "approve_job", "add_candidates", "pick_pros", "contact_pro", "record_contact", "approve_booking", "visit_link", "revoke_visit", "extend_visit", "record_done", "record_cost", "cancel_job"];
-    const extras = ["guests_left", "skip_question", "change_door_code", "reschedule_job", "save_fixer_property", "save_fixer_sources"];
+    const extras = ["guests_left", "skip_question", "change_door_code", "reschedule_job", "save_fixer_property", "save_fixer_sources", "raise_price"];
     expect([...FIXER_TOOL_NAMES].sort()).toEqual([...spec, ...extras].sort());
     expect(Object.keys(SAMPLES).sort()).toEqual([...FIXER_TOOL_NAMES].sort());
     // Answered by the front (Cleaner Core's photos, Supply Core's preview), and the page's reveal is never a tool.
@@ -126,7 +127,7 @@ describe("Fixer Core's tool table", () => {
       const { desk, calls } = spyDesk();
       expect((await handleFixerTool(desk, name, sample.args))?.isError, name).toBe(false);
       expect(calls.map((call) => call.method), name).toEqual([sample.method]);
-      expect(calls[0]!.args, name).toEqual(sample.passes === "none" ? [] : [sample.args]);
+      expect(calls[0]!.args, name).toEqual(sample.passes === "none" ? [] : (sample.passes ?? [sample.args]));
     }
     expect(await handleFixerTool(spyDesk().desk, "check_now", {})).toBeUndefined();
   });

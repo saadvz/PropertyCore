@@ -115,6 +115,8 @@ export interface Booking {
   /** What the booking was checked against, so a replay is not a second booking. */
   fingerprint: string;
   cleaningOrder?: "before" | "after";
+  /** Stays read after the booking that overlap it, as `checkIn|checkout`, each told to the host once. */
+  stayNoted?: string[];
 }
 
 export type JobState = "requested" | "shortlisted" | "contacted" | "booked" | "in-progress" | "done" | "cancelled";
@@ -186,7 +188,21 @@ export interface FixerFile {
   clearedYmd?: string;
   /** The last 200 inbound pro text ids handled, so a replayed webhook does nothing. */
   seenInbound?: string[];
+  /**
+   * What the host should hear that no job's news holds: an injury text, a pro's text with no visit, a
+   * raised price waiting for the host. `urgent` ones come first in check_fixes. Never a code.
+   */
+  news?: FileNews[];
   offAt?: string;
+}
+
+export interface FileNews {
+  kind: string;
+  at: string;
+  text: string;
+  jobId?: string;
+  urgent?: true;
+  toldAt?: string;
 }
 
 export function emptyFixer(): FixerFile {

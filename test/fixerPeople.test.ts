@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { fixerDeskFor, resetFixerDesks, type FixerDeps } from "../src/fixer-core/desk";
 import { proRoute } from "../src/fixer-core/proLine";
-import { PRO_DONE_ACK, PRO_HURT, proInvite, proTextFailed } from "../src/fixer-core/texts";
+import { PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proInvite, proTextFailed } from "../src/fixer-core/texts";
 import { readFixer, writeFixer, type Job } from "../src/fixer-core/store";
 import { randomBytes } from "node:crypto";
 import { photoCount, setCleanerPhotoFetch } from "../src/cleaner-core/photos";
@@ -483,5 +483,47 @@ describe("review fixes: one other-role check, opt-in, photos, replays", () => {
     const before = JSON.stringify(readFixer(w.root).jobs);
     await w.desk.proInbound(text(JOE, "YES"));
     expect(JSON.stringify(readFixer(w.root).jobs)).toBe(before);
+  });
+});
+
+describe("final review fixes: notes with no job", () => {
+  type News = { jobId?: string; kind: string; text?: string; urgent?: boolean };
+  const news = async (w: { desk: ReturnType<typeof setup>["desk"] }) => ((await w.desk.checkFixes({})).structured as { news: News[] }).news;
+
+  it("keeps an injury and a text with no visit as check_fixes news, the injury first, told once", async () => {
+    // A Fixer-only property: no note reaches the host by itself.
+    const w = setup(A, undefined, { env: () => ENV, send: async () => true });
+    await w.desk.savePro(joe);
+    const file = readFixer(w.root);
+    file.settings.activatedAt = NOW.toISOString();
+    writeFixer(w.root, file);
+    await w.desk.proInbound(text(JOE, "can you call me back"));
+    await w.desk.proInbound(text(JOE, "my helper fell off the ladder"));
+    const told = await news(w);
+    expect(told).toEqual([
+      expect.objectContaining({ kind: "pro-hurt", urgent: true, text: proHurtNews({ proName: "Joe's Plumbing", street: "12 Scratch Lane" }) }),
+      expect.objectContaining({ kind: "pro-text", text: `Joe's Plumbing texted: "can you call me back"` }),
+    ]);
+    expect(told[0]!.jobId).toBeUndefined();
+    expect(await news(w)).toEqual([]);
+  });
+
+  it("says the host knows only when a note was kept or sent", async () => {
+    const sent: string[] = [];
+    const kept = setup(A, undefined, { send: async (_to, body) => (sent.push(body), true) });
+    await kept.desk.savePro(joe);
+    await kept.desk.proInbound(text(JOE, "someone is hurt"));
+    expect(sent).toEqual([PRO_HURT]);
+    // The record can't be read and the host can't be reached: only the 911 line.
+    writeFileSync(join(kept.root, "fixer.json"), "{ not json");
+    await kept.desk.proInbound(text(JOE, "someone is hurt"));
+    expect(sent).toEqual([PRO_HURT, PRO_HURT_CALL]);
+    expect(PRO_HURT_CALL).toBe("If someone is hurt, call 911 now.");
+    // The record can't be read, but Cleaner Core took the note.
+    const reached = setup(A, undefined, { send: async (_to, body) => (sent.push(body), true), notifyHost: async () => true });
+    await reached.desk.savePro(joe);
+    writeFileSync(join(reached.root, "fixer.json"), "{ not json");
+    await reached.desk.proInbound(text(JOE, "someone is hurt"));
+    expect(sent.at(-1)).toBe(PRO_HURT);
   });
 });

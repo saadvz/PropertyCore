@@ -50,9 +50,9 @@ The Fixer Core Check routine runs this every hour, and you run it whenever the h
 - **After each contact:** `record_contact` with the token and what happened: `booked` (with `from`, `until`, and `estimateCents` if they gave one), `quoted`, `no-answer`, `declined`, or `waiting`. A `declined` or `no-answer` gives the next pro to try.
 - **unconfirmed:** a contact with no outcome after 2 hours. Find out what happened and `record_contact`.
 - **followUps:** a pro who said "I'll get back to you" and hasn't. Contact them again, or the next pro.
-- **held:** a booking that waits for the host. Show the host why.
+- **held:** a booking that waits for the host. Show the host why. One with `overlapsStay` is a booked visit that a stay now covers: the door code won't go out for it, so ask the host whether to `reschedule_job` or `cancel_job`.
 - **delays:** a visit that ran late or a job that is stuck. Tell the host.
-- **news:** things the host should hear, once. Tell them in your own words.
+- **news:** things the host should hear, once. Tell them in your own words, the `urgent` ones first (a pro said someone is hurt). When the calendars haven't been read, `windowsNext` says so and there are no times to offer.
 
 ## Booking
 
@@ -68,9 +68,9 @@ When a pro books a time, `record_contact` with `booked` runs Fixer Core's checks
 
 **Access.** On a property with no saved door code (a Fixer-only property), the booking's access is `host`: the host lets them in. `guests_left` takes `confirmed: true`, only after you ask the host.
 
-**Changes.** `reschedule_job`, `extend_visit` and `cancel_job` take the host's yes in two calls. Reschedule, extend and cancel end the old link: a new time or more time gives a new `visit_link`, and a cancel gives none. Tell the pro. `revoke_visit` ends a link on the host's word.
+**Changes.** `reschedule_job`, `extend_visit` and `cancel_job` take the host's yes in two calls. Reschedule, extend and cancel end the old link: a new time or more time gives a new `visit_link`, and a cancel gives none. Tell the pro. A reschedule gives back the pro's `contactToken`: ask them for a new time and `record_contact` with it. Every time a pro offered before it is off. `revoke_visit` ends a link on the host's word.
 
-**On site.** A raised price comes from the pro on the visit page or by text. Over the cost line, or more than 20% over the estimate, it waits for the host's yes: ask `{Pro} says the fix is {$new}, not {$old}. Go ahead?`, then `approve_booking` with `revised: true`.
+**On site.** A raised price comes from the pro on the visit page or by text, or the pro tells you: then call `raise_price` with the job and the new amount in cents. Over the cost line, or more than 20% over the estimate, it waits for the host's yes: ask `{Pro} says the fix is {$new}, not {$old}. Go ahead?`, then `approve_booking` with `revised: true`.
 
 **After the visit.** The pro's photos and done arrive on the visit page or by text. `get_job_photos` shows the photos. The visit page stays open after the visit until the pro marks done, at most 24 hours. `record_done` and `record_cost` log what the pro or the host says it cost. Costs are logged, not paid. News tells the host each time a pro opened the door code.
 

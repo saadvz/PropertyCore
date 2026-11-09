@@ -10,6 +10,8 @@ import { FixerDesk, resetFixerDesks } from "../src/fixer-core/desk";
 import { readFixer, tokenHash } from "../src/fixer-core/store";
 import { fixerDesk } from "../src/hosted/fixer";
 import { hubFor } from "../src/hub/hub";
+import { peopleFor } from "../src/hub/people";
+import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { FIXER_TOOL_NAMES } from "../src/fixer-core/tools";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
@@ -77,8 +79,9 @@ async function activeFixer(m: MultiTenantApp, token: string, property: Property)
 }
 
 /** Opens a host's job and books Joe for Tuesday, with the host's yes. */
-async function bookedJob(m: MultiTenantApp, token: string, property: Property, access?: "code") {
+async function bookedJob(m: MultiTenantApp, token: string, property: Property, access?: "code", before?: (call: (name: string, args?: Record<string, unknown>) => Promise<unknown>, joeId: string) => Promise<void>) {
   const { call, joeId } = await activeFixer(m, token, property);
+  await before?.(call, joeId);
   const jobId = (await call("open_job", { trade: "plumbing", what: "Sink leaks", urgency: "soon", source: "host" })).structured!.jobId as string;
   await call("check_fixes");
   const contactToken = (await call("contact_pro", { jobId, to: joeId, how: "call" })).structured!.contactToken as string;
@@ -312,5 +315,43 @@ describe("round 1 fixes", () => {
     expect(off.structured?.rotationAsk).toEqual([{ jobId, question: "Joe's Plumbing knows the door code. Want to change it? Set the new code on the lock, then save it here." }]);
     expect(off.text).toContain("Then ask the host each question in rotationAsk.");
     expect(off.raw).not.toContain(["6", "2", "0", "4"].join(""));
+  });
+});
+
+describe("final review fixes on the shared service", () => {
+  /** Saves a made-up door code for the property, under the account's own key. */
+  function saveCode(m: MultiTenantApp, tenant: Tenant, property: Property) {
+    m.hosted().secrets.set(tenant.id, { CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64") });
+    const ctx = propertyContext(m.hosted(), m.registry.get(tenant.id)!, property);
+    expect(hubFor(ctx.root, { now: () => clock }).doorAccess(ctx.env).save(["6", "2", "0", "4"].join(""), undefined, undefined).ok).toBe(true);
+  }
+
+  it("on a Fixer-only property, a pro who texts on the line still gets the visit page", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    saveCode(m, tenant, property);
+    const { jobId } = await bookedJob(m, token, property, "code", async (save, joeId) => {
+      const ask = (await save("save_pro", { id: joeId, ...JOES, prefersText: true })) as { structured?: Record<string, unknown> };
+      await save("save_pro", { id: joeId, ...JOES, prefersText: true, confirmation: codeOf(ask) });
+      peopleFor(tenantFolder(m.app.root, tenant.id), { now: () => clock }).optIn(JOE, property.id);
+    });
+    const link = await m.toolAt(PATH, token, "visit_link", { property: property.id, jobId });
+    expect(link.isError, link.text).toBe(false);
+    clock = new Date(Date.parse(TUE.from) - 10 * 60_000);
+    await tickAllFixers(m.hosted());
+    expect(m.sms.sent).toEqual([]);
+  });
+
+  it("turning Fixer Core off refuses a yes given before the visit was extended", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    const { call, jobId } = await bookedJob(m, token, property);
+    const ask = await m.toolAt(PATH, token, "set_flows", { property: property.id, fixer: false });
+    const extend = await call("extend_visit", { jobId, until: "2026-11-10T18:00:00.000Z" });
+    await call("extend_visit", { jobId, until: "2026-11-10T18:00:00.000Z", confirmation: codeOf(extend as { structured?: Record<string, unknown> }) });
+    const stale = await m.toolAt(PATH, token, "set_flows", { property: property.id, fixer: false, confirmation: codeOf(ask) });
+    expect(stale.isError).toBe(true);
+    expect(flows(m, tenant).fixer.on).toBe(true);
+    expect(readFixer(folder(m, tenant, property)).jobs[0]).toMatchObject({ id: jobId, state: "booked" });
   });
 });

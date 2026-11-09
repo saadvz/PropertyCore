@@ -7,6 +7,7 @@ import { fixerDeskFor, resetFixerDesks, type FixerDeps } from "../src/fixer-core
 import { setCalendarFetch } from "../src/hub/calendarFetch";
 import { FIXER_FILE, readFixer, writeFixer } from "../src/fixer-core/store";
 import { hubFor, resetHubs } from "../src/hub/hub";
+import { STAYS_UNREAD, STAYS_UNREAD_BOOK } from "../src/fixer-core/texts";
 
 /** Booking: the pro's yes, the host's yes, the gates at redeem, cancel. Made-up pros, 555 numbers, a made-up door code. */
 
@@ -30,7 +31,7 @@ const ics = (...stays: [string, string][]) =>
 const serve = (body: string) => setCalendarFetch(async (url) => ({ status: 200, url, async text() { return body; } }));
 const codeOf = (reply: { structured?: Record<string, unknown> }): string => (reply.structured!.confirmation as { code: string }).code;
 
-type Opts = { code?: boolean; costLine?: number; locksmith?: boolean; cleanings?: FixerDeps["cleanings"] };
+type Opts = { code?: boolean; costLine?: number; locksmith?: boolean; cleanings?: FixerDeps["cleanings"]; /** Every calendar read fails, so the stays are never read. */ unread?: boolean };
 
 /** An activated property with a plumber (and a locksmith) ranked first, and one host job open. */
 async function setup(opts: Opts = {}) {
@@ -48,7 +49,8 @@ async function setup(opts: Opts = {}) {
   await desk.saveSettings(opts.costLine ? { costLineCents: opts.costLine } : { costLineCents: null });
   await desk.saveSettings({ upkeepDone: true });
   expect((await desk.activate()).isError).toBe(false);
-  serve(ics());
+  if (opts.unread) setCalendarFetch(async (url) => ({ status: 500, url, async text() { return ""; } }));
+  else serve(ics());
   const lock = opts.locksmith === true;
   await desk.openJob({ trade: lock ? "locksmith" : "plumbing", what: lock ? "Lock sticks" : "Sink leaks", urgency: "soon", source: "host", ...(lock ? { doorLock: true as const } : {}) });
   await desk.checkFixes({});
@@ -419,3 +421,102 @@ async function cancelTwice(w: World) {
   const first = await w.desk.cancelJob({ jobId: w.job().id });
   return w.desk.cancelJob({ jobId: w.job().id, confirmation: codeOf(first) });
 }
+
+describe("final review fixes: unknown stays, reschedule offers, removing a pro, turning off", () => {
+  it("counts stays never read as unknown while calendars are saved: no windows, no booking, until a read", async () => {
+    // Cleaner Core reads the calendars here, and its read never ran.
+    const w = await setup({ unread: true, cleanings: async () => undefined });
+    expect(hubFor(w.root, { now: () => NOW }).stays()).toBeUndefined();
+    const fixes = (await w.desk.checkFixes({})).structured as { windows: Record<string, unknown[]>; windowsNext?: string };
+    expect(fixes.windows[w.job().id]).toEqual([]);
+    expect(fixes.windowsNext).toBe(STAYS_UNREAD);
+    const token = await w.contact();
+    const refused = await w.desk.recordContact({ contactToken: token, outcome: "booked", ...TUE, estimateCents: 18000 });
+    expect(refused).toMatchObject({ isError: true, text: STAYS_UNREAD_BOOK });
+    expect(w.job().booking).toBeUndefined();
+    // A pending booking can't be approved while the stays are unknown either.
+    const file = readFixer(w.root);
+    file.jobs[0]!.booking = { proId: w.pro("Joe").id, ...TUE, estimateCents: 18000, access: "code", fingerprint: "fp" };
+    writeFixer(w.root, file);
+    expect(await w.desk.approveBooking({ jobId: w.job().id })).toMatchObject({ isError: true, text: STAYS_UNREAD_BOOK });
+    expect(w.job().state).toBe("contacted");
+    // Once a read works, check_fixes reads the calendars itself, though Cleaner Core owns reading here.
+    serve(ics());
+    const read = (await w.desk.checkFixes({})).structured as { windows: Record<string, unknown[]>; windowsNext?: string };
+    expect(read.windowsNext).toBeUndefined();
+    expect(read.windows[w.job().id]!.length).toBeGreaterThan(0);
+    expect(hubFor(w.root, { now: () => NOW }).stays()).toEqual([]);
+    expect(STAYS_UNREAD).toBe("The booking calendars haven't been read yet, so there are no visit times. Call check_fixes again (with googleEvents when the bookings are in Google Calendar), or check_now where Cleaner Core runs.");
+    expect(STAYS_UNREAD_BOOK).toBe("The booking calendars haven't been read yet, so this time can't be checked against the stays. Call check_fixes first, then try again.");
+  });
+
+  it("a reschedule turns every booked offer into waiting, so none can be rebooked, and gives the pro's token", async () => {
+    const w = await setup();
+    const joeToken = await w.contact("Joe");
+    await w.desk.recordContact({ contactToken: joeToken, outcome: "booked", ...TUE, estimateCents: 18000 });
+    const rita = await w.contact("Rita");
+    await w.desk.recordContact({ contactToken: rita, outcome: "booked", from: "2026-11-11T15:00:00.000Z", until: "2026-11-11T17:00:00.000Z" });
+    expect((await yes(w)).isError).toBe(false);
+    const first = await w.desk.rescheduleJob({ jobId: w.job().id });
+    const moved = await w.desk.rescheduleJob({ jobId: w.job().id, confirmation: codeOf(first) });
+    expect(moved.structured).toMatchObject({ rescheduled: true, contactToken: joeToken });
+    for (const contact of w.job().contacts) {
+      expect(contact).toMatchObject({ outcome: "waiting", followUpAt: new Date(NOW.getTime() + 24 * 60 * 60_000).toISOString() });
+      expect(contact.booked).toBeUndefined();
+    }
+    const fixes = (await w.desk.checkFixes({})).structured as { held: unknown[]; contactNext: unknown[] };
+    expect(fixes.held).toEqual([]);
+    expect(fixes.contactNext).toEqual([]);
+    for (const name of ["Joe", "Rita"]) expect((await w.desk.approveBooking({ jobId: w.job().id, proId: w.pro(name).id })).isError).toBe(true);
+    expect((await w.desk.approveBooking({ jobId: w.job().id })).isError).toBe(true);
+    // The same token takes the new time.
+    const again = await w.desk.recordContact({ contactToken: joeToken, outcome: "booked", from: "2026-11-12T15:00:00.000Z", until: "2026-11-12T17:00:00.000Z" });
+    expect(again.isError, again.text).toBe(false);
+    expect(w.job().booking).toMatchObject({ proId: w.pro("Joe").id, from: "2026-11-12T15:00:00.000Z" });
+  });
+
+  it("refuses to remove a pro with a live booking or a pending contact", async () => {
+    const w = await setup();
+    await booked(w);
+    expect(await w.desk.removePro({ id: w.pro("Joe").id })).toMatchObject({ isError: true, text: "Joe's Plumbing has a repair visit on a job. Cancel or reschedule their visit first." });
+    await yes(w);
+    expect(await w.desk.removePro({ id: w.pro("Joe").id })).toMatchObject({ isError: true, text: "Joe's Plumbing has a repair visit on a job. Cancel or reschedule their visit first." });
+    await w.desk.openJob({ trade: "plumbing", what: "Tub drains slowly", urgency: "soon", source: "host" });
+    const second = w.state().jobs[1]!;
+    await w.desk.contactPro({ jobId: second.id, to: w.pro("Rita").id, how: "call" });
+    expect(await w.desk.removePro({ id: w.pro("Rita").id })).toMatchObject({ isError: true, text: "Rita Rooter is still being contacted for a job. Record what they said with record_contact first." });
+    const lou = await w.desk.removePro({ id: w.pro("Lou").id });
+    expect(lou.isError).toBe(false);
+    expect(lou.structured!.confirmation).toBeDefined();
+  });
+
+  it("turning off lists the pros still being contacted and closes their contacts", async () => {
+    const w = await setup();
+    await booked(w);
+    await w.contact("Rita");
+    const reply = await w.desk.turnOff(false);
+    expect(reply.structured!.tellPro).toEqual([
+      { name: "Joe's Plumbing", reach: { phone: "+15555550142" } },
+      { name: "Rita Rooter", reach: { phone: "+15555550143" } },
+    ]);
+    expect(w.job().contacts.every((contact) => contact.cancelled)).toBe(true);
+    expect(w.job().booking).toBeUndefined();
+    await w.desk.turnOn();
+    const fixes = (await w.desk.checkFixes({})).structured as { held: unknown[] };
+    expect(fixes.held).toEqual([]);
+    expect((await w.desk.approveBooking({ jobId: w.job().id })).isError).toBe(true);
+  });
+
+  it("turning off with cancel lists the booked pro and the pros still being contacted on other jobs", async () => {
+    const w = await setup();
+    await booked(w);
+    await yes(w);
+    await w.desk.openJob({ trade: "plumbing", what: "Tub drains slowly", urgency: "soon", source: "host" });
+    await w.desk.contactPro({ jobId: w.state().jobs[1]!.id, to: w.pro("Rita").id, how: "call" });
+    const reply = await w.desk.turnOff(true);
+    expect(reply.structured!.tellPro).toEqual([
+      { name: "Joe's Plumbing", reach: { phone: "+15555550142" } },
+      { name: "Rita Rooter", reach: { phone: "+15555550143" } },
+    ]);
+  });
+});

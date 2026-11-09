@@ -1,5 +1,5 @@
 import { fixedCodePort } from "../src/cleaner-core/doorPort";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -214,7 +214,7 @@ describe("the live desk and Fixer Core", () => {
       CLEANER_CORE_ROUTINE_URL: ROUTINE.url,
       CLEANER_CORE_ROUTINE_KEY: ROUTINE.token,
     };
-    return { root, sms, desk: liveDeskFor(root, () => env, () => new Date(FROZEN)) };
+    return { root, sms, env, desk: liveDeskFor(root, () => env, () => new Date(FROZEN)) };
   }
 
   async function live(desk: LiveDesk) {
@@ -267,5 +267,25 @@ describe("the live desk and Fixer Core", () => {
     const report = messages.find((m) => m.handled === "repair-report");
     expect(report?.text).toContain("faucet");
     expect(report?.text).not.toContain("4812");
+  });
+
+  it("cleaningFor opens the engine on a fresh desk over saved files, before any other call", async () => {
+    const { desk, root, env } = openDesk();
+    choose(root, true);
+    await live(desk);
+    resetLiveDesks();
+    const fresh = liveDeskFor(root, () => env, () => new Date(FROZEN));
+    expect(await fresh.cleaningFor("2026-10-18")).toMatchObject({ cleared: true });
+  });
+
+  it("keeps Cleaner Core working when fixer.json or supply.json can't be read", async () => {
+    const { desk, sms, root } = openDesk();
+    choose(root, true);
+    await live(desk);
+    for (const name of ["fixer.json", "supply.json"]) writeFileSync(join(root, name), "{ not json");
+    desk.refreshSupplyAsk();
+    await desk.inbound({ id: "done", from: CLEANER, text: "DONE" });
+    expect(bodies(sms)).toContain(DONE_ACK);
+    expect(ok(await desk.checkNow())).toBeDefined();
   });
 });

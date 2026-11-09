@@ -57,6 +57,15 @@ import {
   type DeliveryReport,
 } from "./scratchQa";
 
+/** Another Core's "ask the cleaner" switch, or false when its record can't be read. */
+function askOn(read: () => boolean): boolean {
+  try {
+    return read();
+  } catch {
+    return false;
+  }
+}
+
 export const FIRST_QUESTION =
   "What do you want help with? 1) Letting renters tour a unit on their own, or 2) Scheduling cleaners between guest stays.";
 
@@ -856,10 +865,14 @@ export class LiveDesk {
    * Cleaner Core's cleaning for a checkout date, for Fixer Core's visit windows: when it was done, and
    * whether the cleaner has cleared the unit (the code went out, or the cleaning started or finished).
    */
-  async cleaningFor(checkoutYmd: string): Promise<{ id: string; doneAt?: string; cleared: boolean } | undefined> {
-    const job = this.engine?.jobs().find((item) => item.checkoutDate === checkoutYmd && item.status !== "canceled" && item.status !== "declined");
-    if (!job) return undefined;
-    return { id: job.id, ...(job.doneAt ? { doneAt: job.doneAt } : {}), cleared: job.status === "cleared" || job.status === "in_progress" || job.status === "done" };
+  cleaningFor(checkoutYmd: string): Promise<{ id: string; doneAt?: string; cleared: boolean } | undefined> {
+    // In this desk's turn, with the engine opened from the saved files, so a fresh desk after a restart sees its cleanings.
+    return this.serial(async () => {
+      this.resume();
+      const job = this.engine?.jobs().find((item) => item.checkoutDate === checkoutYmd && item.status !== "canceled" && item.status !== "declined");
+      if (!job) return undefined;
+      return { id: job.id, ...(job.doneAt ? { doneAt: job.doneAt } : {}), cleared: job.status === "cleared" || job.status === "in_progress" || job.status === "done" };
+    });
   }
 
   /** Delivers every pending wake-up that is due. A routine that is down or not saved leaves them pending. */
@@ -3563,9 +3576,10 @@ export class LiveDesk {
   private preferenceOptions(): Partial<Parameters<typeof openCleanerCore>[0]> {
     // Supply Core on and active: the done text also asks what's running low.
     // Fixer Core on and chosen: it also asks "Anything broken?".
+    // A supply.json or fixer.json that can't be read never stops Cleaner Core: that question is left out.
     const supplies = {
-      ...(supplyAskOn(this.root) ? { supplyAsk: true } : {}),
-      ...(fixerAskOn(this.root) ? { repairAsk: true, ...(this.file.cleanerName ? { cleanerName: this.file.cleanerName } : {}) } : {}),
+      ...(askOn(() => supplyAskOn(this.root)) ? { supplyAsk: true } : {}),
+      ...(askOn(() => fixerAskOn(this.root)) ? { repairAsk: true, ...(this.file.cleanerName ? { cleanerName: this.file.cleanerName } : {}) } : {}),
     };
     const preferences = this.file.preferences;
     if (!preferences) return supplies;

@@ -70,7 +70,7 @@ export function defaultAccess(job: Job, pro: { reach: { phone?: string } } | und
   return "code";
 }
 
-export type AccessRefusal = "not-booked" | "no-yes" | "host-access" | "no-phone" | "before-visit" | "after-visit" | "guests-not-left";
+export type AccessRefusal = "not-booked" | "no-yes" | "host-access" | "no-phone" | "overlaps-stay" | "before-visit" | "after-visit" | "guests-not-left";
 
 /** May the visit page show the door code now? The window runs from 30 minutes before the visit. */
 export function accessCheck(input: {
@@ -80,6 +80,8 @@ export function accessCheck(input: {
   now: Date;
   checkoutDay: boolean;
   cleared: boolean;
+  /** A stay read after the booking overlaps the visit: the host decides, and the code never goes. */
+  overlapsStay?: boolean;
 }): { ok: true; window: { from: string; until: string } } | { ok: false; reason: AccessRefusal } {
   const { job, pro, now } = input;
   const booking = job.booking;
@@ -87,6 +89,7 @@ export function accessCheck(input: {
   if (!booking.hostYes) return { ok: false, reason: "no-yes" };
   if (booking.access === "host") return { ok: false, reason: "host-access" };
   if (!pro?.reach.phone) return { ok: false, reason: "no-phone" };
+  if (input.overlapsStay) return { ok: false, reason: "overlaps-stay" };
   const from = Date.parse(booking.from) - 30 * MINUTE_MS;
   const until = Date.parse(booking.extendedUntil ?? booking.until);
   if (now.getTime() < from) return { ok: false, reason: "before-visit" };

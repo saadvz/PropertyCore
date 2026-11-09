@@ -93,7 +93,7 @@ export async function setFlows(ctx: FlowContext, input: FlowInput): Promise<Fron
     h.log(`${tenant.id}/${current.id} turned ${flow} ${on ? "on" : "off"}${forced ? " (forced by the admin)" : ""}.`);
     done.push(`${NAMES[flow]} is ${on ? "on" : "off"} for ${current.label}.${on ? "" : " Its setup is kept."}`);
   }
-  if (Array.isArray(extra.tellPro) && extra.tellPro.length > 0) done.push("Tell each pro in tellPro their visit is cancelled.");
+  if (Array.isArray(extra.tellPro) && extra.tellPro.length > 0) done.push("Tell each pro in tellPro that the repair visit is off.");
   if (Array.isArray(extra.rotationAsk) && extra.rotationAsk.length > 0) done.push("Then ask the host each question in rotationAsk.");
   ctx.noteToolsChanged();
   const after = latest();
@@ -182,7 +182,7 @@ async function turnOffRepairs(ctx: FlowContext, property: Property, confirmation
       return fail(STALE);
     }
   }
-  const reply = await turnOffFixer(h, tenant, property, jobs.length > 0);
+  const reply = await turnOffFixer(h, tenant, property, jobs.length > 0, forced);
   const { tellPro, rotationAsk } = (reply.structured ?? {}) as { tellPro?: unknown[]; rotationAsk?: unknown[] };
   if (tellPro?.length) extra.tellPro = tellPro;
   if (rotationAsk?.length) extra.rotationAsk = rotationAsk;
