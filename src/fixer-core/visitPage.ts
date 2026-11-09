@@ -30,7 +30,7 @@ export interface VisitResponse {
 }
 
 export const MAX_VISIT_PHOTO_BYTES = 5 * 1024 * 1024;
-const MAX_JSON_BYTES = 4096;
+export const MAX_VISIT_JSON_BYTES = 4096;
 const MAX_CENTS = 2_000_000;
 
 /** MMS photo types the page keeps, by extension. HEIC, HEIF and GIF are refused: their metadata isn't stripped here. */
@@ -67,7 +67,30 @@ const COPY = {
   heldQuote: "The host is asked about the new price. Wait for their answer before you go on.",
   toldQuote: "The host is told about the new price. You can go ahead.",
   addressSoon: "The address shows here from 24 hours before the visit.",
+  busy: "Too many requests right now. Try again in a minute.",
+  failed: "Something went wrong. Try again in a few minutes.",
 };
+
+/** The most a request to this sub may send: 5 MB for a photo, 4096 bytes for everything else. */
+export function visitBodyCap(sub: string): number {
+  return sub === "photo" ? MAX_VISIT_PHOTO_BYTES : MAX_VISIT_JSON_BYTES;
+}
+
+/** A refusal in the page's shape: HTML for the page itself, JSON for its actions. Always the strict headers. */
+function refusal(sub: string, status: number, message: string, extra: Record<string, string> = {}): VisitResponse {
+  return sub === "" ? html(status, (nonce) => shell(`<p>${escape(message)}</p>`, nonce, ""), false, extra) : json(status, { error: message }, extra);
+}
+
+/**
+ * What the route around the page answers itself, with the page's strict headers: "busy" when too many
+ * new links are looked up, "too-large" when the body is over its cap (nothing more is read), and
+ * "failed" when the desk threw. A failure's body is plain and carries no error text.
+ */
+export function visitRouteRefusal(sub: string, kind: "busy" | "too-large" | "failed"): VisitResponse {
+  if (kind === "failed") return { status: 500, headers: { ...STRICT, "Content-Security-Policy": BARE_CSP, "Content-Type": "text/plain; charset=utf-8" }, body: COPY.failed };
+  if (kind === "busy") return refusal(sub, 429, COPY.busy, { "Retry-After": "60" });
+  return refusal(sub, 413, sub === "photo" ? COPY.photoTooBig : COPY.tooLarge, { Connection: "close" });
+}
 
 /** The plain reason a door POST got no code. */
 function doorReason(reason: RevealRefusal): string {
@@ -80,7 +103,7 @@ function doorReason(reason: RevealRefusal): string {
 
 export async function handleVisitRequest(desk: FixerDesk, req: VisitRequest): Promise<VisitResponse> {
   const page = req.sub === "";
-  const refuse = (status: number, message: string, extra: Record<string, string> = {}) => (page ? html(status, (nonce) => shell(`<p>${escape(message)}</p>`, nonce, ""), false, extra) : json(status, { error: message }, extra));
+  const refuse = (status: number, message: string, extra: Record<string, string> = {}) => refusal(req.sub, status, message, extra);
   // Every request to a known link counts, the page and its 404s included.
   const hit = desk.visitHit(req.token);
   if (hit === "limited") return refuse(429, COPY.tooMany, { "Retry-After": "3600" });
@@ -103,7 +126,7 @@ export async function handleVisitRequest(desk: FixerDesk, req: VisitRequest): Pr
   if (view.phase === "before") return refuse(409, VISIT_NOT_STARTED);
   if (req.sub === "photo") return photo(desk, req, refuse);
   if (!isJson(req.contentType)) return refuse(415, COPY.sendJson);
-  if (req.body.length > MAX_JSON_BYTES) return refuse(413, COPY.tooLarge);
+  if (req.body.length > MAX_VISIT_JSON_BYTES) return refuse(413, COPY.tooLarge);
   const parsed = jsonObject(req.body);
   if (!parsed) return refuse(400, COPY.sendJson);
   if (refuseCards(parsed)) return refuse(400, CARD_REFUSAL);

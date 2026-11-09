@@ -2015,6 +2015,17 @@ export class FixerDesk {
     return entry.count > VISIT_HITS_PER_HOUR ? "limited" : "ok";
   }
 
+  /**
+   * True when counting this token would read fixer.json: it is well formed and no request to it was
+   * counted in its current hour. The route limits these lookups across every account.
+   */
+  visitNeedsLookup(token: string): boolean {
+    if (!VISIT_TOKEN.test(token)) return false;
+    const entry = this.visitHits.get(tokenHash(token));
+    const now = this.deps.now().getTime();
+    return !entry || now - entry.start >= HOUR_MS || now < entry.start;
+  }
+
   /** The live visit a page token opens, as the page shows it, or undefined (unknown, revoked, done, cancelled or ended). */
   visitByToken(token: string): VisitView | undefined {
     if (!VISIT_TOKEN.test(token)) return undefined;

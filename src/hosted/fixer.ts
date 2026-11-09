@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { InboundMedia } from "../cleaner-core/photos";
 import { FIXER_AGENTS_ONLY, runsFixer, type CleanerAssistant } from "../cleaner-core/assistant";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { sendLiveSms } from "../cleaner-core/liveSms";
@@ -239,4 +240,23 @@ export async function tickFixer(h: HostedCleaner, tenant: Tenant, property: Prop
   if (!needsTick(propertyFolder(h.dataRoot, tenant.id, property), h.now())) return;
   await accountPeople(h, tenant);
   await fixerDesk(h, tenant, property).tick();
+}
+
+/**
+ * A pro's text on the shared line, for one of `properties` (proRoute's): the one where the pro's own
+ * visit is booked or under way, else the first. The desk ignores anything that isn't theirs to say.
+ */
+export async function fixerProText(h: HostedCleaner, tenant: Tenant, properties: Property[], input: { id: string; from: string; text: string; media: InboundMedia[] }): Promise<void> {
+  const visiting = properties.find((property) => {
+    const file = readOrNone(propertyFolder(h.dataRoot, tenant.id, property));
+    const pro = file?.pros.find((entry) => entry.status === "saved" && entry.reach.phone === input.from);
+    return !!pro && file!.jobs.some((job) => job.booking?.proId === pro.id && (job.state === "booked" || job.state === "in-progress"));
+  });
+  const property = visiting ?? properties[0]!;
+  try {
+    await fixerDesk(h, tenant, property).proInbound({ id: input.id, from: input.from, text: input.text, ...(input.media.length > 0 ? { media: input.media } : {}) });
+  } catch {
+    // Never the text: it can hold a price or anything the pro wrote.
+    h.log(`Fixer Core couldn't take a pro's text for ${tenant.id}/${property.id}.`);
+  }
 }
