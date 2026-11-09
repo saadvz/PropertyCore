@@ -254,7 +254,7 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
     <button type="button" data-pick="supply" aria-pressed="false"><b>Supply Core</b><span>Supplies reordered for your property</span></button>
   </div>
   <p class="map-note">A property can run both. Set up one now, and turn the other on later by asking Muse.</p>
-  <p class="map-note">Fixer Core, for repairs, is offered only on a service with FIXER_CORE=1. Tour Core (self-guided tours) is parked: only touring accounts Saad sets up get it. Its guide is <a href="tour-core/README.md">here</a>.</p>
+  <p class="map-note">Fixer Core, for repairs, is offered only where the service has FIXER_CORE=1. Self-guided tours (Tour Core) are on hold for new hosts, and Saad sets them up by hand. Their guide is <a href="tour-core/README.md">here</a>.</p>
 </section>
 
 <div class="stuck" role="note">
@@ -327,13 +327,13 @@ Start now.</pre></div></details>
       <div class="step-body">
         <div class="do">
           <ol class="todo">
-            <li><div>A page titled <b>Connect Muse to Tour Core and Cleaner Core</b> opens in Muse's browser, and Muse hands it to you. That old name is expected. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you.</div></li>
+            <li><div>A page titled <b>Connect Muse to Property Core</b> opens in Muse's browser, and Muse hands it to you. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you.</div></li>
             <li><div>Click <span class="btn-label">Allow</span> yourself. Muse isn't allowed to do this part.</div></li>
             <li><div>Open <b>Settings → Connectors → Property Core</b> and let Muse use it <b>without asking each time</b>. This lets the checks run while you're away.</div></li>
           </ol>
           <p class="tip"><b>Only if your bookings are on a Google calendar:</b> connect Muse's <b>Google Calendar</b> connector too.</p>
           <p class="note warn">Never type your invite code in the chat or in a choice card.</p></div>
-        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Approval page</span></div><div class="mock-body"><div class="mock-title">Connect Muse to Tour Core and Cleaner Core</div>
+        <div class="see"><span class="eyebrow">Roughly what you'll see</span><div class="mock" aria-hidden="true"><div class="mock-bar"><i></i><i></i><i></i><span>Approval page</span></div><div class="mock-body"><div class="mock-title">Connect Muse to Property Core</div>
       <div class="field"><label>Your Property Core account</label><div class="radio"><b></b> Sign in</div><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> Create account</div><div class="radio" style="color:var(--muted)"><b style="border-width:2px;border-color:var(--line)"></b> I have an invite code</div></div>
       <div class="field"><label>Code from the text</label><div class="val hl secret">••••••</div></div>
       <div class="mock-btns"><span class="mbtn">Deny</span><span class="mbtn primary">Allow</span></div></div></div></div>
@@ -430,7 +430,7 @@ Start now.</pre></div></details></div>
       <div class="step-body">
         <div class="do">
           <ol class="todo">
-            <li><div>A page titled <b>Connect Muse to Tour Core and Cleaner Core</b> opens in Muse's browser. That old name is expected. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you.</div></li>
+            <li><div>A page titled <b>Connect Muse to Property Core</b> opens in Muse's browser. Sign in, or create an account with the code it texts to your phone. If it only asks for an invite code, type the one Saad sent you.</div></li>
             <li><div>Click <span class="btn-label">Allow</span> yourself. Muse isn't allowed to do this part.</div></li>
             <li><div>Open <b>Settings → Connectors → Property Core</b> and let Muse use it <b>without asking each time</b>. Otherwise the daily check stops at a question nobody sees.</div></li>
           </ol>
@@ -505,7 +505,7 @@ Start now.</pre></div></details></div>
     <p>Most days you don't need to do anything. You hear when something needs you.</p>
   </div>
   <div class="after" data-svc="clean"><div><span class="place pl-chat">Group text</span><h3>Your cleaner texts</h3><p>You see their message right away in the group text. Muse picks it up at its next check. To reply, tell Muse "Maria texted, draft a reply".</p></div><div><span class="place pl-private">Door code</span><h3>The code waits for your yes</h3><p>Your cleaner only gets the door code after you've said the guests have left.</p></div><div><span class="place pl-chat">Summary</span><h3>Cleaning finished</h3><p>Your assistant looks at the cleaner's photos, checks them against your checklist, and sends you a short report.</p></div></div>
-  <div class="after" data-svc="supply"><div><span class="place pl-task">Every day</span><h3>Muse checks what's due</h3><p>At your check time, the Supply Core task finds what's due and shops for it in Muse's browser.</p></div><div><span class="place pl-chat">Checkout</span><h3>Every cart is checked</h3><p>Before any order, Muse checks the cart with Supply Core (<code>check_cart</code>). On go, it orders and tells you. A held cart waits for your yes: buy anyway, use the backup, or skip.</p></div><div><span class="place pl-private">Store account</span><h3>Your cards stay yours</h3><p>Card details never reach Supply Core. Muse pays with the method saved on the store account. If a store asks for a sign-in or a card code, Muse hands you the browser.</p></div><div><span class="place pl-chat">Any time</span><h3>Running low?</h3><p>Say "we're low on paper towels". With Cleaner Core too, your cleaner's "running low" answer after a cleaning turns into an order.</p></div></div>
+  <div class="after" data-svc="supply"><div><span class="place pl-task">Every day</span><h3>Muse checks what's due</h3><p>At your check time, the Supply Core task finds what's due and shops for it in Muse's browser.</p></div><div><span class="place pl-chat">Checkout</span><h3>Every cart is checked</h3><p>Before any order, Supply Core checks the final cart: the items, the total, and the delivery date. If it passes, Muse orders and tells you. A held cart waits for your yes: buy anyway, use the backup, or skip.</p></div><div><span class="place pl-private">Store account</span><h3>Your cards stay yours</h3><p>Card details never reach Supply Core. Muse pays with the method saved on the store account. If a store asks for a sign-in or a card code, Muse hands you the browser.</p></div><div><span class="place pl-chat">Any time</span><h3>Running low?</h3><p>Say "we're low on paper towels". With Cleaner Core too, your cleaner's "running low" answer after a cleaning turns into an order.</p></div></div>
 </section>
 
 <section aria-labelledby="tr-h">

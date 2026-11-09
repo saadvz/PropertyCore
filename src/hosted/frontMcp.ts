@@ -10,7 +10,7 @@ import { sweepHeldTexts } from "./lineRouter";
 import { signUpFlag } from "./signUp";
 import { afterPeopleSaved, draftPeople, peopleRefusal } from "./sharedPeople";
 import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
-import { SUPPORTED_PROTOCOL_VERSIONS } from "../mcp/mcpBridge";
+import { negotiatedProtocolVersion } from "../mcp/protocol";
 import { OPERATOR_TOOL_NAMES } from "../operator/tools";
 import { ServiceNotices } from "./crossService";
 import { FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsFor, wrongServiceLine, type FrontReply } from "./serviceTools";
@@ -161,9 +161,7 @@ async function propertiesAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tena
   if (!message) return r.send(400, JSON_TYPE, rpcError(null, -32600, "That isn't a valid request."));
   if (message.id === undefined) return r.send(202, JSON_TYPE, "");
   if (message.method === "initialize") {
-    // The client's version when it's one this service speaks, otherwise the newest it does (MCP lifecycle).
-    const asked = typeof message.params?.protocolVersion === "string" ? message.params.protocolVersion : undefined;
-    const version = asked && SUPPORTED_PROTOCOL_VERSIONS.includes(asked) ? asked : SUPPORTED_PROTOCOL_VERSIONS[0];
+    const version = negotiatedProtocolVersion(message.params?.protocolVersion);
     return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "property-core", title: "Property Core", version: "0.1.0" }, instructions: `${PROPERTY_INSTRUCTIONS} ${cleanerInstructions(caller.assistant)}` }));
   }
   if (message.method === "ping") return r.send(200, JSON_TYPE, rpcResult(message.id, {}));

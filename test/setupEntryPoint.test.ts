@@ -243,13 +243,13 @@ describe("the HTML setup guides", () => {
     const page = read(rel);
     expect(page).not.toMatch(/data-pick="tour"|data-svc="tour"|svc-tour/);
     expect(page).not.toContain("Self-guided tours for a rental unit");
-    expect(page.replace(/<[^>]+>/g, "")).toMatch(/Tour Core[^.]*is parked/);
+    expect(page.replace(/<[^>]+>/g, "")).toMatch(/Self-guided tours \(Tour Core\) are on hold for new hosts/);
   });
 
   it.each(["grok", "muse"])("the %s guide sets up Supply Core and pastes the entry prompt word for word", (agent) => {
     const page = read(`docs/property-core-${agent}-setup.html`);
     expect(page).toContain("Supply Core");
-    expect(page).toContain("check_cart");
+    expect(page).toContain("Supply Core checks the final cart: the items, the total, and the delivery date.");
     const prompt = promptOf(agent === "grok" ? `${ENTRY}/SETUP_PROMPT.md` : `${ENTRY}/muse/SETUP_PROMPT.md`);
     const text = page.replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, "&");
     for (const line of prompt.split("\n")) expect(text).toContain(line);
@@ -258,7 +258,7 @@ describe("the HTML setup guides", () => {
   it.each(["claude", "chatgpt"])("the %s guide is Cleaner Core only, and sends Supply Core to Grok Bot or Muse", (agent) => {
     const page = read(`docs/property-core-${agent}-setup.html`);
     expect(page).toContain("Cleaner Core");
-    expect(page).toMatch(/Supply Core needs an always-on agent/);
+    expect(page).toContain('use Supply Core with <a href="property-core-grok-setup.html">Grok Bot</a> or <a href="property-core-muse-setup.html">Muse</a>');
     expect(page).not.toMatch(/data-pick=/);
   });
 });

@@ -1,9 +1,12 @@
 import { lookup } from "node:dns/promises";
-import { BlockList, isIP } from "node:net";
+import { request } from "node:https";
+import { isIP, type LookupFunction } from "node:net";
+import type { Readable } from "node:stream";
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { DeploymentMode } from "../../install/deployment";
 import { assistantProfile, CHATGPT_REDIRECT_HOST, CLAUDE_REDIRECT_HOST, MUSE_REDIRECT_HOST } from "../../cleaner-core/assistant";
 import { cleanerMultiTenant } from "../../cleaner-core/flag";
+import { isPrivateAddress } from "../../net/addresses";
 
 /**
  * Which OAuth clients may be sent an authorization code, and where. Grok
@@ -200,19 +203,6 @@ export function checkClientMetadata(body: unknown, policy: RedirectPolicy, allow
 
 export const isMetadataDocumentClientId = (clientId: string) => /^https:\/\//i.test(clientId);
 
-const PRIVATE = new BlockList();
-for (const [net, bits] of [
-  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12],
-  ["192.0.0.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15], ["224.0.0.0", 3],
-] as const) PRIVATE.addSubnet(net, bits, "ipv4");
-for (const [net, bits] of [["::", 127], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8]] as const) PRIVATE.addSubnet(net, bits, "ipv6");
-
-const isPrivateAddress = (address: string) => {
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address)?.[1];
-  if (mapped) return PRIVATE.check(mapped, "ipv4");
-  return PRIVATE.check(address, isIP(address) === 6 ? "ipv6" : "ipv4");
-};
-
 /** The client_id URL itself: https, a real path, and a public host (the server fetches it, so no internal addresses). */
 export function checkMetadataDocumentUrl(clientId: string): URL {
   let url: URL;
@@ -232,19 +222,80 @@ export function checkMetadataDocumentUrl(clientId: string): URL {
 }
 
 const MAX_DOCUMENT_BYTES = 5 * 1024;
+const NOT_PUBLIC = "client_id must resolve to a public address.";
+const NOT_FETCHED = "The client metadata document couldn't be fetched.";
+const TOO_LARGE = "The client metadata document is too large.";
 
-/** Fetches a Client ID Metadata Document with SSRF guards: public addresses only, no redirects, 5 KB, 5 seconds. */
-export async function fetchMetadataDocument(clientId: string): Promise<unknown> {
+export type Resolve = (host: string) => Promise<{ address: string; family: number }[]>;
+const systemResolve: Resolve = (host) => lookup(host, { all: true });
+
+/**
+ * The socket's own DNS lookup: it resolves once and refuses the connection if any
+ * address is internal, so the address that was checked is the one connected to.
+ */
+export function publicOnlyLookup(resolve: Resolve): LookupFunction {
+  return (hostname, options, callback) => {
+    resolve(hostname).then(
+      (found) => {
+        const addresses = options.family === 4 || options.family === 6 ? found.filter((a) => a.family === options.family) : found;
+        if (!addresses.length || found.some((a) => isPrivateAddress(a.address))) {
+          callback(new ClientMetadataError("invalid_client_metadata", NOT_PUBLIC) as NodeJS.ErrnoException, "", 0);
+        } else if (options.all) {
+          callback(null, addresses);
+        } else {
+          callback(null, addresses[0]!.address, addresses[0]!.family);
+        }
+      },
+      () => callback(new ClientMetadataError("invalid_client_metadata", NOT_PUBLIC) as NodeJS.ErrnoException, "", 0),
+    );
+  };
+}
+
+/** Reads a stream as UTF-8, or gives undefined (and stops reading) once it passes max bytes. */
+export function readCapped(stream: Readable, max: number): Promise<string | undefined> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    stream.on("data", (chunk: Buffer | string) => {
+      const bytes = Buffer.from(chunk);
+      size += bytes.length;
+      if (size > max) {
+        stream.destroy();
+        resolve(undefined);
+        return;
+      }
+      chunks.push(bytes);
+    });
+    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    stream.on("error", reject);
+    stream.on("close", () => reject(new Error("closed before the end")));
+  });
+}
+
+/** Fetches a Client ID Metadata Document with SSRF guards: public addresses only (checked at connect), no redirects, 5 KB, 5 seconds. */
+export async function fetchMetadataDocument(clientId: string, deps: { resolve?: Resolve } = {}): Promise<unknown> {
   const url = checkMetadataDocumentUrl(clientId);
-  const addresses = await lookup(url.hostname, { all: true }).catch(() => []);
-  if (!addresses.length || addresses.some((a) => isPrivateAddress(a.address))) {
-    throw new ClientMetadataError("invalid_client_metadata", "client_id must resolve to a public address.");
-  }
-  const res = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(5000), headers: { Accept: "application/json" } });
-  if (!res.ok) throw new ClientMetadataError("invalid_client_metadata", "The client metadata document couldn't be fetched.");
-  if (Number(res.headers.get("content-length") ?? 0) > MAX_DOCUMENT_BYTES) throw new ClientMetadataError("invalid_client_metadata", "The client metadata document is too large.");
-  const text = await res.text();
-  if (Buffer.byteLength(text) > MAX_DOCUMENT_BYTES) throw new ClientMetadataError("invalid_client_metadata", "The client metadata document is too large.");
+  const text = await new Promise<string>((resolve, reject) => {
+    const fail = (message: string) => reject(new ClientMetadataError("invalid_client_metadata", message));
+    const req = request(url, {
+      headers: { Accept: "application/json", "User-Agent": "property-core" },
+      lookup: publicOnlyLookup(deps.resolve ?? systemResolve),
+      signal: AbortSignal.timeout(5000),
+    }, (res) => {
+      const status = res.statusCode ?? 0;
+      if (status < 200 || status > 299) {
+        req.destroy();
+        return fail(NOT_FETCHED);
+      }
+      if (Number(res.headers["content-length"] ?? 0) > MAX_DOCUMENT_BYTES) {
+        req.destroy();
+        return fail(TOO_LARGE);
+      }
+      readCapped(res, MAX_DOCUMENT_BYTES).then((body) => (body === undefined ? fail(TOO_LARGE) : resolve(body)), () => fail(NOT_FETCHED));
+    });
+    req.on("error", (err) => (err instanceof ClientMetadataError ? reject(err) : fail(NOT_FETCHED)));
+    req.end();
+  });
   try {
     return JSON.parse(text);
   } catch {

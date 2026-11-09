@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { nodeVersionProblem, runBootstrap } from "../src/install/bootstrap";
@@ -240,11 +240,11 @@ describe("bootstrap:grok", () => {
 });
 
 describe("Node.js version check", () => {
-  const TOO_OLD = /^Tour Core needs Node\.js 22\.13 or newer \(this computer has [0-9.]+\)\.$/;
+  const TOO_OLD = /^Tour Core needs Node\.js 22\.13 or newer, and this computer has [0-9.]+\. Install the LTS version from nodejs\.org, then run this again\.$/;
 
   it("requires Node.js 22.13, which package.json engines and ci-check.sh need", () => {
     expect(nodeVersionProblem("20.11.0")).toMatch(TOO_OLD);
-    expect(nodeVersionProblem("22.12.0")).toBe("Tour Core needs Node.js 22.13 or newer (this computer has 22.12.0).");
+    expect(nodeVersionProblem("22.12.0")).toBe("Tour Core needs Node.js 22.13 or newer, and this computer has 22.12.0. Install the LTS version from nodejs.org, then run this again.");
     expect(nodeVersionProblem("22.13.0")).toBeUndefined();
     expect(nodeVersionProblem("23.0.0")).toBeUndefined();
   });
@@ -259,8 +259,15 @@ describe("Node.js version check", () => {
       ].join(" ");
       const run = spawnSync(process.execPath, ["--import", `data:text/javascript,${encodeURIComponent(fake)}`, join("scripts", "bootstrap-grok.mjs")], { encoding: "utf8" });
       expect(run.status, version).toBe(1);
-      expect(run.stderr.trim()).toBe(`Tour Core needs Node.js 22.13 or newer (this computer has ${version}).`);
+      expect(run.stderr.trim()).toBe(`Tour Core needs Node.js 22.13 or newer, and this computer has ${version}. Install the LTS version from nodejs.org, then run this again.`);
       expect(run.stdout).toBe("");
     }
+  });
+
+  it("the Cursor verify skill asks for Node 22.13 too, never Node 20 (#215 follow-up)", () => {
+    const dir = join(".cursor", "skills", "verify-cleanercore");
+    const files = [join(dir, "SKILL.md"), ...readdirSync(join(dir, "features")).filter((name) => name.endsWith(".md")).map((name) => join(dir, "features", name))];
+    for (const file of files) expect(readFileSync(file, "utf8"), file).not.toMatch(/\bNode(\.js)? 20\b/);
+    expect(readFileSync(join(dir, "SKILL.md"), "utf8")).toContain("Node 22.13 or newer");
   });
 });

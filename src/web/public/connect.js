@@ -49,7 +49,7 @@ async function render() {
   const loaded = await api("GET", `/api/connect?request=${encodeURIComponent(requestId)}`);
   if (loaded.status === 401) {
     // There is no owner-claim page any more: a connection is approved on the page the chat opens.
-    body.append(h("p", { text: "Approve this connection on the page your chat opened, where the pairing code and Allow are. Go back to the chat and connect again." }));
+    body.append(h("p", { text: "This page can't approve the connection. Go back to your chat and connect again, then click Allow on the page the chat opens." }));
     root.replaceChildren(body);
     return;
   }
