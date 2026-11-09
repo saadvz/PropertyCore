@@ -62,7 +62,7 @@ const PROS_QUESTION: AskQuestion = {
   required: true,
   example: "Joe's Plumbing, 201-555-0142",
   how:
-    "Draft the list yourself from what you can read (their contacts, receipts and emails) and save each pro with save_pro and draft: true. Show one summary, trade by trade, with the gaps marked needs you. The host confirms, edits or removes. Confirm with save_pro { confirm: [ids] }. For each trade, put the pros in the order to call them with preferredFor ranks. When the list is final (none is fine), call save_fixer_settings with prosDone: true.",
+    "Draft the list yourself from what you can read (their contacts, receipts and emails) and save each pro with save_pro and draft: true. Don't show a summary. Confirm each drafted pro with the host, one per message: name the pro and their trade, with Yes, Change it and Remove as a choice card. Then ask about each trade still missing, one per message. Confirm with save_pro { confirm: [ids] }. For each trade, put the pros in the order to call them with preferredFor ranks. When the list is final (none is fine), call save_fixer_settings with prosDone: true.",
 };
 
 const COST_QUESTION: AskQuestion = {

@@ -1,9 +1,9 @@
 /**
  * What each setup step still needs, for Grok to ask in its own words. Cleaner Core names the fields,
- * the allowed answers, and the defaults. Setup starts with a draft: Grok fills in what it already
- * knows, shows the host one summary with the gaps marked "needs you", and the host corrects it once.
- * Whatever is still missing after that is asked one short question at a time, with options as a
- * choice card. Nothing here is sent to anyone.
+ * the allowed answers, and the defaults. Setup starts with a draft: Grok looks first and fills in what
+ * it can find, then confirms each thing it filled in, one per message. Whatever is still missing after
+ * that is asked one short question at a time, with options as a choice card. Nothing here is sent to
+ * anyone.
  */
 
 import { askNext, type AskOption, type AskQuestion } from "../hub/ask";
@@ -323,7 +323,7 @@ export interface SetupDraft {
 }
 
 export const DRAFT_NEXT =
-  'Draft this setup before you ask the host anything. draft.fill says where to look and which tool saves each part. Save what you find, in any order except that the calendars wait for the property, but do not save again a step that done already lists unless the host changes it. Never draft the door code. Then show the host one summary for this property: what you filled in, every step in draft.needsYou marked "needs you", and each item in draft.confirm called out for their yes. Let the host correct it in one reply. Save their changes, then call get_state with drafted: true.';
+  'Draft this setup before you ask the host anything. draft.fill says where to look and which tool saves each part. Save what you find, in any order except that the calendars wait for the property, but do not save again a step that done already lists unless the host changes it. Look everywhere it names before you ask anything. Never draft the door code. Do not show the host a summary or a list of what is missing. Then confirm what you filled in, one item per message: say what you found and ask whether it is right, with the options Yes and Change it. Each item in draft.confirm that you filled in, like a new person who will be texted or who gets the door code, gets its own question even when you are sure. Save each change as the host gives it. If you found nothing, say so in one short line. Then call get_state with drafted: true: it asks what is still missing, one question at a time.';
 
 export const DRAFT_FILL: DraftFill[] = [
   {

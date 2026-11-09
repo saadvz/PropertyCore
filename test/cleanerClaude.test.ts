@@ -22,8 +22,8 @@ const PATH = "/mcp/cleaner-core";
 const ZONE = "America/New_York";
 const FIRE_URL = "https://api.anthropic.com/v1/claude_code/routines/trig_01MADEUPTESTTRIGGER/fire";
 const FIRE_TOKEN = "made-up-claude-routine-token-for-tests";
-/** The Grok deployment's initialize instructions, byte for byte: as before Claude, plus the reply-draft lines and the setup draft (#166). */
-const GROK_INSTRUCTIONS_SHA256 = "4bda70e0b890741eb62150226eb4b985ee580f8856b7db4c0d593f91bc8e5bf0";
+/** The Grok deployment's initialize instructions, byte for byte: as before Claude, plus the reply-draft lines and the setup draft (#166), confirmed one item at a time. */
+const GROK_INSTRUCTIONS_SHA256 = "e7e45fa38f19124f7c2b41e6c240806af713a66acabca71edd29f243a8742ab4";
 
 const read = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 

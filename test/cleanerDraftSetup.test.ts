@@ -2,15 +2,17 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetLiveDesks, setCleanerAlertFetch, setCleanerCalendarFetch } from "../src/cleaner-core/liveDesk";
 import { setCleanerGroupFetch, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
+import { CHATGPT_INSTRUCTIONS, CLAUDE_INSTRUCTIONS, MUSE_INSTRUCTIONS } from "../src/cleaner-core/assistant";
+import { GROK_INSTRUCTIONS } from "../src/cleaner-core/mcp";
 import { DRAFT_CONFIRM, DRAFT_NEXT, type SetupAsk } from "../src/cleaner-core/setupAsk";
 import { PUBLIC } from "./fakeSendblue";
 import { filesUnder } from "./files";
 import { ADDRESS, BUSINESS, CALENDAR_URL, CLEANER, CLEANER_TOKEN, DOOR_CODE, HOST, OBSERVER, startWiredApp, type WiredApp } from "./wiringProof";
 
 /**
- * Draft-and-confirm setup (saadvz/PropertyCore#166): the agent drafts what it already knows, saves it in
- * any order, shows the host one summary with the gaps marked "needs you", and then asks only what's
- * still missing. The host always confirms the door code (through its secure upload), who gets it,
+ * Draft-and-confirm setup (saadvz/PropertyCore#166): the agent looks first and drafts what it can find,
+ * saves it in any order, confirms each thing it filled in with the host one per message, and then asks
+ * only what's still missing, one question at a time. The host always confirms the door code (through its secure upload), who gets it,
  * any spending, and anyone new who will be texted. Only 555 numbers and made-up codes.
  */
 
@@ -105,7 +107,7 @@ describe("draft-and-confirm setup", () => {
     expect(draftOf(summary)?.fill.map((part) => part.tool).filter(Boolean)).toEqual(["save_sources"]);
     expect(summary.done).toEqual(expect.arrayContaining(["Property saved.", "Cleaner saved.", "Schedule saved.", "Calendar link saved.", "Preferences saved."]));
 
-    // The host saw the summary and corrected it in one reply: that's all the calendars. Host decision 1.
+    // The host confirmed each drafted item, one per message: that's all the calendars. Host decision 1.
     expect((await call(wired, "save_sources", { done: true })).isError).toBe(false);
     const asked: string[] = [];
     const afterDraft = await state(wired, { drafted: true });
@@ -227,5 +229,32 @@ describe("draft-and-confirm setup", () => {
     const refused = await call(wired, "save_door_code", { code: DOOR_CODE });
     expect(refused.isError).toBe(true);
     expect(refused.text).toContain("in a name or a setting saved for this setup");
+  });
+});
+
+describe("the draft is confirmed one item at a time, never as one summary", () => {
+  const SUMMARY = /one summary|in one reply|round of corrections|marked "?needs you"?/i;
+  const texts: Record<string, string> = {
+    DRAFT_NEXT,
+    GROK_INSTRUCTIONS,
+    CLAUDE_INSTRUCTIONS,
+    CHATGPT_INSTRUCTIONS,
+    MUSE_INSTRUCTIONS,
+  };
+  for (const file of ["CLEANER_CORE_BOOTSTRAP.md", "cleaner-template/bot-profile.md", "muse-template/skills/cleaner-core/SKILL.md", "claude-template/plugin/skills/cleaner-core/SKILL.md", "claude-template/SETUP_GUIDE.md", "src/fixer-core/setupAsk.ts"]) {
+    texts[file] = readFileSync(file, "utf8");
+  }
+
+  for (const [name, text] of Object.entries(texts)) {
+    it(`${name} never shows the host a summary to correct at once`, () => {
+      expect(text).not.toMatch(SUMMARY);
+    });
+  }
+
+  it("the draft step looks first, then confirms each filled item in its own message, then asks what's missing", () => {
+    expect(DRAFT_NEXT).toMatch(/one item per message/);
+    expect(DRAFT_NEXT).toMatch(/Do not show the host a summary/);
+    expect(DRAFT_NEXT).toMatch(/draft\.confirm/);
+    expect(DRAFT_NEXT).toMatch(/drafted: true/);
   });
 });
