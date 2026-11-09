@@ -42,6 +42,8 @@ export interface FakeConversations {
   close(conversationSid: string): void;
   /** An old conversation made the proxy way: each phone bound to the Twilio number, no chat participant. */
   seedProxy(phones: string[], proxy: string): string;
+  /** A group text that already exists on a line, with its reply webhook: another account's leftover, or a sibling property's. */
+  seedGroup(phones: string[], line: string, hookUrl: string, identity?: string): string;
 }
 
 function fields(init: RequestInit | undefined): Record<string, string> {
@@ -65,6 +67,13 @@ export function fakeConversations(
   let sequence = 0;
   let blocked = false;
   const closed = new Set<string>();
+  const hooks = new Map<string, string[]>();
+  const LIST = "https://conversations.twilio.com/v1/ParticipantConversations";
+  /** The line a group texts from, and its phones, sorted. Undefined for a conversation that is no group text. */
+  const groupOf = (people: FakeParticipant[]) => {
+    const line = people.find((person) => person.projectedAddress)?.projectedAddress;
+    return line ? { line, phones: people.flatMap((person) => (person.address ? [person.address] : [])).sort().join(",") } : undefined;
+  };
   const hex = (n: number) => n.toString(16).padStart(32, "0");
   const reply = (status: number, body: unknown) => ({ ok: status >= 200 && status < 300, status, json: async () => body }) as Response;
 
@@ -77,6 +86,13 @@ export function fakeConversations(
       conversations.set(sid, []);
       created.push(sid);
       return reply(201, { sid });
+    }
+    if (url.startsWith(`${LIST}?`) && method === "GET") {
+      const identity = new URL(url).searchParams.get("Identity");
+      const found = [...conversations.entries()].flatMap(([sid, people]) =>
+        people.filter((person) => person.identity && person.identity === identity).map((person) => ({ conversation_sid: sid, participant_messaging_binding: { projected_address: person.projectedAddress ?? null } })),
+      );
+      return reply(200, { conversations: found, meta: { next_page_url: null } });
     }
     if (!url.startsWith(`${ROOT}/`)) return reply(404, {});
     const [rawSid, ...rest] = url.slice(ROOT.length + 1).split("/");
@@ -99,8 +115,13 @@ export function fakeConversations(
       posts.push({ conversationSid, to, body: params.Body ?? "" });
       return reply(201, { sid: `IM${hex(messages.length)}` });
     }
+    if (tail === "Webhooks" && method === "GET") {
+      return reply(200, { webhooks: (hooks.get(conversationSid) ?? []).map((hookUrl) => ({ target: "webhook", configuration: { url: hookUrl, method: "POST" } })), meta: { next_page_url: null } });
+    }
     if (tail === "Webhooks" && method === "POST") {
       if (options.failWebhooks) return reply(500, {});
+      const hook = fields(init)["Configuration.Url"];
+      if (hook) hooks.set(conversationSid, [...(hooks.get(conversationSid) ?? []), hook]);
       webhooks.push({ conversationSid, params: fields(init) });
       return reply(201, { sid: `WH${hex(webhooks.length)}` });
     }
@@ -136,6 +157,16 @@ export function fakeConversations(
         if (address && people.some((person) => person.address === address)) return reply(409, {});
         if (identity && people.some((person) => person.identity === identity)) return reply(409, {});
         if (!address && !identity) return reply(400, {});
+        // Twilio allows one group text per line and set of phones.
+        if (address) {
+          const next = groupOf([...people, { sid: "", address }]);
+          for (const [otherSid, others] of conversations) {
+            const other = otherSid === conversationSid ? undefined : groupOf(others);
+            if (next && other && other.line === next.line && other.phones === next.phones) {
+              return reply(409, { code: 50438, message: `Group MMS with given participant list already exists as Conversation ${otherSid}`, status: 409 });
+            }
+          }
+        }
         const person: FakeParticipant = {
           sid: `MB${hex(++sequence)}`,
           ...(identity ? { identity } : {}),
@@ -181,6 +212,12 @@ export function fakeConversations(
         sid,
         phones.map((address) => ({ sid: `MB${hex(++sequence)}`, address, proxyAddress: proxy })),
       );
+      return sid;
+    },
+    seedGroup(phones, line, hookUrl, identity = "cleaner-core") {
+      const sid = `CH${hex(++sequence)}`;
+      conversations.set(sid, [{ sid: `MB${hex(++sequence)}`, identity, projectedAddress: line }, ...phones.map((address) => ({ sid: `MB${hex(++sequence)}`, address }))]);
+      hooks.set(sid, [hookUrl]);
       return sid;
     },
   };

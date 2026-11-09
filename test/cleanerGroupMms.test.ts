@@ -2,10 +2,10 @@ import { fixedCodePort } from "../src/cleaner-core/doorPort";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { groupIntroBody, groupInviteBody, groupOfferBody } from "../src/cleaner-core/cleanerTexts";
+import { groupIntroBody, groupInviteBody, groupOfferBody, groupRefusedLine } from "../src/cleaner-core/cleanerTexts";
 import { openCleanerCore, type CleanerText } from "../src/cleaner-core/core";
 import { GroupNotConfirmed } from "../src/cleaner-core/groupThread";
-import { CLEANER_GROUP_IDENTITY, sendLiveGroup, setCleanerGroupFetch, setCleanerGroupPause, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
+import { CLEANER_GROUP_IDENTITY, clearLineGroups, sendLiveGroup, setCleanerGroupFetch, setCleanerGroupPause, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import { setCleanerPhotoFetch } from "../src/cleaner-core/photos";
 import { SCRATCH_TENANTS } from "../src/cleaner-core/tenants";
 import { twilioSignature } from "../src/messaging/twilio/signature";
@@ -189,6 +189,80 @@ describe("group texting: how the group is made", () => {
     expect(fake.calls()).toBe(0);
   });
 
+  describe("a group text that already exists on the line with the same people (Twilio error 50438)", () => {
+    const HOOK = "/webhooks/twilio/cleaner-core/conversation";
+    const MINE = { ...ENV, PUBLIC_BASE_URL: `${PUBLIC}/t/tnt_new/p/prp_one` };
+
+    it("clears another account's leftover on this account's line, then starts the group", async () => {
+      const fake = useFake();
+      const old = fake.seedGroup([HOST, CLEANER], CLEANER_LINE, `${PUBLIC}/t/tnt_old${HOOK}`);
+      const sent = await sendLiveGroup(MINE, { audience: [HOST, CLEANER], body: "Hello the group" });
+      expect(fake.removed).toEqual([old]);
+      expect(sent?.conversationSid).toBeDefined();
+      expect(sent?.conversationSid).not.toBe(old);
+      expect(fake.posts).toEqual([{ conversationSid: sent?.conversationSid, to: [HOST, CLEANER].sort(), body: "Hello the group" }]);
+      // The first try's half-made conversation holds nobody.
+      for (const sid of fake.created) if (sid !== sent?.conversationSid) expect(fake.people(sid)).toEqual([]);
+    });
+
+    it("takes back its own group when the saved id was lost", async () => {
+      const fake = useFake();
+      const old = fake.seedGroup([HOST, CLEANER], CLEANER_LINE, `${MINE.PUBLIC_BASE_URL}${HOOK}`);
+      const sent = await sendLiveGroup(MINE, { audience: [HOST, CLEANER], body: "Hello again" });
+      expect(sent?.conversationSid).toBe(old);
+      expect(fake.removed).toEqual([]);
+      expect(fake.posts).toEqual([{ conversationSid: old, to: [HOST, CLEANER].sort(), body: "Hello again" }]);
+      for (const sid of fake.created) expect(fake.people(sid)).toEqual([]);
+    });
+
+    it("leaves another property's group on the same account alone, and says why", async () => {
+      const fake = useFake();
+      const sibling = fake.seedGroup([HOST, CLEANER], CLEANER_LINE, `${PUBLIC}/t/tnt_new/p/prp_two${HOOK}`);
+      const failed = await sendLiveGroup(MINE, { audience: [HOST, CLEANER], body: "Hello" }).catch((err: unknown) => err);
+      expect(failed).toBeInstanceOf(GroupNotConfirmed);
+      expect((failed as GroupNotConfirmed).refused?.code).toBe(50438);
+      expect(fake.removed).toEqual([]);
+      expect(fake.people(sibling)).toHaveLength(3);
+      expect(fake.posts).toEqual([]);
+    });
+
+    it("leaves a group it can't place alone: no account in its own address, or a group that isn't Cleaner Core's", async () => {
+      const fake = useFake();
+      fake.seedGroup([HOST, CLEANER], CLEANER_LINE, `https://elsewhere.example${HOOK}`);
+      await expect(sendLiveGroup(ENV, { audience: [HOST, CLEANER], body: "Hello" })).rejects.toBeInstanceOf(GroupNotConfirmed);
+      const other = useFake();
+      other.seedGroup([HOST, CLEANER], CLEANER_LINE, `${PUBLIC}/t/tnt_old${HOOK}`, "someone-else");
+      await expect(sendLiveGroup(MINE, { audience: [HOST, CLEANER], body: "Hello" })).rejects.toBeInstanceOf(GroupNotConfirmed);
+      expect(fake.removed).toEqual([]);
+      expect(other.removed).toEqual([]);
+    });
+
+    it("tells the host in plain words, without blaming a phone", () => {
+      expect(groupRefusedLine({ phone: HOST, code: 50438 })).toBe(
+        "This text line already has a group text with the same people, so a second one can't start. Texts for this property go to the cleaner alone.",
+      );
+    });
+  });
+
+  describe("a closing account's line", () => {
+    it("loses every group text on it, and other lines keep theirs", async () => {
+      const fake = useFake();
+      const one = fake.seedGroup([HOST, CLEANER], CLEANER_LINE, `${PUBLIC}/t/tnt_old/webhooks/twilio/cleaner-core/conversation`);
+      const two = fake.seedGroup([HOST, CLEANER, OBSERVER], CLEANER_LINE, `${PUBLIC}/t/tnt_old/p/prp_b/webhooks/twilio/cleaner-core/conversation`);
+      const kept = fake.seedGroup([HOST, CLEANER], "+15555550177", `${PUBLIC}/t/tnt_other/webhooks/twilio/cleaner-core/conversation`);
+      expect(await clearLineGroups(ENV, CLEANER_LINE)).toBe(2);
+      expect(fake.removed.sort()).toEqual([one, two].sort());
+      expect(fake.people(kept)).toHaveLength(3);
+    });
+
+    it("does nothing with live texts off", async () => {
+      const fake = useFake();
+      fake.seedGroup([HOST, CLEANER], CLEANER_LINE, `${PUBLIC}/t/tnt_old/webhooks/twilio/cleaner-core/conversation`);
+      expect(await clearLineGroups({ ...ENV, CLEANER_CORE_LIVE_SMS: "0" }, CLEANER_LINE)).toBe(0);
+      expect(fake.calls()).toBe(0);
+    });
+  });
+
   it("names the phone and Twilio's code when Twilio won't add it to the group", async () => {
     const fake = useFake({ refusePhone: HOST });
     const failed = await sendLiveGroup(ENV, { audience: [HOST, CLEANER], body: "Hello" }).catch((err: unknown) => err);
@@ -276,7 +350,7 @@ describe("group texting: the offer goes to the cleaner once", () => {
       sent.push(text);
     });
     expect(sent.filter((text) => text.kind === "offer")).toEqual([{ to: MIKE, body: OFFER, kind: "offer" }]);
-    expect(job.hostNotes()).toContain("I couldn't send the cleaning offer to the group.");
+    expect(job.hostNotes()).toContain("The group text couldn't start, so I texted the cleaner the cleaning offer directly.");
     // The group just failed, so no host copy tries it again.
     expect(tried.filter((text) => text.channel === "group" && text.kind === "offer")).toHaveLength(1);
     await job.receive({ id: "mike-yes-direct", from: MIKE, text: "YES" });
@@ -490,7 +564,7 @@ describe("group texting: when the group can't be made", () => {
     expect(wired.cleanerSent.filter((item) => item.body.startsWith("Turnover at")).map((item) => ({ to: item.to, body: item.body }))).toEqual([
       { to: CLEANER, body: `Turnover at ${ADDRESS} on Sunday, Oct 18. Checkout 11:00 AM, next guest 4:00 PM. Reply YES to schedule it, or STOP to opt out.` },
     ]);
-    expect((await must(wired, "get_state")).notes).toContain("I couldn't send the cleaning offer to the group.");
+    expect((await must(wired, "get_state")).notes).toContain("The group text couldn't start, so I texted the cleaner the cleaning offer directly.");
     expect((await sms(wired, CLEANER, "YES")).status).toBe(200);
     expect(await turnStatus(wired)).toBe("confirmed");
   });

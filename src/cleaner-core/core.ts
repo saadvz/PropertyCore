@@ -27,7 +27,7 @@ import {
 } from "../hub/sources";
 import { fingerprintOf, freshnessOf, GUESTY_POLL_MS, staleAfterMs, type FreshnessStatus, type SourceRecord } from "./freshness";
 import { containsCodeToken, redactLine, redactPhone } from "./redact";
-import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, SUPPLY_DONE_ASK, SUPPLY_NOTED, repairDoneAsk, supplyRepairDoneAsk, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, schedulerOptInBody, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
+import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, SUPPLY_DONE_ASK, SUPPLY_NOTED, repairDoneAsk, supplyRepairDoneAsk, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupFellBackLine, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, schedulerOptInBody, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
 import { codeRoute, GroupNotConfirmed, type GroupSeat } from "./groupThread";
 import { GROK_HELPER } from "./assistant";
 import { codeHandlingText, HEALTH_NOTE, reviewAlert, reviewId, type AuditEvent, type ReviewDetail, type ReviewItem, type ReviewKind } from "./review";
@@ -2558,6 +2558,8 @@ class Engine implements CleanerCore {
         ...(draft.afterSend ? { afterSend: draft.afterSend } : {}),
       });
       if (this.delivery(draft.id) !== "sent") return null;
+      // The note said the group didn't get it. The cleaner did, so it says that instead.
+      if (fellBack && draft.kind !== "pin") this.setHostNote(`group-unconfirmed:${this.options.property.id}:${draft.kind}`, groupFellBackLine(draft.kind));
       if (draft.kind === "offer" && !fellBack) await this.copyOffer({ ...draft, body: addressed.body }, addressed.to);
       return text;
     }
@@ -2735,6 +2737,14 @@ class Engine implements CleanerCore {
     if (!id || !body || this.hostNoteState.some((note) => note.id === id)) return;
     if (this.pin && body.includes(this.pin)) return;
     this.hostNoteState.push({ id, body });
+    this.save();
+  }
+
+  /** Rewrites a kept note in place. Nothing is added when it was never kept. */
+  private setHostNote(id: string, body: string): void {
+    const note = this.hostNoteState.find((each) => each.id === id);
+    if (!note || note.body === body || (this.pin && body.includes(this.pin))) return;
+    note.body = body;
     this.save();
   }
 

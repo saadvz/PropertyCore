@@ -8,6 +8,8 @@ import { TenantRegistry } from "../src/cleaner-core/hosted/registry";
 import { propertyContext, type HostedCleaner } from "../src/cleaner-core/hosted/router";
 import { TenantSecrets } from "../src/cleaner-core/hosted/tenantSecrets";
 import { setTwilioNumbersFetch } from "../src/cleaner-core/hosted/twilioNumbers";
+import { setCleanerGroupFetch } from "../src/cleaner-core/liveSms";
+import { fakeConversations } from "./fakeConversations";
 
 /** saadvz/PropertyCore#163: the pool of registered numbers each account takes its line from. Only 555 numbers. */
 
@@ -70,6 +72,7 @@ beforeEach(() => {
 
 afterEach(() => {
   setTwilioNumbersFetch(undefined);
+  setCleanerGroupFetch(undefined);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -166,6 +169,23 @@ describe("the number pool", () => {
     expect(await openAccount(h, { label: "Court" })).toEqual({ refused: "no-line" });
     now = T0 + REST_MS;
     expect(await openAccount(h, { label: "Court" })).toMatchObject({ number: A });
+  });
+
+  it("a closed account's line loses its group texts before it goes back to the pool, so the next account can start its own", async () => {
+    fakeTwilio({ [A]: "PNa" });
+    const groups = fakeConversations();
+    setCleanerGroupFetch(groups.impl);
+    const base = h.baseEnv;
+    h = { ...h, baseEnv: () => ({ ...base(), CLEANER_CORE_LIVE_SMS: "1" }) };
+    await topUp(h, [A]);
+    const opened = await openAccount(h, { label: "Lane" });
+    if ("refused" in opened) throw new Error(opened.refused);
+    const old = groups.seedGroup([B, C], A, `${ORIGIN}/t/${opened.tenant.id}/webhooks/twilio/cleaner-core/conversation`);
+    const elsewhere = groups.seedGroup([B, C], "+15555550188", `${ORIGIN}/t/tnt_other/webhooks/twilio/cleaner-core/conversation`);
+    expect(await closeLine(h, opened.tenant, "return")).toBe("returned");
+    expect(groups.removed).toEqual([old]);
+    expect(groups.people(elsewhere)).toHaveLength(3);
+    expect(logs).toContain(`Removed 1 group text from ${opened.tenant.id}'s line.`);
   });
 
   it("releases a closed account's line from Twilio when asked, and keeps it resting if Twilio refuses", async () => {

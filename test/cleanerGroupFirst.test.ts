@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { hostDoneLine, groupIntroBody, groupInviteBody, groupUnconfirmedLine, namedAsk, nameList, withoutStopAsk } from "../src/cleaner-core/cleanerTexts";
+import { hostDoneLine, groupFellBackLine, groupIntroBody, groupInviteBody, groupUnconfirmedLine, namedAsk, nameList, withoutStopAsk } from "../src/cleaner-core/cleanerTexts";
 import { GroupNotConfirmed } from "../src/cleaner-core/groupThread";
 import { openCleanerCore, type CleanerText } from "../src/cleaner-core/core";
 import { outboxLabel } from "../src/cleaner-core/scratchQa";
@@ -461,7 +461,7 @@ describe("group-first: routing", () => {
     for (const kind of ["offer", "corrected", "reminder", "confirm", "started"] as const) {
       expect(sent.some((text) => text.kind === kind && text.to === MIKE && text.channel === undefined), kind).toBe(true);
     }
-    expect(job.hostNotes()).toContain(groupUnconfirmedLine("offer"));
+    expect(job.hostNotes()).toContain(groupFellBackLine("offer"));
     expect(job.hostNotes()).toContain(groupUnconfirmedLine("corrected"));
     expect(job.hostNotes()).toContain(groupUnconfirmedLine("started"));
   });
