@@ -1583,7 +1583,7 @@ export class FixerDesk {
     let cleared = file.clearedYmd === ymd;
     if (checkoutDay && !cleared && this.deps.cleanings) cleared = (await this.deps.cleanings(ymd))?.cleared === true;
     const overlaps = booking ? this.staysOver(file, booking).length > 0 : false;
-    return accessCheck({ job, pro: booking ? { reach: this.reachOfId(file, job, booking.proId) } : undefined, now: this.deps.now(), checkoutDay, cleared, overlapsStay: overlaps });
+    return accessCheck({ job, pro: booking ? { reach: this.reachOfId(file, job, booking.proId) } : undefined, now: this.deps.now(), checkoutDay, cleared, overlapsStay: overlaps, staysUnread: this.staysUnknown() });
   }
 
   /** The saved stays that overlap this visit, with its extension and the check-in buffer. */
@@ -1696,8 +1696,10 @@ export class FixerDesk {
       }
       return;
     }
-    // A pro with a visit link uses the page for this visit, so the code never goes two ways.
-    if (booking.access !== "code" || booking.visitToken) return;
+    // A pro given a visit link uses the page for this visit, even after an extend or a revoke, so the code never goes two ways.
+    if (booking.access !== "code" || booking.visitToken || booking.linkGivenAt || booking.visitRevokedAt) return;
+    // The host was told the code won't go by text for this visit: texts turning on later doesn't change that.
+    if (job.codeNoteAt) return;
     const phone = await this.textPhone(file, job);
     if (!phone) {
       // On the text path, but texts can't go out here (Fixer only, or the host isn't confirmed): one note, and visit_link opens.
@@ -1966,9 +1968,11 @@ export class FixerDesk {
     const at = this.deps.now().toISOString();
     job.preferredAsked = { at: job.preferredAsked?.at ?? at, answer };
     // A pro the host keeps on the preferred list gets no rotation question. A candidate the job booked
-    // and the host just saved has a new pro id, so the booking's id counts as that pro too.
+    // and the host just saved has a new pro id, so the booking's id counts as that pro too (only when
+    // the booking's id is a candidate's, never another saved pro's).
     const preferred = (proId: string) => {
-      const saved = proId === pro?.id || (pro && proId === job.booking?.proId) ? pro : file.pros.find((entry) => entry.id === proId);
+      const candidate = proId === job.booking?.proId && !file.pros.some((entry) => entry.id === proId);
+      const saved = proId === pro?.id || (pro && candidate) ? pro : file.pros.find((entry) => entry.id === proId);
       return saved?.status === "saved" && saved.preferredFor.some((entry) => entry.trade === job.trade);
     };
     return this.askRotation(file, job, { open: false, skip: preferred });
@@ -2101,6 +2105,7 @@ export class FixerDesk {
       if (!base) return fail("The visit link needs the server's public address.");
       const token = letterToken();
       booking.visitToken = tokenHash(token);
+      booking.linkGivenAt ??= this.deps.now().toISOString();
       this.write(file);
       return ok({ jobId: job.id, url: `${base}${FIXER_VISIT_PREFIX}${token}`, next: VISIT_LINK_NEXT });
     });

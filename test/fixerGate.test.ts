@@ -165,6 +165,9 @@ describe("accessCheck", () => {
     const j = job({ booking: booking({ extendedUntil: "2026-12-01T14:00:00.000Z" }) });
     expect(run(j, { now: at("2026-12-01T13:00:00.000Z") })).toEqual({ ok: true, window: { from: "2026-12-01T09:30:00.000Z", until: "2026-12-01T14:00:00.000Z" } });
   });
+  it("refuses while the stays are unread", () => {
+    expect(run(job({ booking: booking() }), { staysUnread: true })).toEqual({ ok: false, reason: "stays-unread" });
+  });
   it("refuses without a live booking", () => {
     expect(run(job())).toEqual({ ok: false, reason: "not-booked" });
     expect(run(job({ booking: booking(), state: "done" }))).toEqual({ ok: false, reason: "not-booked" });

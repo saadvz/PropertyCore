@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -690,5 +690,78 @@ describe("final review fixes: new stays, the text path, candidates, photos", () 
     await w.desk().raisePrice(w.job().id, 42_000, "pro");
     const news = ((await w.desk().checkFixes({})).structured as { news: Record<string, unknown>[] }).news;
     expect(news).toEqual([expect.objectContaining({ jobId: w.job().id, kind: "raised-price-held", text: "Joe's Plumbing says the fix is $420.00, not $180.00. Go ahead?" })]);
+  });
+});
+
+describe("residual fixes: the code goes one way only, unknown stays, the preferred alias", () => {
+  it("never texts the code after the visit link was given, revoked, or ended by an extend", async () => {
+    for (const end of ["revoke", "extend"] as const) {
+      const w = await setup({ textsAllowed: false });
+      await book(w);
+      w.at(Date.parse(TUE.from) - 10 * MIN);
+      await w.desk().tick();
+      expect((await w.desk().visitLink({ jobId: w.job().id })).isError).toBe(false);
+      expect(w.job().booking!.linkGivenAt).toBeDefined();
+      if (end === "revoke") {
+        expect((await w.desk().revokeVisit({ jobId: w.job().id })).isError).toBe(false);
+      } else {
+        const until = new Date(Date.parse(TUE.until) + 60 * MIN).toISOString();
+        const ask = await w.desk().extendVisit({ jobId: w.job().id, until });
+        expect((await w.desk().extendVisit({ jobId: w.job().id, until, confirmation: codeOf(ask) })).isError).toBe(false);
+        expect(w.job().booking!.visitToken).toBeUndefined();
+      }
+      // Texts can go out now, and the pro is on the text path: still no text.
+      w.deps.textsAllowed = async () => true;
+      w.at(Date.parse(TUE.from) - 5 * MIN);
+      await w.desk().tick();
+      await w.desk().tick();
+      expect(w.sent).toEqual([]);
+      expect(w.job().codeTextAt).toBeUndefined();
+      resetFixerDesks();
+      resetHubs();
+      resetPeople();
+    }
+  });
+
+  it("sends no code text once the host was told it won't go by text, even when texts turn on", async () => {
+    const w = await setup({ textsAllowed: false });
+    await book(w);
+    w.at(Date.parse(TUE.from) - 10 * MIN);
+    await w.desk().tick();
+    expect(w.notes.map((n) => n.id.split(":").at(-1))).toEqual(["code-text-off"]);
+    w.deps.textsAllowed = async () => true;
+    await w.desk().tick();
+    expect(w.sent).toEqual([]);
+    expect(w.notes).toHaveLength(1);
+  });
+
+  it("shows no code and texts none while the stays are unknown", async () => {
+    const w = await setup();
+    await book(w);
+    // A hub.json from before stays were kept, and every read now fails.
+    const hubPath = join(w.root, "hub.json");
+    const hub = JSON.parse(readFileSync(hubPath, "utf8")) as Record<string, unknown>;
+    delete hub.stays;
+    writeFileSync(hubPath, JSON.stringify(hub));
+    w.restart();
+    setCalendarFetch(async (url) => ({ status: 500, url, async text() { return ""; } }));
+    expect(hubFor(w.root, { now: () => NOW }).stays()).toBeUndefined();
+    w.at(Date.parse(TUE.from) - 10 * MIN);
+    await w.desk().tick();
+    expect(w.sent).toEqual([]);
+    expect(outcome(await w.desk().revealCode(w.job().id))).toBe("stays-unread");
+  });
+
+  it("still asks the rotation question for a booked saved pro when the host saves a different pro for the job", async () => {
+    const w = await setup();
+    await book(w, "Sam");
+    w.at(Date.parse(TUE.from) - 10 * MIN);
+    expect(outcome(await w.desk().revealCode(w.job().id))).toBe("opened");
+    await w.desk().recordDone({ jobId: w.job().id });
+    const input = { name: "Dana Drains", trades: ["plumbing" as const], reach: { phone: "+15555550147" }, preferredFor: [{ trade: "plumbing" as const, rank: 2 }], jobId: w.job().id };
+    const first = await w.desk().savePro(input);
+    const saved = first.structured?.confirmation ? await w.desk().savePro({ ...input, confirmation: codeOf(first) }) : first;
+    expect(saved.isError, saved.text).toBe(false);
+    expect(saved.structured!.rotationAsk).toBeDefined();
   });
 });

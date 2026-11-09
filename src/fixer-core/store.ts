@@ -108,6 +108,8 @@ export interface Booking {
   visitToken?: string;
   /** The host ended the visit link: no new one until a rebook or an extend. */
   visitRevokedAt?: string;
+  /** When a visit link was first given for this booking. It stays after an extend or a revoke, so the code never also goes by text. */
+  linkGivenAt?: string;
   /** Each time the page showed the code. */
   revealedAt?: string[];
   revisedQuote?: { cents: number; at: string; by?: "pro" | "agent" | "host"; hostYes?: { at: string } };
