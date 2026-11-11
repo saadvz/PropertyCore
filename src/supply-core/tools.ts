@@ -18,6 +18,7 @@ const Cents = z.number().int();
 const Ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const Product = z.object({ title: z.string().max(200), store: z.string().max(60), url: z.string().max(500), packSize: z.string().max(60), priceCents: Cents }).strict();
 const Schedule = z.union([
+  z.object({ kind: z.literal("reports") }).strict(),
   z.object({ kind: z.literal("every"), days: z.number().int() }).strict(),
   z.object({ kind: z.literal("every"), monthlyOn: z.number().int() }).strict(),
   z.object({ kind: z.literal("bookings"), stays: z.number().int() }).strict(),
@@ -25,6 +26,15 @@ const Schedule = z.union([
 ]);
 const Confirmation = z.string().max(40).optional();
 const GoogleEvents = z.object({ timeZone: z.string().max(80).optional(), items: z.array(z.unknown()).max(2000) }).strict();
+const ItemFields = {
+  id: z.string().max(40).optional(),
+  name: z.string().max(60).optional(),
+  qtyPerOrder: z.number().int().optional(),
+  preferred: Product.optional(),
+  backup: Product.nullable().optional(),
+  storeNote: z.string().max(200).optional(),
+  schedule: Schedule.optional(),
+};
 const CartLine = z.object({ itemId: z.string().max(40), product: z.enum(["preferred", "backup"]), qty: z.number().int(), unitCents: Cents }).strict();
 
 export const NO_CARDS = "Never pass a card number, expiry, or security code: checkout uses your Vault.";
@@ -39,10 +49,12 @@ export const SUPPLY_TOOLS: SupplyTool[] = [
   {
     name: "save_supply_settings",
     title: "Save supply settings",
-    description: `Saves any of: property (the delivery address, the time zone you work out from it, and an optional name that defaults to the street address; it's the property's, shared with Cleaner Core), mode (hands-off or checkout), perOrderCapCents and perMonthCapCents (null clears one), priceJumpPct, bufferDays, checkTime (24-hour HH:MM), routineCreated, sharedSchedule (one schedule for every item; null for each its own), and storesReady (the plan's stores you checked you can check out with: signed in, delivering to the property, a payment method ready). After Activate, call without confirmation to get the question and a code, ask the host, and call again with the code only after their yes. ${NO_CARDS}`,
+    description: `Saves any of: property (the delivery address, the time zone you work out from it, and an optional name that defaults to the street address; it's the property's, shared with Cleaner Core), ordering (reports: an item is ordered only when the cleaner or the host says it's low, and no schedule is asked; schedule: on dates too), cleanerAsk (arrival: the cleaner is asked what's low right after the door code; done: in the done text), mode (hands-off or checkout), perOrderCapCents and perMonthCapCents (null clears one), priceJumpPct, bufferDays, checkTime (24-hour HH:MM), routineCreated, sharedSchedule (one schedule for every item; null for each its own), and storesReady (the plan's stores you checked you can check out with: signed in, delivering to the property, a payment method ready). After Activate, call without confirmation to get the question and a code, ask the host, and call again with the code only after their yes. ${NO_CARDS}`,
     input: z
       .object({
         property: z.object({ address: z.string().max(200), timeZone: z.string().max(80), name: z.string().max(80).optional() }).strict().optional(),
+        ordering: z.enum(["reports", "schedule"]).optional(),
+        cleanerAsk: z.enum(["arrival", "done"]).optional(),
         mode: z.enum(["hands-off", "checkout"]).optional(),
         perOrderCapCents: Cents.nullable().optional(),
         perMonthCapCents: Cents.nullable().optional(),
@@ -78,16 +90,11 @@ export const SUPPLY_TOOLS: SupplyTool[] = [
   {
     name: "save_supply_item",
     title: "Save a supply item",
-    description: `Saves the next item from the draft list, or changes one with its itemId: name, qtyPerOrder, the preferred product the host picked from your product cards (only from the plan's stores), an optional backup from the plan's stores (null removes it), an optional one-line storeNote under 160 characters, and the schedule. { done: true } ends the list. After Activate it takes the host's yes: call without confirmation, ask, then call again with the code. ${NO_CARDS}`,
+    description: `Saves the next item from the draft list, or changes one with its itemId: name, qtyPerOrder, the preferred product the host picked from your product cards (only from the plan's stores), an optional backup from the plan's stores (null removes it), an optional one-line storeNote under 160 characters, and the schedule (left out, the shared schedule fills it in). items: [...] saves several at once, each with those same fields, once the host confirmed the whole list: nothing saves unless every one can. { done: true } ends the list. After Activate it takes the host's yes: call without confirmation, ask, then call again with the code. ${NO_CARDS}`,
     input: z
       .object({
-        id: z.string().max(40).optional(),
-        name: z.string().max(60).optional(),
-        qtyPerOrder: z.number().int().optional(),
-        preferred: Product.optional(),
-        backup: Product.nullable().optional(),
-        storeNote: z.string().max(200).optional(),
-        schedule: Schedule.optional(),
+        ...ItemFields,
+        items: z.array(z.object(ItemFields).strict()).min(1).max(30).optional(),
         confirmation: Confirmation,
         done: z.literal(true).optional(),
       })

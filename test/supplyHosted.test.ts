@@ -132,10 +132,12 @@ describe("a property running Supply Core on its own", () => {
     expect(existsSync(join(folder(m, tenant, property), "supply.json"))).toBe(false);
   });
 
-  it("takes the address, the whole list, and the store plan before any product", SLOW, async () => {
+  it("takes the address, how it orders, the whole list, and the store plan before any product", SLOW, async () => {
     const m = await start();
     const { tenant, property, token } = await suppliesAccount(m);
     expect((await m.toolAt(PATH, token, "save_supply_settings", { property: { address: PROPERTY.address, timeZone: PROPERTY.timeZone } })).isError).toBe(false);
+    expect(((await m.toolAt(PATH, token, "get_state")).structured?.ask as { step: string }).step).toBe("ordering");
+    expect((await m.toolAt(PATH, token, "save_supply_settings", { ordering: "schedule" })).isError).toBe(false);
     expect((await m.toolAt(PATH, token, "save_supply_list", { names: ["Paper towels", "Dish soap"] })).isError).toBe(false);
     expect(((await m.toolAt(PATH, token, "get_state")).structured?.ask as { step: string }).step).toBe("stores");
     expect((await m.toolAt(PATH, token, "save_supply_stores", { primary: { name: "Example Mart", channel: "shipping" }, fast: { name: "Example Now", channel: "same-day" } })).isError).toBe(false);

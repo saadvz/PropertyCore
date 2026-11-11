@@ -8,7 +8,7 @@ import { OperatorEventOutbox } from "../alerts/outbox";
 import { parsePhone } from "../core/phone";
 import { FileRuntimeStore } from "../storage/runtimeStore";
 import { ConfirmationBook } from "../operator/confirmations";
-import { supplyAskOn } from "../supply-core/store";
+import { supplyAskOn, supplyAskOnArrival } from "../supply-core/store";
 import { fixerAskOn } from "../fixer-core/store";
 import { messagingKeyword, normalize } from "../intent";
 import { spokenTimes } from "../core/spokenTime";
@@ -3581,11 +3581,12 @@ export class LiveDesk {
 
   /** The engine options for the saved preferences. The cleaning note is set only when instructions are saved. */
   private preferenceOptions(): Partial<Parameters<typeof openCleanerCore>[0]> {
-    // Supply Core on and active: the done text also asks what's running low.
+    // Supply Core on and active: the done text also asks what's running low, or, when the host chose
+    // to ask on arrival, a text right after the door code does.
     // Fixer Core on and chosen: it also asks "Anything broken?".
     // A supply.json or fixer.json that can't be read never stops Cleaner Core: that question is left out.
     const supplies = {
-      ...(askOn(() => supplyAskOn(this.root)) ? { supplyAsk: true } : {}),
+      ...(askOn(() => supplyAskOn(this.root)) ? { supplyAsk: true, ...(askOn(() => supplyAskOnArrival(this.root)) ? { supplyAskOnArrival: true } : {}) } : {}),
       ...(askOn(() => fixerAskOn(this.root)) ? { repairAsk: true, ...(this.file.cleanerName ? { cleanerName: this.file.cleanerName } : {}) } : {}),
     };
     const preferences = this.file.preferences;

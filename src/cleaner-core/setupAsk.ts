@@ -277,7 +277,7 @@ export const SUPPLIES_STEP: SetupAsk = {
         { value: "no", label: "Not now" },
       ],
       how:
-        'Explain it in two or three short sentences, in your own words: Supply Core reorders the supplies the property always needs, like paper towels and coffee pods, on a schedule, from stores that deliver to the door. After each cleaning, the cleaner is asked "Anything running low?", and what they name gets ordered. You stop for the host\'s yes before checkout unless they choose hands-off, and their cards stay in their Vault. Tell them they can set it up later by asking you. Then call choose_supplies with on true or false.',
+        'Explain it in two or three short sentences, in your own words: Supply Core restocks the supplies the property needs, like paper towels and coffee pods, from stores that deliver to the door. The cleaner is asked "Anything running low?" as they arrive or as they finish, whichever the host picks, and what they name gets ordered. A standing schedule is optional: the host can order only what the cleaner reports low. You stop for the host\'s yes before checkout unless they choose hands-off, and their cards stay in their Vault. Tell them they can set it up later by asking you. Then call choose_supplies with on true or false.',
     },
   ],
 };

@@ -91,7 +91,15 @@ export interface StorePlan {
   fast?: PlanStore;
 }
 
+/** What decides an order: only a low report from the cleaner or the host, or a schedule as well. Unset reads as schedule. */
+export type Ordering = "reports" | "schedule";
+
+/** When Cleaner Core asks the cleaner what's low: right after the door code, or in the done text. Unset reads as done. */
+export type CleanerAsk = "arrival" | "done";
+
 export interface SupplySettings {
+  ordering?: Ordering;
+  cleanerAsk?: CleanerAsk;
   mode?: Mode;
   perOrderCapCents?: number;
   perMonthCapCents?: number;
@@ -150,6 +158,11 @@ export function writeSupply(root: string, file: SupplyFile): void {
 export function supplyAskOn(root: string): boolean {
   const file = readSupply(root);
   return Boolean(file.settings.activatedAt) && !file.offAt;
+}
+
+/** True when the cleaner is asked what's low as they arrive, right after the door code, instead of in the done text. */
+export function supplyAskOnArrival(root: string): boolean {
+  return readSupply(root).settings.cleanerAsk === "arrival";
 }
 
 function monthOf(date: Date, timeZone: string): string {

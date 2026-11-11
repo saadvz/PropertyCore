@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { supplyDeskFor, type SupplyDeps, type SupplyDesk } from "../src/supply-core/desk";
-import { readSupply } from "../src/supply-core/store";
+import { readSupply, writeSupply } from "../src/supply-core/store";
 import { interpretFeed } from "../src/hub/calendar";
 import { setCleanerCalendarFetch } from "../src/cleaner-core/liveDesk";
 
@@ -42,8 +42,19 @@ async function activated(over: { mode?: "hands-off" | "checkout"; perMonthCapCen
   await desk.saveItem({ done: true });
   await desk.saveSettings({ mode: over.mode ?? "hands-off", perOrderCapCents: null, perMonthCapCents: over.perMonthCapCents ?? null, checkTime: "10:00", routineCreated: true });
   expect((await desk.activate({})).isError).toBe(false);
+  // Activate orders nothing by itself: these tests start a month later, with both items due.
+  monthAgo(root);
   const items = readSupply(root).items;
   return { desk, root, clock, ids: { towels: items[0]!.id, soap: items[1]!.id } };
+}
+
+/** Moves Activate and every item's save date back a month, as if Supply Core had been on since. */
+function monthAgo(root: string): void {
+  const file = readSupply(root);
+  const then = new Date(START.getTime() - 30 * 24 * 60 * MIN).toISOString();
+  file.settings.activatedAt = then;
+  for (const item of file.items) item.savedAt = then;
+  writeSupply(root, file);
 }
 
 const cartOf = (lines: { itemId: string; product?: "preferred" | "backup"; qty: number; unitCents: number }[], over: Record<string, unknown> = {}) => {

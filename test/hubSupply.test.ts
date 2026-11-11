@@ -66,6 +66,8 @@ async function activate(desk: SupplyDesk): Promise<void> {
 describe("Supply Core on the property hub", () => {
   it("setup skips the property and calendar steps Cleaner Core already finished", async () => {
     const { desk } = cleaningProperty();
+    expect(await step(desk)).toBe("ordering");
+    await desk.saveSettings({ ordering: "schedule", cleanerAsk: "arrival" });
     expect(await step(desk)).toBe("list");
     await desk.saveItem(towels);
     await desk.saveItem({ done: true });

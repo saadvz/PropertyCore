@@ -81,7 +81,7 @@ describe("Supply Core on Muse", () => {
   it("walks setup in Muse's words: its browser for products and stores, its own recurring task", SLOW, async () => {
     const { m, lane, muse } = await museAccount();
     await m.toolAt(PATH, muse, "set_flows", { property: lane.id, supplies: true });
-    await m.toolAt(PATH, muse, "save_supply_settings", { property: PROPERTY });
+    await m.toolAt(PATH, muse, "save_supply_settings", { property: PROPERTY, ordering: "schedule" });
     await m.toolAt(PATH, muse, "save_supply_list", { names: ["Paper towels"] });
     await m.toolAt(PATH, muse, "save_supply_stores", { primary: { name: "Example Mart", channel: "shipping" }, fast: null });
     const products = await m.toolAt(PATH, muse, "get_supply_state");
@@ -107,7 +107,7 @@ describe("Supply Core on Muse", () => {
     const { m, tenant, lane } = await museAccount();
     const grok = await m.joinAt(tenant.id, "grok", PATH);
     await m.toolAt(PATH, grok, "set_flows", { property: lane.id, supplies: true });
-    await m.toolAt(PATH, grok, "save_supply_settings", { property: PROPERTY });
+    await m.toolAt(PATH, grok, "save_supply_settings", { property: PROPERTY, ordering: "schedule" });
     await m.toolAt(PATH, grok, "save_supply_list", { names: ["Paper towels"] });
     await m.toolAt(PATH, grok, "save_supply_stores", { primary: { name: "Example Mart", channel: "shipping" }, fast: null });
     expect(howsOf(await m.toolAt(PATH, grok, "get_supply_state"))).toContain(CARDS);
@@ -165,6 +165,7 @@ describe("Muse's words for one Supply Core reply", () => {
     await desk.saveSettings({ mode: "hands-off", perOrderCapCents: null, perMonthCapCents: null, checkTime: "10:00", routineCreated: true });
     expect((await desk.activate({})).isError).toBe(false);
     const itemId = readSupply(root).items[0]!.id;
+    await desk.reportLow({ itemIds: [itemId], source: "host" });
     const go = await desk.checkCart({ store: "Example Mart", items: [{ itemId, product: "preferred", qty: 2, unitCents: 2400 }], shippingCents: 0, taxCents: 0, totalCents: 4800, deliveryBy: "2026-11-06" });
     expect(go.structured?.verdict).toBe("go");
     await desk.recordOrder({ cartToken: go.structured!.cartToken as string, chargedCents: 4800, approvedBy: "host-browser" });

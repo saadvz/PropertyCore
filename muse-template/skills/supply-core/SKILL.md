@@ -18,7 +18,7 @@ browser, and Supply Core keeps the record and the spending rules.
   follow tracking, and report every order back.
 
 Supply Core runs beside Cleaner Core at a property, where the cleaner's answer
-to `Anything running low?` after DONE turns into an order.
+to `Anything running low?` (after the door code or after DONE) turns into an order.
 
 ## Connect
 
@@ -48,14 +48,22 @@ addresses, and connectors out of the conversation unless something breaks.
 Call `get_supply_state` first and follow its `ask`, one question at a time.
 Then call the step's tool.
 
-1. **The whole list:** ask once, "What do you want restocked regularly? List
-   everything, up to 30 items." Split the answer into items, read it back
-   once, and call `save_supply_list` with the names.
-2. **Where to buy**, before any product search, with `save_supply_stores`.
+1. **How it orders**, with `save_supply_settings`: `ordering` is **Only when
+   it's low** (`reports`: nothing has a standing order, and an item is ordered
+   only when the cleaner or the host says it's low) or **On a schedule too**
+   (`schedule`). With Cleaner Core, `cleanerAsk` is **When they arrive**
+   (`arrival`, the default: the question goes right after the door code, and
+   what they name is ordered same-day so it lands while they're there) or
+   **When they finish** (`done`).
+2. **The whole list:** ask once, "Which supplies should Supply Core keep track
+   of? List everything, up to 30 items." Tell them nothing is ordered while
+   they build the list. Split the answer into items, read it back once, and
+   call `save_supply_list` with the names.
+3. **Where to buy**, before any product search, with `save_supply_stores`.
    The property is usually empty, so offer only stores that ship to the door
    from their own site (like Amazon, Walmart, Target, or Costco) or same-day
-   services whose driver can leave it at the door (like Instacart and Uber
-   Eats). From Amazon, only items shipped and sold by Amazon. Before you
+   services whose driver can leave it at the door (like DoorDash, Instacart
+   and Uber Eats). From Amazon, only items shipped and sold by Amazon. Before you
    suggest Walmart, Target or Costco, check with a search that there's one
    near the address. Never offer pickup, anything that needs a signature, or
    a third-party seller inside a marketplace. Suggest the one store that
@@ -63,40 +71,47 @@ Then call the step's tool.
    membership it needs. When the host picks Walmart or Target, save its
    same-day as the same-day store too and don't ask about one. Otherwise ask
    whether to add a same-day store for deadlines the main store can't make,
-   and offer Instacart and Uber Eats.
-3. **One schedule?** With two or more items, ask once whether one schedule
-   fits everything. A schedule is **Every…** (days, or a day of the month),
+   and offer DoorDash, Instacart and Uber Eats. When the cleaner is asked as
+   they arrive, make sure the plan has a same-day store.
+4. **One schedule?** Skipped with only when it's low. With two or more items,
+   ask once whether one schedule fits everything. A schedule is **Only when
+   it's low** (`{ kind: "reports" }`), **Every…** (days, or a day of the month),
    **By bookings** (once every so many stays), or **Other**: for Other, write
    an RRULE from the host's words, call `preview_schedule`, and read the next
    3 dates back before saving.
-4. **Products**, one item at a time, with `save_supply_item`. Search only the
-   plan's stores, in your browser. Show 3 to 4 products as product cards if
-   you can show them, then a choice card with one option per product so the
-   host can tap their pick. Never list products as plain text. Then the
-   backup the same way, if they want one, how many to buy each time, and the
-   schedule if each item has its own. When the list is done, ask "Anything
-   else to add?"; new names go to `save_supply_list`, and that's all is
-   `save_supply_item` with `{ done: true }`.
-5. **Booking calendars**, only for by-bookings items and only while the
+5. **Products**, the whole list at once. Search only the plan's stores, in
+   your browser, and pick the best match for every item. Show the whole list
+   once, one short line per item with the product, pack size, price, and
+   store, and ask the host to confirm it or name any to change. For an item
+   they want to change, show 3 to 4 products as product cards if you can,
+   then a choice card so they can tap their pick. Quantity is 1 of each
+   unless they say otherwise, and don't ask about backups. On their yes, call
+   `save_supply_item` once with `items: [...]`; nothing is ordered. When the
+   list is done, ask "Anything else to add?"; new names go to
+   `save_supply_list`, and that's all is `save_supply_item` with
+   `{ done: true }`.
+6. **Booking calendars**, only for by-bookings items and only while the
    property has none saved: `save_supply_sources`. A calendar link goes on
    the host's private page, the same way as in your Cleaner Core skill: call
    it with `uploadLink: { name }`, open the `uploadUrl` in your browser, and
    hand the browser to the host to paste the link and click **Save**. For
    Google Calendar, call it with `google: true`. Then `done: true`.
-6. **Mode:** hands-off, or stop at checkout for the host's yes.
-7. **Caps:** "Want a spending cap?" Per order, per month, both, or no cap.
-8. **Check time:** when the daily task runs. 10:00 unless the host picks
+7. **Mode:** hands-off, or stop at checkout for the host's yes.
+8. **Caps:** "Want a spending cap?" Per order, per month, both, or no cap.
+9. **Check time:** when the daily task runs. 10:00 unless the host picks
    another time.
-9. **Recurring task:** create the **Supply Core** recurring task yourself,
+10. **Recurring task:** create the **Supply Core** recurring task yourself,
    daily at the check time, from
    [`references/supply-core-task.md`](references/supply-core-task.md), with
    its prompt word for word. Then call `save_supply_settings` with
    `routineCreated: true`.
-10. **Check each store:** see [Your stores](#your-stores). Save each ready
+11. **Check each store:** see [Your stores](#your-stores). Save each ready
     store with `save_supply_settings` `{ storesReady: ["<store>"] }`.
     Activate is refused until every store in the plan is ready.
-11. **Review and Activate:** summarize the list, mode, caps, and check time in
-    your own words. On the host's Activate, call `activate_supplies`.
+12. **Review and Activate:** summarize the list, how it orders, when the
+    cleaner is asked, mode, caps, and check time in your own words. Say that
+    Activate doesn't order the whole list. On the host's Activate, call
+    `activate_supplies`.
 
 After Activate, every change (an item, the mode, a cap, the check time) takes
 the host's yes: call the tool without `confirmation` to get the question and a
@@ -163,7 +178,9 @@ the cleaner's message is handled `supply-report` (see below).
 ## With Cleaner Core
 
 When a Cleaner Core message is handled `supply-report`, the cleaner answered
-`Anything running low?` after DONE. Match their words to the list yourself
+`Anything running low?`, right after the door code or in the done text. Items
+marked `cleanerThere` in `check_supplies` were named as they arrived: order
+them same-day now, so they land while the cleaner is there. Match their words to the list yourself
 and call `report_low` with those item ids, `source: "cleaner"`. Never pass
 their words. Ask the host about anything not on the list: "Maria says trash
 bags are low. They're not on your list. Want to add them?" Then run the steps

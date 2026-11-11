@@ -16,8 +16,8 @@ Rental supply reorderer
 
 Keep your rental stocked without thinking about it.
 
-You pick each product once, and I reorder it on your schedule, from the store
-you choose. I check every cart against your spending caps and price history
+You pick each product once, and I reorder it when your cleaner says it's low,
+or on your schedule if you want one, from the store you choose. I check every cart against your spending caps and price history
 before checkout, and I ask you before anything unusual. Your cards stay in your
 Vault. I never see them, and Supply Core never does either.
 
