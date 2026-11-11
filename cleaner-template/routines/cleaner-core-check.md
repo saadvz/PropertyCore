@@ -70,7 +70,7 @@ webhook address, no key, and no secret.
    done until the cleaner replies YES. With `checklist-not-done`, tell the
    host the cleaner said the checklist isn't finished.
    A message handled `supply-report` is the cleaner's answer to `Anything
-   running low?` after DONE. When Supply Core is on, match their words to the
+   running low?` (after the door code or after DONE). When Supply Core is on, match their words to the
    list yourself and call `report_low` with those item ids and
    `source: "cleaner"`, then follow the Supply Core Check steps in
    `supply-template/routines/supply-core-check.md`. Ask the host about

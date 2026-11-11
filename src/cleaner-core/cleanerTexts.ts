@@ -107,6 +107,9 @@ export const PHOTO_FIRST = "Please send a photo of the finished rooms, then repl
 /** DONE's question when the cleaner was sent a checklist. The job is done only after YES. */
 export const CHECKLIST_ASK = "Before I mark it done: is everything on the checklist I sent finished? Reply YES or NO.";
 
+/** Supply Core's question right after the door code, when the host chose to ask as the cleaner arrives. */
+export const SUPPLY_ARRIVAL_ASK = "Supply check: anything running low? Reply with what's low, or NONE, so it can be delivered while you're there.";
+
 /** The done text when Supply Core is on: the cleaner is asked once what's running low. */
 export const SUPPLY_DONE_ASK = "Thanks, cleaning marked done. Anything running low? Reply with what's low, or NONE.";
 

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SUPPLY_DONE_ASK, SUPPLY_NOTED } from "../src/cleaner-core/cleanerTexts";
+import { SUPPLY_ARRIVAL_ASK, SUPPLY_DONE_ASK, SUPPLY_NOTED } from "../src/cleaner-core/cleanerTexts";
 import { liveDeskFor, resetLiveDesks, setCleanerAlertFetch, setCleanerCalendarFetch, type LiveDesk, type ToolReply } from "../src/cleaner-core/liveDesk";
 import { setCleanerGroupFetch, setCleanerTwilioClient } from "../src/cleaner-core/liveSms";
 import { emptySupply, writeSupply } from "../src/supply-core/store";
@@ -70,9 +70,10 @@ async function live(desk: LiveDesk) {
   ok(await desk.markGuestsLeft({ confirmed: true }, PIN_KEY));
 }
 
-function activate(root: string) {
+function activate(root: string, cleanerAsk?: "arrival" | "done") {
   const file = emptySupply();
   file.settings.activatedAt = new Date(FROZEN).toISOString();
+  if (cleanerAsk) file.settings.cleanerAsk = cleanerAsk;
   writeSupply(root, file);
 }
 
@@ -100,6 +101,26 @@ describe("the live desk and Supply Core", () => {
     const report = messages.find((m) => m.handled === "supply-report");
     expect(report?.text).toContain("paper towels");
     expect(report?.text).not.toContain("4812");
+  });
+});
+
+describe("the live desk and Supply Core, asking on arrival", () => {
+  it("sends the supplies question right after the door code, labels the answer, and keeps it out of the done text", async () => {
+    const { desk, sms, root } = openDesk();
+    activate(root, "arrival");
+    desk.refreshSupplyAsk();
+    await live(desk);
+    const sent = bodies(sms);
+    const codeAt = sent.findIndex((body) => body.includes(DOOR_CODE));
+    expect(codeAt).toBeGreaterThanOrEqual(0);
+    expect(sent.indexOf(SUPPLY_ARRIVAL_ASK)).toBeGreaterThan(codeAt);
+    await desk.inbound({ id: "low", from: CLEANER, text: "paper towels and sugar" });
+    expect(bodies(sms)).toContain(SUPPLY_NOTED);
+    const messages = ok(await desk.checkNow()).messages as { handled: string; text: string }[];
+    expect(messages.find((m) => m.handled === "supply-report")?.text).toContain("paper towels");
+    await desk.inbound({ id: "done", from: CLEANER, text: "DONE" });
+    expect(bodies(sms)).toContain("Thanks, cleaning marked done.");
+    expect(bodies(sms)).not.toContain(SUPPLY_DONE_ASK);
   });
 });
 

@@ -123,7 +123,7 @@ post a value.
 - **One Supply Core task** checks every property on the account that has
   Supply Core on.
 - **The Supply Core recurring task** runs daily at the check time. When the
-  cleaner reports something low after DONE, the Cleaner Core task shops for
+  cleaner reports something low, the Cleaner Core task shops for
   it right away.
 
 ## Urgent alerts

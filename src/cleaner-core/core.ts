@@ -27,7 +27,7 @@ import {
 } from "../hub/sources";
 import { fingerprintOf, freshnessOf, GUESTY_POLL_MS, staleAfterMs, type FreshnessStatus, type SourceRecord } from "./freshness";
 import { containsCodeToken, redactLine, redactPhone } from "./redact";
-import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, SUPPLY_DONE_ASK, SUPPLY_NOTED, repairDoneAsk, supplyRepairDoneAsk, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupFellBackLine, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, schedulerOptInBody, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
+import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, SUPPLY_ARRIVAL_ASK, SUPPLY_DONE_ASK, SUPPLY_NOTED, repairDoneAsk, supplyRepairDoneAsk, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupFellBackLine, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, schedulerOptInBody, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
 import { codeRoute, GroupNotConfirmed, type GroupSeat } from "./groupThread";
 import { GROK_HELPER } from "./assistant";
 import { codeHandlingText, HEALTH_NOTE, reviewAlert, reviewId, type AuditEvent, type ReviewDetail, type ReviewItem, type ReviewKind } from "./review";
@@ -63,7 +63,9 @@ export type TextKind =
   /** The host's own message, sent only after the host approved its exact text. */
   | "host-message"
   /** The host's saved checklist, to the cleaner after the private code. */
-  | "checklist";
+  | "checklist"
+  /** Supply Core's "anything running low?", right after the door code, when the host chose to ask on arrival. */
+  | "supply-ask";
 
 export interface CleanerText {
   to: string;
@@ -124,6 +126,8 @@ export interface JobView {
   checklistConfirmedAt?: string;
   /** The cleaner's answer to the supplies question after DONE, redacted, or none. */
   supplyReport?: SupplyReport;
+  /** The cleaner's answer to the supplies question sent after the door code, redacted, or none. */
+  arrivalSupplyReport?: SupplyReport;
 }
 
 export interface SupplyReport {
@@ -404,6 +408,11 @@ export interface CleanerCoreOptions {
   /** Supply Core is on: the done text also asks what's running low, and the next reply is the answer. */
   supplyAsk?: boolean;
   /**
+   * With supplyAsk: the question goes on its own right after the door code instead, so what's low can
+   * be delivered while the cleaner is there. The done text then leaves supplies out.
+   */
+  supplyAskOnArrival?: boolean;
+  /**
    * Fixer Core is on and the host chose it: the done text also asks "Anything broken?", and the
    * next reply is labeled repair-report (with Supply Core on too, it covers supplies as well).
    */
@@ -593,13 +602,13 @@ export function redactDigitRuns(text: string): string {
 
 /** Texts that ask the cleaner their own YES or NO. */
 const CLEANER_QUESTIONS = new Set<TextKind>(["offer", "corrected", "opt-in"]);
-const JOB_TEXTS = new Set<TextKind>(["offer", "corrected", "confirm", "reminder", "cancel-update", "declined", "started", "done", "checklist"]);
+const JOB_TEXTS = new Set<TextKind>(["offer", "corrected", "confirm", "reminder", "cancel-update", "declined", "started", "done", "checklist", "supply-ask"]);
 /**
  * Engine job texts that carry a due group intro in the same post, the intro first. Two texts sent
  * back to back into a group can reach each phone in a different order. The door code, the injury
  * alert, and the landlord's own messages always go on their own.
  */
-const INTRO_RIDES = new Set<TextKind>(["offer", "corrected", "confirm", "reminder", "cancel-update", "declined", "started", "done", "next", "checklist"]);
+const INTRO_RIDES = new Set<TextKind>(["offer", "corrected", "confirm", "reminder", "cancel-update", "declined", "started", "done", "next", "checklist", "supply-ask"]);
 /** Job notes kept during a cleaning, newest last, and the length of each. */
 const MAX_NOTES = 5;
 const MAX_NOTE = 200;
@@ -615,6 +624,7 @@ export const GROUP_ROUTED: ReadonlySet<TextKind> = new Set<TextKind>([
   "done",
   "next",
   "checklist",
+  "supply-ask",
   "held",
   "emergency",
   "host-message",
@@ -700,6 +710,10 @@ interface Job {
   supplyAskedAt?: string;
   /** The cleaner's supplies answer. */
   supplyReport?: SupplyReport;
+  /** When the supplies question went right after the door code. */
+  arrivalSupplyAskedAt?: string;
+  /** The cleaner's answer to that question. */
+  arrivalSupplyReport?: SupplyReport;
 }
 
 interface Clearance {
@@ -1099,6 +1113,8 @@ class Engine implements CleanerCore {
     if (from === this.owner && stripFiller(normalize(input.text)) === "retry") return this.retryUncertain(input.id);
     const supplyJob = this.supplyWaiting(from, input.text);
     if (supplyJob) return this.answerSupplies(supplyJob, from, input.id, input.text);
+    const arrivalJob = this.arrivalSupplyWaiting(from, input.text);
+    if (arrivalJob) return this.answerArrivalSupplies(arrivalJob, from, input.id, input.text);
     const asked = this.pin && from === this.cleanerPhone && this.cleanerConsent === "in" ? this.progressJob() : undefined;
     if (asked && this.checklistWaiting(asked) && (isYes(input.text) || isNo(input.text))) return this.answerChecklist(asked, from, input.id, isYes(input.text));
     if (this.pin && from === this.cleanerPhone && isYes(input.text) && this.awaitingOptIn()) return this.optInCleaner(input.id);
@@ -1441,7 +1457,10 @@ class Engine implements CleanerCore {
     if (this.progressJob()) return true;
     const now = this.now().getTime();
     return this.ordered().some(
-      (job) => (job.checklistAskedAt && !job.done && this.checklistWaiting(job)) || (job.done && job.supplyAskedAt && !job.supplyReport && now - Date.parse(job.supplyAskedAt) <= SUPPLY_ANSWER_MS),
+      (job) =>
+        (job.checklistAskedAt && !job.done && this.checklistWaiting(job)) ||
+        (job.done && job.supplyAskedAt && !job.supplyReport && now - Date.parse(job.supplyAskedAt) <= SUPPLY_ANSWER_MS) ||
+        (job.arrivalSupplyAskedAt && !job.arrivalSupplyReport && now - Date.parse(job.arrivalSupplyAskedAt) <= SUPPLY_ANSWER_MS),
     );
   }
 
@@ -1964,28 +1983,34 @@ class Engine implements CleanerCore {
     return { ...replied, label: "checklist-not-done" };
   }
 
+  /** True when the done text asks about supplies: on, and not already asked after this job's door code. */
+  private suppliesAfterDone(job: Job): boolean {
+    return Boolean(this.options.supplyAsk && !job.arrivalSupplyAskedAt);
+  }
+
   /** True when the done text asks the cleaner a question: supplies, repairs, or both. */
-  private asksAfterDone(): boolean {
-    return Boolean(this.options.supplyAsk || this.options.repairAsk);
+  private asksAfterDone(job: Job): boolean {
+    return Boolean(this.suppliesAfterDone(job) || this.options.repairAsk);
   }
 
   /** The done text. A group names the cleaner itself, so no first name goes in here. */
-  private doneBody(): string {
+  private doneBody(job: Job): string {
     const name = this.groupChat ? undefined : this.options.cleanerName;
-    if (this.options.repairAsk) return this.options.supplyAsk ? supplyRepairDoneAsk(name) : repairDoneAsk(name);
-    return this.options.supplyAsk ? SUPPLY_DONE_ASK : "Thanks, cleaning marked done.";
+    const supplies = this.suppliesAfterDone(job);
+    if (this.options.repairAsk) return supplies ? supplyRepairDoneAsk(name) : repairDoneAsk(name);
+    return supplies ? SUPPLY_DONE_ASK : "Thanks, cleaning marked done.";
   }
 
   /** Marks the cleaning done once the cleaner's acknowledgement went out, and tells the host. */
   private async markDone(job: Job, from: string, id: string): Promise<ReceiveResult & { label?: MessageHandled }> {
-    const body = this.doneBody();
+    const body = this.doneBody(job);
     const result = await this.reply(from, body, "done", "done", id, job.id);
     const acked = result.sent.length > 0 || this.delivery(`done:${id}`) === "sent";
     if (acked) {
       job.started = true;
       job.done = true;
       job.doneAt = this.now().toISOString();
-      if (this.asksAfterDone() && !job.supplyAskedAt) job.supplyAskedAt = job.doneAt;
+      if (this.asksAfterDone(job) && !job.supplyAskedAt) job.supplyAskedAt = job.doneAt;
       if (!this.inboundIds.includes(id)) this.inboundIds.push(id);
       await this.tellHostDone(job);
     }
@@ -2000,7 +2025,7 @@ class Engine implements CleanerCore {
    * plain-language stop, or a code-like text, which keep their own meaning.
    */
   private supplyWaiting(from: string, raw: string): Job | undefined {
-    if (!this.asksAfterDone() || !from || from !== this.cleanerPhone || this.cleanerConsent !== "in") return undefined;
+    if (!(this.options.supplyAsk || this.options.repairAsk) || !from || from !== this.cleanerPhone || this.cleanerConsent !== "in") return undefined;
     const text = raw.trim();
     if (!text || keywordOf(text) !== undefined || isYes(text) || isDone(text) || isInjuryReport(text) || isPlainLanguageStop(text) || this.looksLikeCode(text)) return undefined;
     // A bare NO while the next cleaning's offer waits declines that offer.
@@ -2021,6 +2046,54 @@ class Engine implements CleanerCore {
     this.inboundIds.push(id);
     this.save();
     return { ...replied, label: this.options.repairAsk ? "repair-report" : "supply-report" };
+  }
+
+  /**
+   * The cleaning whose arrival supplies question this text answers: the same rules as after DONE,
+   * within 12 hours of the question. A checklist question waiting for YES or NO keeps a bare NO.
+   */
+  private arrivalSupplyWaiting(from: string, raw: string): Job | undefined {
+    if (!this.options.supplyAsk || !from || from !== this.cleanerPhone || this.cleanerConsent !== "in") return undefined;
+    const text = raw.trim();
+    if (!text || keywordOf(text) !== undefined || isYes(text) || isDone(text) || isInjuryReport(text) || isPlainLanguageStop(text) || this.looksLikeCode(text)) return undefined;
+    if (isNo(text) && this.ordered().some((item) => this.derive(item) === "offered" || (item.checklistAskedAt && !item.done && this.checklistWaiting(item)))) return undefined;
+    const job = [...this.ordered()].reverse().find((item) => item.arrivalSupplyAskedAt);
+    if (!job || job.arrivalSupplyReport || job.canceled) return undefined;
+    if (this.now().getTime() - Date.parse(job.arrivalSupplyAskedAt!) > SUPPLY_ANSWER_MS) return undefined;
+    return job;
+  }
+
+  /** Saves the cleaner's answer to the arrival supplies question, redacted, and thanks them once. */
+  private async answerArrivalSupplies(job: Job, from: string, id: string, raw: string): Promise<ReceiveResult & { label?: MessageHandled }> {
+    if (this.inboundIds.includes(id)) return { handled: true, reason: "duplicate", sent: [] };
+    const at = this.now().toISOString();
+    const words = raw.trim().toLowerCase().replace(/[^a-z ]+/g, "").trim();
+    job.arrivalSupplyReport = NOTHING_LOW.has(words) ? { none: true, at } : { text: this.noteText(raw), at };
+    // An answer counts as the cleaner having started.
+    if (!job.startedAt && !job.done) job.startedAt = at;
+    const replied = await this.reply(from, SUPPLY_NOTED, "next", "ignored", id, job.id);
+    this.inboundIds.push(id);
+    this.save();
+    return { ...replied, label: "supply-report" };
+  }
+
+  /** Supply Core's question, once per job, right after the door code, when the host chose to ask on arrival. */
+  private async sendArrivalSupplyAsk(job: Job): Promise<CleanerText[]> {
+    const to = this.cleanerRecord()?.phone;
+    if (!this.options.supplyAsk || !this.options.supplyAskOnArrival || !to) return [];
+    const id = `supply-ask:${job.id}`;
+    if (this.delivery(id) === "sent") return [];
+    const text = await this.emit({
+      id,
+      jobId: job.id,
+      to,
+      kind: "supply-ask",
+      body: SUPPLY_ARRIVAL_ASK,
+      afterSend: () => {
+        job.arrivalSupplyAskedAt = this.now().toISOString();
+      },
+    });
+    return text ? [text] : [];
   }
 
   /** The cleaning in progress: the code went to the cleaner and it isn't done, called off, or declined. */
@@ -2229,7 +2302,7 @@ class Engine implements CleanerCore {
         });
       }
       if (text) sent.push(text);
-      if (this.delivery(key) === "sent") sent.push(...(await this.sendChecklist(job)));
+      if (this.delivery(key) === "sent") sent.push(...(await this.sendChecklist(job)), ...(await this.sendArrivalSupplyAsk(job)));
     }
     if (this.groupChat && this.groupPinTerminal && this.delivery(key) !== "sent") return sent;
     if (this.delivery(key) === "failed" && this.owner && !this.groupPhones.includes(this.owner)) {
@@ -3362,6 +3435,7 @@ class Engine implements CleanerCore {
       ...(job.checklist ? { checklist: [...job.checklist] } : {}),
       ...(job.checklistConfirmedAt ? { checklistConfirmedAt: job.checklistConfirmedAt } : {}),
       ...(job.supplyReport ? { supplyReport: { ...job.supplyReport } } : {}),
+      ...(job.arrivalSupplyReport ? { arrivalSupplyReport: { ...job.arrivalSupplyReport } } : {}),
     };
   }
 

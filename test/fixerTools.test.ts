@@ -219,7 +219,7 @@ describe("the hub's setup through Fixer Core", () => {
     expect(readFixer(root).setup.noCalendar).toBe(true);
     expect(hub().calendarsDone()).toBe(false);
     // Supply Core, with its list done and an item that goes by bookings, still asks where the bookings come from.
-    const supply = { ...emptySupply(), setup: { itemsDone: true }, items: [{ schedule: { kind: "bookings", stays: 2 } }] } as unknown as SupplyFile;
+    const supply = { ...emptySupply(), settings: { ...emptySupply().settings, ordering: "schedule" }, setup: { itemsDone: true }, items: [{ schedule: { kind: "bookings", stays: 2 } }] } as unknown as SupplyFile;
     expect(supplySetupAsk(supply, hub())?.step).toBe("sources");
     expect((await handleFixerTool(desk, "activate_fixer", {}))?.isError).toBe(false);
   });

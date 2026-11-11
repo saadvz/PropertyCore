@@ -10,7 +10,7 @@ import { refuseCards } from "../hub/cards";
 import { cartFingerprint, checkCart, type CartInput, type GateContext, type Hold, type Mode } from "./gate";
 import { deadlineFor, dueOn, nextDates, scheduleProblem, type Schedule } from "./schedule";
 import { planStores, supplySetupAsk, unreadyStores } from "./setupAsk";
-import { monthSpentCents, onItsWay, readSupply, writeSupply, type Cart, type Item, type Order, type PlanStore, type Product, type SupplyFile } from "./store";
+import { monthSpentCents, onItsWay, readSupply, writeSupply, type Cart, type CleanerAsk, type Item, type Order, type Ordering, type PlanStore, type Product, type SupplyFile } from "./store";
 
 /**
  * Supply Core's desk: every tool's behaviour over one property's `supply.json`. One call at a time.
@@ -41,12 +41,17 @@ export const CART_MINUTES = 30;
 const CART_EXPIRED = "That cart expired. Check it again.";
 const NO_GO = "No go answer or landlord approval for that order. Check the cart again.";
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
+/** check_supplies' note for items the cleaner named as they arrived. */
+export const CLEANER_THERE =
+  "The cleaner is at the property now and named the items marked cleanerThere. Order them now from a same-day store in the plan, with the soonest delivery window today, so they arrive while the cleaner is still there.";
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export interface DueItem {
   itemId: string;
   name: string;
   why: "schedule" | "report";
+  /** The cleaner named it as they arrived today: order it same-day, so it's delivered while they're there. */
+  cleanerThere?: true;
   deadline: string;
   qtyPerOrder: number;
   preferred: Product;
@@ -74,10 +79,16 @@ export interface ItemInput {
   schedule?: Schedule;
   confirmation?: string;
   done?: true;
+  /** Several items at once: the whole draft after the host confirmed one list. */
+  items?: Omit<ItemInput, "items" | "done" | "confirmation">[];
 }
 
 export interface SettingsInput {
   property?: { name?: string; address: string; timeZone: string };
+  /** reports: ordered only when someone says it's low, with no schedule asked. schedule: on dates too. */
+  ordering?: Ordering;
+  /** When Cleaner Core asks the cleaner what's low: right after the door code, or in the done text. */
+  cleanerAsk?: CleanerAsk;
   mode?: Mode;
   perOrderCapCents?: number | null;
   perMonthCapCents?: number | null;
@@ -251,6 +262,8 @@ export class SupplyDesk {
         line: file.offAt ? "Supplies: off." : this.line(file),
         summary: {
           items: file.items.map((item) => ({ itemId: item.id, name: item.name, qtyPerOrder: item.qtyPerOrder, store: item.preferred.store, schedule: item.schedule })),
+          ordering: file.settings.ordering ?? "schedule",
+          cleanerAsk: file.settings.cleanerAsk ?? "done",
           mode: file.settings.mode,
           ...(file.settings.perOrderCapCents !== undefined ? { perOrderCapCents: file.settings.perOrderCapCents } : {}),
           ...(file.settings.perMonthCapCents !== undefined ? { perMonthCapCents: file.settings.perMonthCapCents } : {}),
@@ -269,6 +282,8 @@ export class SupplyDesk {
       const placeProblem = input.property ? propertyDetailsProblem(input.property) : undefined;
       if (placeProblem) return fail(placeProblem);
       if (input.mode !== undefined && input.mode !== "hands-off" && input.mode !== "checkout") return fail("The mode is hands-off or checkout.");
+      if (input.ordering !== undefined && input.ordering !== "reports" && input.ordering !== "schedule") return fail("Ordering is reports or schedule.");
+      if (input.cleanerAsk !== undefined && input.cleanerAsk !== "arrival" && input.cleanerAsk !== "done") return fail("The cleaner is asked on arrival or when done.");
       if (input.perOrderCapCents !== undefined && input.perOrderCapCents !== null && !isInt(input.perOrderCapCents, 100, 500_000)) return fail("A per-order cap has to be from $1 to $5,000.");
       if (input.perMonthCapCents !== undefined && input.perMonthCapCents !== null && !isInt(input.perMonthCapCents, 100, 2_000_000)) return fail("A monthly cap has to be from $1 to $20,000.");
       if (input.priceJumpPct !== undefined && !isInt(input.priceJumpPct, 5, 100)) return fail("The price-jump check has to be from 5% to 100%.");
@@ -291,6 +306,19 @@ export class SupplyDesk {
         if (!saved.ok) return fail(saved.error);
       }
       if (input.mode) s.mode = input.mode;
+      if (input.cleanerAsk) s.cleanerAsk = input.cleanerAsk;
+      if (input.ordering) {
+        s.ordering = input.ordering;
+        if (input.ordering === "reports") {
+          // Nothing has a standing order: every item, saved or still to come, waits for a low report.
+          s.sharedSchedule = { kind: "reports" };
+          file.setup.scheduleAsked = true;
+          for (const item of file.items) item.schedule = { kind: "reports" };
+        } else if (s.sharedSchedule?.kind === "reports") {
+          delete s.sharedSchedule;
+          delete file.setup.scheduleAsked;
+        }
+      }
       for (const key of ["perOrderCapCents", "perMonthCapCents"] as const) {
         if (input[key] === null) delete s[key];
         else if (input[key] !== undefined) s[key] = input[key];
@@ -324,56 +352,93 @@ export class SupplyDesk {
         this.write(file);
         return ok({ saved: true, next: "Call get_supply_state for the next step." });
       }
+      if (input.items) return this.saveMany(file, input.items, input.confirmation);
       const existing = input.id ? file.items.find((item) => item.id === input.id) : undefined;
       if (input.id && !existing) return fail("There's no item with that id. Call get_supply_state for the list.");
       if (!existing && file.items.length >= MAX_ITEMS) return fail(`The list holds up to ${MAX_ITEMS} items.`);
-      if (!isText(input.name, 60)) return fail("The item needs a name under 60 characters.");
-      if (!isInt(input.qtyPerOrder, 1, 50)) return fail("How many per order has to be from 1 to 50.");
-      const problem = productProblem(input.preferred, "preferred") ?? (input.backup ? productProblem(input.backup, "backup") : undefined);
-      if (problem) return fail(problem);
-      if (input.storeNote !== undefined && (typeof input.storeNote !== "string" || input.storeNote.length >= 160)) return fail("The store note has to be under 160 characters.");
-      const plan = file.settings.stores;
-      if (plan) {
-        const allowed = planStores(file);
-        const inPlan = (store: string) => allowed.some((name) => name.trim().toLowerCase() === store.trim().toLowerCase());
-        if (!inPlan(input.preferred!.store) || (input.backup && !inPlan(input.backup.store))) return fail(`Pick products from your stores: ${allowed.join(" or ")}. To use another store, change the store plan with save_supply_stores.`);
-      }
-      // The shared schedule fills in an item saved without one.
-      const schedule = input.schedule ?? file.settings.sharedSchedule;
-      if (!schedule) return fail("The item needs a schedule.");
-      const scheduleIssue = scheduleProblem(schedule, this.today());
-      if (scheduleIssue) return fail(scheduleIssue);
-      const gate = this.approved(file, "supply-item", existing?.id ?? "new", input, `Save ${input.name}: ${input.qtyPerOrder} × ${input.preferred!.title} from ${input.preferred!.store}?`);
+      const item = this.buildItem(file, input, existing);
+      if (typeof item === "string") return fail(item);
+      const gate = this.approved(file, "supply-item", existing?.id ?? "new", input, `Save ${item.name}: ${item.qtyPerOrder} × ${item.preferred.title} from ${item.preferred.store}?`);
       if (gate !== "go") return gate;
-      const now = this.deps.now().toISOString();
-      const product = (p: ProductInput, before?: Product): Product => ({
-        title: p.title.trim(),
-        store: p.store.trim(),
-        url: p.url,
-        packSize: p.packSize.trim(),
-        priceCents: p.priceCents,
-        pickedAt: before && before.url === p.url ? before.pickedAt : now,
-        // A different product starts its price history over.
-        ...(before && before.url === p.url && before.lastPaidCents !== undefined ? { lastPaidCents: before.lastPaidCents } : {}),
-      });
-      const item: Item = {
-        ...(existing ?? {}),
-        id: existing?.id ?? newId("it_", 8),
-        name: input.name.trim(),
-        qtyPerOrder: input.qtyPerOrder,
-        preferred: product(input.preferred!, existing?.preferred),
-        storeNote: (input.storeNote ?? "").trim(),
-        schedule,
-        savedAt: existing?.savedAt ?? now,
-      };
-      if (input.backup) item.backup = product(input.backup, existing?.backup);
-      else delete item.backup;
-      if (existing) file.items[file.items.indexOf(existing)] = item;
-      else file.items.push(item);
-      file.draft = file.draft.filter((name) => name.trim().toLowerCase() !== item.name.toLowerCase());
+      this.putItem(file, item, existing);
       this.write(file);
       return ok({ saved: true, itemId: item.id, ...(file.settings.activatedAt ? {} : { next: "Ask whether there's anything else to add." }) });
     });
+  }
+
+  /** The whole confirmed list in one call: every item is checked first, and nothing saves unless all of them can. */
+  private saveMany(file: SupplyFile, inputs: NonNullable<ItemInput["items"]>, confirmation: string | undefined): SupplyReply {
+    if (inputs.length === 0) return fail("Pass the items to save.");
+    const built: { item: Item; existing?: Item }[] = [];
+    const names = new Set<string>();
+    for (const [index, input] of inputs.entries()) {
+      const existing = input.id ? file.items.find((item) => item.id === input.id) : file.items.find((item) => item.name.toLowerCase() === input.name?.trim().toLowerCase());
+      if (input.id && !existing) return fail(`Item ${index + 1}: there's no item with that id. Call get_supply_state for the list.`);
+      const item = this.buildItem(file, input, existing);
+      if (typeof item === "string") return fail(`${input.name?.trim() || `Item ${index + 1}`}: ${item}`);
+      if (names.has(item.name.toLowerCase())) return fail(`${item.name} is in the list twice.`);
+      names.add(item.name.toLowerCase());
+      built.push({ item, ...(existing ? { existing } : {}) });
+    }
+    const added = built.filter((entry) => !entry.existing).length;
+    if (file.items.length + added > MAX_ITEMS) return fail(`The list holds up to ${MAX_ITEMS} items.`);
+    const change = { items: inputs, ...(confirmation ? { confirmation } : {}) };
+    const gate = this.approved(file, "supply-items", "list", change, `Save these ${built.length} items: ${built.map((entry) => entry.item.name).join(", ")}?`);
+    if (gate !== "go") return gate;
+    for (const { item, existing } of built) this.putItem(file, item, existing);
+    this.write(file);
+    return ok({ saved: built.length, itemIds: built.map((entry) => entry.item.id), ...(file.settings.activatedAt ? {} : { next: "Ask whether there's anything else to add." }) });
+  }
+
+  /** One item from the host's picks, or a plain-language reason it can't be saved. Nothing is written. */
+  private buildItem(file: SupplyFile, input: Omit<ItemInput, "items" | "done">, existing: Item | undefined): Item | string {
+    if (!isText(input.name, 60)) return "The item needs a name under 60 characters.";
+    if (!isInt(input.qtyPerOrder, 1, 50)) return "How many per order has to be from 1 to 50.";
+    const problem = productProblem(input.preferred, "preferred") ?? (input.backup ? productProblem(input.backup, "backup") : undefined);
+    if (problem) return problem;
+    if (input.storeNote !== undefined && (typeof input.storeNote !== "string" || input.storeNote.length >= 160)) return "The store note has to be under 160 characters.";
+    const plan = file.settings.stores;
+    if (plan) {
+      const allowed = planStores(file);
+      const inPlan = (store: string) => allowed.some((name) => name.trim().toLowerCase() === store.trim().toLowerCase());
+      if (!inPlan(input.preferred!.store) || (input.backup && !inPlan(input.backup.store))) return `Pick products from your stores: ${allowed.join(" or ")}. To use another store, change the store plan with save_supply_stores.`;
+    }
+    // The shared schedule fills in an item saved without one; with only-when-low ordering, every item waits for a report.
+    const schedule = file.settings.ordering === "reports" ? { kind: "reports" as const } : (input.schedule ?? file.settings.sharedSchedule);
+    if (!schedule) return "The item needs a schedule.";
+    const scheduleIssue = scheduleProblem(schedule, this.today());
+    if (scheduleIssue) return scheduleIssue;
+    const now = this.deps.now().toISOString();
+    const product = (p: ProductInput, before?: Product): Product => ({
+      title: p.title.trim(),
+      store: p.store.trim(),
+      url: p.url,
+      packSize: p.packSize.trim(),
+      priceCents: p.priceCents,
+      pickedAt: before && before.url === p.url ? before.pickedAt : now,
+      // A different product starts its price history over.
+      ...(before && before.url === p.url && before.lastPaidCents !== undefined ? { lastPaidCents: before.lastPaidCents } : {}),
+    });
+    const item: Item = {
+      ...(existing ?? {}),
+      id: existing?.id ?? newId("it_", 8),
+      name: input.name.trim(),
+      qtyPerOrder: input.qtyPerOrder,
+      preferred: product(input.preferred!, existing?.preferred),
+      storeNote: (input.storeNote ?? "").trim(),
+      schedule,
+      savedAt: existing?.savedAt ?? now,
+    };
+    if (input.backup) item.backup = product(input.backup, existing?.backup);
+    else delete item.backup;
+    return item;
+  }
+
+  /** Puts a built item on the list, in place of the one it changes, and takes its name off the draft. */
+  private putItem(file: SupplyFile, item: Item, existing: Item | undefined): void {
+    if (existing) file.items[file.items.indexOf(existing)] = item;
+    else file.items.push(item);
+    file.draft = file.draft.filter((name) => name.trim().toLowerCase() !== item.name.toLowerCase());
   }
 
   /** The host's whole list, saved as a draft: names only, until their products are picked. */
@@ -614,6 +679,10 @@ export class SupplyDesk {
       const away = onItsWay(file, now);
       const inCart = this.openCartItems(file);
       const due: DueItem[] = [];
+      const today = this.today();
+      // Named by the cleaner as they arrived today: the order should land while they're still there.
+      const there = (itemId: string) =>
+        file.settings.cleanerAsk === "arrival" && file.lowReports.some((report) => report.itemId === itemId && report.source === "cleaner" && this.ymd(report.at) === today);
       for (const { item, why, deadline } of (await this.dueItems(file)).values()) {
         if (away.has(item.id) || inCart.has(item.id)) continue;
         // After a failed calendar read, a by-bookings item waits for a good read.
@@ -622,6 +691,7 @@ export class SupplyDesk {
           itemId: item.id,
           name: item.name,
           why,
+          ...(why === "report" && there(item.id) ? { cleanerThere: true as const } : {}),
           deadline,
           qtyPerOrder: item.qtyPerOrder,
           preferred: item.preferred,
@@ -629,12 +699,12 @@ export class SupplyDesk {
           ...(item.preferred.lastPaidCents !== undefined ? { lastPaidCents: item.preferred.lastPaidCents } : {}),
         });
       }
-      const today = this.today();
       const late = file.orders.filter((order) => order.status === "placed" && !order.deliveredAt && !order.lateTold && order.deadline !== undefined && order.deadline < today);
       for (const order of late) order.lateTold = true;
       this.write(file);
       return ok({
         due,
+        ...(due.some((entry) => entry.cleanerThere) ? { cleanerThere: CLEANER_THERE } : {}),
         ...(file.settings.stores ? { stores: file.settings.stores } : {}),
         ...(sourcesFailed ? { sourcesFailed: true, next: googleMissing ? GOOGLE_EVENTS_NEEDED : "Tell the host a booking calendar couldn't be read, so by-bookings items wait for the next check." } : {}),
         unconfirmed: file.orders.filter((order) => order.status === "unconfirmed"),

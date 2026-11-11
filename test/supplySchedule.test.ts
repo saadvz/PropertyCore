@@ -50,8 +50,17 @@ describe("nextDates", () => {
 describe("dueOn", () => {
   const base = { startYmd: "2026-11-01", todayYmd: "2026-11-04", checkouts: [] as string[], lowReported: false };
 
-  it("is due on Activate for an every-N-days item never ordered", () => {
-    expect(dueOn({ ...base, schedule: { kind: "every", days: 21 } })).toMatchObject({ due: true, why: "schedule" });
+  it("an every-N-days item never ordered first comes due N days after its start, not on Activate", () => {
+    expect(dueOn({ ...base, schedule: { kind: "every", days: 21 } }).due).toBe(false);
+    expect(dueOn({ ...base, todayYmd: "2026-11-21", schedule: { kind: "every", days: 21 } }).due).toBe(false);
+    expect(dueOn({ ...base, todayYmd: "2026-11-22", schedule: { kind: "every", days: 21 } })).toMatchObject({ due: true, why: "schedule", occurrenceYmd: "2026-11-22" });
+  });
+
+  it("an only-when-low item is due only on a report, and has no dates", () => {
+    expect(dueOn({ ...base, todayYmd: "2030-01-01", schedule: { kind: "reports" } }).due).toBe(false);
+    expect(dueOn({ ...base, schedule: { kind: "reports" }, lowReported: true })).toMatchObject({ due: true, why: "report" });
+    expect(scheduleProblem({ kind: "reports" }, "2026-11-04")).toBeUndefined();
+    expect(nextDates({ kind: "reports" }, "2026-11-04", "2026-11-04", 3)).toEqual([]);
   });
 
   it("is due again N days after the last order, not before", () => {

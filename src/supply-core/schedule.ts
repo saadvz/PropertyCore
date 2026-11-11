@@ -6,6 +6,8 @@ import { addCalendarDays } from "../hub/calendar";
  */
 
 export type Schedule =
+  /** No dates at all: ordered only when the cleaner or the host reports it low. */
+  | { kind: "reports" }
   | { kind: "every"; days: number }
   | { kind: "every"; monthlyOn: number }
   | { kind: "bookings"; stays: number }
@@ -200,6 +202,7 @@ const horizon = (ymd: string) => addCalendarDays(ymd, 366 * LOOKAHEAD_YEARS);
 
 /** A plain-language refusal, or undefined when the schedule is valid. `todayYmd` is the property's local date. */
 export function scheduleProblem(schedule: Schedule, todayYmd: string): string | undefined {
+  if (schedule.kind === "reports") return undefined;
   if (schedule.kind === "every" && "days" in schedule) {
     return Number.isInteger(schedule.days) && schedule.days >= 1 && schedule.days <= 365 ? undefined : "Every so many days has to be from 1 to 365.";
   }
@@ -218,6 +221,7 @@ export function scheduleProblem(schedule: Schedule, todayYmd: string): string | 
 /** The next `count` dates strictly after `afterYmd`. Bookings use the checkouts on which each count is reached. */
 export function nextDates(schedule: Schedule, startYmd: string, afterYmd: string, count: number, checkouts: readonly string[] = []): string[] {
   const out: string[] = [];
+  if (schedule.kind === "reports") return out;
   if (schedule.kind === "bookings") {
     const later = [...checkouts].filter((day) => day > afterYmd).sort();
     for (let i = schedule.stays - 1; i < later.length && out.length < count; i += schedule.stays) out.push(later[i]!);
@@ -234,7 +238,7 @@ export function nextDates(schedule: Schedule, startYmd: string, afterYmd: string
  * A schedule's dates from `startYmd` up to `endYmd`. `fromYmd` lets a monthly schedule skip the
  * months before it; a custom rule always runs from its start, so COUNT and INTERVAL stay right.
  */
-function dates(schedule: Exclude<Schedule, { kind: "bookings" }>, startYmd: string, fromYmd: string, endYmd: string): Iterable<string> {
+function dates(schedule: Exclude<Schedule, { kind: "bookings" } | { kind: "reports" }>, startYmd: string, fromYmd: string, endYmd: string): Iterable<string> {
   if (schedule.kind === "custom") {
     const rule = parseRule(schedule.rrule);
     return typeof rule === "string" ? [] : occurrences(rule, startYmd, endYmd);
@@ -257,9 +261,10 @@ export interface DueInput {
 export function dueOn(input: DueInput): { due: boolean; why?: "schedule" | "report"; occurrenceYmd?: string } {
   if (input.lowReported) return { due: true, why: "report" };
   const { schedule, anchorYmd, startYmd, todayYmd } = input;
+  if (schedule.kind === "reports") return { due: false };
   if (schedule.kind === "every" && "days" in schedule) {
-    if (!anchorYmd) return { due: true, why: "schedule", occurrenceYmd: todayYmd };
-    const next = addCalendarDays(anchorYmd, schedule.days);
+    // Never ordered: the first one comes N days after the item's start, so Activate doesn't order the whole list.
+    const next = addCalendarDays(anchorYmd ?? startYmd, schedule.days);
     return next <= todayYmd ? { due: true, why: "schedule", occurrenceYmd: next } : { due: false };
   }
   if (schedule.kind === "bookings") {

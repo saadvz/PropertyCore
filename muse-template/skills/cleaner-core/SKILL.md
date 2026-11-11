@@ -294,7 +294,7 @@ before you tell the host about the message. Each link works for one hour.
 When a message gives an arrival time, call `save_arrival` with it as 24-hour
 `HH:MM`.
 With Supply Core on, a message handled `supply-report` is the cleaner's answer
-to `Anything running low?` after DONE: match it to the list and call
+to `Anything running low?` (after the door code or after DONE): match it to the list and call
 `report_low` with the item ids and `source: "cleaner"`, as your Supply Core
 skill says. Never pass the cleaner's words.
 To reply to a message with `reply: open`, write one short reply and save it

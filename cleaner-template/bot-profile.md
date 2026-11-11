@@ -23,8 +23,8 @@ the cleaner says. When the cleaning is done, I check the photos against your
 checklist, tell you how it went, and show you the photos.
 
 If you want, I help you pay the cleaner after each cleaning with a Venmo link,
-and I keep the place stocked with Supply Core: I reorder supplies on a schedule
-and when the cleaner says something is running low. Your cards stay in your
+and I keep the place stocked with Supply Core: I order what the cleaner says is
+running low, and on a schedule too if you want one. Your cards stay in your
 Vault, and I stop for your yes before checkout unless you choose hands-off.
 
 ## Suggested starting prompts
@@ -123,7 +123,7 @@ Every booking:
 Supplies, when Supply Core is on:
 
 - A message handled `supply-report` is the cleaner's answer to "Anything
-  running low?" after DONE. Match their words to the list yourself and call
+  running low?" (after the door code or after DONE). Match their words to the list yourself and call
   `report_low` with those item ids and `source: "cleaner"`. Never pass their
   words. Ask the host about anything not on the list. Then follow the Supply
   Core Check steps.

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hubFor, resetHubs } from "../src/hub/hub";
 import { resetSupplyDesks, supplyDeskFor, type SupplyDeps } from "../src/supply-core/desk";
-import { emptySupply, monthSpentCents, readSupply, type Order } from "../src/supply-core/store";
+import { emptySupply, monthSpentCents, readSupply, writeSupply, type Order } from "../src/supply-core/store";
 
 /** Supply Core setup on a made-up property. Made-up stores and links only; nothing reaches a store. */
 
@@ -24,7 +24,15 @@ function folder(): string {
   return dir;
 }
 
-function standalone(root = folder()) {
+/** The host already answered how Supply Core orders (on a schedule too), so setup goes on to the list. */
+function orderingChosen(root: string): void {
+  const file = emptySupply();
+  file.settings.ordering = "schedule";
+  writeSupply(root, file);
+}
+
+function standalone(root = folder(), { fresh = false } = {}) {
+  if (!fresh) orderingChosen(root);
   const deps: SupplyDeps = { now: () => NOW };
   return { root, desk: supplyDeskFor(root, deps) };
 }
@@ -34,6 +42,7 @@ function cleaning(root = folder()) {
   const hub = hubFor(root, { now: () => NOW });
   hub.saveProperty({ nickname: PROPERTY.name, address: PROPERTY.address, timeZone: PROPERTY.timeZone });
   hub.setCalendars({ calendars: [{ name: "Airbnb", url: "https://calendar.example/lane.ics" }], done: true });
+  orderingChosen(root);
   const deps: SupplyDeps = { now: () => NOW, cleaningOn: () => true };
   return { root, desk: supplyDeskFor(root, deps) };
 }
@@ -69,10 +78,12 @@ async function activated() {
 }
 
 describe("setup", () => {
-  it("asks property, items, mode, caps, check time, routine, review, in order, standalone", async () => {
-    const { desk } = standalone();
+  it("asks property, ordering, items, mode, caps, check time, routine, review, in order, standalone", async () => {
+    const { desk } = standalone(undefined, { fresh: true });
     expect(await step(desk)).toBe("property");
     await desk.saveSettings({ property: PROPERTY });
+    expect(await step(desk)).toBe("ordering");
+    await desk.saveSettings({ ordering: "schedule", cleanerAsk: "done" });
     expect(await step(desk)).toBe("list");
     await desk.saveList({ names: ["Paper towels"] });
     expect(await step(desk)).toBe("stores");
@@ -387,9 +398,9 @@ describe("address first, the whole list, then where to buy", () => {
     await desk.saveList({ names: ["Paper towels", "Dish soap"] });
     await desk.saveStores({ primary: { name: "Example Mart", channel: "shipping" } });
     await desk.saveSettings({ sharedSchedule: null });
-    const products = (await desk.state()).structured?.ask as { step: string; questions: { field: string }[] };
+    const products = (await desk.state()).structured?.ask as { step: string; questions: { field: string; how?: string }[] };
     expect(products.step).toBe("products");
-    expect(products.questions.map((q) => q.field)).toContain("schedule");
+    expect(products.questions[0]!.how).toContain("Each item needs its own schedule");
     const { schedule: _schedule, ...bare } = towels;
     expect((await desk.saveItem(bare)).isError).toBe(true);
   });

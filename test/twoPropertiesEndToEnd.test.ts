@@ -90,6 +90,8 @@ beforeAll(async () => {
   await tool("save_supply_settings", { propertyId: lane.id, mode: "hands-off", perOrderCapCents: null, perMonthCapCents: null, checkTime: "10:00", routineCreated: true });
   await tool("activate_supplies", { property: lane.id });
   const itemId = readSupply(m.cleaningRoot(accountId)).items[0]!.id;
+  // Activate doesn't order the list by itself: the host says towels are low.
+  await tool("report_low", { property: lane.id, itemIds: [itemId], source: "host" });
   const due = await tool("check_supplies", { property: lane.id });
   const deadline = (due.structured?.due as { deadline: string }[])[0]!.deadline;
   const go = await tool("check_cart", { property: lane.id, store: "Example Mart", items: [{ itemId, product: "preferred", qty: 2, unitCents: 2400 }], shippingCents: 0, taxCents: 0, totalCents: 4800, deliveryBy: deadline });

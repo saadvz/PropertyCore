@@ -8,7 +8,7 @@ import type { SupplyFile } from "./store";
  * here are Grok's; src/hosted/supplyWording.ts gives Muse its own.
  */
 
-export type SupplyStep = "property" | "list" | "stores" | "schedule" | "products" | "sources" | "accounts" | "mode" | "caps" | "check-time" | "routine" | "review";
+export type SupplyStep = "property" | "ordering" | "list" | "stores" | "schedule" | "products" | "sources" | "accounts" | "mode" | "caps" | "check-time" | "routine" | "review";
 
 export interface SupplyAsk {
   step: SupplyStep;
@@ -16,12 +16,37 @@ export interface SupplyAsk {
   questions: AskQuestion[];
 }
 
+/** Asked first: whether anything has a standing order at all, and when the cleaner is asked what's low. */
+const ORDERING_QUESTIONS: AskQuestion[] = [
+  {
+    field: "ordering",
+    ask: "how Supply Core decides when to order",
+    required: true,
+    options: [
+      { value: "reports", label: "Only when it's low" },
+      { value: "schedule", label: "On a schedule too" },
+    ],
+    how: "Explain it in a sentence or two: with only when it's low, nothing has a standing order, and an item is ordered only when the cleaner (or the host) says it's running low, which suits a rental with little storage. With a schedule, items are also reordered on dates the host picks. Save it with save_supply_settings { ordering }.",
+  },
+  {
+    field: "cleanerAsk",
+    ask: "when the cleaner is asked what's running low",
+    required: false,
+    options: [
+      { value: "arrival", label: "When they arrive" },
+      { value: "done", label: "When they finish" },
+    ],
+    default: "arrival",
+    how: "When they arrive: the question goes right after the door code, and what they name is ordered at once from a same-day store, so it's delivered while they're still there. When they finish: it's in the done text, and the order arrives by the next cleaning. Skip it when Cleaner Core doesn't text a cleaner for this property. Save it with save_supply_settings { cleanerAsk }.",
+  },
+];
+
 const LIST_QUESTION: AskQuestion = {
   field: "names",
-  ask: "What do you want restocked regularly? List everything, up to 30 items.",
+  ask: "Which supplies should Supply Core keep track of? List everything, up to 30 items.",
   required: true,
   example: "Paper towels, dish soap, coffee pods",
-  how: "Ask in one message. Split their answer into items, read the list back once to confirm, then call save_supply_list with the names.",
+  how: "Ask in one message. Tell them nothing is ordered while they build the list. Split their answer into items, read the list back once to confirm, then call save_supply_list with the names.",
 };
 
 const STORE_QUESTIONS: AskQuestion[] = [
@@ -30,7 +55,7 @@ const STORE_QUESTIONS: AskQuestion[] = [
     ask: "which one store to buy the whole list from",
     required: true,
     how:
-      "Before searching for products, look at the whole draft list, the delivery address, and how soon things are needed. The property is usually empty, so offer only stores that ship to the door from their own site (like Amazon, Walmart, Target, Sam's Club, or Costco) or same-day services whose driver can leave it at the door (like Instacart and Uber Eats). From Amazon, only items shipped and sold by Amazon. Before you suggest Walmart, Target, Sam's Club or Costco, check with your own search that there's one near the address, and leave out any that isn't. Never offer pickup, anything that needs a signature, a third-party seller inside a marketplace, or a local store that doesn't deliver to the address. Offer only stores you can actually check out with now, through a connector or the store's own checkout. Suggest the one store that covers the whole list in time; if none does, the fewest that do. Name any membership it needs and ask whether the host has it. Save its name and channel: shipping or same-day. When the host picks Walmart or Target, they also deliver same-day from a store near the address, so save that store's same-day as fast too and don't ask the next question.",
+      "Before searching for products, look at the whole draft list, the delivery address, and how soon things are needed. The property is usually empty, so offer only stores that ship to the door from their own site (like Amazon, Walmart, Target, Sam's Club, or Costco) or same-day services whose driver can leave it at the door (like DoorDash, Instacart and Uber Eats). When the cleaner is asked what's low as they arrive, what they name has to arrive the same day: make the main store a same-day one, or add a same-day store next. From Amazon, only items shipped and sold by Amazon. Before you suggest Walmart, Target, Sam's Club or Costco, check with your own search that there's one near the address, and leave out any that isn't. Never offer pickup, anything that needs a signature, a third-party seller inside a marketplace, or a local store that doesn't deliver to the address. Offer only stores you can actually check out with now, through a connector or the store's own checkout. Suggest the one store that covers the whole list in time; if none does, the fewest that do. Name any membership it needs and ask whether the host has it. Save its name and channel: shipping or same-day. When the host picks Walmart or Target, they also deliver same-day from a store near the address, so save that store's same-day as fast too and don't ask the next question.",
   },
   {
     field: "fast",
@@ -42,14 +67,15 @@ const STORE_QUESTIONS: AskQuestion[] = [
     ],
     default: "yes",
     when: "the main store isn't Walmart or Target",
-    how: "Use the same rules. Offer Instacart and Uber Eats, and any other same-day service that delivers to the address. Save it as fast with channel same-day.",
+    how: "Use the same rules. Offer DoorDash, Instacart and Uber Eats, and any other same-day service that delivers to the address. Save it as fast with channel same-day.",
   },
 ];
 
 const SCHEDULE_HOW =
-  "Every: a number of days (1 to 365) or a day of the month (1 to 28). By bookings: once every so many stays (1 to 50). Other: write an RRULE from their words, call preview_schedule, and read the next 3 dates back before saving.";
+  "Only when it's low: { kind: \"reports\" }, ordered only when the cleaner or the host says it's low. Every: a number of days (1 to 365) or a day of the month (1 to 28). By bookings: once every so many stays (1 to 50). Other: write an RRULE from their words, call preview_schedule, and read the next 3 dates back before saving.";
 
 const SCHEDULE_OPTIONS = [
+  { value: "reports", label: "Only when it's low" },
   { value: "every", label: "Every…" },
   { value: "bookings", label: "By bookings" },
   { value: "custom", label: "Other" },
@@ -90,13 +116,9 @@ const ITEM_QUESTIONS: AskQuestion[] = [
   },
   {
     field: "backup",
-    ask: "whether they want a backup product, and which",
+    ask: "nothing unless the host asks for one: a backup product",
     required: false,
-    options: [
-      { value: "yes", label: "Pick a backup" },
-      { value: "no", label: "No backup" },
-    ],
-    how: `For a backup: ${CARDS} Use the products they didn't pick, or search again.`,
+    how: `Don't ask. If the host wants a backup: ${CARDS} Use the products they didn't pick, or search again.`,
   },
   { field: "qtyPerOrder", ask: "how many to buy each time", required: true, default: "1" },
   {
@@ -107,6 +129,22 @@ const ITEM_QUESTIONS: AskQuestion[] = [
     how: SCHEDULE_HOW,
   },
 ];
+
+/**
+ * The whole draft at once: the agent picks a product for every item and the host confirms one list,
+ * instead of product cards and four questions per item.
+ */
+function listQuestion(eachSchedule: boolean): AskQuestion {
+  const schedule = eachSchedule
+    ? ` Each item needs its own schedule: suggest one per item in the same list (${SCHEDULE_HOW}) and let the host change any.`
+    : " The shared schedule covers every item, so leave schedule out.";
+  return {
+    field: "items",
+    ask: "nothing until you've searched: then whether the products you picked for the whole list look right",
+    required: true,
+    how: `For each item on the draft, search the plan's stores yourself and pick the best match: the store's own listing, a pack size that suits a rental, and a fair price per unit. Then show the whole list once, one short line per item with the product, pack size, price, and store (this confirm list is the one place products go as text), and ask the host to confirm it or name any to change. Quantity is 1 of each unless they say otherwise. Don't ask about backups. For an item they want to change: ${CARDS}${schedule} When they confirm, call save_supply_item once with items: [...], each with its name, qtyPerOrder, and preferred product (title, store, https link, pack size, price in cents). Saving orders nothing.`,
+  };
+}
 
 const MORE: AskQuestion = {
   field: "more",
@@ -147,10 +185,13 @@ export function supplySetupAsk(file: SupplyFile, hub: Hub): SupplyAsk | undefine
       ],
     };
   }
+  // Asked before the list, and of a setup already under way, so no schedule is asked of a host who wants none.
+  if (!s.ordering) return { step: "ordering", tool: "save_supply_settings", questions: ORDERING_QUESTIONS };
   if (!file.setup.itemsDone || file.items.length === 0) {
     if (file.items.length === 0 && file.draft.length === 0) return { step: "list", tool: "save_supply_list", questions: [LIST_QUESTION] };
     if (!s.stores) return { step: "stores", tool: "save_supply_stores", questions: STORE_QUESTIONS };
     if (file.items.length === 0 && file.draft.length >= 2 && !file.setup.scheduleAsked) return { step: "schedule", tool: "save_supply_settings", questions: SCHEDULE_QUESTIONS };
+    if (file.draft.length >= 2) return { step: "products", tool: "save_supply_item", questions: [listQuestion(!s.sharedSchedule)] };
     const perItem = s.sharedSchedule ? ITEM_QUESTIONS.filter((q) => q.field !== "schedule") : ITEM_QUESTIONS;
     if (file.draft.length > 0) return { step: "products", tool: "save_supply_item", questions: perItem };
     return { step: "products", tool: "save_supply_item", questions: [MORE] };
@@ -246,6 +287,14 @@ export function supplySetupAsk(file: SupplyFile, hub: Hub): SupplyAsk | undefine
   return {
     step: "review",
     tool: "activate_supplies",
-    questions: [{ field: "activate", ask: "whether to start: summarize the list, mode, caps, and check time in your own words", required: true, options: [{ value: "activate", label: "Activate" }] }],
+    questions: [
+      {
+        field: "activate",
+        ask: "whether to start: summarize the list, how it orders, when the cleaner is asked, mode, caps, and check time in your own words",
+        required: true,
+        options: [{ value: "activate", label: "Activate" }],
+        how: "Say plainly that Activate doesn't order the whole list: an only-when-low item waits for a report, and an every-so-many-days item first comes due that many days from today.",
+      },
+    ],
   };
 }
