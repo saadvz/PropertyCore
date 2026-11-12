@@ -72,7 +72,6 @@ async function activeFixer(m: MultiTenantApp, token: string, property: Property)
   await call("save_fixer_sources", { done: true });
   const joe = await call("save_pro", JOES);
   await call("save_fixer_settings", { prosDone: true });
-  await call("save_fixer_settings", { costLineCents: null });
   await call("save_fixer_settings", { upkeepDone: true });
   await call("activate_fixer");
   return { call, joeId: joe.structured!.proId as string };

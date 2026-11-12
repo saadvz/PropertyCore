@@ -129,8 +129,6 @@ export interface ReachInput {
 }
 
 export interface SettingsInput {
-  /** A number from 100 to 500_000, or null for no line. */
-  costLineCents?: number | null;
   checkInBufferMinutes?: number;
   cleaningMinutes?: number;
   askCleaner?: boolean;
@@ -179,6 +177,8 @@ export interface JobInput {
   photoMessageIds?: string[];
   cleanerName?: string;
   doorLock?: true;
+  /** The host's cost line for this repair, 100 to 500_000. Only on the host's own job. */
+  costLineCents?: number;
 }
 
 export interface CandidateInput {
@@ -198,10 +198,13 @@ export interface CandidateInput {
 export interface ApproveJobInput {
   jobId?: string;
   no?: true;
+  /** The host's cost line for this repair, 100 to 500_000, given with their go. */
+  costLineCents?: number;
   confirmation?: string;
 }
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const COST_LINE_RANGE = "A cost line has to be from $1 to $5,000.";
 const URGENCIES = ["now", "soon", "by-date", "flexible"] as const;
 /** A job is still going until it is done or cancelled; these states are before any contact. */
 const NOT_BOOKED = new Set<Job["state"]>(["requested", "shortlisted", "contacted"]);
@@ -426,9 +429,8 @@ export class FixerDesk {
           pros,
           ...(drafts.length > 0 ? { drafts } : {}),
           upkeep: file.upkeep.map((item) => ({ upkeepId: item.id, trade: item.trade, what: item.what, schedule: item.schedule, leadDays: item.leadDays, ...(item.proId ? { proId: item.proId } : {}) })),
-          openJobs: file.jobs.filter(isOpen).map((job) => ({ jobId: job.id, trade: job.trade, what: job.what, state: job.state })),
+          openJobs: file.jobs.filter(isOpen).map((job) => ({ jobId: job.id, trade: job.trade, what: job.what, state: job.state, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}) })),
           costLog: this.costLog(file),
-          ...(file.settings.costLineCents !== undefined ? { costLineCents: file.settings.costLineCents } : {}),
           checkInBufferMinutes: file.settings.checkInBufferMinutes,
           cleaningMinutes: file.settings.cleaningMinutes,
           askCleaner: file.settings.askCleaner,
@@ -441,16 +443,12 @@ export class FixerDesk {
     return this.guarded(input, () => {
       const file = this.read();
       const s = file.settings;
-      if (input.costLineCents !== undefined && input.costLineCents !== null && !isInt(input.costLineCents, 100, 500_000)) return fail("A cost line has to be from $1 to $5,000.");
       if (input.checkInBufferMinutes !== undefined && !isInt(input.checkInBufferMinutes, 0, 240)) return fail("The check-in buffer has to be from 0 to 240 minutes.");
       if (input.cleaningMinutes !== undefined && !isInt(input.cleaningMinutes, 30, 480)) return fail("The cleaning length has to be from 30 to 480 minutes.");
       if (input.askCleaner !== undefined && typeof input.askCleaner !== "boolean") return fail("Asking the cleaner is yes or no.");
       if (input.prosDone && file.pros.some((pro) => pro.status === "draft")) return fail("Confirm or remove the drafted pros first.");
       const gate = this.approved(file, "fixer-settings", "settings", input, "Save these settings?");
       if (gate !== "go") return gate;
-      if (input.costLineCents === null) delete s.costLineCents;
-      else if (input.costLineCents !== undefined) s.costLineCents = input.costLineCents;
-      if (input.costLineCents !== undefined) file.setup.costAsked = true;
       if (input.checkInBufferMinutes !== undefined) s.checkInBufferMinutes = input.checkInBufferMinutes;
       if (input.cleaningMinutes !== undefined) s.cleaningMinutes = input.cleaningMinutes;
       if (input.askCleaner !== undefined) {
@@ -781,6 +779,8 @@ export class FixerDesk {
       if (input.sourceRef !== undefined && !isText(input.sourceRef, 80)) return fail("That source reference is too long.");
       if (input.cleanerName !== undefined && !isText(input.cleanerName, 80)) return fail("The cleaner's name is too long.");
       if (input.doorLock !== undefined && input.doorLock !== true) return fail("doorLock is only ever true.");
+      if (input.costLineCents !== undefined && !isInt(input.costLineCents, 100, 500_000)) return fail(COST_LINE_RANGE);
+      if (input.costLineCents !== undefined && input.source !== "host") return fail("Only the host sets a cost line. For a cleaner's or upkeep job, pass it to approve_job with the host's go.");
       const photoIds = input.photoMessageIds ?? [];
       if (!Array.isArray(photoIds) || photoIds.length > 10 || !photoIds.every((id) => isText(id, 120))) return fail("Pass up to 10 message ids for the photos.");
       if (photoIds.length > 0 && input.source !== "cleaner") return fail("Only a cleaner's report carries photos.");
@@ -810,6 +810,7 @@ export class FixerDesk {
       if (input.sourceRef) job.sourceRef = input.sourceRef;
       if (input.cleanerName) job.cleanerName = input.cleanerName.trim();
       if (input.doorLock) job.doorLock = true;
+      if (input.costLineCents !== undefined) job.costLineCents = input.costLineCents;
       if (input.source === "host") job.hostGo = { at: now };
       const key = `fixer:${job.id}`;
       for (const id of photoIds) {
@@ -831,6 +832,7 @@ export class FixerDesk {
       if (!job) return fail("There's no job with that id. Call get_fixer_state for the list.");
       if (!isOpen(job) || job.hostGo || !NOT_BOOKED.has(job.state)) return fail("That job isn't waiting for a go.");
       if (input.no !== undefined && input.no !== true) return fail("no is only ever true.");
+      if (input.costLineCents !== undefined && !isInt(input.costLineCents, 100, 500_000)) return fail(COST_LINE_RANGE);
       if (input.no) {
         job.state = "cancelled";
         job.cancelledAt = this.deps.now().toISOString();
@@ -838,9 +840,11 @@ export class FixerDesk {
         this.write(file);
         return ok({ cancelled: true, jobId: job.id });
       }
-      const gate = this.approved(file, "fixer-job-go", job.id, input, this.goQuestion(file, job));
+      // The code is bound to the job. The cost line only adds a hold, so the host can give it after the question.
+      const gate = this.approved(file, "fixer-job-go", job.id, { jobId: job.id, ...(input.confirmation !== undefined ? { confirmation: input.confirmation } : {}) } as ApproveJobInput, this.goQuestion(file, job));
       if (gate !== "go") return gate;
       job.hostGo = { at: this.deps.now().toISOString() };
+      if (input.costLineCents !== undefined) job.costLineCents = input.costLineCents;
       this.write(file);
       return ok({ approved: true, jobId: job.id, next: "Call check_fixes for who to contact." });
     });
@@ -1118,13 +1122,13 @@ export class FixerDesk {
   private async holdsFor(file: FixerFile, job: Job, span: { from: string; until: string }, estimateCents: number | undefined, order?: "before" | "after"): Promise<{ holds: BookingHold[]; windows: VisitWindow[] }> {
     const windows = await this.windowsFor({ ...job, ...(order ? { cleaningOrder: order } : {}) });
     const overlaps = overlapsStay(span, this.hub().stays() ?? [], this.occupyInput(file));
-    const holds = bookingHolds({ span, windows, overlaps, ...(file.settings.costLineCents !== undefined ? { costLineCents: file.settings.costLineCents } : {}), ...(estimateCents !== undefined ? { estimateCents } : {}) });
+    const holds = bookingHolds({ span, windows, overlaps, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}), ...(estimateCents !== undefined ? { estimateCents } : {}) });
     return { holds, windows };
   }
 
   /** The question for a booking, with the holds the host's yes would accept. */
-  private questionFor(file: FixerFile, proName: string, b: { from: string; until: string; estimateCents?: number }, access: "code" | "host", holds: readonly BookingHold[]): string {
-    return bookingQuestion({ proName, from: b.from, until: b.until, timeZone: this.timeZone(), ...(b.estimateCents !== undefined ? { estimateCents: b.estimateCents } : {}), access, holds, ...(file.settings.costLineCents !== undefined ? { costLineCents: file.settings.costLineCents } : {}) });
+  private questionFor(job: Job, proName: string, b: { from: string; until: string; estimateCents?: number }, access: "code" | "host", holds: readonly BookingHold[]): string {
+    return bookingQuestion({ proName, from: b.from, until: b.until, timeZone: this.timeZone(), ...(b.estimateCents !== undefined ? { estimateCents: b.estimateCents } : {}), access, holds, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}) });
   }
 
   /** The pending booking a pro's "booked" gives: held for the host if it breaks a gate, kept on the contact if another is already pending. */
@@ -1165,7 +1169,7 @@ export class FixerDesk {
     if (holds.includes("overlaps-stay")) {
       reply.next = `That time overlaps a guest stay, so it can't be booked. Tell the host, and ask ${name} for another time.`;
     } else {
-      reply.question = this.questionFor(file, name, booking, access, holds);
+      reply.question = this.questionFor(job, name, booking, access, holds);
       reply.next = "Ask the host this question, then call approve_booking.";
     }
     return ok(reply);
@@ -1225,7 +1229,7 @@ export class FixerDesk {
       if (holds.includes("overlaps-stay")) return fail(`That time overlaps a guest stay, so nothing is booked. Ask ${name} for another time.`);
       const checkoutDay = localYmd(new Date(span.from), this.timeZone());
       if (!order && windows.some((w) => w.cleaning && w.checkoutYmd === checkoutDay)) return ok({ question: cleaningOrderQuestion({ proName: name }), next: "Ask the host, then call approve_booking again with cleaningOrder set to before or after." });
-      const question = this.questionFor(file, name, target, access, holds);
+      const question = this.questionFor(job, name, target, access, holds);
       const bound = tokenHash(JSON.stringify([target.fingerprint, access, order ?? null, [...holds].sort()]));
       const gate = this.confirm("fixer-book", job.id, bound, input.confirmation, question);
       if (gate !== "go") return gate;
@@ -1268,7 +1272,7 @@ export class FixerDesk {
   private approveRevised(file: FixerFile, job: Job, input: { confirmation?: string }): FixerReply {
     const booking = job.booking;
     const revised = booking?.revisedQuote;
-    if (!booking || !liveBooking(job) || !revised || revised.hostYes || !raisedPriceHeld(file.settings.costLineCents, booking.estimateCents, revised.cents)) return fail("There's no raised price waiting for the host's yes.");
+    if (!booking || !liveBooking(job) || !revised || revised.hostYes || !raisedPriceHeld(job.costLineCents, booking.estimateCents, revised.cents)) return fail("There's no raised price waiting for the host's yes.");
     const name = this.nameOf(file, job, booking.proId) ?? "The pro";
     const question = raisedPrice({ proName: name, newCents: revised.cents, ...(booking.estimateCents !== undefined ? { oldCents: booking.estimateCents } : {}) });
     const gate = this.confirm("fixer-revised", job.id, tokenHash(JSON.stringify([booking.fingerprint, revised.cents])), input.confirmation, question);
@@ -1814,14 +1818,14 @@ export class FixerDesk {
   private expectedCents(file: FixerFile, job: Job): number | undefined {
     const booking = job.booking;
     const revised = booking?.revisedQuote;
-    if (revised && (revised.hostYes || !raisedPriceHeld(file.settings.costLineCents, booking.estimateCents, revised.cents))) return revised.cents;
+    if (revised && (revised.hostYes || !raisedPriceHeld(job.costLineCents, booking.estimateCents, revised.cents))) return revised.cents;
     return booking?.estimateCents;
   }
 
   /** Logs the amount. Over the cost line, or more than 20% over what was expected, the host is told once. */
   private logCost(file: FixerFile, job: Job, cents: number, by: "pro" | "agent" | "host", note: string | undefined, notes: HostNote[]): void {
     job.cost = { cents, by, at: this.deps.now().toISOString(), ...(note ? { note } : {}) };
-    const line = file.settings.costLineCents;
+    const line = job.costLineCents;
     const estimateCents = this.expectedCents(file, job);
     if (job.news.some((item) => item.kind === "cost-over") || !costNews(line, estimateCents, cents)) return;
     notes.push(this.news(job, "cost-over", costNewsText({ proName: this.bookedName(file, job), cents, ...(estimateCents !== undefined ? { estimateCents } : {}), ...(line !== undefined ? { costLineCents: line } : {}) })));
@@ -1888,7 +1892,7 @@ export class FixerDesk {
   private heldRevised(file: FixerFile, job: Job): { cents: number; question: string } | undefined {
     const booking = job.booking;
     const revised = booking?.revisedQuote;
-    if (!booking || !liveBooking(job) || !revised || revised.hostYes || !raisedPriceHeld(file.settings.costLineCents, booking.estimateCents, revised.cents)) return undefined;
+    if (!booking || !liveBooking(job) || !revised || revised.hostYes || !raisedPriceHeld(job.costLineCents, booking.estimateCents, revised.cents)) return undefined;
     return { cents: revised.cents, question: raisedPrice({ proName: this.bookedName(file, job), newCents: revised.cents, ...(booking.estimateCents !== undefined ? { oldCents: booking.estimateCents } : {}) }) };
   }
 
@@ -1920,7 +1924,7 @@ export class FixerDesk {
     booking.revisedQuote = { cents, at, by };
     const proName = this.bookedName(file, job);
     const prices = { proName, newCents: cents, ...(old !== undefined ? { oldCents: old } : {}) };
-    if (raisedPriceHeld(file.settings.costLineCents, old, cents)) {
+    if (raisedPriceHeld(job.costLineCents, old, cents)) {
       const question = raisedPrice(prices);
       const note = this.fileNews(file, { kind: "raised-price-held", text: question, jobId: job.id }, `fixer:${job.id}:raised:${at}`);
       this.write(file);
@@ -2218,7 +2222,7 @@ export class FixerDesk {
       phase: now < from - DOOR_LEAD_MS ? "before" : now < this.endOf(booking) ? "during" : "after",
       ...(address && now >= from - ADDRESS_LEAD_MS ? { address } : {}),
       ...(booking.estimateCents !== undefined ? { estimateCents: booking.estimateCents } : {}),
-      ...(raised ? { raised: { cents: raised.cents, waiting: !raised.hostYes && raisedPriceHeld(file.settings.costLineCents, booking.estimateCents, raised.cents) } } : {}),
+      ...(raised ? { raised: { cents: raised.cents, waiting: !raised.hostYes && raisedPriceHeld(job.costLineCents, booking.estimateCents, raised.cents) } } : {}),
       photos: job.photos.filter((photo) => photo.from === "pro").length,
     };
   }

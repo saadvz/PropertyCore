@@ -74,10 +74,9 @@ export const FIXER_TOOLS: FixerTool[] = [
   {
     name: "save_fixer_settings",
     title: "Save repair settings",
-    description: `Saves any of: costLineCents (a repair over it needs the host's yes; null for no line), checkInBufferMinutes (how long before check-in a pro must be gone), cleaningMinutes (how long a cleaning takes), askCleaner (ask the cleaner "Anything broken?" after each cleaning), prosDone (the pro list is final), upkeepDone (no more upkeep to add). ${AFTER_ACTIVATE} ${NO_CARDS}`,
+    description: `Saves any of: checkInBufferMinutes (how long before check-in a pro must be gone), cleaningMinutes (how long a cleaning takes), askCleaner (ask the cleaner "Anything broken?" after each cleaning), prosDone (the pro list is final), upkeepDone (no more upkeep to add). ${AFTER_ACTIVATE} ${NO_CARDS}`,
     input: z
       .object({
-        costLineCents: Cents.nullable().optional(),
         checkInBufferMinutes: z.number().int().optional(),
         cleaningMinutes: z.number().int().optional(),
         askCleaner: z.boolean().optional(),
@@ -142,7 +141,7 @@ export const FIXER_TOOLS: FixerTool[] = [
     name: "open_job",
     title: "Open a repair job",
     description:
-      'Opens a repair: trade, what needs fixing (under 300 characters, in the reporter\'s words), urgency (now, soon, by-date with byDate, or flexible), and source (host, cleaner, or upkeep with the upkeep id as sourceRef). For a cleaner\'s report, pass the message\'s photo ids as photoMessageIds and the cleaner\'s name. doorLock: true when the lock itself is broken. A host\'s job starts at once; a cleaner\'s or upkeep job waits for the host\'s go with approve_job.',
+      'Opens a repair: trade, what needs fixing (under 300 characters, in the reporter\'s words), urgency (now, soon, by-date with byDate, or flexible), and source (host, cleaner, or upkeep with the upkeep id as sourceRef). For a cleaner\'s report, pass the message\'s photo ids as photoMessageIds and the cleaner\'s name. doorLock: true when the lock itself is broken. costLineCents, on the host\'s own job only, when the host wants a cost line for this repair: an estimate over it, no estimate, or a price raised on site then needs their yes. Ask the host before you open their job, and leave it out for no line. A host\'s job starts at once; a cleaner\'s or upkeep job waits for the host\'s go with approve_job.',
     input: z
       .object({
         trade: Trade,
@@ -154,14 +153,15 @@ export const FIXER_TOOLS: FixerTool[] = [
         photoMessageIds: z.array(z.string().max(120)).max(10).optional(),
         cleanerName: z.string().max(80).optional(),
         doorLock: z.literal(true).optional(),
+        costLineCents: Cents.optional(),
       })
       .strict(),
   },
   {
     name: "approve_job",
     title: "The host's go for a job",
-    description: `For a job from the cleaner or upkeep: ${TWO_CALL} no: true when the host says no, which cancels the job.`,
-    input: z.object({ jobId: Id, no: z.literal(true).optional(), confirmation: Confirmation }).strict(),
+    description: `For a job from the cleaner or upkeep: ${TWO_CALL} After the host's yes, ask whether they want a cost line for this repair, and pass it as costLineCents on the call with the code; leave it out for no line. no: true when the host says no, which cancels the job.`,
+    input: z.object({ jobId: Id, no: z.literal(true).optional(), costLineCents: Cents.optional(), confirmation: Confirmation }).strict(),
   },
   {
     name: "add_candidates",

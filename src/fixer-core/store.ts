@@ -140,6 +140,8 @@ export interface Job {
   byDate?: string;
   state: JobState;
   hostGo?: { at: string };
+  /** The host's cost line for this repair, $1 to $5,000: an estimate over it, or none, holds the booking. */
+  costLineCents?: number;
   candidates: Candidate[];
   picked: string[];
   contacts: Contact[];
@@ -170,8 +172,6 @@ export interface Job {
 }
 
 export interface FixerSettings {
-  /** Optional: $1 to $5,000. */
-  costLineCents?: number;
   checkInBufferMinutes: number;
   cleaningMinutes: number;
   /** Ask the cleaner "Anything running low or broken?" after each clean. */
@@ -182,7 +182,7 @@ export interface FixerSettings {
 export interface FixerFile {
   settings: FixerSettings;
   /** Setup steps the host finished that leave no other trace. */
-  setup: { prosDone?: true; costAsked?: true; cleanerAsked?: true; upkeepDone?: true; noCalendar?: true };
+  setup: { prosDone?: true; cleanerAsked?: true; upkeepDone?: true; noCalendar?: true };
   pros: Pro[];
   upkeep: Upkeep[];
   jobs: Job[];

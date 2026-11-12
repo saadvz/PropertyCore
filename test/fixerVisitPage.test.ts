@@ -102,11 +102,10 @@ async function setup(opts: { costLine?: number; lockLocation?: string; requestKe
   await desk().savePro({ name: "Joe's Plumbing", trades: ["plumbing"], reach: { phone: JOE }, prefersText: true, preferredFor: [{ trade: "plumbing", rank: 1 }] });
   await desk().savePro({ name: "Sam Spigot", trades: ["plumbing"], reach: { phone: SAM } });
   await desk().saveSettings({ prosDone: true });
-  await desk().saveSettings(opts.costLine ? { costLineCents: opts.costLine } : { costLineCents: null });
   await desk().saveSettings({ upkeepDone: true });
   expect((await desk().activate()).isError).toBe(false);
   serve();
-  await keep(desk().openJob({ trade: "plumbing", what: opts.what ?? "Sink leaks", urgency: "soon", source: "host" }));
+  await keep(desk().openJob({ trade: "plumbing", what: opts.what ?? "Sink leaks", urgency: "soon", source: "host", ...(opts.costLine ? { costLineCents: opts.costLine } : {}) }));
   // The first check reads the calendars, so the stays are known before anyone books.
   await keep(desk().checkFixes({}));
   const state = () => readFixer(root);
