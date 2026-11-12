@@ -58,10 +58,10 @@ Then call the step's tool.
    paste the link and click **Save**. For Google Calendar, call it with
    `google: true`. Then `done: true`, or `done: true` straight away when the
    host has no booking calendar.
-3. **Pros:** ask once, as one choice card: which trades the host already has
-   someone for (plumber, HVAC, electrician, handyman, gutters, pest control,
-   appliance repair, locksmith, and None yet), picking all that apply. Never
-   ask trade by trade. Then ask for the name and phone of the pro for each
+3. **Pros:** ask two choice cards, one per message, where the host picks all
+   that apply: first Plumber, HVAC, Electrician, Handyman, None of these;
+   then Gutters, Pest control, Appliance repair, Locksmith, None of these.
+   Never ask trade by trade. Then ask for the name and phone of the pro for each
    trade they picked, one per message, and skip the rest. If you
    can see the host's contacts or receipts, draft pros from them with
    `save_pro` and `draft: true`, and confirm them with the host

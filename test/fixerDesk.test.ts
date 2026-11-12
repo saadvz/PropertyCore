@@ -98,12 +98,19 @@ describe("setup asks", () => {
     }
   });
 
-  it("asks the pros as one card: every trade and None yet, pick all that apply", async () => {
+  it("asks the pros as two cards of at most five, each with None of these", async () => {
     const { desk } = made();
-    const question = ((await desk.state()).structured!.ask as { questions: { options?: { value: string }[]; multiple?: boolean; how?: string }[] }).questions[0]!;
-    expect(question.multiple).toBe(true);
-    expect(question.options!.map((option) => option.value)).toEqual([...TRADES, "none"]);
-    expect(question.how).toContain("Never ask trade by trade");
+    const questions = ((await desk.state()).structured!.ask as { questions: { field: string; options?: { value: string }[]; multiple?: boolean; how?: string }[] }).questions;
+    expect(questions.map((q) => q.field)).toEqual(["pros", "pros-more"]);
+    for (const q of questions) {
+      expect(q.multiple).toBe(true);
+      expect(q.options!.length).toBeLessThanOrEqual(5);
+    }
+    expect(questions[0]!.options!.map((o) => o.value)).toEqual(["plumbing", "hvac", "electrical", "handyman", "none"]);
+    expect(questions[1]!.options!.map((o) => o.value)).toEqual(["gutters", "pest-control", "appliance", "locksmith", "none"]);
+    const covered = new Set(questions.flatMap((q) => q.options!.map((o) => o.value)));
+    for (const trade of TRADES) expect(covered.has(trade), trade).toBe(true);
+    expect(questions[0]!.how).toContain("one card per message");
   });
 
   it("asks the cleaner only with cleaning on, and saves the answer", async () => {
