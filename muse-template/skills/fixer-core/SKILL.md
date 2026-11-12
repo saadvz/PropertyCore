@@ -110,7 +110,7 @@ You search in your own browser and call, email or message pros yourself.
 
 The Fixer Core recurring task runs this every hour, and you run it whenever
 the host mentions something broken. Call `check_fixes` on every run and act on everything it returns:
-`needsGo`, `contactNext`, `unconfirmed`, `followUps`, `held`, `delays`,
+`needsGo`, `upkeepDue`, `contactNext`, `unconfirmed`, `followUps`, `held`, `delays`,
 `preferredAsk`, `rotationAsk`, `news`. When Google Calendar is saved for the
 property, read the calendar's events and pass them as `googleEvents` to
 `check_fixes` and to `approve_booking`.
@@ -120,6 +120,11 @@ property, read the calendar's events and pass them as `googleEvents` to
   `approve_job`: without `confirmation`, ask, then with the code and the
   host's `costLineCents` if they gave one. On no, `approve_job` with
   `no: true`.
+- **upkeepDue:** an upkeep item whose start date has come. Call `open_job`
+  with its trade and `what`, urgency `by-date` with its `nextDate` as
+  `byDate`, source `upkeep`, and its `upkeepId` as `sourceRef`. The job waits
+  for the host's go: ask the question `open_job` gives, then handle it as
+  `needsGo`. An item with an open job isn't listed again.
 - **Cost line, once per repair:** setup never asks for one. When a repair
   starts, ask "Want a cost line for this repair? An estimate over it, or a
   price raised on site, needs your yes." as a choice card with No cost line
