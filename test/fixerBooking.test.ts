@@ -31,7 +31,7 @@ const ics = (...stays: [string, string][]) =>
 const serve = (body: string) => setCalendarFetch(async (url) => ({ status: 200, url, async text() { return body; } }));
 const codeOf = (reply: { structured?: Record<string, unknown> }): string => (reply.structured!.confirmation as { code: string }).code;
 
-type Opts = { code?: boolean; costLine?: number; locksmith?: boolean; cleanings?: FixerDeps["cleanings"]; /** Every calendar read fails, so the stays are never read. */ unread?: boolean };
+type Opts = { code?: boolean; costLine?: number; quotesFirst?: boolean; locksmith?: boolean; cleanings?: FixerDeps["cleanings"]; /** Every calendar read fails, so the stays are never read. */ unread?: boolean };
 
 /** An activated property with a plumber (and a locksmith) ranked first, and one host job open. */
 async function setup(opts: Opts = {}) {
@@ -51,7 +51,7 @@ async function setup(opts: Opts = {}) {
   if (opts.unread) setCalendarFetch(async (url) => ({ status: 500, url, async text() { return ""; } }));
   else serve(ics());
   const lock = opts.locksmith === true;
-  await desk.openJob({ trade: lock ? "locksmith" : "plumbing", what: lock ? "Lock sticks" : "Sink leaks", urgency: "soon", source: "host", ...(opts.costLine ? { costLineCents: opts.costLine } : {}), ...(lock ? { doorLock: true as const } : {}) });
+  await desk.openJob({ trade: lock ? "locksmith" : "plumbing", what: lock ? "Lock sticks" : "Sink leaks", urgency: "soon", source: "host", ...(opts.costLine ? { costLineCents: opts.costLine } : {}), ...(opts.quotesFirst ? { quotesFirst: true as const } : {}), ...(lock ? { doorLock: true as const } : {}) });
   await desk.checkFixes({});
   const state = () => readFixer(root);
   const job = () => state().jobs[0]!;
@@ -115,6 +115,17 @@ describe("the pro's yes", () => {
     const held = ((await w.desk.checkFixes({})).structured as { held: { jobId: string; heldFor: string[] }[] }).held;
     expect(held).toEqual([expect.objectContaining({ jobId: w.job().id, heldFor: expect.arrayContaining(["outside-window"]) })]);
     expect((await w.desk.approveBooking({ jobId: w.job().id })).isError).toBe(true);
+  });
+
+  it("refuses a booked outcome on a quotes-only job, and keeps the quote", async () => {
+    const w = await setup({ quotesFirst: true });
+    const token = await w.contact();
+    const refused = await w.desk.recordContact({ contactToken: token, outcome: "booked", ...TUE, estimateCents: 18000 });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toBe("This repair is getting quotes first. Record what they quoted with outcome quoted, put any time they offered in the note, and tell them you'll call back.");
+    expect(w.job().booking).toBeUndefined();
+    expect((await w.desk.recordContact({ contactToken: token, outcome: "quoted", quoteCents: 15000, note: "Can come Tuesday" })).isError).toBe(false);
+    expect(w.job().contacts[0]!.quote).toEqual({ cents: 15000, note: "Can come Tuesday" });
   });
 
   it("holds a price over the cost line, and the host's yes still books it", async () => {

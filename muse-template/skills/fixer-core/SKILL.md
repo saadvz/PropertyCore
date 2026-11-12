@@ -133,9 +133,17 @@ property, read the calendar's events and pass them as `googleEvents` to
   `needsGo`. An item with an open job isn't listed again.
 - **Cost line, once per repair:** setup never asks for one. When a repair
   starts, ask "Want a cost line for this repair? An estimate over it, or a
-  price raised on site, needs your yes." as a choice card with No cost line
-  first. It's saved on that job only, from $1 to $5,000. For the host's own
-  repair, pass it to `open_job` as `costLineCents`.
+  price raised on site, needs your yes." as a choice card with three options,
+  in this order: No cost line, Set a cost line, Get quotes first. Set a cost
+  line: the host types the amount, from $1 to $5,000, saved on that job only
+  as `costLineCents`. Get quotes first: confirm with "I'll call pros for
+  quotes only and report back before anyone is booked. OK?", then pass
+  `quotesFirst: true`. On the host's own repair both go to `open_job`; on a
+  cleaner's or upkeep job, to `approve_job` with the code.
+- **A quotes-only repair:** ask each pro for a price, not a time.
+  `record_contact` with `quoted` and `quoteCents`; a time they offered goes in
+  the note, and tell them you'll call back. A `booked` outcome is refused
+  until the host picks a quote.
 - **A repair the host reports:** `open_job` with the trade, what needs fixing,
   how urgent (`now`, `soon`, `by-date`, `flexible`), and source `host`. Set
   `doorLock: true` when the lock itself is broken.

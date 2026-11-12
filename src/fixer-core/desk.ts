@@ -201,6 +201,8 @@ export interface JobInput {
   doorLock?: true;
   /** The host's cost line for this repair, 100 to 500_000. Only on the host's own job. */
   costLineCents?: number;
+  /** The host chose to get quotes first. Only on the host's own job. */
+  quotesFirst?: true;
 }
 
 export interface CandidateInput {
@@ -222,11 +224,15 @@ export interface ApproveJobInput {
   no?: true;
   /** The host's cost line for this repair, 100 to 500_000, given with their go. */
   costLineCents?: number;
+  /** The host chose to get quotes first, with their go. */
+  quotesFirst?: true;
   confirmation?: string;
 }
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const COST_LINE_RANGE = "A cost line has to be from $1 to $5,000.";
+const QUOTES_FIRST_REFUSAL =
+  "This repair is getting quotes first. Record what they quoted with outcome quoted, put any time they offered in the note, and tell them you'll call back.";
 /** The most of a voicemail's transcript that is kept. */
 const VOICEMAIL_MAX = 600;
 /** Beside the line's number on contact_pro: what to tell a pro who asks how to reach the host. */
@@ -903,6 +909,8 @@ export class FixerDesk {
       if (input.doorLock !== undefined && input.doorLock !== true) return fail("doorLock is only ever true.");
       if (input.costLineCents !== undefined && !isInt(input.costLineCents, 100, 500_000)) return fail(COST_LINE_RANGE);
       if (input.costLineCents !== undefined && input.source !== "host") return fail("Only the host sets a cost line. For a cleaner's or upkeep job, pass it to approve_job with the host's go.");
+      if (input.quotesFirst !== undefined && input.quotesFirst !== true) return fail("quotesFirst is only ever true.");
+      if (input.quotesFirst && input.source !== "host") return fail("Only the host chooses quotes first. For a cleaner's or upkeep job, pass it to approve_job with the host's go.");
       const photoIds = input.photoMessageIds ?? [];
       if (!Array.isArray(photoIds) || photoIds.length > 10 || !photoIds.every((id) => isText(id, 120))) return fail("Pass up to 10 message ids for the photos.");
       if (photoIds.length > 0 && input.source !== "cleaner") return fail("Only a cleaner's report carries photos.");
@@ -933,6 +941,7 @@ export class FixerDesk {
       if (input.cleanerName) job.cleanerName = input.cleanerName.trim();
       if (input.doorLock) job.doorLock = true;
       if (input.costLineCents !== undefined) job.costLineCents = input.costLineCents;
+      if (input.quotesFirst) job.quotesFirst = true;
       if (input.source === "host") job.hostGo = { at: now };
       const key = `fixer:${job.id}`;
       for (const id of photoIds) {
@@ -967,6 +976,7 @@ export class FixerDesk {
       if (gate !== "go") return gate;
       job.hostGo = { at: this.deps.now().toISOString() };
       if (input.costLineCents !== undefined) job.costLineCents = input.costLineCents;
+      if (input.quotesFirst === true) job.quotesFirst = true;
       this.write(file);
       return ok({ approved: true, jobId: job.id, next: "Call check_fixes for who to contact." });
     });
@@ -1194,6 +1204,7 @@ export class FixerDesk {
       const now = this.deps.now();
       const at = now.toISOString();
       const name = this.nameOf(file, job, contact.to) ?? "The pro";
+      if (outcome === "booked" && job.quotesFirst) return fail(QUOTES_FIRST_REFUSAL);
       if (outcome === "booked") return this.recordBooked(file, job, contact, name, input);
       if (liveBooking(job)) return fail("This job already has a booking.");
       if (outcome === "quoted") {

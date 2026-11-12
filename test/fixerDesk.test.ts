@@ -591,6 +591,17 @@ describe("the host's go", () => {
     return { ...m, jobId: opened.structured!.jobId as string };
   }
 
+  it("saves quotes-only and a cost line on the host's job, and with the go on a cleaner's job", async () => {
+    const { root, desk, jobId } = await waiting();
+    const first = await desk.approveJob({ jobId });
+    expect((await desk.approveJob({ jobId, quotesFirst: true, confirmation: codeOf(first) })).isError).toBe(false);
+    const host = await desk.openJob({ trade: "plumbing", what: "Tap drips", urgency: "soon", source: "host", quotesFirst: true, costLineCents: 20_000 });
+    const jobs = readFixer(root).jobs;
+    expect(jobs.find((job) => job.id === jobId)!.quotesFirst).toBe(true);
+    expect(jobs.find((job) => job.id === host.structured!.jobId)).toMatchObject({ quotesFirst: true, costLineCents: 20_000 });
+    expect((await desk.openJob({ trade: "plumbing", what: "Leak", urgency: "now", source: "cleaner", quotesFirst: true })).isError).toBe(true);
+  });
+
   it("takes the host's cost line with the go, after the question, and saves it on that job only", async () => {
     const { root, desk, jobId } = await waiting();
     const first = await desk.approveJob({ jobId });

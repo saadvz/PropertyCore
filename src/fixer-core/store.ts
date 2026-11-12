@@ -143,6 +143,8 @@ export interface Job {
   hostGo?: { at: string };
   /** The host's cost line for this repair, $1 to $5,000: an estimate over it, or none, holds the booking. */
   costLineCents?: number;
+  /** The host chose to get quotes first: no booking until pick_quote. */
+  quotesFirst?: true;
   candidates: Candidate[];
   picked: string[];
   contacts: Contact[];
