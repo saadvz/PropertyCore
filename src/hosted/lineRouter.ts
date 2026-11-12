@@ -88,7 +88,7 @@ function replyDue(h: HostedCleaner, tenantId: string, phone: string): boolean {
 }
 
 /** The landlord's phone: the host on any of the account's properties. */
-function isLandlord(tenant: Tenant, people: People, phone: string): boolean {
+export function isLandlord(tenant: Tenant, people: People, phone: string): boolean {
   return tenant.properties.some((p) => people.hostOf(p.id) === phone);
 }
 

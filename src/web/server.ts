@@ -41,6 +41,7 @@ import { INVITE_REFUSALS } from "../mcp/oauth/pages";
 import { phoneCodesFor } from "../hosted/phoneCodes";
 import { accountDoor, SignUpDesk } from "../hosted/signUp";
 import { openAccount, pointVoiceOnce } from "../cleaner-core/hosted/lines";
+import { VOICE_PATH, VOICE_TRANSCRIPT_PATH } from "../hosted/voice";
 import { handleCleanerUploadPage, isFormPost } from "../cleaner-core/uploadPage";
 import { ALERT_UPLOAD_MAX_BYTES, alertUploadCode, calendarUploadCode, doorCodeUploadCode, uploadPageOf, CLEANER_MCP_PATH, CLEANER_TWILIO_GROUP_PATH, CLEANER_TWILIO_PATH, CLEANER_TWILIO_STATUS_PATH, handleCleanerAlertUpload, handleCleanerCalendarUpload, handleCleanerDoorCodeUpload, handleCleanerGroupWebhook, handleCleanerMcpHttp, handleCleanerTwilioStatus, handleCleanerTwilioWebhook, textAddressedTo } from "../cleaner-core/http";
 import { drainCleanerAlerts } from "../cleaner-core/liveDesk";
@@ -217,7 +218,7 @@ function publicRouteAllowed(method: string, path: string, oauth: boolean, hosted
     return (method === "GET" && path.startsWith("/portable/artifacts/")) || (method === "POST" && path.startsWith("/portable/uploads/"));
   }
   if (oauth && (isOAuthPublicPath(path, OAUTH_RESOURCE_PATHS) || (method === "GET" && path === "/oauth.js"))) return true;
-  if (method === "POST" && (path === SENDBLUE_WEBHOOK_PATH || path === TWILIO_WEBHOOK_PATH || path === CLEANER_TWILIO_PATH || path === CLEANER_TWILIO_STATUS_PATH || path === CLEANER_TWILIO_GROUP_PATH || path === PHOTON_WEBHOOK_PATH || path === LOCAL_WEBHOOK_PATH)) return true;
+  if (method === "POST" && (path === SENDBLUE_WEBHOOK_PATH || path === TWILIO_WEBHOOK_PATH || path === CLEANER_TWILIO_PATH || path === CLEANER_TWILIO_STATUS_PATH || path === CLEANER_TWILIO_GROUP_PATH || path === VOICE_PATH || path === VOICE_TRANSCRIPT_PATH || path === PHOTON_WEBHOOK_PATH || path === LOCAL_WEBHOOK_PATH)) return true;
   if (method === "GET" && isPublicCompliancePath(path)) return true;
   if (method === "GET" && (/^\/verify\/[A-Za-z0-9_-]+$/.test(path) || path === "/verify.js" || path === "/styles.css")) return true;
   if (hosted && method === "GET" && (path === "/connect" || path === "/connect.js" || path === "/install" || path === "/install.js" || path === "/styles.css")) return true;
@@ -1139,7 +1140,7 @@ const CLEANER_NEEDS_MULTI_TENANT = "Hosted Cleaner Core runs only as the multi-t
 /** A Cleaner Core route, on a hosted service without the multi-tenant flag, where all of them are off. */
 function hostedCleanerRoute(method: string, path: string): "mcp" | "other" | undefined {
   if (path === CLEANER_MCP_PATH) return "mcp";
-  if (path === CLEANER_TWILIO_PATH || path === CLEANER_TWILIO_STATUS_PATH || path === CLEANER_TWILIO_GROUP_PATH) return "other";
+  if (path === CLEANER_TWILIO_PATH || path === CLEANER_TWILIO_STATUS_PATH || path === CLEANER_TWILIO_GROUP_PATH || path === VOICE_PATH || path === VOICE_TRANSCRIPT_PATH) return "other";
   if (path.startsWith(CLEANER_PHOTO_PREFIX) || uploadPageOf(path)) return "other";
   if (method === "POST" && (alertUploadCode(path) || calendarUploadCode(path) || doorCodeUploadCode(path))) return "other";
   return undefined;
