@@ -25,6 +25,7 @@ Every request resolves exactly one tenant before it reads or writes anything:
 | --- | --- |
 | `/mcp/cleaner-core` | The OAuth grant. The host's invite code, sign-in, or new account on the Allow page bound it to a tenant |
 | A text to `/webhooks/twilio/cleaner-core` | The `To` number. Each tenant has its own Twilio number |
+| A call to `/webhooks/twilio/voice`, and its transcript to `/webhooks/twilio/voice/transcript` | The `To` number, as for a text. Both are signed by Twilio. Only a known caller is recorded; see the Voicemail gate in `docs/fixer-core-safety-gates.md` |
 | Everything Cleaner Core hands out: group webhooks, status callbacks, upload pages, photo links | The `/t/<tenantId>/` path prefix, and `/p/<propertyId>/` after it for every property but a migrated one. Twilio signs the full URL, and photo links are signed with the tenant's own key |
 
 A request that names no tenant, an unknown one, or a turned-off one stops there.
@@ -79,7 +80,9 @@ bought and registered ahead of time and kept in a pool,
   are recorded as in use the first time `/admin` loads.
 - **Sign-up.** `openAccount` in `src/cleaner-core/hosted/lines.ts` creates the
   account with the ready number that has waited longest, records it, and
-  points its webhook at `/webhooks/twilio/cleaner-core`. Two sign-ups never get
+  points its SMS webhook at `/webhooks/twilio/cleaner-core` and its voice
+  webhook at `/webhooks/twilio/voice` in one call, clearing any TwiML App.
+  A line pointed before voice gets its voice webhook once at startup. Two sign-ups never get
   the same number. With no ready number, sign-up is refused and the log says
   so. `/admin`'s "Add a host" with a blank number makes the same call. A typed
   number is recorded in the pool too, unless it is resting.

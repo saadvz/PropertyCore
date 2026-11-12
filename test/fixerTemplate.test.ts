@@ -129,6 +129,15 @@ describe("Fixer Core agent instructions", () => {
     expect(read("docs/hosted-multitenancy.md")).toContain("Fixer Core");
   });
 
+  it("the gates hold the Alerts and Voicemail rows, and Cleaner Core's names a cleaner's voicemail", () => {
+    const gates = read(GATES);
+    expect(gates).toMatch(/^\| Alerts \|/m);
+    expect(gates).toMatch(/^\| Voicemail \|/m);
+    expect(gates).toContain("test/voiceCall.test.ts");
+    expect(gates).toContain("test/fixerAlerts.test.ts");
+    expect(read("docs/cleaner-core-safety-gates.md")).toContain("a cleaner's voicemail is a Cleaner Core note and nothing else");
+  });
+
   it("every test the safety gates name exists in its file", () => {
     const gates = read(GATES);
     const cited = [...gates.matchAll(/`(test\/[A-Za-z]+\.test\.ts)` \("((?:[^"\\]|\\.)*)"\)/g)];
