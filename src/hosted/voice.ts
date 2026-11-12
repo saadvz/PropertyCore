@@ -10,6 +10,7 @@ import { formParams, verifyTwilioSignature } from "../messaging/twilio/signature
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { isLandlord } from "./lineRouter";
 import { accountPeople } from "./sharedPeople";
+import { VoiceDeletes } from "./voiceDeletes";
 import { fixerProVoicemail } from "./fixer";
 import { propertyContext } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
@@ -87,6 +88,7 @@ export function signedCall(h: HostedCleaner, r: HostedRequest, fields: Record<st
 export async function handleVoiceCall(h: HostedCleaner, r: HostedRequest, tenant: Tenant, rawBody: Buffer, signedUrl: string | undefined): Promise<void> {
   const fields = formParams(rawBody);
   if (!signedCall(h, r, fields, signedUrl)) return r.send(403, "text/plain", "Forbidden");
+  await new VoiceDeletes(tenantFolder(h.dataRoot, tenant.id)).retry(h.baseEnv()).catch(() => undefined);
   const from = parsePhone(fields.From ?? "") ?? "";
   const who = knownCaller(tenant, await accountPeople(h, tenant), from);
   h.registry.touch(tenant.id);
@@ -150,5 +152,16 @@ export async function handleVoiceTranscript(h: HostedCleaner, r: HostedRequest, 
       ...(Number.isFinite(seconds) && fields.RecordingDuration !== undefined ? { seconds } : {}),
     }).catch(() => h.log(`A voicemail for ${tenant.id} couldn't be taken.`));
   }
+  // The audio goes once the transcript is in, whatever it said: only the words are kept.
+  if (/^RE[0-9a-zA-Z]{2,64}$/.test(recordingSid)) {
+    const deletes = new VoiceDeletes(tenantFolder(h.dataRoot, tenant.id));
+    await deletes.retry(h.baseEnv()).catch(() => undefined);
+    await deletes.remove(h.baseEnv(), recordingSid).catch(() => h.log(`A voicemail recording for ${tenant.id} wasn't deleted yet.`));
+  }
   r.send(200, "text/xml", twiml([]));
+}
+
+/** At startup: tries again each account's voicemail recordings Twilio didn't delete yet. */
+export async function retryVoiceDeletes(h: HostedCleaner): Promise<void> {
+  for (const tenant of h.registry.list()) await new VoiceDeletes(tenantFolder(h.dataRoot, tenant.id)).retry(h.baseEnv()).catch(() => undefined);
 }

@@ -41,7 +41,7 @@ import { INVITE_REFUSALS } from "../mcp/oauth/pages";
 import { phoneCodesFor } from "../hosted/phoneCodes";
 import { accountDoor, SignUpDesk } from "../hosted/signUp";
 import { openAccount, pointVoiceOnce } from "../cleaner-core/hosted/lines";
-import { VOICE_PATH, VOICE_TRANSCRIPT_PATH } from "../hosted/voice";
+import { retryVoiceDeletes, VOICE_PATH, VOICE_TRANSCRIPT_PATH } from "../hosted/voice";
 import { handleCleanerUploadPage, isFormPost } from "../cleaner-core/uploadPage";
 import { ALERT_UPLOAD_MAX_BYTES, alertUploadCode, calendarUploadCode, doorCodeUploadCode, uploadPageOf, CLEANER_MCP_PATH, CLEANER_TWILIO_GROUP_PATH, CLEANER_TWILIO_PATH, CLEANER_TWILIO_STATUS_PATH, handleCleanerAlertUpload, handleCleanerCalendarUpload, handleCleanerDoorCodeUpload, handleCleanerGroupWebhook, handleCleanerMcpHttp, handleCleanerTwilioStatus, handleCleanerTwilioWebhook, textAddressedTo } from "../cleaner-core/http";
 import { drainCleanerAlerts } from "../cleaner-core/liveDesk";
@@ -489,7 +489,11 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     log,
   });
   // Lines pointed before voice get their voice webhook once, so a pro's call reaches the service.
-  if (cleanerMultiTenant(installation.env())) void pointVoiceOnce(hostedCleanerService).catch(() => log("Couldn't point the lines' voice webhooks this time."));
+  if (cleanerMultiTenant(installation.env())) {
+    void pointVoiceOnce(hostedCleanerService).catch(() => log("Couldn't point the lines' voice webhooks this time."));
+    // Voicemail audio Twilio didn't delete before the restart.
+    void retryVoiceDeletes(hostedCleanerService).catch(() => undefined);
+  }
   // Sign in and Create account on the connect page. Off until CLEANER_CORE_SIGNUP and its settings are set.
   const signUp = new SignUpDesk({
     registry: tenants,

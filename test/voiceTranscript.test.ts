@@ -3,7 +3,10 @@ import { propertyFolder, type Property } from "../src/cleaner-core/hosted/proper
 import { tenantFolder, type Tenant } from "../src/cleaner-core/hosted/registry";
 import { readFixer, writeFixer } from "../src/fixer-core/store";
 import { resetFixerDesks } from "../src/fixer-core/desk";
-import { routeVoicemail } from "../src/hosted/voice";
+import { setTwilioNumbersFetch } from "../src/cleaner-core/hosted/twilioNumbers";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { retryVoiceDeletes, routeVoicemail } from "../src/hosted/voice";
 import { peopleFor } from "../src/hub/people";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
@@ -19,7 +22,22 @@ const SLOW = { timeout: 90_000 };
 const NOW = new Date("2026-11-12T15:00:00.000Z");
 
 let open: MultiTenantApp | undefined;
+/** Twilio's recordings API, stubbed: each DELETE is kept, and `refuse` makes it fail. */
+let deletes: string[] = [];
+let refuse = false;
+function stubRecordings() {
+  deletes = [];
+  refuse = false;
+  setTwilioNumbersFetch(async (input, init) => {
+    if ((init?.method ?? "GET") === "DELETE") {
+      deletes.push(String(input));
+      return new Response(null, { status: refuse ? 500 : 204 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+}
 afterEach(() => {
+  setTwilioNumbersFetch(undefined);
   vi.restoreAllMocks();
   open?.close();
   open = undefined;
@@ -29,6 +47,7 @@ afterEach(() => {
 
 /** An account with two Fixer Core properties; Joe is saved on both, Maria is the first one's cleaner. */
 async function setup() {
+  stubRecordings();
   open = await multiTenantApp({ env: { FIXER_CORE: "1" }, now: () => NOW });
   const m = open;
   const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LINE });
@@ -97,5 +116,50 @@ describe("a voicemail's transcript", () => {
     await routeVoicemail(m.hosted(), tenant, { recordingSid: "REstranger1", from: "+15555550177", text: "Hello", status: "completed" }, async (...args) => void notes.push(args));
     expect(notes).toEqual([]);
     expect(readFixer(propertyFolder(m.app.root, tenant.id, a)).news ?? []).toEqual([]);
+  });
+});
+
+describe("the audio", () => {
+  const recordingUrl = (sid: string) => `https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/Recordings/${sid}.json`;
+  const listFile = (m: MultiTenantApp, tenant: Tenant) => join(tenantFolder(m.app.root, tenant.id), "voice-deletes.json");
+
+  it("deletes the recording after the transcript, whatever its status", SLOW, async () => {
+    const { m } = await setup();
+    await transcript(m, { From: JOE, RecordingSid: "REdelete0001", TranscriptionText: "Running late" });
+    await transcript(m, { From: JOE, RecordingSid: "REdelete0002", TranscriptionStatus: "failed" });
+    await transcript(m, { From: "+15555550177", RecordingSid: "REdelete0003", TranscriptionText: "Hello" });
+    expect(deletes).toEqual([recordingUrl("REdelete0001"), recordingUrl("REdelete0002"), recordingUrl("REdelete0003")]);
+  });
+
+  it("keeps a failed delete's sid and retries it on the next call, then forgets it", SLOW, async () => {
+    const { m, tenant } = await setup();
+    refuse = true;
+    await transcript(m, { From: JOE, RecordingSid: "REretry00001", TranscriptionText: "Running late" });
+    expect(JSON.parse(readFileSync(listFile(m, tenant), "utf8"))).toEqual([{ sid: "REretry00001", tries: 1 }]);
+    refuse = false;
+    await m.twilio("/webhooks/twilio/voice", { CallSid: "CAnext", From: "+15555550177", To: LINE });
+    expect(deletes.at(-1)).toBe(recordingUrl("REretry00001"));
+    expect(JSON.parse(readFileSync(listFile(m, tenant), "utf8"))).toEqual([]);
+    const kept = readFileSync(listFile(m, tenant), "utf8");
+    expect(kept).not.toContain("+1555");
+  });
+
+  it("gives up after 20 tries", SLOW, async () => {
+    const { m, tenant } = await setup();
+    refuse = true;
+    await transcript(m, { From: JOE, RecordingSid: "REgiveup0001", TranscriptionText: "Running late" });
+    for (let i = 0; i < 19; i++) await m.twilio("/webhooks/twilio/voice", { CallSid: `CA${i}`, From: "+15555550177", To: LINE });
+    expect(existsSync(listFile(m, tenant)) ? JSON.parse(readFileSync(listFile(m, tenant), "utf8")) : []).toEqual([]);
+    expect(deletes.filter((url) => url === recordingUrl("REgiveup0001"))).toHaveLength(20);
+  });
+
+  it("retries the kept deletes of every account at startup", SLOW, async () => {
+    const { m, tenant } = await setup();
+    refuse = true;
+    await transcript(m, { From: JOE, RecordingSid: "REstartup001", TranscriptionText: "Running late" });
+    refuse = false;
+    await retryVoiceDeletes(m.hosted());
+    expect(deletes.at(-1)).toBe(recordingUrl("REstartup001"));
+    expect(JSON.parse(readFileSync(listFile(m, tenant), "utf8"))).toEqual([]);
   });
 });

@@ -73,3 +73,18 @@ export async function releaseNumber(env: NodeJS.ProcessEnv, numberSid: string): 
     return false;
   }
 }
+
+/** Deletes a voicemail recording. True when Twilio deleted it, or it was already gone. */
+export async function deleteRecording(env: NodeJS.ProcessEnv, recordingSid: string): Promise<boolean> {
+  const acct = account(env);
+  if (!acct) return false;
+  try {
+    const res = await (fetchImpl ?? fetch)(`${API}/Accounts/${acct.sid}/Recordings/${encodeURIComponent(recordingSid)}.json`, {
+      method: "DELETE",
+      headers: { Authorization: acct.auth },
+    });
+    return res.ok || res.status === 404;
+  } catch {
+    return false;
+  }
+}
