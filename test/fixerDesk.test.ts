@@ -968,4 +968,32 @@ describe("quotes first", () => {
     await w.desk.recordContact({ contactToken: await w.contact(w.rita), outcome: "quoted", quoteCents: 22000 });
     expect((await ready(w.desk))[0]!.question).toBe("Quotes for Kitchen sink leaks: Joe's Plumbing $150 (Can come Tuesday), Rita Rooter $220. Who should I book, and want a cost line?");
   });
+
+  it("pick_quote books the picked pro next, with the host's yes and a cost line", async () => {
+    const w = await quotesJob();
+    const joe = await w.contact(w.joe);
+    await w.desk.recordContact({ contactToken: joe, outcome: "quoted", quoteCents: 15000 });
+    const ask = await w.desk.pickQuote({ jobId: w.job().id, proId: w.joe, costLineCents: 20_000 });
+    expect(ask.structured!.question).toBe("Book Joe's Plumbing for Kitchen sink leaks with a $200 cost line?");
+    expect(w.job().quotesFirst).toBe(true);
+    expect((await w.desk.pickQuote({ jobId: w.job().id, proId: w.joe, costLineCents: 20_000, confirmation: codeOf(ask) })).isError).toBe(false);
+    expect(w.job()).toMatchObject({ costLineCents: 20_000 });
+    expect(w.job().quotesFirst).toBeUndefined();
+    expect((await check(w.desk)).contactNext[0]).toMatchObject({ jobId: w.job().id, proId: w.joe });
+    const again = await w.contact(w.joe);
+    expect((await w.desk.recordContact({ contactToken: again, outcome: "booked", from: "2026-11-10T15:00:00.000Z", until: "2026-11-10T17:00:00.000Z", estimateCents: 15000 })).isError).toBe(false);
+  });
+
+  it("refuses a pro who didn't quote, a job that isn't quotes-only, and a stale code", async () => {
+    const w = await quotesJob();
+    await w.desk.recordContact({ contactToken: await w.contact(w.rita), outcome: "declined" });
+    expect((await w.desk.pickQuote({ jobId: w.job().id, proId: w.rita })).isError).toBe(true);
+    await w.desk.recordContact({ contactToken: await w.contact(w.joe), outcome: "quoted", quoteCents: 15000 });
+    const ask = await w.desk.pickQuote({ jobId: w.job().id, proId: w.joe });
+    expect((await w.desk.pickQuote({ jobId: w.job().id, proId: w.joe, costLineCents: 99_00, confirmation: codeOf(ask) })).isError).toBe(true);
+    expect(w.job().quotesFirst).toBe(true);
+    const plain = await withJob();
+    expect((await plain.desk.pickQuote({ jobId: plain.job().id, proId: readFixer(plain.root).pros[0]!.id })).isError).toBe(true);
+  });
 });
+

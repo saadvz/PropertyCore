@@ -12,7 +12,7 @@ export function dollars(cents: number): string {
 }
 
 /** `$180` when the cents are 0, else `$180.50`. */
-function shortDollars(cents: number): string {
+export function shortDollars(cents: number): string {
   return cents % 100 === 0 ? `$${(cents / 100).toLocaleString("en-US")}` : dollars(cents);
 }
 

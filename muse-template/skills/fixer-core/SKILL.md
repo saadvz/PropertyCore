@@ -141,7 +141,10 @@ property, read the calendar's events and pass them as `googleEvents` to
   `quotesFirst: true`. On the host's own repair both go to `open_job`; on a
   cleaner's or upkeep job, to `approve_job` with the code.
 - **quotesReady:** a quotes-only repair whose contacted pros have all
-  answered. Ask the host its question as given.
+  answered. Ask the host its question as given. When they pick a pro (and a
+  cost line, if they want one), call `pick_quote` without `confirmation`,
+  ask, then with the code. `contactNext` then names that pro: book them the
+  normal way. If they want more pros, find more; a new summary follows.
 - **A quotes-only repair:** ask each pro for a price, not a time.
   `record_contact` with `quoted` and `quoteCents`; a time they offered goes in
   the note, and tell them you'll call back. A `booked` outcome is refused

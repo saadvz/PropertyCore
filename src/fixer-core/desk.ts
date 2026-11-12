@@ -27,7 +27,7 @@ import { supplyAskOn } from "../supply-core/store";
 import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
 import { holdsOtherRole, priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
-import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
+import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, shortDollars, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
@@ -1611,11 +1611,47 @@ export class FixerDesk {
     for (const job of file.jobs) {
       if (!isOpen(job) || !job.hostGo || !NOT_BOOKED.has(job.state) || liveBooking(job)) continue;
       if (job.contacts.some((contact) => !contact.cancelled && (contact.outcome === undefined || contact.outcome === "waiting"))) continue;
+      // The pro the host picked from the quotes comes first, until they are contacted again.
+      const pick = job.quotePick;
+      if (pick && !job.contacts.some((c) => c.to === pick.proId && c.at > pick.at)) {
+        const name = this.nameOf(file, job, pick.proId);
+        if (name && contactAllowed(job, pick.proId, file.pros).ok) {
+          out.push({ jobId: job.id, proId: pick.proId, name, reach: this.reachOfId(file, job, pick.proId) });
+          continue;
+        }
+      }
       const next = this.topPro(file, job.trade, job.contacts.map((contact) => contact.to));
       if (!next || !contactAllowed(job, next.pro.id, file.pros).ok) continue;
       out.push({ jobId: job.id, proId: next.pro.id, name: next.pro.name, reach: next.pro.reach, rank: next.rank });
     }
     return out;
+  }
+
+  /**
+   * pick_quote: the host's pick from a quotes-only job's quotes, in two calls, with an optional cost line.
+   * The code is bound to the job, the pro and the line. It ends quotes-only, and check_fixes names the pro to book.
+   */
+  pickQuote(input: { jobId?: string; proId?: string; costLineCents?: number; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      if (!job) return fail("There's no job with that id. Call get_fixer_state for the list.");
+      if (!isOpen(job) || !job.quotesFirst) return fail("That repair isn't getting quotes first.");
+      if (typeof input.proId !== "string" || !job.contacts.some((c) => !c.cancelled && c.to === input.proId && c.outcome === "quoted")) return fail("Pick a pro who gave a quote on this repair.");
+      if (input.costLineCents !== undefined && !isInt(input.costLineCents, 100, 500_000)) return fail(COST_LINE_RANGE);
+      const name = this.nameOf(file, job, input.proId) ?? "That pro";
+      const line = input.costLineCents !== undefined ? ` with a ${shortDollars(input.costLineCents)} cost line` : "";
+      const gate = this.approved(file, "fixer-pick-quote", job.id, input, `Book ${name} for ${job.what}${line}?`);
+      if (gate !== "go") return gate;
+      delete job.quotesFirst;
+      delete job.quotesToldAt;
+      if (input.costLineCents !== undefined) job.costLineCents = input.costLineCents;
+      job.quotePick = { proId: input.proId, at: this.deps.now().toISOString() };
+      this.write(file);
+      return ok({ picked: true, jobId: job.id, next: `Call check_fixes: contactNext names ${name} to book.` });
+    });
   }
 
   /**

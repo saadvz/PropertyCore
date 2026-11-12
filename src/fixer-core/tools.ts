@@ -126,6 +126,12 @@ export const FIXER_TOOLS: FixerTool[] = [
     input: z.object({ id: Id, confirmation: Confirmation }).strict(),
   },
   {
+    name: "pick_quote",
+    title: "Pick a quote",
+    description: `For a quotes-only repair, after quotesReady: the pro the host picked (proId) and, if they want one, a cost line (costLineCents). ${TWO_CALL} Then check_fixes names that pro in contactNext to book the normal way.`,
+    input: z.object({ jobId: Id, proId: Id, costLineCents: Cents.optional(), confirmation: Confirmation }).strict(),
+  },
+  {
     name: "save_repair_alerts",
     title: "Connect repair alerts",
     description:
@@ -336,6 +342,8 @@ export async function handleFixerTool(desk: FixerDesk, name: string, args: unkno
       return desk.checkFixes(input);
     case "open_job":
       return desk.openJob(input);
+    case "pick_quote":
+      return desk.pickQuote(input);
     case "save_repair_alerts":
       return desk.issueAlertUpload();
     case "approve_job":
