@@ -345,7 +345,9 @@ so these wait for him. Most important first.
    moved earlier.** **The host clears the guests early.** A code made ahead starts at checkout time. If the host says
    the guests left early, does the code's start move to now (reprogramming at release), or does the
    cleaner wait until checkout time and get told so? Pros on a checkout day have the same question.
-3. **Which key seals the per-visit codes.** The saved code may use a key the server holds only in
+3. **Answered 2026-11-12: grants always use the account's own server key** (the per-account key in the
+   tenant's secrets file, made if missing), whatever key the saved code uses. **Which key seals the
+   per-visit codes.** The saved code may use a key the server holds only in
    memory. Codes are issued and opened with no host request present (the cleaner's YES, webhooks, the
    checkout timer, leak checks). May grants always use the account's server key?
 4. **How a standing code reaches its person.** The host enters the digits and passes them on, or
