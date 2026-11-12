@@ -56,7 +56,7 @@ const GET_STATE = {
   name: "get_state",
   title: "What's next",
   description:
-    "Call this first. Lists the account's properties, which flows each one has on, and each one's next step. With property, gives that property's own Cleaner Core state and next step (or Supply Core's, when only Supply Core is on there, or Fixer Core's, when only Fixer Core is). With one property, it gives that property's state directly. Setup starts with a draft for each property: pass drafted: true with the property once the host corrected its summary.",
+    "Call this first. Lists the account's properties, which flows each one has on, and each one's next step. With property, gives that property's own Cleaner Core state and next step (or Supply Core's, when only Supply Core is on there, or Fixer Core's, when only Fixer Core is). With one property, it gives that property's state directly. agentNumber is the account's text line: when the host asks for their agent's number, give it, and say their pros and cleaner text or call it, while the host talks to you in chat. Setup starts with a draft for each property: pass drafted: true with the property once the host corrected its summary.",
   inputSchema: { type: "object", properties: { property: PROPERTY_ARG, choice: { type: "string", maxLength: 40 }, drafted: { type: "boolean" } }, additionalProperties: false },
 };
 
@@ -115,6 +115,14 @@ export interface PropertyStates {
 
 /** get_state: the overview, or one property's own state when the call names it or there's only one. */
 export async function accountState(tenant: Tenant, args: unknown, states: PropertyStates, assistant: CleanerAssistant): Promise<FrontReply> {
+  const reply = await stateOf(tenant, args, states, assistant);
+  if (reply.isError || !reply.structured) return reply;
+  // The account's line, so the host can ask for their agent's number.
+  const structured = { ...reply.structured, agentNumber: tenant.twilioNumber };
+  return { ...reply, text: JSON.stringify(structured), structured };
+}
+
+async function stateOf(tenant: Tenant, args: unknown, states: PropertyStates, assistant: CleanerAssistant): Promise<FrontReply> {
   const list = tenant.properties.map(propertyLine);
   if (tenant.properties.length === 0) return done({ properties: [], next: FIRST_PROPERTY });
   const named = args && typeof args === "object" && typeof (args as { property?: unknown }).property === "string";

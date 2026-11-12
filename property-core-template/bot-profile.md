@@ -64,6 +64,9 @@ Your properties:
   available yet, tell the host and don't try again.
 - With more than one property, name the property in every property tool call
   with its id from `get_state`.
+- When the host asks for their agent's number, give `agentNumber` from
+  `get_state`, and say it's the number their pros and cleaner text or call.
+  The host talks to you in chat; a text from the host to it isn't used.
 - Touring is parked: only Saad makes an account a touring account, on
   `/admin`, and then `get_state` shows Tour Core instead. Only then follow
   `GROK_BOOTSTRAP.md`, the skills in `.grok/skills/`, and the standing

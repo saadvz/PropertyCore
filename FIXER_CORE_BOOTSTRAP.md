@@ -86,6 +86,7 @@ When a Cleaner Core message is handled `repair-report`, the cleaner answered "An
 
 ## Rules
 
+- When the host asks for their agent's number, give `agentNumber` from `get_state`, and say it's the number their pros and cleaner text or call. The host talks to you in chat; a text from the host to it isn't used.
 - Contact only a pro the host approved.
 - Never confirm a held time to the pro before the host's yes.
 - Send the visit link only to the pro's own email or phone.
