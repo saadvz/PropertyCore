@@ -17,7 +17,7 @@ export const TOUR_EVENT_TYPES = ["tour.booked", "tour.started", "tour.completed"
 export const ISSUE_EVENT_TYPES = ["exception.created", "access.problem", "verification.problem"] as const;
 /** A visitor asked for a time that needs the landlord. Not optional: a person has to decide. */
 export const TIME_REQUEST_EVENT = "tour.time_requested" as const;
-export const OPERATOR_EVENT_TYPES = [...TOUR_EVENT_TYPES, ...ISSUE_EVENT_TYPES, TIME_REQUEST_EVENT, "installation.test", "cleaning.update"] as const;
+export const OPERATOR_EVENT_TYPES = [...TOUR_EVENT_TYPES, ...ISSUE_EVENT_TYPES, TIME_REQUEST_EVENT, "installation.test", "cleaning.update", "repairs.update"] as const;
 export type OperatorEventType = (typeof OPERATOR_EVENT_TYPES)[number];
 export type TourEventType = (typeof TOUR_EVENT_TYPES)[number];
 export type IssueEventType = (typeof ISSUE_EVENT_TYPES)[number];
@@ -97,6 +97,16 @@ export function testEvent(now: Date): OperatorEvent {
  * Cleaner Core has a new host alert. It carries no property, job, name, number or text:
  * the cleaning routine wakes and reads the alerts over MCP (`check_now`).
  */
+/** Something new for the host from Fixer Core: the routine calls check_fixes. Nothing else is in it. */
+export function repairsUpdateEvent(now: Date): OperatorEvent {
+  return OperatorEventSchema.parse({
+    schemaVersion: 1,
+    eventId: `evt_${randomUUID().replace(/-/g, "")}`,
+    eventType: "repairs.update",
+    occurredAt: now.toISOString(),
+  });
+}
+
 export function cleaningUpdateEvent(now: Date): OperatorEvent {
   return OperatorEventSchema.parse({
     schemaVersion: 1,

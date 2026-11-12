@@ -80,6 +80,13 @@ export function fixerDesk(h: HostedCleaner, tenant: Tenant, property: Property):
       return photoKey(c.env(), c.saveSecrets);
     },
     lineNumber: () => current(h, tenant, property).account.twilioNumber || undefined,
+    // The account's alerts routine for its primary chat, the same one Cleaner Core wakes.
+    routine: () => {
+      const env = ctx().env();
+      const url = env.CLEANER_CORE_ROUTINE_URL?.trim();
+      const key = env.CLEANER_CORE_ROUTINE_KEY?.trim();
+      return url && key ? { url, key } : undefined;
+    },
   });
 }
 

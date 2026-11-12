@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { GrokRoutineWebhookSink, repairsUpdateEvent } from "../alerts/operatorEvents";
+import { OperatorEventOutbox } from "../alerts/outbox";
+import { FileRuntimeStore } from "../storage/runtimeStore";
 import { localDateOf } from "../core/timezone";
 import { isDone, isYes } from "../cleaner-core/core";
 import { isInjuryReport } from "../cleaner-core/injury";
@@ -55,6 +58,10 @@ export interface FixerDeps {
   photoKey?(): Buffer | undefined;
   /** The account's text line, in +1 form: the number a pro is given to reach the host back, by text. */
   lineNumber?(): string | undefined;
+  /** The account's alerts routine for its primary chat, read on each delivery and never kept here. */
+  routine?(): { url: string; key: string } | undefined;
+  /** Tests stub the routine's webhook. */
+  alertFetch?: NonNullable<ConstructorParameters<typeof GrokRoutineWebhookSink>[1]>["fetch"];
 }
 
 /** Why the visit page (or the tick) got no code. */
@@ -316,6 +323,28 @@ export class FixerDesk {
     this.approvals = new ConfirmationBook(10 * 60_000, () => deps.now().getTime(), { file: join(root, "fixer-approvals.json") });
     // The hub moves any old property and calendar fields out of the older files before this desk reads anything.
     this.hub();
+    // The routine's address and key are read on every delivery, never saved here.
+    this.alerts = new OperatorEventOutbox(
+      new FileRuntimeStore(join(root, "fixer-alerts")),
+      () => new GrokRoutineWebhookSink({ url: () => deps.routine?.()?.url, key: () => deps.routine?.()?.key }, deps.alertFetch ? { fetch: deps.alertFetch } : {}),
+      { now: () => deps.now().getTime() },
+    );
+  }
+
+  private readonly alerts: OperatorEventOutbox;
+
+  /** True when the account has an alerts routine this desk can wake. */
+  routineConnected(): boolean {
+    const routine = this.deps.routine?.();
+    return Boolean(routine?.url && routine.key);
+  }
+
+  /** One wake-up for the routine: a pending one already covers every note since. Then it calls check_fixes. */
+  private wake(): void {
+    if (!this.routineConnected()) return;
+    const waiting = this.alerts.records().some((record) => record.event.eventType === "repairs.update" && record.status === "pending");
+    if (!waiting) this.alerts.enqueue(repairsUpdateEvent(this.deps.now()));
+    void this.alerts.drain().catch(() => undefined);
   }
 
   /** Runs calls one at a time, so two tools never write the record at once. */
@@ -1579,6 +1608,8 @@ export class FixerDesk {
 
   /** Sends the host notes. A note that fails to go is still in check_fixes' news. */
   private async tell(notes: readonly HostNote[]): Promise<boolean> {
+    // Without Cleaner Core here, nothing takes the note: it waits in check_fixes' news, and the routine is woken.
+    if (notes.length > 0 && this.deps.cleaningOn?.() !== true) this.wake();
     let taken = notes.length > 0;
     for (const note of notes) {
       try {
