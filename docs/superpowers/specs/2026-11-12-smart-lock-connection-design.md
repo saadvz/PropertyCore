@@ -335,11 +335,14 @@ tests on the fake adapter:
 A reviewer read this spec as its builder on 2026-11-12. Saad paused project 1 to finish the build map,
 so these wait for him. Most important first.
 
-1. **Checkout-time release and pros.** Fixer Core lets a pro in on a checkout day once Cleaner Core
+1. **Answered 2026-11-12: fine as is.** With `codeAtCheckout` on, the automatic release clears the day
+   for pros too. The Fixer gates doc must say so. **Checkout-time release and pros.** Fixer Core lets a pro in on a checkout day once Cleaner Core
    counts the cleaning cleared, and it counts it cleared once the cleaner's code is sent. With
    `codeAtCheckout`, a pro booked that day would get their code without the host's guests-left.
    Intended, or should an automatic release be kept apart from a real clearance?
-2. **The host clears the guests early.** A code made ahead starts at checkout time. If the host says
+2. **Answered 2026-11-12: the code starts at checkout time, since that's when the cleaner is expected.
+   If the cleaner says they're coming early and the host has cleared the guests, the code's start is
+   moved earlier.** **The host clears the guests early.** A code made ahead starts at checkout time. If the host says
    the guests left early, does the code's start move to now (reprogramming at release), or does the
    cleaner wait until checkout time and get told so? Pros on a checkout day have the same question.
 3. **Which key seals the per-visit codes.** The saved code may use a key the server holds only in
