@@ -329,3 +329,32 @@ tests on the fake adapter:
 - Matching events to visits: project 2.
 - Seam's per-lock cost: who pays, Property Core or the host. Cory's stack doc lists $1 per lock per
   month plus credits as of 10 Nov 2026.
+
+## Questions from the builder review (not yet answered)
+
+A reviewer read this spec as its builder on 2026-11-12. Saad paused project 1 to finish the build map,
+so these wait for him. Most important first.
+
+1. **Checkout-time release and pros.** Fixer Core lets a pro in on a checkout day once Cleaner Core
+   counts the cleaning cleared, and it counts it cleared once the cleaner's code is sent. With
+   `codeAtCheckout`, a pro booked that day would get their code without the host's guests-left.
+   Intended, or should an automatic release be kept apart from a real clearance?
+2. **The host clears the guests early.** A code made ahead starts at checkout time. If the host says
+   the guests left early, does the code's start move to now (reprogramming at release), or does the
+   cleaner wait until checkout time and get told so? Pros on a checkout day have the same question.
+3. **Which key seals the per-visit codes.** The saved code may use a key the server holds only in
+   memory. Codes are issued and opened with no host request present (the cleaner's YES, webhooks, the
+   checkout timer, leak checks). May grants always use the account's server key?
+4. **How a standing code reaches its person.** The host enters the digits and passes them on, or
+   Property Core makes the code and shows it once to the named person (a new way a code leaves the
+   system, with its own consent rules)?
+5. **The pro's code window.** Fixer's current access window (30 minutes before the visit to its end or
+   extension), or up to the check-in buffer? Does extending a visit count as a move?
+6. **One of several locks falls back.** Two codes named by door, one fallback code for the whole visit,
+   or the visit counts as failed?
+7. **Resuming after a pause under `codeAtCheckout`.** Does resuming make a new code and send it
+   automatically, or wait for the host's guests-left? The host likely paused because guests were
+   still there.
+8. **Urgent lock alerts without an alerts routine.** On agents or properties with no alerts routine,
+   notes wait until the host opens chat. Should connecting a lock require a working routine, or do
+   urgent lock problems need another way to reach the host?
