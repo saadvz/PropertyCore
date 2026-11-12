@@ -27,7 +27,7 @@ import { supplyAskOn } from "../supply-core/store";
 import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
 import { holdsOtherRole, priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
-import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
+import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
@@ -1618,6 +1618,25 @@ export class FixerDesk {
     return out;
   }
 
+  /**
+   * Quotes-only jobs whose contacted pros all answered (quoted, declined or no answer), each listed once:
+   * again only after a newer contact. Listing one marks it told.
+   */
+  private quotesReady(file: FixerFile): Record<string, unknown>[] {
+    const out: Record<string, unknown>[] = [];
+    const answered = new Set(["quoted", "declined", "no-answer"]);
+    for (const job of file.jobs) {
+      if (!isOpen(job) || !job.quotesFirst) continue;
+      const contacts = job.contacts.filter((c) => !c.cancelled);
+      if (contacts.length === 0 || !contacts.every((c) => c.outcome !== undefined && answered.has(c.outcome))) continue;
+      if (job.quotesToldAt && !contacts.some((c) => c.at > job.quotesToldAt!)) continue;
+      const quotes = contacts.filter((c) => c.outcome === "quoted" && c.quote).map((c) => ({ proId: c.to, name: this.nameOf(file, job, c.to) ?? "A pro", cents: c.quote!.cents, ...(c.quote!.note ? { note: c.quote!.note } : {}) }));
+      out.push({ jobId: job.id, quotes, question: quotesQuestion({ what: job.what, quotes }) });
+      job.quotesToldAt = this.deps.now().toISOString();
+    }
+    return out;
+  }
+
   /** The morning pass: what needs the host's go, what upkeep is due, who to contact next, and when pros can visit. */
   checkFixes(input: { googleEvents?: GoogleEventList }): Promise<FixerReply> {
     // Event text can hold long booking numbers. Only their dates are read, so they skip the card check.
@@ -1663,6 +1682,7 @@ export class FixerDesk {
         needsGo: file.jobs.filter((job) => isOpen(job) && !job.hostGo && job.state === "requested").map((job) => ({ jobId: job.id, question: this.goQuestion(file, job) })),
         upkeepDue: this.upkeepDue(file),
         contactNext: this.contactNext(file),
+        quotesReady: this.quotesReady(file),
         windows,
         ...(unread ? { windowsNext: STAYS_UNREAD } : {}),
         unconfirmed: swept.unconfirmed,

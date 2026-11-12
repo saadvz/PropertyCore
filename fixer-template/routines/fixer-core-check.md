@@ -29,7 +29,7 @@ hours, so an hourly run keeps jobs moving without waking anyone at night.
    Then `record_contact` with what they said. A booked time that overlaps a
    guest stay gives no question: tell the host, and ask the pro for another
    time.
-6. For `needsGo`, `held`, `preferredAsk`, `rotationAsk`, and a booking
+6. For `needsGo`, `quotesReady`, `held`, `preferredAsk`, `rotationAsk`, and a booking
    question, post the question for the host as given. Call `approve_job`,
    `approve_booking`, `pick_pros`, `save_pro`, `skip_question` or
    `change_door_code` without a code or confirmation, never with one.

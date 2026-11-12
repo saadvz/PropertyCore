@@ -266,3 +266,10 @@ export function fixerOffQuestion(f: { label: string; jobs: { what: string; proNa
 export function propertyQuestion(f: { address: string }): string {
   return `Save ${f.address} as the property's address for repairs?`;
 }
+
+/** A quotes-only repair's summary for the host, once every contacted pro answered. */
+export function quotesQuestion(f: { what: string; quotes: { name: string; cents: number; note?: string }[] }): string {
+  if (f.quotes.length === 0) return `No quotes yet for ${f.what}. Want me to find more pros?`;
+  const list = f.quotes.map((q) => `${q.name} ${shortDollars(q.cents)}${q.note ? ` (${q.note})` : ""}`).join(", ");
+  return `Quotes for ${f.what}: ${list}. Who should I book, and want a cost line?`;
+}

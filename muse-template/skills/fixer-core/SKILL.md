@@ -116,7 +116,7 @@ You search in your own browser and call, email or message pros yourself.
 
 The Fixer Core recurring task runs this every hour, and you run it whenever
 the host mentions something broken. Call `check_fixes` on every run and act on everything it returns:
-`needsGo`, `upkeepDue`, `contactNext`, `unconfirmed`, `followUps`, `held`, `delays`,
+`needsGo`, `upkeepDue`, `contactNext`, `quotesReady`, `unconfirmed`, `followUps`, `held`, `delays`,
 `preferredAsk`, `rotationAsk`, `news`. When Google Calendar is saved for the
 property, read the calendar's events and pass them as `googleEvents` to
 `check_fixes` and to `approve_booking`.
@@ -140,6 +140,8 @@ property, read the calendar's events and pass them as `googleEvents` to
   quotes only and report back before anyone is booked. OK?", then pass
   `quotesFirst: true`. On the host's own repair both go to `open_job`; on a
   cleaner's or upkeep job, to `approve_job` with the code.
+- **quotesReady:** a quotes-only repair whose contacted pros have all
+  answered. Ask the host its question as given.
 - **A quotes-only repair:** ask each pro for a price, not a time.
   `record_contact` with `quoted` and `quoteCents`; a time they offered goes in
   the note, and tell them you'll call back. A `booked` outcome is refused

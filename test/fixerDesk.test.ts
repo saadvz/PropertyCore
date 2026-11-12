@@ -689,7 +689,7 @@ describe("check_fixes", () => {
   it("returns every list, empty when nothing, and refuses before activation", async () => {
     expect((await made().desk.checkFixes({})).isError).toBe(true);
     const { desk } = await withPlumber();
-    expect((await desk.checkFixes({})).structured).toEqual({ needsGo: [], upkeepDue: [], contactNext: [], windows: {}, unconfirmed: [], followUps: [], held: [], delays: [], preferredAsk: [], rotationAsk: [], news: [] });
+    expect((await desk.checkFixes({})).structured).toEqual({ needsGo: [], upkeepDue: [], contactNext: [], quotesReady: [], windows: {}, unconfirmed: [], followUps: [], held: [], delays: [], preferredAsk: [], rotationAsk: [], news: [] });
   });
 
   it("windows respect the next check-in and its buffer", async () => {
@@ -923,5 +923,49 @@ describe("what a pro said", () => {
     clock.at = new Date(NOW.getTime() + 24 * 3_600_000);
     const follow = ((await desk.checkFixes({})).structured as { followUps: { name: string; next?: { name: string } }[] }).followUps;
     expect(follow).toEqual([expect.objectContaining({ name: "Joe's Plumbing", next: expect.objectContaining({ name: "Rita Rooter" }) })]);
+  });
+});
+
+/** A quotes-only repair reports its quotes once. Made-up pros, 555 numbers. */
+describe("quotes first", () => {
+  async function quotesJob() {
+    const w = await withJob();
+    const file = readFixer(w.root);
+    file.jobs[0]!.quotesFirst = true;
+    writeFixer(w.root, file);
+    const [joe, rita] = readFixer(w.root).pros;
+    const contact = async (proId: string) => (await w.desk.contactPro({ jobId: w.job().id, to: proId, how: "call" })).structured!.contactToken as string;
+    return { ...w, joe: joe!.id, rita: rita!.id, contact };
+  }
+  const ready = async (desk: Desk) => ((await desk.checkFixes({})).structured as { quotesReady?: { jobId: string; quotes: { proId: string; cents: number }[]; question: string }[] }).quotesReady ?? [];
+
+  it("reports the quotes once every contacted pro answered", async () => {
+    const w = await quotesJob();
+    const joe = await w.contact(w.joe);
+    const rita = await w.contact(w.rita);
+    expect(await ready(w.desk)).toEqual([]);
+    await w.desk.recordContact({ contactToken: joe, outcome: "quoted", quoteCents: 15000 });
+    expect(await ready(w.desk)).toEqual([]);
+    await w.desk.recordContact({ contactToken: rita, outcome: "declined" });
+    const listed = await ready(w.desk);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]!.question).toBe("Quotes for Kitchen sink leaks: Joe's Plumbing $150. Who should I book, and want a cost line?");
+    expect(listed[0]!.quotes).toEqual([{ proId: w.joe, name: "Joe's Plumbing", cents: 15000 }]);
+    expect(await ready(w.desk)).toEqual([]);
+  });
+
+  it("says no quotes yet when everyone declined", async () => {
+    const w = await quotesJob();
+    await w.desk.recordContact({ contactToken: await w.contact(w.joe), outcome: "declined" });
+    expect((await ready(w.desk))[0]!.question).toBe("No quotes yet for Kitchen sink leaks. Want me to find more pros?");
+  });
+
+  it("reports again after more pros are contacted", async () => {
+    const w = await quotesJob();
+    await w.desk.recordContact({ contactToken: await w.contact(w.joe), outcome: "quoted", quoteCents: 15000, note: "Can come Tuesday" });
+    expect(await ready(w.desk)).toHaveLength(1);
+    w.clock.at = new Date(NOW.getTime() + 60_000);
+    await w.desk.recordContact({ contactToken: await w.contact(w.rita), outcome: "quoted", quoteCents: 22000 });
+    expect((await ready(w.desk))[0]!.question).toBe("Quotes for Kitchen sink leaks: Joe's Plumbing $150 (Can come Tuesday), Rita Rooter $220. Who should I book, and want a cost line?");
   });
 });

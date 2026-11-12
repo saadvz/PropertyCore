@@ -145,6 +145,8 @@ export interface Job {
   costLineCents?: number;
   /** The host chose to get quotes first: no booking until pick_quote. */
   quotesFirst?: true;
+  /** When check_fixes last reported this quotes-only job's quotes. */
+  quotesToldAt?: string;
   candidates: Candidate[];
   picked: string[];
   contacts: Contact[];
