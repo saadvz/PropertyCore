@@ -393,4 +393,32 @@ describe("save_repair_alerts (a Fixer-only property)", () => {
       expect(posted.status).toBe(400);
     }
   });
+
+  it("retries a refused wake-up on the clock tick, with no new note", SLOW, async () => {
+    const m = await start();
+    const { property, token } = await account(m);
+    await activeFixer(m, token, property);
+    const link = await m.toolAt(PATH, token, "save_repair_alerts", { property: property.id });
+    await m.app.http(new URL(String(link.structured!.uploadUrl)).pathname, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(HOOK) });
+    m.setWakeStatus(500);
+    await m.text(LANE, JOE, "Running 10 minutes late", "SMfixerretry1");
+    await vi.waitFor(() => expect(m.wakes.some((w) => JSON.parse(w.body).eventType === "repairs.update")).toBe(true));
+    const tried = m.wakes.filter((w) => JSON.parse(w.body).eventType === "repairs.update").length;
+    m.setWakeStatus(200);
+    clock = new Date(clock.getTime() + 10 * 60_000);
+    await tickAllFixers(m.hosted());
+    await vi.waitFor(() => expect(m.wakes.filter((w) => JSON.parse(w.body).eventType === "repairs.update").length).toBeGreaterThan(tried));
+  });
+
+  it("a second chat that saves the routine gets the alerts, when the primary chat has none", SLOW, async () => {
+    const m = await start();
+    const { tenant, property } = await account(m);
+    const second = await m.joinAt(tenant.id, "grok", PATH);
+    await activeFixer(m, second, property);
+    const link = await m.toolAt(PATH, second, "save_repair_alerts", { property: property.id });
+    const posted = await m.app.http(new URL(String(link.structured!.uploadUrl)).pathname, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(HOOK) });
+    expect(posted.status).toBe(200);
+    await m.text(LANE, JOE, "Running 10 minutes late", "SMfixersecond1");
+    await vi.waitFor(() => expect(m.wakes.some((w) => w.url === HOOK.url && JSON.parse(w.body).eventType === "repairs.update")).toBe(true));
+  });
 });

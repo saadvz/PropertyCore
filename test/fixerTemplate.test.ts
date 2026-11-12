@@ -104,6 +104,9 @@ describe("Fixer Core agent instructions", () => {
     const shared = read("property-core-template/routines/property-core-alerts.md");
     expect(shared).toContain("cleaning.update");
     expect(shared).toContain("check_now");
+    // Cleaner Core's steps for a cleaning wake-up include asking for the times (needsTimes): none is skipped.
+    expect(shared).not.toContain("steps 2 to 9");
+    expect(shared).toContain("needsTimes");
     const guide = read(BOOTSTRAP).replace(/\s+/g, " ");
     expect(guide).toContain("`save_repair_alerts`");
     expect(guide).toContain("property-core-template/routines/property-core-alerts.md");

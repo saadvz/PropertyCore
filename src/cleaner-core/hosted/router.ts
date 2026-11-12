@@ -33,7 +33,7 @@ import { fixerCodeChanged, fixerDesk, fixerPhotoFolders, tickFixer } from "../..
 import { FIXER_ALERT_UPLOAD_PREFIX } from "../../fixer-core/desk";
 import { isVisitPath, serveFixerVisit } from "../../hosted/fixerVisit";
 import { handleLineText } from "../../hosted/lineRouter";
-import { handleVoiceCall, handleVoiceTranscript, noCallsTwiml, VOICE_PATH, VOICE_TRANSCRIPT_PATH } from "../../hosted/voice";
+import { dropTranscript, handleVoiceCall, handleVoiceTranscript, noCallsTwiml, VOICE_PATH, VOICE_TRANSCRIPT_PATH } from "../../hosted/voice";
 import type { TouringFront } from "../../hosted/serviceTools";
 import { handleTouringAlertUpload, refreshTouringAlerts, touringAlertFormReply, touringAlertPage, touringAlertUploadCode } from "../../hosted/touringAlerts";
 import { forwardTenantPath } from "../../hosted/touringForward";
@@ -202,7 +202,7 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
     const rawBody = await r.readRaw();
     const tenant = h.registry.byNumber(formTo(rawBody));
     if (!tenant || tenant.disabled || tenant.service === "touring") {
-      r.send(200, "text/xml", EMPTY_TWIML);
+      await dropTranscript(h, r, tenant, rawBody, signed(path));
       return true;
     }
     await handleVoiceTranscript(h, r, tenant, rawBody, signed(path));
@@ -415,6 +415,8 @@ async function handleFixerOnlyPath(h: HostedCleaner, r: HostedRequest, tenant: T
     if (method !== "POST") return false;
     const read = await uploadBody(contentType, () => r.readCapped(ALERT_UPLOAD_MAX_BYTES));
     const saved = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : await fixerDesk(h, tenant, property).uploadAlerts(alert, read.parsed, ctx.saveSecrets);
+    // The chat that saved the routine gets the alerts when the primary chat has no routine of its own.
+    if (saved.status === 200 && "by" in saved && saved.by) promoteFixerRoutine(h, tenant.id, saved.by);
     r.send(saved.status, JSON_TYPE, JSON.stringify(saved.body), saved.status === 413 ? { Connection: "close" } : {});
     return true;
   }
@@ -502,6 +504,16 @@ export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
   h.log(`${tenantId}'s primary chat is now the one that connected its alert routine.`);
 }
 
+/** Makes `grantId` the primary chat when the primary has no saved routine, so Fixer Core's alerts reach the chat that saved one. */
+function promoteFixerRoutine(h: HostedCleaner, tenantId: string, grantId: string): void {
+  const primary = h.registry.primary(tenantId, (id) => h.grantLive(id));
+  if (!primary || primary.grantId === grantId) return;
+  const own = h.secrets.connection(tenantId, primary.grantId);
+  if (own.CLEANER_CORE_ROUTINE_URL && own.CLEANER_CORE_ROUTINE_KEY) return;
+  h.registry.setPrimary(tenantId, grantId);
+  h.log(`${tenantId}'s primary chat is now the one that connected its alert routine.`);
+}
+
 /**
  * The account's alert routine belongs to its chats, not to one property: a routine connected through
  * any property counts on every property running Cleaner Core, so setup never asks for it again.
@@ -569,6 +581,8 @@ async function fixerPass(h: HostedCleaner): Promise<void> {
       if (!property.flows.fixer.on) continue;
       try {
         await tickFixer(h, tenant, property);
+        // A wake-up the routine refused is tried again here, not only when the next note comes.
+        await fixerDesk(h, tenant, property).drainAlerts();
       } catch {
         h.log(`Fixer Core couldn't run ${tenant.id}/${property.id}'s clock this round.`);
       }

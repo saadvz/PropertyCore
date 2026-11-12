@@ -4,9 +4,10 @@ import { tenantFolder, type Tenant } from "../src/cleaner-core/hosted/registry";
 import { readFixer, writeFixer } from "../src/fixer-core/store";
 import { resetFixerDesks } from "../src/fixer-core/desk";
 import { setTwilioNumbersFetch } from "../src/cleaner-core/hosted/twilioNumbers";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { retryVoiceDeletes, routeVoicemail } from "../src/hosted/voice";
+import { VoiceDeletes } from "../src/hosted/voiceDeletes";
 import { peopleFor } from "../src/hub/people";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
@@ -31,6 +32,8 @@ function stubRecordings() {
   setTwilioNumbersFetch(async (input, init) => {
     if ((init?.method ?? "GET") === "DELETE") {
       deletes.push(String(input));
+      // A slow answer for this one recording, so a retry is still waiting while another delete fails.
+      if (String(input).includes("REboth000001")) await new Promise((resolve) => setTimeout(resolve, 30));
       return new Response(null, { status: refuse ? 500 : 204 });
     }
     return new Response("{}", { status: 200 });
@@ -161,5 +164,27 @@ describe("the audio", () => {
     await retryVoiceDeletes(m.hosted());
     expect(deletes.at(-1)).toBe(recordingUrl("REstartup001"));
     expect(JSON.parse(readFileSync(listFile(m, tenant), "utf8"))).toEqual([]);
+  });
+
+  it("deletes the recording even when the account was turned off before the transcript arrived", SLOW, async () => {
+    const { m, tenant } = await setup();
+    m.registry.setDisabled?.(tenant.id, true);
+    if (!m.registry.get(tenant.id)!.disabled) {
+      const doc = JSON.parse(readFileSync(join(m.app.root, "tenants.json"), "utf8"));
+      doc.tenants.find((t: { id: string }) => t.id === tenant.id).disabled = true;
+      writeFileSync(join(m.app.root, "tenants.json"), JSON.stringify(doc));
+    }
+    await transcript(m, { From: JOE, RecordingSid: "REdisabled01", TranscriptionText: "Running late" });
+    expect(deletes).toEqual([recordingUrl("REdisabled01")]);
+  });
+
+  it("keeps a delete that fails while a retry is under way", SLOW, async () => {
+    const { m, tenant } = await setup();
+    refuse = true;
+    const list = new VoiceDeletes(tenantFolder(m.app.root, tenant.id));
+    await list.remove(m.hosted().baseEnv(), "REboth000001");
+    // A retry that waits on Twilio while a new failed delete is kept: neither is lost.
+    await Promise.all([list.retry(m.hosted().baseEnv()), list.remove(m.hosted().baseEnv(), "REboth000002")]);
+    expect(JSON.parse(readFileSync(listFile(m, tenant), "utf8")).map((p: { sid: string }) => p.sid).sort()).toEqual(["REboth000001", "REboth000002"]);
   });
 });

@@ -1,3 +1,4 @@
+import { fixerCoreOn } from "../cleaner-core/flag";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ import { writeJsonAtomic } from "../storage/atomicWrite";
 import { isLandlord } from "./lineRouter";
 import { accountPeople } from "./sharedPeople";
 import { VoiceDeletes } from "./voiceDeletes";
+import { deleteRecording } from "../cleaner-core/hosted/twilioNumbers";
 import { fixerProVoicemail } from "./fixer";
 import { propertyContext } from "../cleaner-core/hosted/router";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
@@ -49,8 +51,9 @@ export function knownCaller(tenant: Pick<Tenant, "properties">, people: People, 
   if (!from) return undefined;
   if (isLandlord(tenant as Tenant, people, from)) return "landlord";
   if (proRoute(tenant, people, from)) return "pro";
-  const ids = new Set(tenant.properties.map((p) => p.id));
-  return people.person(from)?.where.some((w) => ids.has(w.propertyId)) ? "person" : undefined;
+  // Someone else is recorded only where their message can land: a property running Cleaner Core, in a role that isn't pro.
+  const landing = new Set(tenant.properties.filter((p) => p.flows.cleaning.on).map((p) => p.id));
+  return people.person(from)?.where.some((w) => w.role !== "pro" && landing.has(w.propertyId)) ? "person" : undefined;
 }
 
 /** Recordings per caller on one account in the last hour. Only a hash of the phone and the times are kept. */
@@ -88,15 +91,26 @@ export function signedCall(h: HostedCleaner, r: HostedRequest, fields: Record<st
 export async function handleVoiceCall(h: HostedCleaner, r: HostedRequest, tenant: Tenant, rawBody: Buffer, signedUrl: string | undefined): Promise<void> {
   const fields = formParams(rawBody);
   if (!signedCall(h, r, fields, signedUrl)) return r.send(403, "text/plain", "Forbidden");
-  await new VoiceDeletes(tenantFolder(h.dataRoot, tenant.id)).retry(h.baseEnv()).catch(() => undefined);
+  // Twilio's request after a recording ends: the call is over. Not a new call, so it isn't greeted or counted.
+  if (fields.RecordingSid || fields.RecordingUrl) return r.send(200, "text/xml", twiml(["<Hangup/>"]));
+  // Kept deletes are retried after the caller is answered, so a slow Twilio API never holds up the call.
+  const retry = () => void new VoiceDeletes(tenantFolder(h.dataRoot, tenant.id)).retry(h.baseEnv(), (line) => h.log(line)).catch(() => undefined);
+  // Voicemail is part of Fixer Core: while FIXER_CORE is off, nobody is recorded.
+  if (!fixerCoreOn(h.baseEnv())) {
+    r.send(200, "text/xml", noCallsTwiml());
+    return retry();
+  }
   const from = parsePhone(fields.From ?? "") ?? "";
   const who = knownCaller(tenant, await accountPeople(h, tenant), from);
   h.registry.touch(tenant.id);
-  if (who === "landlord") return r.send(200, "text/xml", twiml([say(LANDLORD_CALL), "<Hangup/>"]));
   const origin = h.origin();
-  if (!who || !origin || !new VoiceCalls(tenantFolder(h.dataRoot, tenant.id), () => h.now()).allow(from)) return r.send(200, "text/xml", noCallsTwiml());
-  const record = `<Record maxLength="120" timeout="5" playBeep="true" transcribe="true" transcribeCallback="${escape(`${origin}${VOICE_TRANSCRIPT_PATH}`)}"/>`;
-  r.send(200, "text/xml", twiml([say(GREETING), record, "<Hangup/>"]));
+  if (who === "landlord") r.send(200, "text/xml", twiml([say(LANDLORD_CALL), "<Hangup/>"]));
+  else if (!who || !origin || !new VoiceCalls(tenantFolder(h.dataRoot, tenant.id), () => h.now()).allow(from)) r.send(200, "text/xml", noCallsTwiml());
+  else {
+    const record = `<Record maxLength="120" timeout="5" playBeep="true" transcribe="true" transcribeCallback="${escape(`${origin}${VOICE_TRANSCRIPT_PATH}`)}"/>`;
+    r.send(200, "text/xml", twiml([say(GREETING), record, "<Hangup/>"]));
+  }
+  retry();
 }
 
 export interface Voicemail {
@@ -155,7 +169,7 @@ export async function handleVoiceTranscript(h: HostedCleaner, r: HostedRequest, 
   // The audio goes once the transcript is in, whatever it said: only the words are kept.
   if (/^RE[0-9a-zA-Z]{2,64}$/.test(recordingSid)) {
     const deletes = new VoiceDeletes(tenantFolder(h.dataRoot, tenant.id));
-    await deletes.retry(h.baseEnv()).catch(() => undefined);
+    await deletes.retry(h.baseEnv(), (line) => h.log(line)).catch(() => undefined);
     await deletes.remove(h.baseEnv(), recordingSid).catch(() => h.log(`A voicemail recording for ${tenant.id} wasn't deleted yet.`));
   }
   r.send(200, "text/xml", twiml([]));
@@ -163,5 +177,20 @@ export async function handleVoiceTranscript(h: HostedCleaner, r: HostedRequest, 
 
 /** At startup: tries again each account's voicemail recordings Twilio didn't delete yet. */
 export async function retryVoiceDeletes(h: HostedCleaner): Promise<void> {
-  for (const tenant of h.registry.list()) await new VoiceDeletes(tenantFolder(h.dataRoot, tenant.id)).retry(h.baseEnv()).catch(() => undefined);
+  for (const tenant of h.registry.list()) await new VoiceDeletes(tenantFolder(h.dataRoot, tenant.id)).retry(h.baseEnv(), (line) => h.log(line)).catch(() => undefined);
+}
+
+/**
+ * A transcript for a line no live account holds (turned off, or gone, since the call): nothing is
+ * routed, but a signed one's recording is still deleted.
+ */
+export async function dropTranscript(h: HostedCleaner, r: HostedRequest, tenant: Tenant | undefined, rawBody: Buffer, signedUrl: string | undefined): Promise<void> {
+  const fields = formParams(rawBody);
+  if (!signedCall(h, r, fields, signedUrl)) return r.send(403, "text/plain", "Forbidden");
+  const recordingSid = fields.RecordingSid ?? "";
+  if (/^RE[0-9a-zA-Z]{2,64}$/.test(recordingSid)) {
+    if (tenant) await new VoiceDeletes(tenantFolder(h.dataRoot, tenant.id)).remove(h.baseEnv(), recordingSid).catch(() => undefined);
+    else await deleteRecording(h.baseEnv(), recordingSid).catch(() => undefined);
+  }
+  r.send(200, "text/xml", twiml([]));
 }

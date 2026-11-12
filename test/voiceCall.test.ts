@@ -84,11 +84,6 @@ describe("a call to the line", () => {
     expect(body).toContain('/webhooks/twilio/voice/transcript"');
   });
 
-  it("the cleaner saved on the property is recorded too", SLOW, async () => {
-    const { m } = await setup();
-    expect(await (await ring(m, MARIA)).text()).toContain("<Record");
-  });
-
   it("the greeting names no address or business", SLOW, async () => {
     const { m } = await setup();
     const body = await (await ring(m, JOE)).text();
@@ -102,5 +97,42 @@ describe("a call to the line", () => {
     const sixth = await (await ring(m, JOE)).text();
     expect(sixth).toContain(NO_CALLS);
     expect(sixth).not.toContain("<Record");
+  });
+
+  it("after the recording, Twilio's follow-up request hangs up, and isn't counted or greeted", SLOW, async () => {
+    const { m } = await setup();
+    await ring(m, JOE, "CAfollow01");
+    for (let i = 0; i < 6; i++) {
+      const after = await (await m.twilio("/webhooks/twilio/voice", { CallSid: `CAfollow0${i}`, From: JOE, To: LINE, RecordingSid: `REfollow0${i}`, RecordingUrl: "https://api.twilio.com/recording", RecordingDuration: "12" })).text();
+      expect(after).not.toContain("<Record");
+      expect(after).not.toContain("Hi, you've reached");
+      expect(after).toContain("<Hangup/>");
+    }
+    // Only the first ring counted: four more recordings are still allowed.
+    for (let i = 0; i < 4; i++) expect(await (await ring(m, JOE)).text()).toContain("<Record");
+  });
+
+  it("a pro saved only where Fixer Core is off is not recorded", SLOW, async () => {
+    const { m, tenant, property } = await setup();
+    const other = m.registry.addProperty(tenant.id, "14 Scratch Lane");
+    peopleFor(tenantFolder(m.app.root, tenant.id), { now: () => NOW }).saveRolePeople(other.id, "pro", [{ phone: "+15555550166", name: "Ana Electric" }]);
+    expect(property.id).not.toBe(other.id);
+    expect(await (await ring(m, "+15555550166")).text()).not.toContain("<Record");
+  });
+
+  it("someone saved on a property without Cleaner Core, as a cleaner, is not recorded: their message has nowhere to go", SLOW, async () => {
+    const { m } = await setup();
+    expect(await (await ring(m, MARIA)).text()).not.toContain("<Record");
+  });
+
+  it("records nobody while FIXER_CORE is off", SLOW, async () => {
+    open = await multiTenantApp({ env: {}, now: () => NOW });
+    const m = open;
+    const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LINE });
+    const property = m.registry.addProperty(tenant.id, "12 Scratch Lane");
+    peopleFor(tenantFolder(m.app.root, tenant.id), { now: () => NOW }).saveRolePeople(property.id, "pro", [{ phone: JOE, name: "Joe" }]);
+    const body = await (await ring(m, JOE)).text();
+    expect(body).toContain(NO_CALLS);
+    expect(body).not.toContain("<Record");
   });
 });

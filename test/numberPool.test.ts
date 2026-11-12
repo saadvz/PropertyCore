@@ -63,7 +63,7 @@ beforeEach(() => {
     secrets: new TenantSecrets(dir),
     dataRoot: dir,
     origin: () => ORIGIN,
-    baseEnv: () => ({ CLEANER_CORE_TWILIO_ACCOUNT_SID: "ACpooltest", CLEANER_CORE_TWILIO_AUTH_TOKEN: "pool-test-token" }),
+    baseEnv: () => ({ CLEANER_CORE_TWILIO_ACCOUNT_SID: "ACpooltest", CLEANER_CORE_TWILIO_AUTH_TOKEN: "pool-test-token", FIXER_CORE: "1" }),
     grantLive: () => false,
     now: clock,
     log: (line) => void logs.push(line),
@@ -351,6 +351,21 @@ describe("the line's voice webhook", () => {
     expect(posts).toHaveLength(1);
     expect(new URLSearchParams(posts[0]!.body).get("VoiceUrl")).toBe(`${ORIGIN}/webhooks/twilio/voice`);
     expect(pool().get(A)?.voiceOk).toBe(true);
+  });
+
+  it("points no voice webhook at startup while FIXER_CORE is off", async () => {
+    const calls = fakeTwilio({ [A]: "PNa" });
+    await topUp(h, [A]);
+    await openAccount(h, { label: "Lane" });
+    const file = join(dir, "number-pool.json");
+    const doc = JSON.parse(readFileSync(file, "utf8"));
+    delete doc.numbers[0].voiceOk;
+    writeFileSync(file, JSON.stringify(doc));
+    const base = h.baseEnv;
+    h = { ...h, baseEnv: () => ({ ...base(), FIXER_CORE: "" }) };
+    const before = calls.length;
+    await pointVoiceOnce(h);
+    expect(calls.slice(before).filter((c) => c.method === "POST")).toEqual([]);
   });
 
   it("points nothing while the public address isn't known", async () => {

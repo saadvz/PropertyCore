@@ -231,7 +231,7 @@ const COST_LINE_RANGE = "A cost line has to be from $1 to $5,000.";
 const VOICEMAIL_MAX = 600;
 /** Beside the line's number on contact_pro: what to tell a pro who asks how to reach the host. */
 const CALLBACK_NEXT =
-  "If they ask for a number to reach the host, give them callbackNumber and say it takes texts, not calls. Never give the host's own phone. Their texts to it reach you as news on this job.";
+  "If they ask for a number to reach the host, give them callbackNumber and say they can leave a text or a voicemail there. Never give the host's own phone. Their texts and voicemails to it reach you as news on this job.";
 const URGENCIES = ["now", "soon", "by-date", "flexible"] as const;
 /** A job is still going until it is done or cancelled; these states are before any contact. */
 const NOT_BOOKED = new Set<Job["state"]>(["requested", "shortlisted", "contacted"]);
@@ -354,6 +354,12 @@ export class FixerDesk {
     return Boolean(routine?.url && routine.key);
   }
 
+  /** Delivers any wake-up that is due, such as one the routine refused before. The clock tick calls it. */
+  async drainAlerts(): Promise<void> {
+    if (!this.alerts.records().some((record) => record.status === "pending")) return;
+    await this.alerts.drain();
+  }
+
   /** One wake-up for the routine: a pending one already covers every note since. Then it calls check_fixes. */
   private wake(): void {
     if (!this.routineConnected()) return;
@@ -461,7 +467,7 @@ export class FixerDesk {
    * Saves the routine's address and key posted to the link, through `save` (the secret store, as the chat
    * that made the link), and queues a test wake-up. Only a save uses the link up. Nothing posted is repeated.
    */
-  uploadAlerts(code: string, body: Record<string, unknown>, save: (values: { CLEANER_CORE_ROUTINE_URL: string; CLEANER_CORE_ROUTINE_KEY: string }) => void): Promise<{ status: 200 | 400 | 404; body: Record<string, unknown> }> {
+  uploadAlerts(code: string, body: Record<string, unknown>, save: (values: { CLEANER_CORE_ROUTINE_URL: string; CLEANER_CORE_ROUTINE_KEY: string }) => void): Promise<{ status: 200 | 400 | 404; body: Record<string, unknown>; by?: string }> {
     return this.serial(async () => {
       const file = this.read();
       const pending = file.alertUpload;
@@ -478,7 +484,7 @@ export class FixerDesk {
       this.write(file);
       this.alerts.enqueue(testEvent(this.deps.now()));
       void this.alerts.drain().catch(() => undefined);
-      return { status: 200 as const, body: { ok: true, message: "Alerts are connected." } };
+      return { status: 200 as const, body: { ok: true, message: "Alerts are connected." }, ...(pending.by?.connectionId ? { by: pending.by.connectionId } : {}) };
     });
   }
 

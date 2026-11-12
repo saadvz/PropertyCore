@@ -567,7 +567,7 @@ describe("the line as the number to reach the host back", () => {
     const w = lineWith(LINE);
     const reply = await called(w);
     expect(reply.structured!.callbackNumber).toBe(LINE);
-    expect(reply.structured!.callbackNext).toContain("texts, not calls");
+    expect(reply.structured!.callbackNext).toContain("a text or a voicemail");
     expect(JSON.stringify(reply.structured)).not.toContain(HOST);
     const none = lineWith(undefined);
     expect((await called(none)).structured!.callbackNumber).toBeUndefined();

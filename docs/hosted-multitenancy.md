@@ -82,7 +82,8 @@ bought and registered ahead of time and kept in a pool,
   account with the ready number that has waited longest, records it, and
   points its SMS webhook at `/webhooks/twilio/cleaner-core` and its voice
   webhook at `/webhooks/twilio/voice` in one call, clearing any TwiML App.
-  A line pointed before voice gets its voice webhook once at startup. Two sign-ups never get
+  A line pointed before voice gets its voice webhook once at startup, only
+  while `FIXER_CORE` is on. Two sign-ups never get
   the same number. With no ready number, sign-up is refused and the log says
   so. `/admin`'s "Add a host" with a blank number makes the same call. A typed
   number is recorded in the pool too, unless it is resting.

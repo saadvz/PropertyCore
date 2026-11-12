@@ -1,3 +1,4 @@
+import { fixerCoreOn } from "../flag";
 import { parsePhone } from "../../core/phone";
 import { CLEANER_TWILIO_PATH } from "../twilioHook";
 import { NumberPool, PoolError, POOL_LOW_AT, poolRestMs } from "./numberPool";
@@ -48,8 +49,9 @@ export function lineVoiceUrl(h: HostedCleaner): string {
  * logged and kept, so /admin's "point it again" retries it; the next start doesn't.
  */
 export async function pointVoiceOnce(h: HostedCleaner): Promise<void> {
-  // Without the public address the webhook would point nowhere: the next start tries again.
-  if (!h.origin()) return;
+  // Without the public address the webhook would point nowhere: the next start tries again. Voicemail is
+  // part of Fixer Core, so an existing line's call handling isn't touched until FIXER_CORE is on.
+  if (!h.origin() || !fixerCoreOn(h.baseEnv())) return;
   const pool = numberPool(h);
   for (const line of pool.list()) {
     if (!line.tenantId || line.voiceOk !== undefined) continue;
