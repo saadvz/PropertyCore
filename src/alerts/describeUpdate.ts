@@ -56,6 +56,7 @@ export function joinAlertDetail(summary: string, tourStatus: string): string {
 
 export async function describeOperatorUpdate(services: OperatorServices, event: OperatorEvent, now: Date, options?: { inbox?: boolean }) {
   if (event.eventType === "cleaning.update") throw new SetupInputError("UPDATE_INCOMPLETE", "That update is for the cleaning scheduler.");
+  if (event.eventType === "repairs.update") throw new SetupInputError("UPDATE_INCOMPLETE", "That update is for Fixer Core.");
   if (event.eventType === "installation.test") {
     return { eventType: event.eventType, summary: "Tour updates are connected. I'll let you know about your tours here." };
   }

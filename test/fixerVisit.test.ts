@@ -101,12 +101,11 @@ async function setup(opts: Opts = {}) {
   await desk().savePro({ name: "Joe's Plumbing", trades: ["plumbing"], reach: { phone: JOE }, prefersText: true, preferredFor: [{ trade: "plumbing", rank: 1 }] });
   await desk().savePro({ name: "Sam Spigot", trades: ["plumbing"], reach: { phone: SAM } });
   await desk().saveSettings({ prosDone: true });
-  await desk().saveSettings(opts.costLine ? { costLineCents: opts.costLine } : { costLineCents: null });
   await desk().saveSettings({ upkeepDone: true });
   expect((await desk().activate()).isError).toBe(false);
   people().optIn(JOE, PROPERTY_ID);
   serve(ics(...(opts.stays ?? [])));
-  await desk().openJob({ trade: "plumbing", what: "Sink leaks", urgency: "soon", source: "host" });
+  await desk().openJob({ trade: "plumbing", what: "Sink leaks", urgency: "soon", source: "host", ...(opts.costLine ? { costLineCents: opts.costLine } : {}) });
   await desk().checkFixes({});
   const state = () => readFixer(root);
   /** The job opened last: the one from setup, unless a test opens another. */

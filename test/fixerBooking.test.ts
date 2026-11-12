@@ -46,13 +46,12 @@ async function setup(opts: Opts = {}) {
   await desk.savePro({ name: "Rita Rooter", trades: ["plumbing"], reach: { phone: "+15555550143" }, preferredFor: [{ trade: "plumbing", rank: 2 }] });
   await desk.savePro({ name: "Lou Locks", trades: ["locksmith"], reach: { phone: "+15555550144" }, preferredFor: [{ trade: "locksmith", rank: 1 }] });
   await desk.saveSettings({ prosDone: true });
-  await desk.saveSettings(opts.costLine ? { costLineCents: opts.costLine } : { costLineCents: null });
   await desk.saveSettings({ upkeepDone: true });
   expect((await desk.activate()).isError).toBe(false);
   if (opts.unread) setCalendarFetch(async (url) => ({ status: 500, url, async text() { return ""; } }));
   else serve(ics());
   const lock = opts.locksmith === true;
-  await desk.openJob({ trade: lock ? "locksmith" : "plumbing", what: lock ? "Lock sticks" : "Sink leaks", urgency: "soon", source: "host", ...(lock ? { doorLock: true as const } : {}) });
+  await desk.openJob({ trade: lock ? "locksmith" : "plumbing", what: lock ? "Lock sticks" : "Sink leaks", urgency: "soon", source: "host", ...(opts.costLine ? { costLineCents: opts.costLine } : {}), ...(lock ? { doorLock: true as const } : {}) });
   await desk.checkFixes({});
   const state = () => readFixer(root);
   const job = () => state().jobs[0]!;
@@ -267,12 +266,12 @@ describe("holds in the question", () => {
     expect(none.structured!.question).toBe("Joe's Plumbing can come Tuesday 10 to 12. They gave no estimate, and you have a $100 cost line. Book it and let them in with the door code?");
   });
 
-  it("refuses the second call when a cost line was saved between the calls", async () => {
+  it("refuses the second call when the job got a cost line between the calls", async () => {
     const w = await setup();
     await booked(w);
     const first = await w.desk.approveBooking({ jobId: w.job().id });
     const file = readFixer(w.root);
-    file.settings.costLineCents = 10_000;
+    file.jobs[0]!.costLineCents = 10_000;
     writeFixer(w.root, file);
     expect((await w.desk.approveBooking({ jobId: w.job().id, confirmation: codeOf(first) })).isError).toBe(true);
     expect(w.job().state).toBe("contacted");

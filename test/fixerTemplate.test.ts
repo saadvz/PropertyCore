@@ -27,7 +27,7 @@ const RULES = [
   "Never pass a card number to Fixer Core.",
 ];
 
-const CHECK_FIXES_KEYS = ["needsGo", "contactNext", "unconfirmed", "followUps", "held", "delays", "preferredAsk", "rotationAsk", "news"];
+const CHECK_FIXES_KEYS = ["needsGo", "upkeepDue", "contactNext", "unconfirmed", "followUps", "held", "delays", "preferredAsk", "rotationAsk", "news"];
 
 /** Every snake_case word in backticks that looks like a tool call. */
 function toolsNamed(text: string): string[] {
@@ -95,6 +95,23 @@ describe("Fixer Core agent instructions", () => {
     });
   }
 
+  it("both alerts routines call check_fixes on repairs.update, and the guide sets alerts up with save_repair_alerts", () => {
+    for (const file of ["property-core-template/routines/property-core-alerts.md", "cleaner-template/routines/cleaner-core-alerts.md"]) {
+      const text = read(file);
+      expect(text, file).toContain("repairs.update");
+      expect(text, file).toContain("check_fixes");
+    }
+    const shared = read("property-core-template/routines/property-core-alerts.md");
+    expect(shared).toContain("cleaning.update");
+    expect(shared).toContain("check_now");
+    // Cleaner Core's steps for a cleaning wake-up include asking for the times (needsTimes): none is skipped.
+    expect(shared).not.toContain("steps 2 to 9");
+    expect(shared).toContain("needsTimes");
+    const guide = read(BOOTSTRAP).replace(/\s+/g, " ");
+    expect(guide).toContain("`save_repair_alerts`");
+    expect(guide).toContain("property-core-template/routines/property-core-alerts.md");
+  });
+
   it("the client matrix points at the real routine and task", () => {
     const matrix = read("docs/client-matrix.md");
     expect(matrix).toContain("fixer-template/routines/fixer-core-check.md");
@@ -113,6 +130,15 @@ describe("Fixer Core agent instructions", () => {
     expect(read("README.md")).toContain("FIXER_CORE_BOOTSTRAP.md");
     expect(read("docs/client-matrix.md")).toContain("FIXER_CORE_BOOTSTRAP.md");
     expect(read("docs/hosted-multitenancy.md")).toContain("Fixer Core");
+  });
+
+  it("the gates hold the Alerts and Voicemail rows, and Cleaner Core's names a cleaner's voicemail", () => {
+    const gates = read(GATES);
+    expect(gates).toMatch(/^\| Alerts \|/m);
+    expect(gates).toMatch(/^\| Voicemail \|/m);
+    expect(gates).toContain("test/voiceCall.test.ts");
+    expect(gates).toContain("test/fixerAlerts.test.ts");
+    expect(read("docs/cleaner-core-safety-gates.md")).toContain("a cleaner's voicemail is a Cleaner Core note and nothing else");
   });
 
   it("every test the safety gates name exists in its file", () => {

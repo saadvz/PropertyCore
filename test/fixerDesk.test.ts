@@ -6,7 +6,7 @@ import { FixerDesk, fixerDeskFor, resetFixerDesks, type FixerDeps } from "../src
 import { storePhoto, messagePhotoId, photoCount } from "../src/cleaner-core/photos";
 import { setCalendarFetch } from "../src/hub/calendarFetch";
 import { fixerSetupAsk } from "../src/fixer-core/setupAsk";
-import { FIXER_FILE, emptyFixer, readFixer, writeFixer } from "../src/fixer-core/store";
+import { FIXER_FILE, TRADES, emptyFixer, readFixer, writeFixer } from "../src/fixer-core/store";
 import { cleanerAskQuestion } from "../src/fixer-core/texts";
 import { hubFor, resetHubs } from "../src/hub/hub";
 
@@ -57,7 +57,6 @@ async function step(desk: Desk): Promise<string | undefined> {
 async function toReview(desk: Desk) {
   await desk.savePro(joe);
   await desk.saveSettings({ prosDone: true });
-  await desk.saveSettings({ costLineCents: null });
   await desk.saveSettings({ upkeepDone: true });
 }
 
@@ -69,23 +68,47 @@ async function activated(extra: Partial<FixerDeps> = {}) {
 }
 
 describe("setup asks", () => {
-  it("asks pros, cost line, upkeep, review in order with cleaning off", async () => {
+  it("asks pros, upkeep, review in order with cleaning off, and never a cost line", async () => {
     const { desk } = made();
     expect(await step(desk)).toBe("pros");
     await desk.savePro(joe);
     expect(await step(desk)).toBe("pros");
     await desk.saveSettings({ prosDone: true });
-    expect(await step(desk)).toBe("cost-line");
-    await desk.saveSettings({ costLineCents: 50_000 });
     expect(await step(desk)).toBe("upkeep");
     await desk.saveSettings({ upkeepDone: true });
     expect(await step(desk)).toBe("review");
   });
 
+  it("asks for alerts after upkeep only on Grok with no routine and Cleaner Core off, and not after Not now", async () => {
+    const { desk } = made({ assistant: () => "grok" });
+    await desk.saveSettings({ prosDone: true });
+    await desk.saveSettings({ upkeepDone: true });
+    expect(await step(desk)).toBe("alerts");
+    const ask = ((await desk.state()).structured!.ask as { questions: { ask: string; options?: { label: string }[] }[] }).questions[0]!;
+    expect(ask.ask).toBe("Want me to tell you the moment a pro texts or calls back? I'll set up an alert for this chat. You'll copy two values into secure cards.");
+    expect(ask.options!.map((o) => o.label)).toEqual(["Yes", "Not now"]);
+    expect((await desk.saveSettings({ alertsSkipped: true })).isError).toBe(false);
+    expect(await step(desk)).toBe("review");
+    for (const extra of [{ assistant: () => "muse" as const }, { assistant: () => "grok" as const, routine: () => ({ url: "https://example.com/hook", key: "made-up-key-123" }) }, { assistant: () => "grok" as const, cleaningOn: () => true }]) {
+      const other = made(extra).desk;
+      await other.saveSettings({ prosDone: true });
+      if (extra.cleaningOn) await other.saveSettings({ askCleaner: false });
+      await other.saveSettings({ upkeepDone: true });
+      expect(await step(other)).toBe("review");
+    }
+  });
+
+  it("asks the pros as one card: every trade and None yet, pick all that apply", async () => {
+    const { desk } = made();
+    const question = ((await desk.state()).structured!.ask as { questions: { options?: { value: string }[]; multiple?: boolean; how?: string }[] }).questions[0]!;
+    expect(question.multiple).toBe(true);
+    expect(question.options!.map((option) => option.value)).toEqual([...TRADES, "none"]);
+    expect(question.how).toContain("Never ask trade by trade");
+  });
+
   it("asks the cleaner only with cleaning on, and saves the answer", async () => {
     const { root, desk } = made({ cleaningOn: () => true });
     await desk.saveSettings({ prosDone: true });
-    await desk.saveSettings({ costLineCents: null });
     expect(await step(desk)).toBe("ask-cleaner");
     const reply = await desk.saveSettings({ askCleaner: true });
     expect(reply.isError).toBe(false);
@@ -96,7 +119,7 @@ describe("setup asks", () => {
   it("uses the approved cleaner wording, with Supply Core on or off", () => {
     const hub = { property: () => ({}), calendars: () => [], google: () => false, calendarsDone: () => false } as never;
     const file = emptyFixer();
-    file.setup = { prosDone: true, costAsked: true };
+    file.setup = { prosDone: true };
     const off = fixerSetupAsk(file, hub, true, false)!;
     const on = fixerSetupAsk(file, hub, true, true)!;
     expect(off.questions[0]!.ask).toBe('Should your cleaner be asked "Anything broken?" after every cleaning? What they report opens a repair for you to approve.');
@@ -110,7 +133,6 @@ describe("setup asks", () => {
     const { root, desk } = made({ cleaningOn: () => true });
     writeFileSync(join(root, "supply.json"), JSON.stringify({ settings: { activatedAt: "2026-11-01T00:00:00Z" }, items: [] }));
     await desk.saveSettings({ prosDone: true });
-    await desk.saveSettings({ costLineCents: null });
     const ask = (await desk.state()).structured!.ask as { questions: { ask: string }[] };
     expect(ask.questions[0]!.ask).toContain("Anything running low or broken?");
   });
@@ -151,7 +173,6 @@ describe("setup asks", () => {
     await rank("Second Plumbing", "+15555550102", 2);
     await rank("Newcomer Plumbing", "+15555550103", 1);
     await desk.saveSettings({ prosDone: true });
-    await desk.saveSettings({ costLineCents: null });
     await desk.saveSettings({ upkeepDone: true });
     await desk.activate();
     const summary = (await desk.state()).structured!.summary as { pros: { plumbing: { name: string; rank: number }[] } };
@@ -173,16 +194,14 @@ describe("setup asks", () => {
   });
 });
 
-describe("cost line and settings", () => {
+describe("settings", () => {
   it("keeps the bounds", async () => {
     const { root, desk } = made();
-    for (const bad of [{ costLineCents: 99 }, { costLineCents: 500_001 }, { checkInBufferMinutes: 241 }, { cleaningMinutes: 29 }, { cleaningMinutes: 481 }, { checkInBufferMinutes: -1 }]) {
+    for (const bad of [{ checkInBufferMinutes: 241 }, { cleaningMinutes: 29 }, { cleaningMinutes: 481 }, { checkInBufferMinutes: -1 }]) {
       expect((await desk.saveSettings(bad)).isError).toBe(true);
     }
-    expect((await desk.saveSettings({ costLineCents: 100, checkInBufferMinutes: 0, cleaningMinutes: 480 })).isError).toBe(false);
-    expect(readFixer(root).settings).toMatchObject({ costLineCents: 100, checkInBufferMinutes: 0, cleaningMinutes: 480 });
-    await desk.saveSettings({ costLineCents: null });
-    expect(readFixer(root).settings.costLineCents).toBeUndefined();
+    expect((await desk.saveSettings({ checkInBufferMinutes: 0, cleaningMinutes: 480 })).isError).toBe(false);
+    expect(readFixer(root).settings).toMatchObject({ checkInBufferMinutes: 0, cleaningMinutes: 480 });
   });
 });
 
@@ -262,7 +281,6 @@ describe("activate", () => {
   it("shows the blockers on the review step", async () => {
     const { desk } = made({}, false);
     await desk.saveSettings({ prosDone: true });
-    await desk.saveSettings({ costLineCents: null });
     await desk.saveSettings({ upkeepDone: true });
     const ask = (await desk.state()).structured!.ask as { step: string; blockers: string[] };
     expect(ask.step).toBe("review");
@@ -330,11 +348,11 @@ describe("two-call approvals after Activate", () => {
 
   it("asks before settings, upkeep and removals", async () => {
     const { root, desk } = await activated();
-    const settings = await desk.saveSettings({ costLineCents: 20_000 });
+    const settings = await desk.saveSettings({ cleaningMinutes: 240 });
     expect(settings.structured!.question).toBeTruthy();
-    expect(readFixer(root).settings.costLineCents).toBeUndefined();
-    expect((await desk.saveSettings({ costLineCents: 20_000, confirmation: codeOf(settings) })).isError).toBe(false);
-    expect(readFixer(root).settings.costLineCents).toBe(20_000);
+    expect(readFixer(root).settings.cleaningMinutes).toBe(180);
+    expect((await desk.saveSettings({ cleaningMinutes: 240, confirmation: codeOf(settings) })).isError).toBe(false);
+    expect(readFixer(root).settings.cleaningMinutes).toBe(240);
 
     const upkeep = { trade: "gutters" as const, what: "Gutters", schedule: { kind: "every" as const, days: 180 } };
     const askedUpkeep = await desk.saveUpkeep(upkeep);
@@ -425,7 +443,7 @@ describe("cards and a damaged file", () => {
   it("answers a corrupt fixer.json with a plain refusal and leaves the file alone", async () => {
     const { root, desk } = made();
     writeFileSync(join(root, FIXER_FILE), "{ not json");
-    for (const reply of [await desk.state(), await desk.savePro(joe), await desk.saveSettings({ costLineCents: null }), await desk.activate(), await desk.saveUpkeep({ trade: "hvac", what: "x", schedule: { kind: "every", days: 90 } })]) {
+    for (const reply of [await desk.state(), await desk.savePro(joe), await desk.saveSettings({ askCleaner: false }), await desk.activate(), await desk.saveUpkeep({ trade: "hvac", what: "x", schedule: { kind: "every", days: 90 } })]) {
       expect(reply.isError).toBe(true);
       expect(reply.text).toContain("fixer.json");
     }
@@ -464,7 +482,6 @@ async function withPlumber(extra: Partial<FixerDeps> = {}) {
   const m = made(extra);
   await m.desk.savePro({ ...joe, preferredFor: [{ trade: "plumbing", rank: 1 }] });
   await m.desk.saveSettings({ prosDone: true });
-  await m.desk.saveSettings({ costLineCents: null });
   await m.desk.saveSettings({ upkeepDone: true });
   await m.desk.activate();
   serve(ics());
@@ -567,6 +584,27 @@ describe("the host's go", () => {
     return { ...m, jobId: opened.structured!.jobId as string };
   }
 
+  it("takes the host's cost line with the go, after the question, and saves it on that job only", async () => {
+    const { root, desk, jobId } = await waiting();
+    const first = await desk.approveJob({ jobId });
+    expect((await desk.approveJob({ jobId, costLineCents: 99, confirmation: codeOf(first) })).isError).toBe(true);
+    expect((await desk.approveJob({ jobId, costLineCents: 20_000, confirmation: codeOf(first) })).isError).toBe(false);
+    const other = await desk.openJob({ trade: "plumbing", what: "Tap drips", urgency: "soon", source: "host" });
+    const jobs = readFixer(root).jobs;
+    expect(jobs.find((job) => job.id === jobId)!.costLineCents).toBe(20_000);
+    expect(jobs.find((job) => job.id === other.structured!.jobId)!.costLineCents).toBeUndefined();
+  });
+
+  it("takes a cost line on the host's own job, and never from a cleaner's or upkeep job", async () => {
+    const { root, desk } = await withPlumber();
+    for (const bad of [99, 500_001]) expect((await desk.openJob({ trade: "plumbing", what: "Leak", urgency: "now", source: "host", costLineCents: bad })).isError).toBe(true);
+    expect((await desk.openJob({ trade: "plumbing", what: "Leak", urgency: "now", source: "cleaner", costLineCents: 20_000 })).isError).toBe(true);
+    expect(readFixer(root).jobs).toHaveLength(0);
+    expect((await desk.openJob({ trade: "plumbing", what: "Leak", urgency: "now", source: "host", costLineCents: 20_000 })).isError).toBe(false);
+    expect(readFixer(root).jobs[0]!.costLineCents).toBe(20_000);
+    expect("costLineCents" in readFixer(root).settings).toBe(false);
+  });
+
   it("takes two calls, then names the pro to contact", async () => {
     const { root, desk, jobId } = await waiting();
     const first = await desk.approveJob({ jobId });
@@ -600,7 +638,6 @@ describe("upkeep jobs", () => {
     const m = made({});
     await m.desk.savePro({ ...joe, preferredFor: [{ trade: "plumbing", rank: 1 }] });
     await m.desk.saveSettings({ prosDone: true });
-    await m.desk.saveSettings({ costLineCents: null });
     await m.desk.saveUpkeep({ trade: "hvac", what: "Change the filters", schedule: { kind: "every", days: 30 }, leadDays: 7, proId: readFixer(m.root).pros[0]!.id });
     await m.desk.saveSettings({ upkeepDone: true });
     await m.desk.activate();
@@ -707,7 +744,6 @@ async function withJob(extra: Partial<FixerDeps> = {}) {
   await m.desk.savePro({ ...joe, preferredFor: [{ trade: "plumbing", rank: 1 }] });
   await m.desk.savePro({ name: "Rita Rooter", trades: ["plumbing"], reach: { phone: "+15555550143" }, preferredFor: [{ trade: "plumbing", rank: 2 }] });
   await m.desk.saveSettings({ prosDone: true });
-  await m.desk.saveSettings({ costLineCents: null });
   await m.desk.saveSettings({ upkeepDone: true });
   await m.desk.activate();
   serve(ics());

@@ -20,9 +20,9 @@ describe("fixer.json", () => {
 
   it("fills in a partial file", () => {
     const root = folder();
-    writeFileSync(join(root, FIXER_FILE), JSON.stringify({ settings: { costLineCents: 50_000 }, jobs: [] }));
+    writeFileSync(join(root, FIXER_FILE), JSON.stringify({ settings: { cleaningMinutes: 240 }, jobs: [] }));
     const file = readFixer(root);
-    expect(file.settings).toEqual({ costLineCents: 50_000, checkInBufferMinutes: 60, cleaningMinutes: 180, askCleaner: false });
+    expect(file.settings).toEqual({ checkInBufferMinutes: 60, cleaningMinutes: 240, askCleaner: false });
     expect(file.pros).toEqual([]);
     expect(file.upkeep).toEqual([]);
     expect(file.setup).toEqual({});

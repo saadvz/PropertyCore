@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { closeLine, lineWebhookUrl, openAccount, releasePooled, repointLine, topUp } from "../src/cleaner-core/hosted/lines";
+import { closeLine, lineWebhookUrl, openAccount, pointVoiceOnce, releasePooled, repointLine, topUp } from "../src/cleaner-core/hosted/lines";
 import { NumberPool, POOL_LOW_AT, REST_MS, poolRestMs } from "../src/cleaner-core/hosted/numberPool";
 import { TenantRegistry } from "../src/cleaner-core/hosted/registry";
 import { propertyContext, type HostedCleaner } from "../src/cleaner-core/hosted/router";
@@ -63,7 +63,7 @@ beforeEach(() => {
     secrets: new TenantSecrets(dir),
     dataRoot: dir,
     origin: () => ORIGIN,
-    baseEnv: () => ({ CLEANER_CORE_TWILIO_ACCOUNT_SID: "ACpooltest", CLEANER_CORE_TWILIO_AUTH_TOKEN: "pool-test-token" }),
+    baseEnv: () => ({ CLEANER_CORE_TWILIO_ACCOUNT_SID: "ACpooltest", CLEANER_CORE_TWILIO_AUTH_TOKEN: "pool-test-token", FIXER_CORE: "1" }),
     grantLive: () => false,
     now: clock,
     log: (line) => void logs.push(line),
@@ -77,10 +77,11 @@ afterEach(() => {
 });
 
 const pool = () => new NumberPool(dir, () => new Date(now));
+/** One call points (or, with "", clears) both webhooks, and clears a TwiML App so the voice webhook takes calls. */
 const point = (sid: string, url: string) => ({
   method: "POST",
   url: `https://api.twilio.com/2010-04-01/Accounts/ACpooltest/IncomingPhoneNumbers/${sid}.json`,
-  body: new URLSearchParams({ SmsUrl: url, SmsMethod: "POST" }).toString(),
+  body: new URLSearchParams({ SmsUrl: url, SmsMethod: "POST", VoiceUrl: url ? `${ORIGIN}/webhooks/twilio/voice` : "", VoiceMethod: "POST", VoiceApplicationSid: "" }).toString(),
 });
 
 describe("the number pool", () => {
@@ -150,7 +151,7 @@ describe("the number pool", () => {
     if ("refused" in opened) throw new Error(opened.refused);
     expect(opened.webhookOk).toBe(false);
     expect(pool().get(A)?.webhookOk).toBe(false);
-    expect(logs).toContain("Twilio didn't take a line's webhook. Point it again from the number pool on /admin.");
+    expect(logs).toContain("Twilio didn't take a line's webhooks. Point it again from the number pool on /admin.");
     fakeTwilio({ [A]: "PNa" });
     expect(await repointLine(h, opened.tenant)).toBe(true);
     expect(pool().get(A)?.webhookOk).toBe(true);
@@ -306,5 +307,103 @@ describe("the rest before a returned line is handed out again (CLEANER_CORE_POOL
     expect(pool().stateOf(pool().get(A)!)).toBe("resting");
     expect(new NumberPool(dir, () => new Date(now), 0).stateOf(pool().get(A)!)).toBe("ready");
     expect(await openAccount(h, { label: "Court" })).toMatchObject({ number: A });
+  });
+});
+
+describe("the line's voice webhook", () => {
+  it("points SMS and voice in one call and clears a TwiML App", async () => {
+    const calls = fakeTwilio({ [A]: "PNa" });
+    await topUp(h, [A]);
+    const opened = await openAccount(h, { label: "Lane" });
+    if ("refused" in opened) throw new Error(opened.refused);
+    const posted = new URLSearchParams(calls.at(-1)!.body);
+    expect(posted.get("SmsUrl")).toBe(`${ORIGIN}/webhooks/twilio/cleaner-core`);
+    expect(posted.get("VoiceUrl")).toBe(`${ORIGIN}/webhooks/twilio/voice`);
+    expect(posted.get("VoiceApplicationSid")).toBe("");
+    expect(pool().get(A)).toMatchObject({ webhookOk: true, voiceOk: true });
+  });
+
+  it("closing a line clears both webhooks", async () => {
+    const calls = fakeTwilio({ [A]: "PNa" });
+    await topUp(h, [A]);
+    const opened = await openAccount(h, { label: "Lane" });
+    if ("refused" in opened) throw new Error(opened.refused);
+    await closeLine(h, opened.tenant, "return");
+    const posted = new URLSearchParams(calls.at(-1)!.body);
+    expect(posted.get("SmsUrl")).toBe("");
+    expect(posted.get("VoiceUrl")).toBe("");
+  });
+
+  it("points an SMS-only line's voice once at startup, and not again", async () => {
+    const calls = fakeTwilio({ [A]: "PNa" });
+    await topUp(h, [A]);
+    const opened = await openAccount(h, { label: "Lane" });
+    if ("refused" in opened) throw new Error(opened.refused);
+    // A line pointed before voice: SMS only, no voice mark.
+    const file = join(dir, "number-pool.json");
+    const doc = JSON.parse(readFileSync(file, "utf8"));
+    delete doc.numbers[0].voiceOk;
+    writeFileSync(file, JSON.stringify(doc));
+    const before = calls.length;
+    await pointVoiceOnce(h);
+    await pointVoiceOnce(h);
+    const posts = calls.slice(before).filter((c) => c.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(new URLSearchParams(posts[0]!.body).get("VoiceUrl")).toBe(`${ORIGIN}/webhooks/twilio/voice`);
+    expect(pool().get(A)?.voiceOk).toBe(true);
+  });
+
+  it("points no voice webhook at startup while FIXER_CORE is off", async () => {
+    const calls = fakeTwilio({ [A]: "PNa" });
+    await topUp(h, [A]);
+    await openAccount(h, { label: "Lane" });
+    const file = join(dir, "number-pool.json");
+    const doc = JSON.parse(readFileSync(file, "utf8"));
+    delete doc.numbers[0].voiceOk;
+    writeFileSync(file, JSON.stringify(doc));
+    const base = h.baseEnv;
+    h = { ...h, baseEnv: () => ({ ...base(), FIXER_CORE: "" }) };
+    const before = calls.length;
+    await pointVoiceOnce(h);
+    expect(calls.slice(before).filter((c) => c.method === "POST")).toEqual([]);
+  });
+
+  it("points the voice webhook of an account made before the pool, at startup", async () => {
+    const calls = fakeTwilio({ [A]: "PNa" });
+    h.registry.create({ label: "Old", twilioNumber: A });
+    await pointVoiceOnce(h);
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(new URLSearchParams(posts[0]!.body).get("VoiceUrl")).toBe(`${ORIGIN}/webhooks/twilio/voice`);
+  });
+
+  it("points nothing while the public address isn't known", async () => {
+    const calls = fakeTwilio({ [A]: "PNa" });
+    await topUp(h, [A]);
+    await openAccount(h, { label: "Lane" });
+    const file = join(dir, "number-pool.json");
+    const doc = JSON.parse(readFileSync(file, "utf8"));
+    delete doc.numbers[0].voiceOk;
+    writeFileSync(file, JSON.stringify(doc));
+    h = { ...h, origin: () => undefined };
+    const before = calls.length;
+    await pointVoiceOnce(h);
+    expect(calls.slice(before).filter((c) => c.method === "POST")).toEqual([]);
+    expect(pool().get(A)?.voiceOk).toBeUndefined();
+  });
+
+  it("logs a refused voice pointing without the number", async () => {
+    fakeTwilio({ [A]: "PNa" }, { webhook: true });
+    await topUp(h, [A]);
+    await openAccount(h, { label: "Lane" });
+    const file = join(dir, "number-pool.json");
+    const doc = JSON.parse(readFileSync(file, "utf8"));
+    delete doc.numbers[0].voiceOk;
+    writeFileSync(file, JSON.stringify(doc));
+    const before = logs.length;
+    await pointVoiceOnce(h);
+    expect(logs.slice(before).filter((l) => l.startsWith("Twilio didn't take"))).toEqual(["Twilio didn't take a line's webhooks. Point it again from the number pool on /admin."]);
+    expect(logs.join("\n")).not.toContain("+1555");
+    expect(pool().get(A)?.voiceOk).toBe(false);
   });
 });

@@ -29,9 +29,11 @@ import { isPropertyId, propertyFolder, type Property } from "./properties";
 import { isTenantId, tenantFolder, type Tenant, type TenantRegistry } from "./registry";
 import { screenText } from "../../hosted/crossService";
 import { handleTenantMcp } from "../../hosted/frontMcp";
-import { fixerCodeChanged, fixerPhotoFolders, tickFixer } from "../../hosted/fixer";
+import { fixerCodeChanged, fixerDesk, fixerPhotoFolders, tickFixer } from "../../hosted/fixer";
+import { FIXER_ALERT_UPLOAD_PREFIX } from "../../fixer-core/desk";
 import { isVisitPath, serveFixerVisit } from "../../hosted/fixerVisit";
 import { handleLineText } from "../../hosted/lineRouter";
+import { dropTranscript, handleVoiceCall, handleVoiceTranscript, noCallsTwiml, VOICE_PATH, VOICE_TRANSCRIPT_PATH } from "../../hosted/voice";
 import type { TouringFront } from "../../hosted/serviceTools";
 import { handleTouringAlertUpload, refreshTouringAlerts, touringAlertFormReply, touringAlertPage, touringAlertUploadCode } from "../../hosted/touringAlerts";
 import { forwardTenantPath } from "../../hosted/touringForward";
@@ -193,6 +195,29 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
 
   if (path === MCP_PATH || path === CLEANER_MCP_PATH) {
     await handleTenantMcp(h, r, path);
+    return true;
+  }
+
+  if (method === "POST" && path === VOICE_TRANSCRIPT_PATH) {
+    const rawBody = await r.readRaw();
+    const tenant = h.registry.byNumber(formTo(rawBody));
+    if (!tenant || tenant.disabled || tenant.service === "touring") {
+      await dropTranscript(h, r, tenant, rawBody, signed(path));
+      return true;
+    }
+    await handleVoiceTranscript(h, r, tenant, rawBody, signed(path));
+    return true;
+  }
+
+  if (method === "POST" && path === VOICE_PATH) {
+    const rawBody = await r.readRaw();
+    const tenant = h.registry.byNumber(formTo(rawBody));
+    // A line no account uses, a turned-off account, or a touring line: nothing is recorded.
+    if (!tenant || tenant.disabled || tenant.service === "touring") {
+      r.send(200, "text/xml", noCallsTwiml());
+      return true;
+    }
+    await handleVoiceCall(h, r, tenant, rawBody, signed(path));
     return true;
   }
 
@@ -369,6 +394,13 @@ function sendPhoto(r: HostedRequest, ctx: TenantContext, rest: string, now: () =
   return true;
 }
 
+/** The code of a Fixer Core alerts upload link, or undefined. */
+function fixerAlertUploadCode(rest: string): string | undefined {
+  if (!rest.startsWith(FIXER_ALERT_UPLOAD_PREFIX)) return undefined;
+  const code = rest.slice(FIXER_ALERT_UPLOAD_PREFIX.length);
+  return /^[A-Za-z0-9_-]{43}$/.test(code) ? code : undefined;
+}
+
 /**
  * A property where Fixer Core runs without Cleaner Core: the job photo links get_job_photos gives,
  * and the door code link from change_door_code, which saves to the hub's door access. Grok's own
@@ -378,6 +410,16 @@ async function handleFixerOnlyPath(h: HostedCleaner, r: HostedRequest, tenant: T
   const { method } = r;
   // Only a repair job's photos: Cleaner Core's, from when it ran here, stay off with it.
   if (method === "GET" && rest.startsWith(CLEANER_PHOTO_PREFIX)) return sendPhoto(r, ctx, rest, now, fixerPhotoFolders(h, tenant, property));
+  const alert = fixerAlertUploadCode(rest);
+  if (alert) {
+    if (method !== "POST") return false;
+    const read = await uploadBody(contentType, () => r.readCapped(ALERT_UPLOAD_MAX_BYTES));
+    const saved = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : await fixerDesk(h, tenant, property).uploadAlerts(alert, read.parsed, ctx.saveSecrets);
+    // The chat that saved the routine gets the alerts when the primary chat has no routine of its own.
+    if (saved.status === 200 && "by" in saved && saved.by) promoteFixerRoutine(h, tenant.id, saved.by);
+    r.send(saved.status, JSON_TYPE, JSON.stringify(saved.body), saved.status === 413 ? { Connection: "close" } : {});
+    return true;
+  }
   const code = doorCodeUploadCode(rest);
   if (!code) return false;
   const door = hubFor(ctx.root, { now }).doorAccess(ctx.env);
@@ -462,6 +504,16 @@ export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
   h.log(`${tenantId}'s primary chat is now the one that connected its alert routine.`);
 }
 
+/** Makes `grantId` the primary chat when the primary has no saved routine, so Fixer Core's alerts reach the chat that saved one. */
+function promoteFixerRoutine(h: HostedCleaner, tenantId: string, grantId: string): void {
+  const primary = h.registry.primary(tenantId, (id) => h.grantLive(id));
+  if (!primary || primary.grantId === grantId) return;
+  const own = h.secrets.connection(tenantId, primary.grantId);
+  if (own.CLEANER_CORE_ROUTINE_URL && own.CLEANER_CORE_ROUTINE_KEY) return;
+  h.registry.setPrimary(tenantId, grantId);
+  h.log(`${tenantId}'s primary chat is now the one that connected its alert routine.`);
+}
+
 /**
  * The account's alert routine belongs to its chats, not to one property: a routine connected through
  * any property counts on every property running Cleaner Core, so setup never asks for it again.
@@ -529,6 +581,8 @@ async function fixerPass(h: HostedCleaner): Promise<void> {
       if (!property.flows.fixer.on) continue;
       try {
         await tickFixer(h, tenant, property);
+        // A wake-up the routine refused is tried again here, not only when the next note comes.
+        await fixerDesk(h, tenant, property).drainAlerts();
       } catch {
         h.log(`Fixer Core couldn't run ${tenant.id}/${property.id}'s clock this round.`);
       }

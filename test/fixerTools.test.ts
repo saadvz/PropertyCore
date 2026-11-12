@@ -40,7 +40,7 @@ const SAMPLES: Record<string, { method: keyof FixerDesk; args: Record<string, un
   get_fixer_state: { method: "state", args: {}, passes: "none" },
   save_fixer_property: { method: "saveProperty", args: { address: "12 Scratch Lane, Teaneck, NJ 07666", timeZone: "America/New_York" } },
   save_fixer_sources: { method: "saveSources", args: { done: true } },
-  save_fixer_settings: { method: "saveSettings", args: { costLineCents: null, askCleaner: true } },
+  save_fixer_settings: { method: "saveSettings", args: { askCleaner: true } },
   save_pro: { method: "savePro", args: { name: "Joe's Plumbing", trades: ["plumbing"], reach: { phone: JOE }, preferredFor: [{ trade: "plumbing", rank: 1 }] } },
   remove_pro: { method: "removePro", args: { id: "pro_abcdefghij" } },
   save_upkeep: { method: "saveUpkeep", args: { trade: "gutters", what: "Clean the gutters", schedule: { kind: "every", days: 180 } } },
@@ -65,6 +65,7 @@ const SAMPLES: Record<string, { method: keyof FixerDesk; args: Record<string, un
   skip_question: { method: "skipQuestion", args: { jobId: "job_abcdefghij", question: "preferred" } },
   change_door_code: { method: "changeDoorCode", args: { jobId: "job_abcdefghij" } },
   raise_price: { method: "raisePrice", args: { jobId: "job_abcdefghij", cents: 42000 }, passes: ["job_abcdefghij", 42000, "agent"] },
+  save_repair_alerts: { method: "issueAlertUpload", args: {}, passes: "none" },
 };
 
 /** A desk that records each call and answers ok. */
@@ -82,7 +83,7 @@ function spyDesk() {
 describe("Fixer Core's tool table", () => {
   it("has the spec's tools and the extras, and leaves the front's and the page's out", () => {
     const spec = ["get_fixer_state", "save_fixer_settings", "save_pro", "remove_pro", "save_upkeep", "remove_upkeep", "activate_fixer", "check_fixes", "open_job", "approve_job", "add_candidates", "pick_pros", "contact_pro", "record_contact", "approve_booking", "visit_link", "revoke_visit", "extend_visit", "record_done", "record_cost", "cancel_job"];
-    const extras = ["guests_left", "skip_question", "change_door_code", "reschedule_job", "save_fixer_property", "save_fixer_sources", "raise_price"];
+    const extras = ["guests_left", "skip_question", "change_door_code", "reschedule_job", "save_fixer_property", "save_fixer_sources", "raise_price", "save_repair_alerts"];
     expect([...FIXER_TOOL_NAMES].sort()).toEqual([...spec, ...extras].sort());
     expect(Object.keys(SAMPLES).sort()).toEqual([...FIXER_TOOL_NAMES].sort());
     // Answered by the front (Cleaner Core's photos, Supply Core's preview), and the page's reveal is never a tool.
@@ -166,7 +167,6 @@ describe("no tool reply holds the door code", () => {
     const joe = await call("save_pro", { name: "Joe's Plumbing", trades: ["plumbing"], reach: { phone: JOE }, prefersText: true, preferredFor: [{ trade: "plumbing", rank: 1 }] });
     people().optIn(JOE, PROPERTY_ID);
     await call("save_fixer_settings", { prosDone: true });
-    await call("save_fixer_settings", { costLineCents: null });
     await call("save_fixer_settings", { upkeepDone: true });
     await call("get_fixer_state");
     expect((await call("activate_fixer")).isError).toBe(false);
@@ -207,7 +207,7 @@ describe("the hub's setup through Fixer Core", () => {
     dirs.push(root);
     const now = () => NOW;
     const desk = fixerDeskFor(root, { now, publicBase: () => "https://fixer.example.com/t/acct/p/prop" });
-    for (const step of [{ prosDone: true }, { costLineCents: null }, { upkeepDone: true }] as const) expect((await desk.saveSettings(step)).isError).toBe(false);
+    for (const step of [{ prosDone: true }, { upkeepDone: true }] as const) expect((await desk.saveSettings(step)).isError).toBe(false);
     return { root, desk, hub: () => hubFor(root, { now }) };
   }
 

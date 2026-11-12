@@ -96,7 +96,6 @@ async function activeFixer(m: MultiTenantApp, w: ReturnType<typeof watcher>) {
   await w.call("save_fixer_sources", { done: true });
   const joe = await w.call("save_pro", JOES);
   await w.call("save_fixer_settings", { prosDone: true });
-  await w.call("save_fixer_settings", { costLineCents: null });
   await w.call("save_fixer_settings", { upkeepDone: true });
   await w.call("activate_fixer");
   return joe.structured!.proId as string;
@@ -379,7 +378,7 @@ describe("the pro's texts on the shared line", () => {
     await call("save_fixer_property", { ...PLACE, address: "8 Scratch Court, Teaneck, NJ 07666" });
     await call("save_fixer_sources", { done: true });
     const joe = await call("save_pro", { ...JOES, shared: true });
-    for (const settings of [{ prosDone: true }, { costLineCents: null }, { upkeepDone: true }]) await call("save_fixer_settings", settings);
+    for (const settings of [{ prosDone: true }, { upkeepDone: true }]) await call("save_fixer_settings", settings);
     await call("activate_fixer");
     const courtJob = (await call("open_job", { trade: "plumbing", what: "Tub drains slowly", urgency: "soon", source: "host" })).structured!.jobId as string;
     const contactToken = (await call("contact_pro", { jobId: courtJob, to: joe.structured!.proId, how: "call" })).structured!.contactToken as string;

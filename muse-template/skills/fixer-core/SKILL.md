@@ -58,32 +58,34 @@ Then call the step's tool.
    paste the link and click **Save**. For Google Calendar, call it with
    `google: true`. Then `done: true`, or `done: true` straight away when the
    host has no booking calendar.
-3. **Pros:** ask who the host already calls, trade by trade (plumbing, HVAC,
-   electrical, handyman, gutters, pest control, appliance, locksmith). If you
+3. **Pros:** ask once, as one choice card: which trades the host already has
+   someone for (plumber, HVAC, electrician, handyman, gutters, pest control,
+   appliance repair, locksmith, and None yet), picking all that apply. Never
+   ask trade by trade. Then ask for the name and phone of the pro for each
+   trade they picked, one per message, and skip the rest. If you
    can see the host's contacts or receipts, draft pros from them with
    `save_pro` and `draft: true`, and confirm them with the host
    (`confirm: [ids]`). A phone already on another of the host's properties needs the host's yes, then `shared: true`. Save each pro with their trades, the order to call them
    in for each trade (`preferredFor`, rank 1 first), how to reach them (phone
    in +1 form, email, website, booking page), and whether they prefer text.
    When the list is final, `save_fixer_settings` with `prosDone: true`.
-4. **Cost line:** "Want a cost line? A repair over it needs your yes, and so
-   does a price raised on site." `save_fixer_settings` with `costLineCents`, or
-   null for no line. Also `checkInBufferMinutes` and `cleaningMinutes` if the
-   host wants to change them.
-5. **Ask the cleaner**, only with Cleaner Core on: whether the cleaner is asked
+4. **Ask the cleaner**, only with Cleaner Core on: whether the cleaner is asked
    "Anything broken?" after each cleaning. `save_fixer_settings` with
    `askCleaner`.
-6. **Upkeep:** regular jobs like gutters or HVAC filters. `save_upkeep` with
+5. **Upkeep:** regular jobs like gutters or HVAC filters. `save_upkeep` with
    the trade, what it is, the schedule (every so many days, a day of the
    month, or another rule: call `preview_schedule` and read the next 3 dates
    back first), and `leadDays`. Then `save_fixer_settings` with
-   `upkeepDone: true`.
+   `upkeepDone: true`. `checkInBufferMinutes` and `cleaningMinutes` are
+   `save_fixer_settings` too, if the host wants to change them.
+6. **Alerts:** Muse has no alerts step. Your hourly task reads the news, so
+   never call `save_repair_alerts`.
 7. **Recurring task:** create the **Fixer Core** recurring task yourself, every
    hour unless the host picks another, from
    [`references/fixer-core-task.md`](references/fixer-core-task.md), with its
    prompt word for word. One task covers every property with Fixer Core on, so
    reuse it if it's already there. Then confirm with the host that it's set.
-8. **Review and Activate:** summarize the pros, cost line, and upkeep in your
+8. **Review and Activate:** summarize the pros and upkeep in your
    own words. On the host's Activate, call `activate_fixer`.
 
 To drop a pro or an upkeep item, use `remove_pro` or `remove_upkeep`. After Activate, every change (a pro, upkeep, a setting, the address) takes the
@@ -97,6 +99,10 @@ You search in your own browser and call, email or message pros yourself.
 - Before you call, email, text, fill in a form or booking page, or message
   anyone, call `contact_pro` with `how`: `call`, `email`, `form`, `booking-page`,
   `text`, or `network`. It gives a `contactToken`, or a refusal to tell the host. Contact only a pro the host approved.
+- When a pro asks for a number to call or text back, give them
+  `callbackNumber` from `contact_pro`: the Property Core text line. Say they can
+  leave a text or a voicemail there. Never give the host's own phone. A text they send it
+  comes back in `news` on that job; then `record_contact` with what they said.
 - With no preferred pro, search for the trade and the address. `add_candidates`
   with up to 8: name, where you found them, rating and reviews, licensed,
   background checked, a price range, the earliest they can come, and how to
@@ -110,14 +116,26 @@ You search in your own browser and call, email or message pros yourself.
 
 The Fixer Core recurring task runs this every hour, and you run it whenever
 the host mentions something broken. Call `check_fixes` on every run and act on everything it returns:
-`needsGo`, `contactNext`, `unconfirmed`, `followUps`, `held`, `delays`,
+`needsGo`, `upkeepDue`, `contactNext`, `unconfirmed`, `followUps`, `held`, `delays`,
 `preferredAsk`, `rotationAsk`, `news`. When Google Calendar is saved for the
 property, read the calendar's events and pass them as `googleEvents` to
 `check_fixes` and to `approve_booking`.
 
 - **needsGo:** a job from the cleaner or from upkeep waits for the host's go.
-  Ask the question it gives. On yes, `approve_job`: without `confirmation`,
-  ask, then with the code. On no, `approve_job` with `no: true`.
+  Ask the question it gives. On yes, ask the cost line question below, then
+  `approve_job`: without `confirmation`, ask, then with the code and the
+  host's `costLineCents` if they gave one. On no, `approve_job` with
+  `no: true`.
+- **upkeepDue:** an upkeep item whose start date has come. Call `open_job`
+  with its trade and `what`, urgency `by-date` with its `nextDate` as
+  `byDate`, source `upkeep`, and its `upkeepId` as `sourceRef`. The job waits
+  for the host's go: ask the question `open_job` gives, then handle it as
+  `needsGo`. An item with an open job isn't listed again.
+- **Cost line, once per repair:** setup never asks for one. When a repair
+  starts, ask "Want a cost line for this repair? An estimate over it, or a
+  price raised on site, needs your yes." as a choice card with No cost line
+  first. It's saved on that job only, from $1 to $5,000. For the host's own
+  repair, pass it to `open_job` as `costLineCents`.
 - **A repair the host reports:** `open_job` with the trade, what needs fixing,
   how urgent (`now`, `soon`, `by-date`, `flexible`), and source `host`. Set
   `doorLock: true` when the lock itself is broken.
@@ -143,8 +161,8 @@ property, read the calendar's events and pass them as `googleEvents` to
 question. Say it as given: `{Pro} can come {Weekday} {from} to {until}, about
 {$est}. Book it and let them in with the door code?`, or `you'll let them in?`
 when the host lets them in. It adds one plain sentence for each hold: outside
-the open times between stays, over the cost line, or no estimate with a cost
-line set. Those are the holds sentences in the booking question; the host's
+the open times between stays, over the job's cost line, or no estimate with a
+cost line set. Those are the holds sentences in the booking question; the host's
 yes accepts them.
 
 0. **A time that overlaps a guest stay is never booked.** `record_contact`
@@ -176,8 +194,8 @@ reschedule gives back the pro's `contactToken`: ask them for a new time and
 
 **On site.** A raised price comes from the pro on the visit page or by text,
 or the pro tells you: then call `raise_price` with the job and the new amount
-in cents. Over the cost line, or more than 20% over the estimate, it waits for
-the host's yes: ask `{Pro} says the fix is {$new}, not {$old}. Go ahead?`, then
+in cents. On a job with a cost line, over the line or more than 20% over the
+estimate, it waits for the host's yes: ask `{Pro} says the fix is {$new}, not {$old}. Go ahead?`, then
 `approve_booking` with `revised: true`.
 
 **After the visit.** The pro's photos and done arrive on the visit page or by
@@ -214,6 +232,7 @@ Your browser searches. It never stands in for the host:
 
 ## Rules
 
+- When the host asks for their agent's number, give `agentNumber` from `get_state`, and say it's the number their pros and cleaner text or call. The host talks to you in chat; a text from the host to it isn't used.
 - Contact only a pro the host approved.
 - Never confirm a held time to the pro before the host's yes.
 - Send the visit link only to the pro's own email or phone.

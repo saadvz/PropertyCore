@@ -8,7 +8,7 @@ import { TRADES, type FixerFile, type Pro, type Trade } from "./store";
  * choices, and the agent asks one short question per message in its own words.
  */
 
-export type FixerStep = "pros" | "cost-line" | "ask-cleaner" | "upkeep" | "review";
+export type FixerStep = "pros" | "ask-cleaner" | "alerts" | "upkeep" | "review";
 
 export interface DraftPro {
   id: string;
@@ -56,21 +56,26 @@ export function activateProblems(hub: Hub, file: FixerFile): string[] {
   return out;
 }
 
-const PROS_QUESTION: AskQuestion = {
-  field: "pros",
-  ask: "who the host already calls for repairs, trade by trade (plumbing, HVAC, electrical, handyman, gutters, pest control, appliance, locksmith)",
-  required: true,
-  example: "Joe's Plumbing, 201-555-0142",
-  how:
-    "Draft the list yourself from what you can read (their contacts, receipts and emails) and save each pro with save_pro and draft: true. Don't show a summary. Confirm each drafted pro with the host, one per message: name the pro and their trade, with Yes, Change it and Remove as a choice card. Then ask about each trade still missing, one per message. Confirm with save_pro { confirm: [ids] }. For each trade, put the pros in the order to call them with preferredFor ranks. When the list is final (none is fine), call save_fixer_settings with prosDone: true.",
+const TRADE_LABELS: Record<Trade, string> = {
+  plumbing: "Plumber",
+  hvac: "HVAC",
+  electrical: "Electrician",
+  handyman: "Handyman",
+  gutters: "Gutters",
+  "pest-control": "Pest control",
+  appliance: "Appliance repair",
+  locksmith: "Locksmith",
 };
 
-const COST_QUESTION: AskQuestion = {
-  field: "costLineCents",
-  ask: "whether they want a cost line: any repair over it needs their yes, and so does a price raised on site",
-  required: false,
-  example: "50000 for $500",
-  how: "No cost line saves costLineCents as null.",
+const PROS_QUESTION: AskQuestion = {
+  field: "pros",
+  ask: "which of these trades the host already has someone they call for",
+  required: true,
+  options: [...TRADES.map((trade) => ({ value: trade, label: TRADE_LABELS[trade] })), { value: "none", label: "None yet" }],
+  multiple: true,
+  example: "Joe's Plumbing, 201-555-0142",
+  how:
+    "Ask this once, as one choice card with every trade and None yet, where the host picks all that apply. Never ask trade by trade, and never ask about a trade they didn't pick. Then, for each trade they picked, ask for that pro's name and phone, one per message. If you can read their contacts, receipts and emails, draft pros from them first with save_pro and draft: true, and confirm each drafted pro with the host, one per message: name the pro and their trade, with Yes, Change it and Remove as a choice card. Confirm with save_pro { confirm: [ids] }. For each trade, put the pros in the order to call them with preferredFor ranks. When the list is final (none is fine), call save_fixer_settings with prosDone: true.",
 };
 
 const UPKEEP_QUESTION: AskQuestion = {
@@ -81,14 +86,28 @@ const UPKEEP_QUESTION: AskQuestion = {
     "Suggest gutters in spring and fall, HVAC filters every 3 months, and smoke detectors twice a year. For each one: the trade, what it is, the schedule (every so many days, a day of the month, or another rule; call preview_schedule and read the next 3 dates back before saving), and optionally a pro. Save it with save_upkeep. Not by bookings. When that's all (none is fine), call save_fixer_settings with upkeepDone: true.",
 };
 
-/** The next setup question. `cleaningOn` and `supplyOn` say whether the cleaner and Supply Core run on the property. */
-export function fixerSetupAsk(file: FixerFile, hub: Hub, cleaningOn: boolean, supplyOn: boolean): FixerAsk | undefined {
+const ALERTS_QUESTION: AskQuestion = {
+  field: "alerts",
+  ask: "Want me to tell you the moment a pro texts or calls back? I'll set up an alert for this chat. You'll copy two values into secure cards.",
+  required: true,
+  options: [
+    { value: "yes", label: "Yes" },
+    { value: "not-now", label: "Not now" },
+  ],
+  how:
+    "On Yes: create the Property Core Alerts routine from property-core-template/routines/property-core-alerts.md. Only the host can see its webhook address and key. Right after you create it, send the host a link that opens its Webhook URL field directly and one that opens its Webhook key field directly, with one secure card for each, the address first. Never send a link to the Routines page. Then call save_repair_alerts to get a one-time upload link, and POST JSON {\"url\": \"<webhook address>\", \"token\": \"<webhook key>\"} to it from your own cloud computer. Never put them in chat. On Not now: save_fixer_settings with alertsSkipped: true.",
+};
+
+/**
+ * The next setup question. `cleaningOn` and `supplyOn` say whether the cleaner and Supply Core run on the property;
+ * `alertsWanted` whether this chat can be woken and no alerts routine reaches it yet.
+ */
+export function fixerSetupAsk(file: FixerFile, hub: Hub, cleaningOn: boolean, supplyOn: boolean, alertsWanted = false): FixerAsk | undefined {
   if (file.settings.activatedAt) return undefined;
   if (!file.setup.prosDone) {
     const drafts = draftsByTrade(file);
     return { step: "pros", tool: "save_pro", questions: [PROS_QUESTION], ...(drafts.length > 0 ? { drafts } : {}) };
   }
-  if (!file.setup.costAsked) return { step: "cost-line", tool: "save_fixer_settings", questions: [COST_QUESTION] };
   if (cleaningOn && !file.setup.cleanerAsked) {
     return {
       step: "ask-cleaner",
@@ -108,11 +127,12 @@ export function fixerSetupAsk(file: FixerFile, hub: Hub, cleaningOn: boolean, su
     };
   }
   if (!file.setup.upkeepDone) return { step: "upkeep", tool: "save_upkeep", questions: [UPKEEP_QUESTION] };
+  if (alertsWanted && !file.setup.alertsDone && !file.setup.alertsSkipped) return { step: "alerts", tool: "save_repair_alerts", questions: [ALERTS_QUESTION] };
   const blockers = activateProblems(hub, file);
   return {
     step: "review",
     tool: "activate_fixer",
-    questions: [{ field: "activate", ask: "whether to start: summarize the pros, cost line, hours and upkeep in your own words", required: true, options: [{ value: "activate", label: "Activate" }] }],
+    questions: [{ field: "activate", ask: "whether to start: summarize the pros, hours and upkeep in your own words", required: true, options: [{ value: "activate", label: "Activate" }] }],
     ...(blockers.length > 0 ? { blockers } : {}),
   };
 }

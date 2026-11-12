@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { InboundMedia } from "../cleaner-core/photos";
 import { FIXER_AGENTS_ONLY, runsFixer, type CleanerAssistant } from "../cleaner-core/assistant";
-import { liveDeskFor } from "../cleaner-core/liveDesk";
+import { withCaller } from "../cleaner-core/callerContext";
+import { cleanerAlertFetch, liveDeskFor } from "../cleaner-core/liveDesk";
 import { sendLiveSms } from "../cleaner-core/liveSms";
 import { photoFolder, photoKey } from "../cleaner-core/photos";
 import { propertyBasePath, propertyFolder, type Property } from "../cleaner-core/hosted/properties";
@@ -79,6 +80,17 @@ export function fixerDesk(h: HostedCleaner, tenant: Tenant, property: Property):
       const c = ctx();
       return photoKey(c.env(), c.saveSecrets);
     },
+    lineNumber: () => current(h, tenant, property).account.twilioNumber || undefined,
+    // The account's alerts routine for its primary chat, the same one Cleaner Core wakes.
+    routine: () => {
+      const env = ctx().env();
+      const url = env.CLEANER_CORE_ROUTINE_URL?.trim();
+      const key = env.CLEANER_CORE_ROUTINE_KEY?.trim();
+      return url && key ? { url, key } : undefined;
+    },
+    assistant: () => h.registry.primary(id, (grantId) => h.grantLive(grantId))?.assistant,
+    // Read on each delivery, so a test's stub of the routine webhook reaches Fixer Core too.
+    alertFetch: (url, init) => (cleanerAlertFetch() ?? ((u: string, i: typeof init) => fetch(u, i)))(url, init),
   });
 }
 
@@ -194,7 +206,7 @@ async function proSharedRefusal(h: HostedCleaner, tenant: Tenant, property: Prop
 }
 
 /** Answers one Fixer Core tool for the property. Undefined when the name isn't Fixer Core's. */
-export async function fixerCall(h: HostedCleaner, tenant: Tenant, property: Property, assistant: CleanerAssistant, name: string, args: Record<string, unknown>): Promise<FixerReply | undefined> {
+export async function fixerCall(h: HostedCleaner, tenant: Tenant, property: Property, assistant: CleanerAssistant, name: string, args: Record<string, unknown>, connectionId?: string): Promise<FixerReply | undefined> {
   if (!FIXER_TOOL_NAMES.has(name)) return undefined;
   if (!runsFixer(assistant)) return { text: FIXER_AGENTS_ONLY, isError: true };
   // The account's people list is moved from the older files before any pro is saved into it.
@@ -205,7 +217,8 @@ export async function fixerCall(h: HostedCleaner, tenant: Tenant, property: Prop
   }
   // With Cleaner Core on, its desk opens first, so its checks guard the hub's saves even after a restart.
   const cleaning = cleaningDesk(h, tenant, property);
-  const reply = await handleFixerTool(fixerDesk(h, tenant, property), name, args);
+  // As the calling chat, so an alerts link saves the routine for that chat.
+  const reply = await withCaller({ assistant, ...(connectionId ? { connectionId } : {}) }, () => handleFixerTool(fixerDesk(h, tenant, property), name, args));
   // Asking the cleaner "Anything broken?" follows Fixer Core's settings: Cleaner Core's engine reads them again.
   if (reply && !reply.isError && (name === "save_fixer_settings" || name === "activate_fixer")) cleaning?.refreshSupplyAsk();
   return reply;
@@ -265,14 +278,30 @@ function visitRank(file: FixerFile | undefined, phone: string, now: number): num
  * ignores anything that isn't theirs to say.
  */
 export async function fixerProText(h: HostedCleaner, tenant: Tenant, properties: Property[], input: { id: string; from: string; text: string; media: InboundMedia[] }): Promise<void> {
-  const now = h.now().getTime();
-  const ranked = properties.map((property) => ({ property, rank: visitRank(readOrNone(propertyFolder(h.dataRoot, tenant.id, property)), input.from, now) }));
-  const property = ranked.reduce((best, next) => (next.rank > best.rank ? next : best)).property;
+  const property = proProperty(h, tenant, properties, input.from);
   try {
     await fixerDesk(h, tenant, property).proInbound({ id: input.id, from: input.from, text: input.text, ...(input.media.length > 0 ? { media: input.media } : {}) });
   } catch {
     // Never the text: it can hold a price or anything the pro wrote.
     h.log(`Fixer Core couldn't take a pro's text for ${tenant.id}/${property.id}.`);
+  }
+}
+
+/** Of `properties`, the one a pro's text or voicemail is about: their visit under way, then a started booking, then any booking, else the first. */
+function proProperty(h: HostedCleaner, tenant: Tenant, properties: Property[], from: string): Property {
+  const now = h.now().getTime();
+  const ranked = properties.map((property) => ({ property, rank: visitRank(readOrNone(propertyFolder(h.dataRoot, tenant.id, property)), from, now) }));
+  return ranked.reduce((best, next) => (next.rank > best.rank ? next : best)).property;
+}
+
+/** A pro's voicemail transcript, for one of `properties` (proRoute's), picked as for a text. News only. */
+export async function fixerProVoicemail(h: HostedCleaner, tenant: Tenant, properties: Property[], input: { id: string; from: string; text: string; status: "completed" | "failed"; seconds?: number }): Promise<void> {
+  const property = proProperty(h, tenant, properties, input.from);
+  try {
+    await fixerDesk(h, tenant, property).proVoicemail(input);
+  } catch {
+    // Never the transcript: it can hold anything the pro said.
+    h.log(`Fixer Core couldn't take a pro's voicemail for ${tenant.id}/${property.id}.`);
   }
 }
 

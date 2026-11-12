@@ -240,6 +240,13 @@ export function proTextNews(f: { proName: string; text: string }): string {
   return `${f.proName} texted: "${f.text}"`;
 }
 
+/** A pro's voicemail on the line, as news for the host: the transcript, or why there is none. */
+export function proVoicemailNews(f: { proName: string; text?: string; failed?: boolean }): string {
+  if (f.failed) return `${f.proName} left a voicemail that couldn't be transcribed. Call them back.`;
+  if (!f.text) return `${f.proName} called and left no message.`;
+  return `${f.proName} left a voicemail: "${f.text}"`;
+}
+
 /** Sent to an opted-in pro whose DONE text marked the visit done (a design-pass item). */
 export const PRO_DONE_ACK = "Thanks, marked done.";
 

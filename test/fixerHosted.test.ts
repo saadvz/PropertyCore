@@ -72,7 +72,6 @@ async function activeFixer(m: MultiTenantApp, token: string, property: Property)
   await call("save_fixer_sources", { done: true });
   const joe = await call("save_pro", JOES);
   await call("save_fixer_settings", { prosDone: true });
-  await call("save_fixer_settings", { costLineCents: null });
   await call("save_fixer_settings", { upkeepDone: true });
   await call("activate_fixer");
   return { call, joeId: joe.structured!.proId as string };
@@ -353,5 +352,84 @@ describe("final review fixes on the shared service", () => {
     expect(stale.isError).toBe(true);
     expect(flows(m, tenant).fixer.on).toBe(true);
     expect(readFixer(folder(m, tenant, property)).jobs[0]).toMatchObject({ id: jobId, state: "booked" });
+  });
+});
+
+describe("save_repair_alerts (a Fixer-only property)", () => {
+  const HOOK = { url: "https://example.com/hook", token: "made-up-key-123" };
+
+  it("gives a one-time link that saves both values for the connection and repeats neither", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    await activeFixer(m, token, property);
+    const link = await m.toolAt(PATH, token, "save_repair_alerts", { property: property.id });
+    expect(link.isError, link.text).toBe(false);
+    const path = new URL(String(link.structured!.uploadUrl)).pathname;
+    const posted = await m.app.http(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(HOOK) });
+    const body = await posted.text();
+    expect(posted.status).toBe(200);
+    for (const said of [body, link.raw]) {
+      expect(said).not.toContain(HOOK.url);
+      expect(said).not.toContain(HOOK.token);
+    }
+    const grant = m.registry.get(tenant.id)!.connections[0]!.grantId;
+    expect(m.hosted().secrets.connection(tenant.id, grant)).toMatchObject({ CLEANER_CORE_ROUTINE_URL: HOOK.url, CLEANER_CORE_ROUTINE_KEY: HOOK.token });
+    const again = await m.app.http(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(HOOK) });
+    expect(again.status).toBe(404);
+    // A pro's text now wakes the routine with repairs.update.
+    await vi.waitFor(() => expect(m.wakes.some((w) => w.url === HOOK.url && JSON.parse(w.body).eventType === "installation.test")).toBe(true));
+    await m.text(LANE, JOE, "Running 10 minutes late", "SMfixeralert1");
+    await vi.waitFor(() => expect(m.wakes.some((w) => w.url === HOOK.url && JSON.parse(w.body).eventType === "repairs.update")).toBe(true));
+  });
+
+  it("refuses an http address or a short key", SLOW, async () => {
+    const m = await start();
+    const { property, token } = await account(m);
+    await activeFixer(m, token, property);
+    for (const bad of [{ url: "http://example.com/hook", token: HOOK.token }, { url: HOOK.url, token: "short" }, { url: HOOK.url, token: "••••••••••" }]) {
+      const link = await m.toolAt(PATH, token, "save_repair_alerts", { property: property.id });
+      const path = new URL(String(link.structured!.uploadUrl)).pathname;
+      const posted = await m.app.http(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(bad) });
+      expect(posted.status).toBe(400);
+    }
+  });
+
+  it("retries a refused wake-up on the clock tick, with no new note", SLOW, async () => {
+    const m = await start();
+    const { property, token } = await account(m);
+    await activeFixer(m, token, property);
+    const link = await m.toolAt(PATH, token, "save_repair_alerts", { property: property.id });
+    await m.app.http(new URL(String(link.structured!.uploadUrl)).pathname, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(HOOK) });
+    m.setWakeStatus(500);
+    await m.text(LANE, JOE, "Running 10 minutes late", "SMfixerretry1");
+    await vi.waitFor(() => expect(m.wakes.some((w) => JSON.parse(w.body).eventType === "repairs.update")).toBe(true));
+    const tried = m.wakes.filter((w) => JSON.parse(w.body).eventType === "repairs.update").length;
+    m.setWakeStatus(200);
+    clock = new Date(clock.getTime() + 10 * 60_000);
+    await tickAllFixers(m.hosted());
+    await vi.waitFor(() => expect(m.wakes.filter((w) => JSON.parse(w.body).eventType === "repairs.update").length).toBeGreaterThan(tried));
+  });
+
+  it("a second chat that saves the routine gets the alerts, when the primary chat has none", SLOW, async () => {
+    const m = await start();
+    const { tenant, property } = await account(m);
+    const second = await m.joinAt(tenant.id, "grok", PATH);
+    await activeFixer(m, second, property);
+    const link = await m.toolAt(PATH, second, "save_repair_alerts", { property: property.id });
+    const posted = await m.app.http(new URL(String(link.structured!.uploadUrl)).pathname, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(HOOK) });
+    expect(posted.status).toBe(200);
+    await m.text(LANE, JOE, "Running 10 minutes late", "SMfixersecond1");
+    await vi.waitFor(() => expect(m.wakes.some((w) => w.url === HOOK.url && JSON.parse(w.body).eventType === "repairs.update")).toBe(true));
+  });
+});
+
+describe("save_repair_alerts on Muse", () => {
+  it("is refused: Muse's hourly task reads the news", SLOW, async () => {
+    const m = await start();
+    const { property, token } = await account(m, "muse", COURT);
+    await activeFixer(m, token, property);
+    const reply = await m.toolAt(PATH, token, "save_repair_alerts", { property: property.id });
+    expect(reply.isError).toBe(true);
+    expect(reply.text).toBe("Repair alerts are for Grok Bot. Your hourly Fixer Core task already reads the news.");
   });
 });

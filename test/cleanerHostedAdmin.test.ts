@@ -138,7 +138,7 @@ describe("the admin page", () => {
     const tenant = m.registry.list()[0]!;
     expect(tenant).toMatchObject({ label: "Lane", twilioNumber: LANE_LINE });
     expect(calls[0]).toMatchObject({ method: "GET", url: `https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(LANE_LINE)}` });
-    expect(calls[1]).toEqual({ method: "POST", url: "https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/IncomingPhoneNumbers/PN1.json", body: new URLSearchParams({ SmsUrl: `${BASE}/webhooks/twilio/cleaner-core`, SmsMethod: "POST" }).toString() });
+    expect(calls[1]).toEqual({ method: "POST", url: "https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/IncomingPhoneNumbers/PN1.json", body: new URLSearchParams({ SmsUrl: `${BASE}/webhooks/twilio/cleaner-core`, SmsMethod: "POST", VoiceUrl: `${BASE}/webhooks/twilio/voice`, VoiceMethod: "POST", VoiceApplicationSid: "" }).toString() });
     expect((await admin.page("/admin")).html).not.toContain(code!);
     expect((await admin.page(`/admin/tenants/${tenant.id}`)).html).not.toContain(code!);
     expect(m.registry.claimInvite(code!)).toEqual({ tenantId: tenant.id });
@@ -255,7 +255,7 @@ describe("the admin page", () => {
     await admin.post(`/admin/tenants/${lane.id}/delete`, { confirm: "Lane" });
     expect(m.registry.get(lane.id)).toBeUndefined();
     expect(existsSync(tenantFolder(m.app.root, lane.id))).toBe(false);
-    expect(calls.at(-1)).toEqual({ method: "POST", url: "https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/IncomingPhoneNumbers/PN1.json", body: new URLSearchParams({ SmsUrl: "", SmsMethod: "POST" }).toString() });
+    expect(calls.at(-1)).toEqual({ method: "POST", url: "https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/IncomingPhoneNumbers/PN1.json", body: new URLSearchParams({ SmsUrl: "", SmsMethod: "POST", VoiceUrl: "", VoiceMethod: "POST", VoiceApplicationSid: "" }).toString() });
     expect((await m.tool(token, "get_state")).status).toBe(401);
     expect((await m.app.http(`/t/${lane.id}/cleaner-core/photos/x`)).status).toBe(404);
     // Nothing recreates the deleted folder on the next drain, and no desk for its property stays cached.
@@ -444,7 +444,7 @@ describe("the number pool on the admin page (saadvz/PropertyCore#163)", () => {
     expect(res.html).toMatch(/data-invite="[0-9A-Z-]{14}"/);
     const lane = m.registry.list()[0]!;
     expect(lane.twilioNumber).toBe(POOL_A);
-    expect(calls.at(-1)).toEqual({ method: "POST", url: "https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/IncomingPhoneNumbers/PNa.json", body: new URLSearchParams({ SmsUrl: `${BASE}/webhooks/twilio/cleaner-core`, SmsMethod: "POST" }).toString() });
+    expect(calls.at(-1)).toEqual({ method: "POST", url: "https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/IncomingPhoneNumbers/PNa.json", body: new URLSearchParams({ SmsUrl: `${BASE}/webhooks/twilio/cleaner-core`, SmsMethod: "POST", VoiceUrl: `${BASE}/webhooks/twilio/voice`, VoiceMethod: "POST", VoiceApplicationSid: "" }).toString() });
     const pool = (await admin.page("/admin/pool")).html;
     expect(pool).toContain(`<tr><td>${POOL_A}</td><td>in use</td><td><a href="/admin/tenants/${lane.id}">Lane</a></td><td>pointed</td>`);
     expect(pool).toContain(`<tr><td>${POOL_B}</td><td>ready</td><td>—</td><td>—</td>`);
@@ -483,7 +483,7 @@ describe("the number pool on the admin page (saadvz/PropertyCore#163)", () => {
     expect((await admin.page("/admin/pool")).html).toContain(`<tr><td>${LANE_LINE}</td><td>in use</td><td><a href="/admin/tenants/${lane.id}">Lane</a></td><td>—</td>`);
     // Its sid is looked up when it's first needed, and the line can be pointed again.
     expect((await admin.post(`/admin/tenants/${lane.id}/line`, {})).status).toBe(303);
-    expect(calls.at(-1)).toEqual({ method: "POST", url: "https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/IncomingPhoneNumbers/PN1.json", body: new URLSearchParams({ SmsUrl: `${BASE}/webhooks/twilio/cleaner-core`, SmsMethod: "POST" }).toString() });
+    expect(calls.at(-1)).toEqual({ method: "POST", url: "https://api.twilio.com/2010-04-01/Accounts/ACmultitenant/IncomingPhoneNumbers/PN1.json", body: new URLSearchParams({ SmsUrl: `${BASE}/webhooks/twilio/cleaner-core`, SmsMethod: "POST", VoiceUrl: `${BASE}/webhooks/twilio/voice`, VoiceMethod: "POST", VoiceApplicationSid: "" }).toString() });
     expect((await admin.page("/admin/pool")).html).toContain(`<td>pointed</td>`);
     await admin.post(`/admin/tenants/${lane.id}/delete`, { confirm: "Lane" });
     expect((await admin.page("/admin/pool")).html).toMatch(new RegExp(`<tr><td>\\${LANE_LINE}</td><td>resting until `));

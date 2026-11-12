@@ -1,5 +1,11 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
+import { GrokRoutineWebhookSink, repairsUpdateEvent, testEvent } from "../alerts/operatorEvents";
+import { routineValuesRefused } from "../alerts/routineCheck";
+import type { CleanerAssistant } from "../cleaner-core/assistant";
+import { currentCaller, withCaller } from "../cleaner-core/callerContext";
+import { OperatorEventOutbox } from "../alerts/outbox";
+import { FileRuntimeStore } from "../storage/runtimeStore";
 import { localDateOf } from "../core/timezone";
 import { isDone, isYes } from "../cleaner-core/core";
 import { isInjuryReport } from "../cleaner-core/injury";
@@ -14,14 +20,14 @@ import type { AccessRefusal as DoorRefusal } from "../hub/doorAccess";
 import { hubFor, propertyDetailsProblem, type Hub } from "../hub/hub";
 import type { Stay } from "../hub/store";
 import type { People } from "../hub/people";
-import { sameHash } from "../hub/uploadCode";
+import { sameHash, uploadHash } from "../hub/uploadCode";
 import { ConfirmationBook } from "../operator/confirmations";
 import { nextDates, scheduleProblem, type Schedule } from "../supply-core/schedule";
 import { supplyAskOn } from "../supply-core/store";
 import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
 import { holdsOtherRole, priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
-import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
+import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
@@ -53,6 +59,14 @@ export interface FixerDeps {
   /** A note for the host, with a wake. True once it was taken (Cleaner Core runs here); otherwise it may go nowhere. */
   notifyHost?(id: string, text: string): Promise<boolean | void>;
   photoKey?(): Buffer | undefined;
+  /** The account's text line, in +1 form: the number a pro is given to reach the host back, by text. */
+  lineNumber?(): string | undefined;
+  /** The account's alerts routine for its primary chat, read on each delivery and never kept here. */
+  routine?(): { url: string; key: string } | undefined;
+  /** The account's primary chat, which gets the alerts. */
+  assistant?(): CleanerAssistant | undefined;
+  /** Tests stub the routine's webhook. */
+  alertFetch?: NonNullable<ConstructorParameters<typeof GrokRoutineWebhookSink>[1]>["fetch"];
 }
 
 /** Why the visit page (or the tick) got no code. */
@@ -60,6 +74,12 @@ export type RevealRefusal = AccessRefusal | DoorRefusal | "no-job" | "off" | "da
 
 /** The visit page's answer. Never passed to a tool reply, a log line or a file. */
 export type RevealResult = { ok: true; code: string; lockLocation?: string } | { ok: false; reason: RevealRefusal };
+
+/** The alerts routine's one-time upload link, under the property's path. */
+export const FIXER_ALERT_UPLOAD_PREFIX = "/fixer-core/alert-routine/";
+const ALERT_UPLOAD_MINUTES = 10;
+const ALERT_UPLOAD_NEXT =
+  'From your own cloud computer, POST JSON {"url": "<webhook address>", "token": "<webhook key>"} to uploadUrl with Content-Type: application/json, using the values from the host\'s secure cards. Never put them in chat or in a tool argument. Then call get_fixer_state.';
 
 /** The visit page's path before its token. The page itself is in `visitPage.ts`. */
 export const FIXER_VISIT_PREFIX = "/fixer-core/visit/";
@@ -129,8 +149,6 @@ export interface ReachInput {
 }
 
 export interface SettingsInput {
-  /** A number from 100 to 500_000, or null for no line. */
-  costLineCents?: number | null;
   checkInBufferMinutes?: number;
   cleaningMinutes?: number;
   askCleaner?: boolean;
@@ -138,6 +156,8 @@ export interface SettingsInput {
   prosDone?: true;
   /** Setup: the host has no more upkeep to add. */
   upkeepDone?: true;
+  /** Setup: the host said Not now to alerts. */
+  alertsSkipped?: true;
   confirmation?: string;
 }
 
@@ -179,6 +199,8 @@ export interface JobInput {
   photoMessageIds?: string[];
   cleanerName?: string;
   doorLock?: true;
+  /** The host's cost line for this repair, 100 to 500_000. Only on the host's own job. */
+  costLineCents?: number;
 }
 
 export interface CandidateInput {
@@ -198,10 +220,18 @@ export interface CandidateInput {
 export interface ApproveJobInput {
   jobId?: string;
   no?: true;
+  /** The host's cost line for this repair, 100 to 500_000, given with their go. */
+  costLineCents?: number;
   confirmation?: string;
 }
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const COST_LINE_RANGE = "A cost line has to be from $1 to $5,000.";
+/** The most of a voicemail's transcript that is kept. */
+const VOICEMAIL_MAX = 600;
+/** Beside the line's number on contact_pro: what to tell a pro who asks how to reach the host. */
+const CALLBACK_NEXT =
+  "If they ask for a number to reach the host, give them callbackNumber and say they can leave a text or a voicemail there. Never give the host's own phone. Their texts and voicemails to it reach you as news on this job.";
 const URGENCIES = ["now", "soon", "by-date", "flexible"] as const;
 /** A job is still going until it is done or cancelled; these states are before any contact. */
 const NOT_BOOKED = new Set<Job["state"]>(["requested", "shortlisted", "contacted"]);
@@ -308,6 +338,34 @@ export class FixerDesk {
     this.approvals = new ConfirmationBook(10 * 60_000, () => deps.now().getTime(), { file: join(root, "fixer-approvals.json") });
     // The hub moves any old property and calendar fields out of the older files before this desk reads anything.
     this.hub();
+    // The routine's address and key are read on every delivery, never saved here.
+    this.alerts = new OperatorEventOutbox(
+      new FileRuntimeStore(join(root, "fixer-alerts")),
+      () => new GrokRoutineWebhookSink({ url: () => deps.routine?.()?.url, key: () => deps.routine?.()?.key }, deps.alertFetch ? { fetch: deps.alertFetch } : {}),
+      { now: () => deps.now().getTime() },
+    );
+  }
+
+  private readonly alerts: OperatorEventOutbox;
+
+  /** True when the account has an alerts routine this desk can wake. */
+  routineConnected(): boolean {
+    const routine = this.deps.routine?.();
+    return Boolean(routine?.url && routine.key);
+  }
+
+  /** Delivers any wake-up that is due, such as one the routine refused before. The clock tick calls it. */
+  async drainAlerts(): Promise<void> {
+    if (!this.alerts.records().some((record) => record.status === "pending")) return;
+    await this.alerts.drain();
+  }
+
+  /** One wake-up for the routine: a pending one already covers every note since. Then it calls check_fixes. */
+  private wake(): void {
+    if (!this.routineConnected()) return;
+    const waiting = this.alerts.records().some((record) => record.event.eventType === "repairs.update" && record.status === "pending");
+    if (!waiting) this.alerts.enqueue(repairsUpdateEvent(this.deps.now()));
+    void this.alerts.drain().catch(() => undefined);
   }
 
   /** Runs calls one at a time, so two tools never write the record at once. */
@@ -378,7 +436,69 @@ export class FixerDesk {
   }
 
   private askFor(file: FixerFile) {
-    return fixerSetupAsk(file, this.hub(), this.deps.cleaningOn?.() ?? false, supplyAskOn(this.root));
+    const cleaningOn = this.deps.cleaningOn?.() ?? false;
+    return fixerSetupAsk(file, this.hub(), cleaningOn, supplyAskOn(this.root), this.alertsWanted(cleaningOn));
+  }
+
+  /** A Grok Bot can be woken; with Cleaner Core on, its own setup connects the routine. */
+  private alertsWanted(cleaningOn: boolean): boolean {
+    return !cleaningOn && this.deps.assistant?.() === "grok" && !this.routineConnected();
+  }
+
+  /**
+   * save_repair_alerts: a one-time link for the alerts routine's address and key, posted from the agent's
+   * own computer. Only the code's sha256, its expiry and the chat that made it are kept.
+   */
+  issueAlertUpload(): Promise<FixerReply> {
+    return this.guarded({}, () => {
+      const file = this.read();
+      if (this.deps.cleaningOn?.()) return fail("Cleaner Core runs at this property: connect alerts with its save_alert_routine.");
+      // Only a Grok Bot's routine can be woken; Muse's hourly task reads the news itself.
+      if ((currentCaller()?.assistant ?? this.deps.assistant?.()) !== "grok") return fail("Repair alerts are for Grok Bot. Your hourly Fixer Core task already reads the news.");
+      const base = this.deps.publicBase?.();
+      if (!base) return fail("Upload links aren't available on this service yet.");
+      const code = randomBytes(32).toString("base64url");
+      const by = currentCaller();
+      file.alertUpload = { hash: uploadHash(code), expiresAt: new Date(this.deps.now().getTime() + ALERT_UPLOAD_MINUTES * 60_000).toISOString(), ...(by ? { by } : {}) };
+      this.write(file);
+      return ok({ uploadUrl: `${base}${FIXER_ALERT_UPLOAD_PREFIX}${code}`, expiresInMinutes: ALERT_UPLOAD_MINUTES, next: ALERT_UPLOAD_NEXT });
+    });
+  }
+
+  /**
+   * Saves the routine's address and key posted to the link, through `save` (the secret store, as the chat
+   * that made the link), and queues a test wake-up. Only a save uses the link up. Nothing posted is repeated.
+   */
+  uploadAlerts(code: string, body: Record<string, unknown>, save: (values: { CLEANER_CORE_ROUTINE_URL: string; CLEANER_CORE_ROUTINE_KEY: string }) => void): Promise<{ status: 200 | 400 | 404; body: Record<string, unknown>; by?: string }> {
+    return this.serial(async () => {
+      const file = this.read();
+      const pending = file.alertUpload;
+      if (!pending || !sameHash(uploadHash(code), pending.hash) || this.deps.now().getTime() >= Date.parse(pending.expiresAt)) return { status: 404 as const, body: { ok: false, error: "This upload link isn't valid anymore. Call save_repair_alerts for a new one." } };
+      const url = typeof body.url === "string" ? body.url.trim() : "";
+      const given = typeof body.token === "string" ? body.token : typeof body.key === "string" ? body.key : "";
+      const token = given.trim();
+      if (routineValuesRefused(url, token) || this.opensDoor(token)) return { status: 400 as const, body: { ok: false, error: "Send the routine's https webhook address as url and its key as token." } };
+      const finish = () => save({ CLEANER_CORE_ROUTINE_URL: url, CLEANER_CORE_ROUTINE_KEY: token });
+      if (pending.by) withCaller(pending.by, finish);
+      else finish();
+      delete file.alertUpload;
+      file.setup.alertsDone = true;
+      this.write(file);
+      this.alerts.enqueue(testEvent(this.deps.now()));
+      void this.alerts.drain().catch(() => undefined);
+      return { status: 200 as const, body: { ok: true, message: "Alerts are connected." }, ...(pending.by?.connectionId ? { by: pending.by.connectionId } : {}) };
+    });
+  }
+
+  /** True when the key, read as a base64 or base64url key, opens the saved door code. */
+  private opensDoor(token: string): boolean {
+    const door = this.door();
+    if (!door.saved()) return false;
+    for (const encoding of ["base64", "base64url"] as const) {
+      const key = Buffer.from(token, encoding);
+      if (key.length === 32 && door.opensWith(key)) return true;
+    }
+    return false;
   }
 
   /** One line for the host: on, the pro count and the open jobs. */
@@ -426,9 +546,8 @@ export class FixerDesk {
           pros,
           ...(drafts.length > 0 ? { drafts } : {}),
           upkeep: file.upkeep.map((item) => ({ upkeepId: item.id, trade: item.trade, what: item.what, schedule: item.schedule, leadDays: item.leadDays, ...(item.proId ? { proId: item.proId } : {}) })),
-          openJobs: file.jobs.filter(isOpen).map((job) => ({ jobId: job.id, trade: job.trade, what: job.what, state: job.state })),
+          openJobs: file.jobs.filter(isOpen).map((job) => ({ jobId: job.id, trade: job.trade, what: job.what, state: job.state, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}) })),
           costLog: this.costLog(file),
-          ...(file.settings.costLineCents !== undefined ? { costLineCents: file.settings.costLineCents } : {}),
           checkInBufferMinutes: file.settings.checkInBufferMinutes,
           cleaningMinutes: file.settings.cleaningMinutes,
           askCleaner: file.settings.askCleaner,
@@ -441,16 +560,12 @@ export class FixerDesk {
     return this.guarded(input, () => {
       const file = this.read();
       const s = file.settings;
-      if (input.costLineCents !== undefined && input.costLineCents !== null && !isInt(input.costLineCents, 100, 500_000)) return fail("A cost line has to be from $1 to $5,000.");
       if (input.checkInBufferMinutes !== undefined && !isInt(input.checkInBufferMinutes, 0, 240)) return fail("The check-in buffer has to be from 0 to 240 minutes.");
       if (input.cleaningMinutes !== undefined && !isInt(input.cleaningMinutes, 30, 480)) return fail("The cleaning length has to be from 30 to 480 minutes.");
       if (input.askCleaner !== undefined && typeof input.askCleaner !== "boolean") return fail("Asking the cleaner is yes or no.");
       if (input.prosDone && file.pros.some((pro) => pro.status === "draft")) return fail("Confirm or remove the drafted pros first.");
       const gate = this.approved(file, "fixer-settings", "settings", input, "Save these settings?");
       if (gate !== "go") return gate;
-      if (input.costLineCents === null) delete s.costLineCents;
-      else if (input.costLineCents !== undefined) s.costLineCents = input.costLineCents;
-      if (input.costLineCents !== undefined) file.setup.costAsked = true;
       if (input.checkInBufferMinutes !== undefined) s.checkInBufferMinutes = input.checkInBufferMinutes;
       if (input.cleaningMinutes !== undefined) s.cleaningMinutes = input.cleaningMinutes;
       if (input.askCleaner !== undefined) {
@@ -459,24 +574,29 @@ export class FixerDesk {
       }
       if (input.prosDone) file.setup.prosDone = true;
       if (input.upkeepDone) file.setup.upkeepDone = true;
+      if (input.alertsSkipped) file.setup.alertsSkipped = true;
       this.write(file);
       return ok({ saved: true, ...(this.askFor(file) ? { next: "Call get_fixer_state for the next step." } : {}) });
     });
   }
 
   /**
-   * The saved pros that have a phone, and a found candidate with a phone while their booking is live,
-   * kept in the account's people list as role "pro" for this property (Decision 10).
+   * The saved pros that have a phone, and a found candidate with a phone while their booking is live or
+   * they were contacted on a job still open, kept in the account's people list as role "pro" for this
+   * property (Decision 10). So a pro given the line as the number to reach the host back can text it.
    */
   private syncPros(file: FixerFile): void {
     const people = this.deps.people?.();
     if (!people || !this.deps.propertyId) return;
     const wanted = file.pros.filter((pro) => pro.status === "saved" && pro.reach.phone).map((pro) => ({ phone: pro.reach.phone!, name: pro.name }));
-    for (const job of file.jobs) {
-      if (!job.booking?.hostYes || !liveBooking(job)) continue;
-      const candidate = job.candidates.find((c) => c.id === job.booking!.proId);
+    const add = (candidate: Candidate | undefined) => {
       const phone = candidate?.reach.phone;
       if (phone && !wanted.some((entry) => entry.phone === phone)) wanted.push({ phone, name: candidate.name });
+    };
+    for (const job of file.jobs) {
+      if (job.booking?.hostYes && liveBooking(job)) add(job.candidates.find((c) => c.id === job.booking!.proId));
+      if (!isOpen(job)) continue;
+      for (const contact of job.contacts) if (!contact.cancelled) add(job.candidates.find((c) => c.id === contact.to));
     }
     people.saveRolePeople(this.deps.propertyId, "pro", wanted);
   }
@@ -781,6 +901,8 @@ export class FixerDesk {
       if (input.sourceRef !== undefined && !isText(input.sourceRef, 80)) return fail("That source reference is too long.");
       if (input.cleanerName !== undefined && !isText(input.cleanerName, 80)) return fail("The cleaner's name is too long.");
       if (input.doorLock !== undefined && input.doorLock !== true) return fail("doorLock is only ever true.");
+      if (input.costLineCents !== undefined && !isInt(input.costLineCents, 100, 500_000)) return fail(COST_LINE_RANGE);
+      if (input.costLineCents !== undefined && input.source !== "host") return fail("Only the host sets a cost line. For a cleaner's or upkeep job, pass it to approve_job with the host's go.");
       const photoIds = input.photoMessageIds ?? [];
       if (!Array.isArray(photoIds) || photoIds.length > 10 || !photoIds.every((id) => isText(id, 120))) return fail("Pass up to 10 message ids for the photos.");
       if (photoIds.length > 0 && input.source !== "cleaner") return fail("Only a cleaner's report carries photos.");
@@ -810,6 +932,7 @@ export class FixerDesk {
       if (input.sourceRef) job.sourceRef = input.sourceRef;
       if (input.cleanerName) job.cleanerName = input.cleanerName.trim();
       if (input.doorLock) job.doorLock = true;
+      if (input.costLineCents !== undefined) job.costLineCents = input.costLineCents;
       if (input.source === "host") job.hostGo = { at: now };
       const key = `fixer:${job.id}`;
       for (const id of photoIds) {
@@ -831,6 +954,7 @@ export class FixerDesk {
       if (!job) return fail("There's no job with that id. Call get_fixer_state for the list.");
       if (!isOpen(job) || job.hostGo || !NOT_BOOKED.has(job.state)) return fail("That job isn't waiting for a go.");
       if (input.no !== undefined && input.no !== true) return fail("no is only ever true.");
+      if (input.costLineCents !== undefined && !isInt(input.costLineCents, 100, 500_000)) return fail(COST_LINE_RANGE);
       if (input.no) {
         job.state = "cancelled";
         job.cancelledAt = this.deps.now().toISOString();
@@ -838,9 +962,11 @@ export class FixerDesk {
         this.write(file);
         return ok({ cancelled: true, jobId: job.id });
       }
-      const gate = this.approved(file, "fixer-job-go", job.id, input, this.goQuestion(file, job));
+      // The code is bound to the job. The cost line only adds a hold, so the host can give it after the question.
+      const gate = this.approved(file, "fixer-job-go", job.id, { jobId: job.id, ...(input.confirmation !== undefined ? { confirmation: input.confirmation } : {}) } as ApproveJobInput, this.goQuestion(file, job));
       if (gate !== "go") return gate;
       job.hostGo = { at: this.deps.now().toISOString() };
+      if (input.costLineCents !== undefined) job.costLineCents = input.costLineCents;
       this.write(file);
       return ok({ approved: true, jobId: job.id, next: "Call check_fixes for who to contact." });
     });
@@ -1032,7 +1158,14 @@ export class FixerDesk {
       job.contacts.push(contact);
       if (job.state === "requested" || job.state === "shortlisted") job.state = "contacted";
       this.write(file);
-      return ok({ contactToken: contact.token, reach, next: "Reach them, then call record_contact with this token and what they said." });
+      this.syncPros(file);
+      const line = how === "text" ? undefined : this.deps.lineNumber?.();
+      return ok({
+        contactToken: contact.token,
+        reach,
+        ...(line ? { callbackNumber: line, callbackNext: CALLBACK_NEXT } : {}),
+        next: "Reach them, then call record_contact with this token and what they said.",
+      });
     });
   }
 
@@ -1118,13 +1251,13 @@ export class FixerDesk {
   private async holdsFor(file: FixerFile, job: Job, span: { from: string; until: string }, estimateCents: number | undefined, order?: "before" | "after"): Promise<{ holds: BookingHold[]; windows: VisitWindow[] }> {
     const windows = await this.windowsFor({ ...job, ...(order ? { cleaningOrder: order } : {}) });
     const overlaps = overlapsStay(span, this.hub().stays() ?? [], this.occupyInput(file));
-    const holds = bookingHolds({ span, windows, overlaps, ...(file.settings.costLineCents !== undefined ? { costLineCents: file.settings.costLineCents } : {}), ...(estimateCents !== undefined ? { estimateCents } : {}) });
+    const holds = bookingHolds({ span, windows, overlaps, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}), ...(estimateCents !== undefined ? { estimateCents } : {}) });
     return { holds, windows };
   }
 
   /** The question for a booking, with the holds the host's yes would accept. */
-  private questionFor(file: FixerFile, proName: string, b: { from: string; until: string; estimateCents?: number }, access: "code" | "host", holds: readonly BookingHold[]): string {
-    return bookingQuestion({ proName, from: b.from, until: b.until, timeZone: this.timeZone(), ...(b.estimateCents !== undefined ? { estimateCents: b.estimateCents } : {}), access, holds, ...(file.settings.costLineCents !== undefined ? { costLineCents: file.settings.costLineCents } : {}) });
+  private questionFor(job: Job, proName: string, b: { from: string; until: string; estimateCents?: number }, access: "code" | "host", holds: readonly BookingHold[]): string {
+    return bookingQuestion({ proName, from: b.from, until: b.until, timeZone: this.timeZone(), ...(b.estimateCents !== undefined ? { estimateCents: b.estimateCents } : {}), access, holds, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}) });
   }
 
   /** The pending booking a pro's "booked" gives: held for the host if it breaks a gate, kept on the contact if another is already pending. */
@@ -1165,7 +1298,7 @@ export class FixerDesk {
     if (holds.includes("overlaps-stay")) {
       reply.next = `That time overlaps a guest stay, so it can't be booked. Tell the host, and ask ${name} for another time.`;
     } else {
-      reply.question = this.questionFor(file, name, booking, access, holds);
+      reply.question = this.questionFor(job, name, booking, access, holds);
       reply.next = "Ask the host this question, then call approve_booking.";
     }
     return ok(reply);
@@ -1225,7 +1358,7 @@ export class FixerDesk {
       if (holds.includes("overlaps-stay")) return fail(`That time overlaps a guest stay, so nothing is booked. Ask ${name} for another time.`);
       const checkoutDay = localYmd(new Date(span.from), this.timeZone());
       if (!order && windows.some((w) => w.cleaning && w.checkoutYmd === checkoutDay)) return ok({ question: cleaningOrderQuestion({ proName: name }), next: "Ask the host, then call approve_booking again with cleaningOrder set to before or after." });
-      const question = this.questionFor(file, name, target, access, holds);
+      const question = this.questionFor(job, name, target, access, holds);
       const bound = tokenHash(JSON.stringify([target.fingerprint, access, order ?? null, [...holds].sort()]));
       const gate = this.confirm("fixer-book", job.id, bound, input.confirmation, question);
       if (gate !== "go") return gate;
@@ -1268,7 +1401,7 @@ export class FixerDesk {
   private approveRevised(file: FixerFile, job: Job, input: { confirmation?: string }): FixerReply {
     const booking = job.booking;
     const revised = booking?.revisedQuote;
-    if (!booking || !liveBooking(job) || !revised || revised.hostYes || !raisedPriceHeld(file.settings.costLineCents, booking.estimateCents, revised.cents)) return fail("There's no raised price waiting for the host's yes.");
+    if (!booking || !liveBooking(job) || !revised || revised.hostYes || !raisedPriceHeld(job.costLineCents, booking.estimateCents, revised.cents)) return fail("There's no raised price waiting for the host's yes.");
     const name = this.nameOf(file, job, booking.proId) ?? "The pro";
     const question = raisedPrice({ proName: name, newCents: revised.cents, ...(booking.estimateCents !== undefined ? { oldCents: booking.estimateCents } : {}) });
     const gate = this.confirm("fixer-revised", job.id, tokenHash(JSON.stringify([booking.fingerprint, revised.cents])), input.confirmation, question);
@@ -1559,6 +1692,8 @@ export class FixerDesk {
 
   /** Sends the host notes. A note that fails to go is still in check_fixes' news. */
   private async tell(notes: readonly HostNote[]): Promise<boolean> {
+    // Without Cleaner Core here, nothing takes the note: it waits in check_fixes' news, and the routine is woken.
+    if (notes.length > 0 && this.deps.cleaningOn?.() !== true) this.wake();
     let taken = notes.length > 0;
     for (const note of notes) {
       try {
@@ -1814,14 +1949,14 @@ export class FixerDesk {
   private expectedCents(file: FixerFile, job: Job): number | undefined {
     const booking = job.booking;
     const revised = booking?.revisedQuote;
-    if (revised && (revised.hostYes || !raisedPriceHeld(file.settings.costLineCents, booking.estimateCents, revised.cents))) return revised.cents;
+    if (revised && (revised.hostYes || !raisedPriceHeld(job.costLineCents, booking.estimateCents, revised.cents))) return revised.cents;
     return booking?.estimateCents;
   }
 
   /** Logs the amount. Over the cost line, or more than 20% over what was expected, the host is told once. */
   private logCost(file: FixerFile, job: Job, cents: number, by: "pro" | "agent" | "host", note: string | undefined, notes: HostNote[]): void {
     job.cost = { cents, by, at: this.deps.now().toISOString(), ...(note ? { note } : {}) };
-    const line = file.settings.costLineCents;
+    const line = job.costLineCents;
     const estimateCents = this.expectedCents(file, job);
     if (job.news.some((item) => item.kind === "cost-over") || !costNews(line, estimateCents, cents)) return;
     notes.push(this.news(job, "cost-over", costNewsText({ proName: this.bookedName(file, job), cents, ...(estimateCents !== undefined ? { estimateCents } : {}), ...(line !== undefined ? { costLineCents: line } : {}) })));
@@ -1888,7 +2023,7 @@ export class FixerDesk {
   private heldRevised(file: FixerFile, job: Job): { cents: number; question: string } | undefined {
     const booking = job.booking;
     const revised = booking?.revisedQuote;
-    if (!booking || !liveBooking(job) || !revised || revised.hostYes || !raisedPriceHeld(file.settings.costLineCents, booking.estimateCents, revised.cents)) return undefined;
+    if (!booking || !liveBooking(job) || !revised || revised.hostYes || !raisedPriceHeld(job.costLineCents, booking.estimateCents, revised.cents)) return undefined;
     return { cents: revised.cents, question: raisedPrice({ proName: this.bookedName(file, job), newCents: revised.cents, ...(booking.estimateCents !== undefined ? { oldCents: booking.estimateCents } : {}) }) };
   }
 
@@ -1920,7 +2055,7 @@ export class FixerDesk {
     booking.revisedQuote = { cents, at, by };
     const proName = this.bookedName(file, job);
     const prices = { proName, newCents: cents, ...(old !== undefined ? { oldCents: old } : {}) };
-    if (raisedPriceHeld(file.settings.costLineCents, old, cents)) {
+    if (raisedPriceHeld(job.costLineCents, old, cents)) {
       const question = raisedPrice(prices);
       const note = this.fileNews(file, { kind: "raised-price-held", text: question, jobId: job.id }, `fixer:${job.id}:raised:${at}`);
       this.write(file);
@@ -2218,7 +2353,7 @@ export class FixerDesk {
       phase: now < from - DOOR_LEAD_MS ? "before" : now < this.endOf(booking) ? "during" : "after",
       ...(address && now >= from - ADDRESS_LEAD_MS ? { address } : {}),
       ...(booking.estimateCents !== undefined ? { estimateCents: booking.estimateCents } : {}),
-      ...(raised ? { raised: { cents: raised.cents, waiting: !raised.hostYes && raisedPriceHeld(file.settings.costLineCents, booking.estimateCents, raised.cents) } } : {}),
+      ...(raised ? { raised: { cents: raised.cents, waiting: !raised.hostYes && raisedPriceHeld(job.costLineCents, booking.estimateCents, raised.cents) } } : {}),
       photos: job.photos.filter((photo) => photo.from === "pro").length,
     };
   }
@@ -2271,7 +2406,9 @@ export class FixerDesk {
         this.write(read);
       }
       const pro = read?.pros.find((entry) => entry.status === "saved" && entry.reach.phone === input.from);
-      const proName = pro?.name ?? "A pro";
+      // A pro found for a job and contacted on it: the job they were asked about, the latest contact first.
+      const asked = read ? this.contactedJob(read, input.from) : undefined;
+      const proName = pro?.name ?? asked?.name ?? "A pro";
       who = proName;
       if (injury) return this.injury(read, input.from, proName, id);
       const file = read!;
@@ -2307,9 +2444,10 @@ export class FixerDesk {
       }
       if (!text) return;
       const news = proTextNews({ proName, text: redactDigits(text).slice(0, 300).trim() });
-      if (target) {
+      const about = target ?? asked?.job;
+      if (about) {
         const fresh = this.read();
-        const job = fresh.jobs.find((entry) => entry.id === target.id);
+        const job = fresh.jobs.find((entry) => entry.id === about.id);
         if (job) {
           const note = this.news(job, "pro-text", news, `fixer:${job.id}:pro-text:${id}`);
           this.write(fresh);
@@ -2323,6 +2461,50 @@ export class FixerDesk {
       this.write(fresh);
       await this.tell([note]);
     }).catch(() => this.tell([{ id: `fixer:pro-text-failed:${id}`, text: proTextFailed({ proName: who }) }]));
+  }
+
+  /**
+   * A pro's voicemail, from Twilio's transcript. It is news for the host and nothing else: no keyword in it
+   * opts anyone in or out, finishes a visit, or raises a price. An injury makes it urgent. A recording
+   * seen before is ignored.
+   */
+  proVoicemail(input: { id: string; from: string; text: string; status: "completed" | "failed"; seconds?: number }): Promise<void> {
+    return this.serial(async () => {
+      const people = this.deps.people?.();
+      const here = this.deps.propertyId;
+      if (!people || !here || !input.from || !input.id) return;
+      if (!people.rolesOn(input.from, here).includes("pro") || holdsOtherRole(people, input.from)) return;
+      const file = this.read();
+      if (file.seenInbound?.includes(input.id)) return;
+      file.seenInbound = [...(file.seenInbound ?? []), input.id].slice(-200);
+      const pro = file.pros.find((entry) => entry.status === "saved" && entry.reach.phone === input.from);
+      const asked = this.contactedJob(file, input.from);
+      const proName = pro?.name ?? asked?.name ?? "A pro";
+      const now = this.deps.now().getTime();
+      const visit = pro && !this.inactive(file) ? file.jobs.find((job) => job.booking?.proId === pro.id && job.booking.hostYes && liveBooking(job) && (job.state === "in-progress" || now >= Date.parse(job.booking.from))) : undefined;
+      const job = visit ?? asked?.job;
+      const words = redactDigits(input.text).trim().slice(0, VOICEMAIL_MAX);
+      const short = input.seconds !== undefined && input.seconds < 2;
+      const text = proVoicemailNews({ proName, ...(input.status === "failed" ? { failed: true } : {}), ...(words && !short ? { text: words } : {}) });
+      const id = `fixer:pro-voicemail:${input.id}`;
+      const urgent = input.status === "completed" && isInjuryReport(input.text);
+      const note = urgent || !job ? this.fileNews(file, { kind: "pro-voicemail", text, ...(job ? { jobId: job.id } : {}), ...(urgent ? { urgent: true } : {}) }, id) : this.news(job, "pro-voicemail", text, id);
+      this.write(file);
+      await this.tell([note]);
+    });
+  }
+
+  /** The open job a phone was contacted on, latest first, with the name it was saved under there. */
+  private contactedJob(file: FixerFile, phone: string): { job: Job; name: string } | undefined {
+    let best: { job: Job; name: string; at: string } | undefined;
+    for (const job of file.jobs) {
+      if (!isOpen(job)) continue;
+      for (const contact of job.contacts) {
+        if (contact.cancelled || this.reachOfId(file, job, contact.to).phone !== phone) continue;
+        if (!best || contact.at > best.at) best = { job, name: this.nameOf(file, job, contact.to) ?? "A pro", at: contact.at };
+      }
+    }
+    return best && { job: best.job, name: best.name };
   }
 
   /**

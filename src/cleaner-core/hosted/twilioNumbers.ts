@@ -1,6 +1,6 @@
 /**
  * The Twilio REST calls for an account's text line: is the number on the Twilio account, point (or
- * clear) its SMS webhook, and release it. Credentials are the shared Cleaner Core Twilio account's.
+ * clear) its SMS and voice webhooks, and release it. Credentials are the shared Cleaner Core Twilio account's.
  */
 
 const API = "https://api.twilio.com/2010-04-01";
@@ -37,15 +37,18 @@ export async function findIncomingNumber(env: NodeJS.ProcessEnv, e164: string): 
   }
 }
 
-/** Sets the number's SMS webhook. An empty `smsUrl` clears it. True when Twilio accepted it. */
-export async function pointSmsWebhook(env: NodeJS.ProcessEnv, numberSid: string, smsUrl: string): Promise<boolean> {
+/**
+ * Sets the number's SMS and voice webhooks in one call, and clears any TwiML App so the voice webhook
+ * takes the calls. Empty strings clear them. True when Twilio accepted it.
+ */
+export async function pointLineWebhooks(env: NodeJS.ProcessEnv, numberSid: string, urls: { sms: string; voice: string }): Promise<boolean> {
   const acct = account(env);
   if (!acct) return false;
   try {
     const res = await (fetchImpl ?? fetch)(`${API}/Accounts/${acct.sid}/IncomingPhoneNumbers/${encodeURIComponent(numberSid)}.json`, {
       method: "POST",
       headers: { Authorization: acct.auth, "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ SmsUrl: smsUrl, SmsMethod: "POST" }).toString(),
+      body: new URLSearchParams({ SmsUrl: urls.sms, SmsMethod: "POST", VoiceUrl: urls.voice, VoiceMethod: "POST", VoiceApplicationSid: "" }).toString(),
     });
     return res.ok;
   } catch {
@@ -66,6 +69,21 @@ export async function releaseNumber(env: NodeJS.ProcessEnv, numberSid: string): 
       headers: { Authorization: acct.auth },
     });
     return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Deletes a voicemail recording. True when Twilio deleted it, or it was already gone. */
+export async function deleteRecording(env: NodeJS.ProcessEnv, recordingSid: string): Promise<boolean> {
+  const acct = account(env);
+  if (!acct) return false;
+  try {
+    const res = await (fetchImpl ?? fetch)(`${API}/Accounts/${acct.sid}/Recordings/${encodeURIComponent(recordingSid)}.json`, {
+      method: "DELETE",
+      headers: { Authorization: acct.auth },
+    });
+    return res.ok || res.status === 404;
   } catch {
     return false;
   }

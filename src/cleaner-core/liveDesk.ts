@@ -509,6 +509,11 @@ export function setCleanerAlertFetch(fetchImpl: AlertFetch | undefined): void {
   alertFetch = fetchImpl;
 }
 
+/** The stubbed routine webhook, for Fixer Core's alerts on the same service. Undefined uses the platform fetch. */
+export function cleanerAlertFetch(): AlertFetch | undefined {
+  return alertFetch;
+}
+
 /**
  * How long a checkout change after the offer waits before the cleaner's update goes. A quick second
  * change then sends one text, and a change back sends none.
