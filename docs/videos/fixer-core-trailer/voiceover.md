@@ -11,8 +11,8 @@
 | 0:37 – 0:46 | The host reports the AC. Grok shows three pros nearby. | When something breaks, just say so. Grok finds licensed pros nearby, and you pick who to call. |
 | 0:46 – 0:54 | Grok calls all three. Two quote; one will call back. | Grok makes the calls and gets a quote from each. One pro needs to call back, so Grok gives them your Fixer Core line. |
 | 0:54 – 1:07 | Only with Fixer Core: the pro's voicemail and text land in the chat. | The pro calls back, and it never reaches your cell. Their voicemail turns into text, right in your chat, and their texts land there too. Grok makes the call. Fixer Core catches the reply. |
-| 1:07 – 1:18 | Three quotes side by side. Book it. Code sent, fixed, cost logged. | Every quote, side by side. Nothing's booked until you say yes. Then the door code goes to that pro alone, and the cost is logged. |
-| 1:18 – 1:24 | Safe by design. | Only pros you approve. Never over a guest stay. And it never pays anyone. |
+| 1:07 – 1:17 | Three quotes side by side. Book it. Code sent, fixed, cost logged. | Every quote, side by side. Nothing's booked until you say yes. Then the door code goes to that pro alone, and the cost is logged. |
+| 1:17 – 1:24 | Safe by design. | Only pros you approve. Never over a guest stay. And it never pays anyone. |
 | 1:24 – 1:30 | End card. | Fixer Core. Repairs and upkeep, handled for you. |
 
 ## The read, start to finish
@@ -37,10 +37,12 @@ Only pros you approve. Never over a guest stay. And it never pays anyone.
 
 Fixer Core. Repairs and upkeep, handled for you.
 
-## Adding the recording
+## The recording
 
-Render with the recording as the audio track. It plays as recorded from 0:00, is padded with silence if it runs short, and fades out over the last 3 seconds:
+The ten recorded lines are in `voiceover/`, `01.mp3` to `10.mp3` in script order. `voiceover.json` says where each one plays. Line 4 is cut at its sentence pauses so each sentence lands on its step of the setup chat. To swap in a new take, replace its file. If its length changes, nudge `at` in `voiceover.json`. Then render:
 
 ```bash
-node docs/videos/fixer-core-trailer/render.mjs video fixer-core-trailer.mp4 voiceover.m4a
+node docs/videos/fixer-core-trailer/render.mjs video fixer-core-trailer.mp4 docs/videos/fixer-core-trailer/voiceover.json
 ```
+
+To hear the mix alone: `node docs/videos/fixer-core-trailer/render.mjs audio mix.wav docs/videos/fixer-core-trailer/voiceover.json`.

@@ -1,0 +1,19 @@
+{
+  "about": "Where each voiceover line plays. file is under voiceover/; from and to cut a sentence out of a line (seconds into the file); at is when it starts in the video.",
+  "clips": [
+    { "file": "01.mp3", "at": 0.4 },
+    { "file": "02.mp3", "at": 7.4 },
+    { "file": "03.mp3", "at": 15.1 },
+    { "file": "04.mp3", "from": 0, "to": 2.0, "at": 19.4 },
+    { "file": "04.mp3", "from": 2.2, "to": 3.75, "at": 22.0 },
+    { "file": "04.mp3", "from": 3.9, "to": 7.3, "at": 27.9 },
+    { "file": "04.mp3", "from": 7.45, "to": 10.6, "at": 31.6 },
+    { "file": "04.mp3", "from": 10.7, "to": 12.2, "at": 34.8 },
+    { "file": "05.mp3", "at": 37.8 },
+    { "file": "06.mp3", "at": 46.1 },
+    { "file": "07.mp3", "at": 54.5 },
+    { "file": "08.mp3", "at": 67.3 },
+    { "file": "09.mp3", "at": 77.3 },
+    { "file": "10.mp3", "at": 84.0 }
+  ]
+}
