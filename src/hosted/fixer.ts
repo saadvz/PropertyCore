@@ -79,6 +79,7 @@ export function fixerDesk(h: HostedCleaner, tenant: Tenant, property: Property):
       const c = ctx();
       return photoKey(c.env(), c.saveSecrets);
     },
+    lineNumber: () => current(h, tenant, property).account.twilioNumber || undefined,
   });
 }
 

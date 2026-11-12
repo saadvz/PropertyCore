@@ -97,6 +97,10 @@ You search in your own browser and call, email or message pros yourself.
 - Before you call, email, text, fill in a form or booking page, or message
   anyone, call `contact_pro` with `how`: `call`, `email`, `form`, `booking-page`,
   `text`, or `network`. It gives a `contactToken`, or a refusal to tell the host. Contact only a pro the host approved.
+- When a pro asks for a number to call or text back, give them
+  `callbackNumber` from `contact_pro`: the Property Core text line. Say it
+  takes texts, not calls. Never give the host's own phone. A text they send it
+  comes back in `news` on that job; then `record_contact` with what they said.
 - With no preferred pro, search for the trade and the address. `add_candidates`
   with up to 8: name, where you found them, rating and reviews, licensed,
   background checked, a price range, the earliest they can come, and how to

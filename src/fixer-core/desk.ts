@@ -53,6 +53,8 @@ export interface FixerDeps {
   /** A note for the host, with a wake. True once it was taken (Cleaner Core runs here); otherwise it may go nowhere. */
   notifyHost?(id: string, text: string): Promise<boolean | void>;
   photoKey?(): Buffer | undefined;
+  /** The account's text line, in +1 form: the number a pro is given to reach the host back, by text. */
+  lineNumber?(): string | undefined;
 }
 
 /** Why the visit page (or the tick) got no code. */
@@ -205,6 +207,9 @@ export interface ApproveJobInput {
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const COST_LINE_RANGE = "A cost line has to be from $1 to $5,000.";
+/** Beside the line's number on contact_pro: what to tell a pro who asks how to reach the host. */
+const CALLBACK_NEXT =
+  "If they ask for a number to reach the host, give them callbackNumber and say it takes texts, not calls. Never give the host's own phone. Their texts to it reach you as news on this job.";
 const URGENCIES = ["now", "soon", "by-date", "flexible"] as const;
 /** A job is still going until it is done or cancelled; these states are before any contact. */
 const NOT_BOOKED = new Set<Job["state"]>(["requested", "shortlisted", "contacted"]);
@@ -463,18 +468,22 @@ export class FixerDesk {
   }
 
   /**
-   * The saved pros that have a phone, and a found candidate with a phone while their booking is live,
-   * kept in the account's people list as role "pro" for this property (Decision 10).
+   * The saved pros that have a phone, and a found candidate with a phone while their booking is live or
+   * they were contacted on a job still open, kept in the account's people list as role "pro" for this
+   * property (Decision 10). So a pro given the line as the number to reach the host back can text it.
    */
   private syncPros(file: FixerFile): void {
     const people = this.deps.people?.();
     if (!people || !this.deps.propertyId) return;
     const wanted = file.pros.filter((pro) => pro.status === "saved" && pro.reach.phone).map((pro) => ({ phone: pro.reach.phone!, name: pro.name }));
-    for (const job of file.jobs) {
-      if (!job.booking?.hostYes || !liveBooking(job)) continue;
-      const candidate = job.candidates.find((c) => c.id === job.booking!.proId);
+    const add = (candidate: Candidate | undefined) => {
       const phone = candidate?.reach.phone;
       if (phone && !wanted.some((entry) => entry.phone === phone)) wanted.push({ phone, name: candidate.name });
+    };
+    for (const job of file.jobs) {
+      if (job.booking?.hostYes && liveBooking(job)) add(job.candidates.find((c) => c.id === job.booking!.proId));
+      if (!isOpen(job)) continue;
+      for (const contact of job.contacts) if (!contact.cancelled) add(job.candidates.find((c) => c.id === contact.to));
     }
     people.saveRolePeople(this.deps.propertyId, "pro", wanted);
   }
@@ -1036,7 +1045,14 @@ export class FixerDesk {
       job.contacts.push(contact);
       if (job.state === "requested" || job.state === "shortlisted") job.state = "contacted";
       this.write(file);
-      return ok({ contactToken: contact.token, reach, next: "Reach them, then call record_contact with this token and what they said." });
+      this.syncPros(file);
+      const line = how === "text" ? undefined : this.deps.lineNumber?.();
+      return ok({
+        contactToken: contact.token,
+        reach,
+        ...(line ? { callbackNumber: line, callbackNext: CALLBACK_NEXT } : {}),
+        next: "Reach them, then call record_contact with this token and what they said.",
+      });
     });
   }
 
@@ -2275,7 +2291,9 @@ export class FixerDesk {
         this.write(read);
       }
       const pro = read?.pros.find((entry) => entry.status === "saved" && entry.reach.phone === input.from);
-      const proName = pro?.name ?? "A pro";
+      // A pro found for a job and contacted on it: the job they were asked about, the latest contact first.
+      const asked = read ? this.contactedJob(read, input.from) : undefined;
+      const proName = pro?.name ?? asked?.name ?? "A pro";
       who = proName;
       if (injury) return this.injury(read, input.from, proName, id);
       const file = read!;
@@ -2311,9 +2329,10 @@ export class FixerDesk {
       }
       if (!text) return;
       const news = proTextNews({ proName, text: redactDigits(text).slice(0, 300).trim() });
-      if (target) {
+      const about = target ?? asked?.job;
+      if (about) {
         const fresh = this.read();
-        const job = fresh.jobs.find((entry) => entry.id === target.id);
+        const job = fresh.jobs.find((entry) => entry.id === about.id);
         if (job) {
           const note = this.news(job, "pro-text", news, `fixer:${job.id}:pro-text:${id}`);
           this.write(fresh);
@@ -2327,6 +2346,19 @@ export class FixerDesk {
       this.write(fresh);
       await this.tell([note]);
     }).catch(() => this.tell([{ id: `fixer:pro-text-failed:${id}`, text: proTextFailed({ proName: who }) }]));
+  }
+
+  /** The open job a phone was contacted on, latest first, with the name it was saved under there. */
+  private contactedJob(file: FixerFile, phone: string): { job: Job; name: string } | undefined {
+    let best: { job: Job; name: string; at: string } | undefined;
+    for (const job of file.jobs) {
+      if (!isOpen(job)) continue;
+      for (const contact of job.contacts) {
+        if (contact.cancelled || this.reachOfId(file, job, contact.to).phone !== phone) continue;
+        if (!best || contact.at > best.at) best = { job, name: this.nameOf(file, job, contact.to) ?? "A pro", at: contact.at };
+      }
+    }
+    return best && { job: best.job, name: best.name };
   }
 
   /**

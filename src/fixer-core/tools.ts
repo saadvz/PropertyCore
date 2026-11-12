@@ -178,7 +178,7 @@ export const FIXER_TOOLS: FixerTool[] = [
   {
     name: "contact_pro",
     title: "Contact a pro",
-    description: "Before you call, email, text, fill in a form or booking page, or message a network: gives a contactToken for a pro the host approved, or a refusal to pass to the host. how is call, email, form, booking-page, text, or network.",
+    description: "Before you call, email, text, fill in a form or booking page, or message a network: gives a contactToken for a pro the host approved, or a refusal to pass to the host. how is call, email, form, booking-page, text, or network. Its callbackNumber is the account's text line: when the pro asks for a number to reach the host, give them that one, and say it takes texts, not calls. Never give the host's own phone.",
     input: z.object({ jobId: Id, to: Id, how: z.enum(["call", "email", "form", "booking-page", "text", "network"]) }).strict(),
   },
   {

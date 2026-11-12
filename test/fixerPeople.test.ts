@@ -527,3 +527,82 @@ describe("final review fixes: notes with no job", () => {
     expect(sent.at(-1)).toBe(PRO_HURT);
   });
 });
+
+/** A pro found for a job and called, who was given the line as the number to reach the host back. Made-up pros, 555 numbers. */
+describe("the line as the number to reach the host back", () => {
+  const LINE = "+15555550199";
+  const PIPE = "+15555550188";
+
+  /** An active desk with one host job, and Pipe One found, picked and called on it. */
+  async function called(w: Line, how: "call" | "email" | "text" = "call") {
+    const file = readFixer(w.root);
+    const job: Job = {
+      id: "job_callback123",
+      trade: "plumbing",
+      what: "Sink leaks",
+      source: "host",
+      photos: [],
+      urgency: "soon",
+      state: "shortlisted",
+      hostGo: { at: NOW.toISOString() },
+      candidates: [{ id: "cand_pipeone1", name: "Pipe One", source: "search", reach: { phone: PIPE, email: "pipe@example.com" } } as Job["candidates"][number]],
+      picked: ["cand_pipeone1"],
+      contacts: [],
+      news: [],
+      createdAt: NOW.toISOString(),
+    };
+    file.jobs.push(job);
+    file.settings.activatedAt = NOW.toISOString();
+    writeFixer(w.root, file);
+    return w.desk.contactPro({ jobId: job.id, to: "cand_pipeone1", how });
+  }
+
+  function lineWith(number: string | undefined) {
+    const notes: { id: string; text: string }[] = [];
+    const base = setup(A, undefined, { lineNumber: () => number, notifyHost: async (id, text) => void notes.push({ id, text }) });
+    return { ...base, sent: [] as { to: string; body: string }[], notes, hub: () => hubFor(base.root, { now: () => NOW }) };
+  }
+
+  it("gives the line as callbackNumber on a call or email, never the host's phone, and none on a text", async () => {
+    const w = lineWith(LINE);
+    const reply = await called(w);
+    expect(reply.structured!.callbackNumber).toBe(LINE);
+    expect(reply.structured!.callbackNext).toContain("texts, not calls");
+    expect(JSON.stringify(reply.structured)).not.toContain(HOST);
+    const none = lineWith(undefined);
+    expect((await called(none)).structured!.callbackNumber).toBeUndefined();
+  });
+
+  it("puts a called candidate on the line while the job is open, and takes them off when it's cancelled", async () => {
+    const w = lineWith(LINE);
+    await called(w);
+    expect(roles(w.people, PIPE)).toEqual(["pro"]);
+    expect(proRoute({ properties: [{ id: A, flows: { fixer: { on: true } } } as Property] }, w.people, PIPE)!.map((p) => p.id)).toEqual([A]);
+    // With no booking yet, the host's cancel is one call.
+    expect((await w.desk.cancelJob({ jobId: job0(w).id })).isError).toBe(false);
+    expect(roles(w.people, PIPE)).toEqual([]);
+  });
+
+  it("hangs a called candidate's text on the job they were called about, by name, with digit runs removed", async () => {
+    const w = lineWith(LINE);
+    await called(w);
+    await w.desk.proInbound(text(PIPE, "Can do Tuesday for $350, call me at 5551234567"));
+    const news = job0(w).news.at(-1)!;
+    expect(news.kind).toBe("pro-text");
+    expect(news.text).toContain("Pipe One texted");
+    expect(news.text).toContain("$350");
+    expect(news.text).not.toContain("5551234567");
+    expect(w.notes.at(-1)!.text).toBe(news.text);
+    // Their text changes nothing on the job: Grok records what they said.
+    expect(job0(w).contacts[0]!.outcome).toBeUndefined();
+    expect(job0(w).booking).toBeUndefined();
+  });
+
+  it("ignores a text from a number nobody called", async () => {
+    const w = lineWith(LINE);
+    await called(w);
+    await w.desk.proInbound(text("+15555550177", "Hi, returning your call"));
+    expect(job0(w).news).toEqual([]);
+    expect(w.notes).toEqual([]);
+  });
+});
