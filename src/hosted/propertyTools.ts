@@ -118,7 +118,7 @@ export async function accountState(tenant: Tenant, args: unknown, states: Proper
   const reply = await stateOf(tenant, args, states, assistant);
   if (reply.isError || !reply.structured) return reply;
   // The account's line, so the host can ask for their agent's number.
-  const structured = { ...reply.structured, agentNumber: tenant.twilioNumber };
+  const structured = { ...reply.structured, ...(tenant.twilioNumber ? { agentNumber: tenant.twilioNumber } : {}) };
   return { ...reply, text: JSON.stringify(structured), structured };
 }
 

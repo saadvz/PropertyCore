@@ -6,7 +6,7 @@ import type { Tenant } from "./registry";
 import type { HostedCleaner } from "./router";
 import { clearLineGroups } from "../liveSms";
 import { findIncomingNumber, pointLineWebhooks, releaseNumber } from "./twilioNumbers";
-import { VOICE_PATH } from "../../hosted/voice";
+import { VOICE_PATH } from "../../hosted/voicePaths";
 
 /**
  * Each account's one text line (saadvz/PropertyCore#163). The line exists for the cleaner, and maybe pros;
@@ -52,6 +52,8 @@ export async function pointVoiceOnce(h: HostedCleaner): Promise<void> {
   // Without the public address the webhook would point nowhere: the next start tries again. Voicemail is
   // part of Fixer Core, so an existing line's call handling isn't touched until FIXER_CORE is on.
   if (!h.origin() || !fixerCoreOn(h.baseEnv())) return;
+  // Accounts made before the pool are recorded first, so their lines are pointed too.
+  recordAccountLines(h);
   const pool = numberPool(h);
   for (const line of pool.list()) {
     if (!line.tenantId || line.voiceOk !== undefined) continue;
@@ -127,10 +129,7 @@ async function pointLine(h: HostedCleaner, pool: NumberPool, number: string, sid
   const ok = await pointLineWebhooks(h.baseEnv(), sid, { sms: lineWebhookUrl(h), voice: lineVoiceUrl(h) });
   pool.setWebhook(number, ok);
   pool.setVoice(number, ok);
-  if (!ok) {
-    h.log("Twilio didn't take a line's webhook. Point it again from the number pool on /admin.");
-    h.log("Twilio didn't take a line's voice webhook. Point it again from the number pool on /admin.");
-  }
+  if (!ok) h.log("Twilio didn't take a line's webhooks. Point it again from the number pool on /admin.");
   return ok;
 }
 

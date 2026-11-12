@@ -1,3 +1,4 @@
+import { VOICE_TRANSCRIPT_PATH } from "./voicePaths";
 import { fixerCoreOn } from "../cleaner-core/flag";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -24,10 +25,7 @@ import { proVoicemailNews } from "../fixer-core/texts";
  * transcript becomes news for the host. Nobody else is recorded.
  */
 
-/** Where every account's line sends its calls. The `To` number picks the account. */
-export const VOICE_PATH = "/webhooks/twilio/voice";
-/** Where Twilio sends a voicemail's transcript. */
-export const VOICE_TRANSCRIPT_PATH = "/webhooks/twilio/voice/transcript";
+export { VOICE_PATH, VOICE_TRANSCRIPT_PATH } from "./voicePaths";
 
 export const GREETING = "Hi, you've reached the repairs and cleaning line. This call is recorded. Please leave your message after the tone, then hang up.";
 export const NO_CALLS = "This number doesn't take calls. Please text it.";
@@ -92,7 +90,12 @@ export async function handleVoiceCall(h: HostedCleaner, r: HostedRequest, tenant
   const fields = formParams(rawBody);
   if (!signedCall(h, r, fields, signedUrl)) return r.send(403, "text/plain", "Forbidden");
   // Twilio's request after a recording ends: the call is over. Not a new call, so it isn't greeted or counted.
-  if (fields.RecordingSid || fields.RecordingUrl) return r.send(200, "text/xml", twiml(["<Hangup/>"]));
+  if (fields.RecordingSid || fields.RecordingUrl) {
+    // Only this request carries the recording's length: kept by its sid until the transcript comes.
+    const seconds = Number(fields.RecordingDuration);
+    if (/^RE[0-9a-zA-Z]{2,64}$/.test(fields.RecordingSid ?? "") && fields.RecordingDuration !== undefined && Number.isFinite(seconds)) new VoiceLengths(tenantFolder(h.dataRoot, tenant.id)).set(fields.RecordingSid!, seconds);
+    return r.send(200, "text/xml", twiml(["<Hangup/>"]));
+  }
   // Kept deletes are retried after the caller is answered, so a slow Twilio API never holds up the call.
   const retry = () => void new VoiceDeletes(tenantFolder(h.dataRoot, tenant.id)).retry(h.baseEnv(), (line) => h.log(line)).catch(() => undefined);
   // Voicemail is part of Fixer Core: while FIXER_CORE is off, nobody is recorded.
@@ -147,7 +150,7 @@ export async function routeVoicemail(h: HostedCleaner, tenant: Tenant, mail: Voi
   const words = redactDigits(mail.text).trim().slice(0, 600);
   const short = mail.seconds !== undefined && mail.seconds < 2;
   const text = proVoicemailNews({ proName: person.name ?? "Someone", ...(mail.status === "failed" ? { failed: true } : {}), ...(words && !short ? { text: words } : {}) });
-  if ((await note(property, `voicemail:${mail.recordingSid}`, text)) === false) h.log(`A voicemail reached ${tenant.id} for a property without Cleaner Core.`);
+  if ((await note(property, `voicemail:${mail.recordingSid}`, text)) === false) h.log(`A voicemail for ${tenant.id} couldn't be noted: Cleaner Core isn't on or set up at that property.`);
 }
 
 /** Twilio's transcript of a voicemail. Always answered 200 once signed, so Twilio doesn't retry it. */
@@ -157,13 +160,14 @@ export async function handleVoiceTranscript(h: HostedCleaner, r: HostedRequest, 
   const from = parsePhone(fields.From ?? "") ?? "";
   const recordingSid = fields.RecordingSid ?? "";
   if (from && /^RE[0-9a-zA-Z]{2,64}$/.test(recordingSid)) {
-    const seconds = Number(fields.RecordingDuration);
+    const kept = new VoiceLengths(tenantFolder(h.dataRoot, tenant.id)).take(recordingSid);
+    const seconds = fields.RecordingDuration !== undefined ? Number(fields.RecordingDuration) : (kept ?? Number.NaN);
     await routeVoicemail(h, tenant, {
       recordingSid,
       from,
       text: fields.TranscriptionText ?? "",
       status: fields.TranscriptionStatus === "failed" ? "failed" : "completed",
-      ...(Number.isFinite(seconds) && fields.RecordingDuration !== undefined ? { seconds } : {}),
+      ...(Number.isFinite(seconds) ? { seconds } : {}),
     }).catch(() => h.log(`A voicemail for ${tenant.id} couldn't be taken.`));
   }
   // The audio goes once the transcript is in, whatever it said: only the words are kept.
@@ -193,4 +197,32 @@ export async function dropTranscript(h: HostedCleaner, r: HostedRequest, tenant:
     else await deleteRecording(h.baseEnv(), recordingSid).catch(() => undefined);
   }
   r.send(200, "text/xml", twiml([]));
+}
+
+/** Each recording's length in seconds, by its sid only, from the request Twilio makes when it ends. At most 200 are kept. */
+export class VoiceLengths {
+  private readonly file: string;
+  constructor(dir: string) {
+    this.file = join(dir, "voice-lengths.json");
+  }
+
+  private read(): Record<string, number> {
+    return existsSync(this.file) ? (JSON.parse(readFileSync(this.file, "utf8")) as Record<string, number>) : {};
+  }
+
+  set(sid: string, seconds: number): void {
+    const all = this.read();
+    all[sid] = seconds;
+    writeJsonAtomic(this.file, Object.fromEntries(Object.entries(all).slice(-200)));
+  }
+
+  /** The length kept for the recording, and forgets it. */
+  take(sid: string): number | undefined {
+    const all = this.read();
+    const seconds = all[sid];
+    if (seconds === undefined) return undefined;
+    delete all[sid];
+    writeJsonAtomic(this.file, all);
+    return seconds;
+  }
 }

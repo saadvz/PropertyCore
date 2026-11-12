@@ -151,7 +151,7 @@ describe("the number pool", () => {
     if ("refused" in opened) throw new Error(opened.refused);
     expect(opened.webhookOk).toBe(false);
     expect(pool().get(A)?.webhookOk).toBe(false);
-    expect(logs).toContain("Twilio didn't take a line's webhook. Point it again from the number pool on /admin.");
+    expect(logs).toContain("Twilio didn't take a line's webhooks. Point it again from the number pool on /admin.");
     fakeTwilio({ [A]: "PNa" });
     expect(await repointLine(h, opened.tenant)).toBe(true);
     expect(pool().get(A)?.webhookOk).toBe(true);
@@ -368,6 +368,15 @@ describe("the line's voice webhook", () => {
     expect(calls.slice(before).filter((c) => c.method === "POST")).toEqual([]);
   });
 
+  it("points the voice webhook of an account made before the pool, at startup", async () => {
+    const calls = fakeTwilio({ [A]: "PNa" });
+    h.registry.create({ label: "Old", twilioNumber: A });
+    await pointVoiceOnce(h);
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(new URLSearchParams(posts[0]!.body).get("VoiceUrl")).toBe(`${ORIGIN}/webhooks/twilio/voice`);
+  });
+
   it("points nothing while the public address isn't known", async () => {
     const calls = fakeTwilio({ [A]: "PNa" });
     await topUp(h, [A]);
@@ -391,9 +400,9 @@ describe("the line's voice webhook", () => {
     const doc = JSON.parse(readFileSync(file, "utf8"));
     delete doc.numbers[0].voiceOk;
     writeFileSync(file, JSON.stringify(doc));
+    const before = logs.length;
     await pointVoiceOnce(h);
-    const line = logs.find((l) => l.includes("voice webhook"));
-    expect(line).toBe("Twilio didn't take a line's voice webhook. Point it again from the number pool on /admin.");
+    expect(logs.slice(before).filter((l) => l.startsWith("Twilio didn't take"))).toEqual(["Twilio didn't take a line's webhooks. Point it again from the number pool on /admin."]);
     expect(logs.join("\n")).not.toContain("+1555");
     expect(pool().get(A)?.voiceOk).toBe(false);
   });

@@ -422,3 +422,14 @@ describe("save_repair_alerts (a Fixer-only property)", () => {
     await vi.waitFor(() => expect(m.wakes.some((w) => w.url === HOOK.url && JSON.parse(w.body).eventType === "repairs.update")).toBe(true));
   });
 });
+
+describe("save_repair_alerts on Muse", () => {
+  it("is refused: Muse's hourly task reads the news", SLOW, async () => {
+    const m = await start();
+    const { property, token } = await account(m, "muse", COURT);
+    await activeFixer(m, token, property);
+    const reply = await m.toolAt(PATH, token, "save_repair_alerts", { property: property.id });
+    expect(reply.isError).toBe(true);
+    expect(reply.text).toBe("Repair alerts are for Grok Bot. Your hourly Fixer Core task already reads the news.");
+  });
+});

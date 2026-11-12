@@ -26,4 +26,10 @@ describe("the agent's number", () => {
     const named = await accountState(two, { property: "prp_bbbbbbbbbb" }, states, "grok");
     for (const reply of [none, one, several, named]) expect(reply.structured!.agentNumber).toBe(LINE);
   });
+
+  it("leaves agentNumber out when the account has no line", async () => {
+    const lineless = { ...tenant([property("prp_aaaaaaaaaa", "12 Scratch Lane")]), twilioNumber: "" } as unknown as Tenant;
+    const reply = await accountState(lineless, {}, states, "grok");
+    expect("agentNumber" in reply.structured!).toBe(false);
+  });
 });

@@ -453,6 +453,8 @@ export class FixerDesk {
     return this.guarded({}, () => {
       const file = this.read();
       if (this.deps.cleaningOn?.()) return fail("Cleaner Core runs at this property: connect alerts with its save_alert_routine.");
+      // Only a Grok Bot's routine can be woken; Muse's hourly task reads the news itself.
+      if ((currentCaller()?.assistant ?? this.deps.assistant?.()) !== "grok") return fail("Repair alerts are for Grok Bot. Your hourly Fixer Core task already reads the news.");
       const base = this.deps.publicBase?.();
       if (!base) return fail("Upload links aren't available on this service yet.");
       const code = randomBytes(32).toString("base64url");

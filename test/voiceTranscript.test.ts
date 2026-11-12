@@ -187,4 +187,12 @@ describe("the audio", () => {
     await Promise.all([list.retry(m.hosted().baseEnv()), list.remove(m.hosted().baseEnv(), "REboth000002")]);
     expect(JSON.parse(readFileSync(listFile(m, tenant), "utf8")).map((p: { sid: string }) => p.sid).sort()).toEqual(["REboth000001", "REboth000002"]);
   });
+
+  it("a recording under 2 seconds, by the length Twilio gave when it ended, says they left no message", SLOW, async () => {
+    const { m, tenant, a } = await setup();
+    await m.twilio("/webhooks/twilio/voice", { CallSid: "CAshort01", From: JOE, To: LINE, RecordingSid: "REshort00001", RecordingUrl: "https://api.twilio.com/r", RecordingDuration: "1" });
+    await transcript(m, { From: JOE, RecordingSid: "REshort00001", TranscriptionText: "Hi" });
+    expect(readFixer(propertyFolder(m.app.root, tenant.id, a)).news?.at(-1)?.text).toBe("Joe's Plumbing called and left no message.");
+    expect(existsSync(join(tenantFolder(m.app.root, tenant.id), "voice-lengths.json")) ? JSON.parse(readFileSync(join(tenantFolder(m.app.root, tenant.id), "voice-lengths.json"), "utf8")) : {}).toEqual({});
+  });
 });
