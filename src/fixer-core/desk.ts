@@ -1174,7 +1174,10 @@ export class FixerDesk {
         contactToken: contact.token,
         reach,
         ...(line ? { callbackNumber: line, callbackNext: CALLBACK_NEXT } : {}),
-        next: "Reach them, then call record_contact with this token and what they said.",
+        ...(job.quotesFirst ? { quotesFirst: true } : {}),
+        next: job.quotesFirst
+          ? "This repair is quotes-only: ask for a price, not a time, and don't agree a time. Then call record_contact with this token, outcome quoted and quoteCents, and any time they offered in the note."
+          : "Reach them, then call record_contact with this token and what they said.",
       });
     });
   }
@@ -1216,6 +1219,13 @@ export class FixerDesk {
       delete contact.booked;
       contact.outcome = outcome;
       contact.outcomeAt = at;
+      // The pro the host picked from the quotes fell through: back to quotes-only, and the host hears the rest.
+      const pick = job.quotePick;
+      if (pick && contact.to === pick.proId && contact.at > pick.at && (outcome === "declined" || outcome === "no-answer")) {
+        job.quotesFirst = true;
+        delete job.quotePick;
+        delete job.quotesToldAt;
+      }
       delete contact.unconfirmedAt;
       if (outcome === "waiting") contact.followUpAt = input.followUpAt ? new Date(input.followUpAt).toISOString() : new Date(now.getTime() + FOLLOW_UP_MS).toISOString();
       else delete contact.followUpAt;
@@ -1622,7 +1632,7 @@ export class FixerDesk {
       }
       const next = this.topPro(file, job.trade, job.contacts.map((contact) => contact.to));
       if (!next || !contactAllowed(job, next.pro.id, file.pros).ok) continue;
-      out.push({ jobId: job.id, proId: next.pro.id, name: next.pro.name, reach: next.pro.reach, rank: next.rank });
+      out.push({ jobId: job.id, proId: next.pro.id, name: next.pro.name, reach: next.pro.reach, rank: next.rank, ...(job.quotesFirst ? { quotesFirst: true } : {}) });
     }
     return out;
   }
@@ -1665,8 +1675,12 @@ export class FixerDesk {
       if (!isOpen(job) || !job.quotesFirst) continue;
       const contacts = job.contacts.filter((c) => !c.cancelled);
       if (contacts.length === 0 || !contacts.every((c) => c.outcome !== undefined && answered.has(c.outcome))) continue;
-      if (job.quotesToldAt && !contacts.some((c) => c.at > job.quotesToldAt!)) continue;
-      const quotes = contacts.filter((c) => c.outcome === "quoted" && c.quote).map((c) => ({ proId: c.to, name: this.nameOf(file, job, c.to) ?? "A pro", cents: c.quote!.cents, ...(c.quote!.note ? { note: c.quote!.note } : {}) }));
+      // The round isn't over while an approved pro hasn't been asked yet: one summary at its end.
+      if (this.nextPro(file, job)) continue;
+      if (job.quotesToldAt && !contacts.some((c) => (c.outcomeAt ?? c.at) > job.quotesToldAt!)) continue;
+      // Each pro once, by their latest contact.
+      const latest = new Map(contacts.map((c) => [c.to, c]));
+      const quotes = [...latest.values()].filter((c) => c.outcome === "quoted" && c.quote).map((c) => ({ proId: c.to, name: this.nameOf(file, job, c.to) ?? "A pro", cents: c.quote!.cents, ...(c.quote!.note ? { note: c.quote!.note } : {}) }));
       out.push({ jobId: job.id, quotes, question: quotesQuestion({ what: job.what, quotes }) });
       job.quotesToldAt = this.deps.now().toISOString();
     }

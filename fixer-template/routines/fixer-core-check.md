@@ -26,6 +26,8 @@ hours, so an hourly run keeps jobs moving without waking anyone at night.
    Call `contact_pro` before every call, email, text, form or message, and
    contact only a pro it gives a token for.
 5. For `contactNext`, call `contact_pro` for the pro it names and reach them.
+   When it says `quotesFirst`, ask for a price only, never agree a time, and
+   record it as `quoted`.
    Then `record_contact` with what they said. A booked time that overlaps a
    guest stay gives no question: tell the host, and ask the pro for another
    time.
