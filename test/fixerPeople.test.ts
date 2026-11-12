@@ -606,3 +606,94 @@ describe("the line as the number to reach the host back", () => {
     expect(w.notes).toEqual([]);
   });
 });
+
+/** A pro's voicemail, as Twilio's transcript. It is news and nothing else. Made-up pros, 555 numbers. */
+describe("a pro's voicemail", () => {
+  const PIPE = "+15555550188";
+  const voicemail = (text: string, extra: Record<string, unknown> = {}) => ({ id: `RE${++n}`, from: PIPE, text, status: "completed" as const, ...extra });
+
+  /** Pipe One found, picked and called on an open job. */
+  async function calledPipe(w: Line) {
+    const file = readFixer(w.root);
+    const job: Job = {
+      id: "job_voicemail1",
+      trade: "plumbing",
+      what: "Sink leaks",
+      source: "host",
+      photos: [],
+      urgency: "soon",
+      state: "shortlisted",
+      hostGo: { at: NOW.toISOString() },
+      candidates: [{ id: "cand_pipeone1", name: "Pipe One", source: "search", reach: { phone: PIPE } } as Job["candidates"][number]],
+      picked: ["cand_pipeone1"],
+      contacts: [],
+      news: [],
+      createdAt: NOW.toISOString(),
+    };
+    file.jobs.push(job);
+    file.settings.activatedAt = NOW.toISOString();
+    writeFixer(w.root, file);
+    await w.desk.contactPro({ jobId: job.id, to: "cand_pipeone1", how: "call" });
+  }
+
+  it("puts a contacted pro's voicemail on their job, by name", async () => {
+    const w = lineSetup();
+    await calledPipe(w);
+    await w.desk.proVoicemail(voicemail("I can come Tuesday morning"));
+    const news = job0(w).news.at(-1)!;
+    expect(news).toMatchObject({ kind: "pro-voicemail", text: 'Pipe One left a voicemail: "I can come Tuesday morning"' });
+    expect(w.notes.at(-1)!.text).toBe(news.text);
+  });
+
+  it("a transcript of yes, stop, done or $300 changes nothing but news", async () => {
+    const w = lineSetup();
+    await calledPipe(w);
+    const before = JSON.stringify({ ...job0(w), news: [] });
+    for (const words of ["Yes", "STOP", "Done", "$300"]) await w.desk.proVoicemail(voicemail(words));
+    expect(w.people.optedIn(PIPE)).toBe(false);
+    expect(w.people.stopped(PIPE)).toBe(false);
+    expect(JSON.stringify({ ...job0(w), news: [] })).toBe(before);
+    expect(job0(w).news.filter((item) => item.kind === "pro-voicemail")).toHaveLength(4);
+    expect(w.sent).toEqual([]);
+  });
+
+  it("an injury voicemail is urgent", async () => {
+    const w = lineSetup();
+    await calledPipe(w);
+    await w.desk.proVoicemail(voicemail("Someone is hurt, the ceiling fell on him"));
+    expect(readFixer(w.root).news?.find((item) => item.kind === "pro-voicemail")).toMatchObject({ urgent: true, jobId: "job_voicemail1" });
+  });
+
+  it("digits are redacted and the text is cut to 600", async () => {
+    const w = lineSetup();
+    await calledPipe(w);
+    await w.desk.proVoicemail(voicemail(`Call me at 5551234567 ${"a".repeat(800)}`));
+    const text = job0(w).news.at(-1)!.text!;
+    expect(text).not.toContain("5551234567");
+    expect(text.length).toBeLessThanOrEqual('Pipe One left a voicemail: ""'.length + 600);
+  });
+
+  it("empty or under 2 seconds says they left no message", async () => {
+    const w = lineSetup();
+    await calledPipe(w);
+    await w.desk.proVoicemail(voicemail(""));
+    await w.desk.proVoicemail(voicemail("Hi", { seconds: 1 }));
+    expect(job0(w).news.slice(-2).map((item) => item.text)).toEqual(["Pipe One called and left no message.", "Pipe One called and left no message."]);
+  });
+
+  it("failed says it couldn't be transcribed", async () => {
+    const w = lineSetup();
+    await calledPipe(w);
+    await w.desk.proVoicemail(voicemail("", { status: "failed" }));
+    expect(job0(w).news.at(-1)!.text).toBe("Pipe One left a voicemail that couldn't be transcribed. Call them back.");
+  });
+
+  it("the same recording twice makes one news item", async () => {
+    const w = lineSetup();
+    await calledPipe(w);
+    const once = voicemail("I can come Tuesday");
+    await w.desk.proVoicemail(once);
+    await w.desk.proVoicemail(once);
+    expect(job0(w).news.filter((item) => item.kind === "pro-voicemail")).toHaveLength(1);
+  });
+});

@@ -33,7 +33,7 @@ import { fixerCodeChanged, fixerDesk, fixerPhotoFolders, tickFixer } from "../..
 import { FIXER_ALERT_UPLOAD_PREFIX } from "../../fixer-core/desk";
 import { isVisitPath, serveFixerVisit } from "../../hosted/fixerVisit";
 import { handleLineText } from "../../hosted/lineRouter";
-import { handleVoiceCall, noCallsTwiml, VOICE_PATH } from "../../hosted/voice";
+import { handleVoiceCall, handleVoiceTranscript, noCallsTwiml, VOICE_PATH, VOICE_TRANSCRIPT_PATH } from "../../hosted/voice";
 import type { TouringFront } from "../../hosted/serviceTools";
 import { handleTouringAlertUpload, refreshTouringAlerts, touringAlertFormReply, touringAlertPage, touringAlertUploadCode } from "../../hosted/touringAlerts";
 import { forwardTenantPath } from "../../hosted/touringForward";
@@ -195,6 +195,17 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
 
   if (path === MCP_PATH || path === CLEANER_MCP_PATH) {
     await handleTenantMcp(h, r, path);
+    return true;
+  }
+
+  if (method === "POST" && path === VOICE_TRANSCRIPT_PATH) {
+    const rawBody = await r.readRaw();
+    const tenant = h.registry.byNumber(formTo(rawBody));
+    if (!tenant || tenant.disabled || tenant.service === "touring") {
+      r.send(200, "text/xml", EMPTY_TWIML);
+      return true;
+    }
+    await handleVoiceTranscript(h, r, tenant, rawBody, signed(path));
     return true;
   }
 

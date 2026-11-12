@@ -27,7 +27,7 @@ import { supplyAskOn } from "../supply-core/store";
 import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
 import { holdsOtherRole, priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
-import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
+import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
@@ -227,6 +227,8 @@ export interface ApproveJobInput {
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const COST_LINE_RANGE = "A cost line has to be from $1 to $5,000.";
+/** The most of a voicemail's transcript that is kept. */
+const VOICEMAIL_MAX = 600;
 /** Beside the line's number on contact_pro: what to tell a pro who asks how to reach the host. */
 const CALLBACK_NEXT =
   "If they ask for a number to reach the host, give them callbackNumber and say it takes texts, not calls. Never give the host's own phone. Their texts to it reach you as news on this job.";
@@ -2451,6 +2453,37 @@ export class FixerDesk {
       this.write(fresh);
       await this.tell([note]);
     }).catch(() => this.tell([{ id: `fixer:pro-text-failed:${id}`, text: proTextFailed({ proName: who }) }]));
+  }
+
+  /**
+   * A pro's voicemail, from Twilio's transcript. It is news for the host and nothing else: no keyword in it
+   * opts anyone in or out, finishes a visit, or raises a price. An injury makes it urgent. A recording
+   * seen before is ignored.
+   */
+  proVoicemail(input: { id: string; from: string; text: string; status: "completed" | "failed"; seconds?: number }): Promise<void> {
+    return this.serial(async () => {
+      const people = this.deps.people?.();
+      const here = this.deps.propertyId;
+      if (!people || !here || !input.from || !input.id) return;
+      if (!people.rolesOn(input.from, here).includes("pro") || holdsOtherRole(people, input.from)) return;
+      const file = this.read();
+      if (file.seenInbound?.includes(input.id)) return;
+      file.seenInbound = [...(file.seenInbound ?? []), input.id].slice(-200);
+      const pro = file.pros.find((entry) => entry.status === "saved" && entry.reach.phone === input.from);
+      const asked = this.contactedJob(file, input.from);
+      const proName = pro?.name ?? asked?.name ?? "A pro";
+      const now = this.deps.now().getTime();
+      const visit = pro && !this.inactive(file) ? file.jobs.find((job) => job.booking?.proId === pro.id && job.booking.hostYes && liveBooking(job) && (job.state === "in-progress" || now >= Date.parse(job.booking.from))) : undefined;
+      const job = visit ?? asked?.job;
+      const words = redactDigits(input.text).trim().slice(0, VOICEMAIL_MAX);
+      const short = input.seconds !== undefined && input.seconds < 2;
+      const text = proVoicemailNews({ proName, ...(input.status === "failed" ? { failed: true } : {}), ...(words && !short ? { text: words } : {}) });
+      const id = `fixer:pro-voicemail:${input.id}`;
+      const urgent = input.status === "completed" && isInjuryReport(input.text);
+      const note = urgent || !job ? this.fileNews(file, { kind: "pro-voicemail", text, ...(job ? { jobId: job.id } : {}), ...(urgent ? { urgent: true } : {}) }, id) : this.news(job, "pro-voicemail", text, id);
+      this.write(file);
+      await this.tell([note]);
+    });
   }
 
   /** The open job a phone was contacted on, latest first, with the name it was saved under there. */

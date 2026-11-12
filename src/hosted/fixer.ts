@@ -278,14 +278,30 @@ function visitRank(file: FixerFile | undefined, phone: string, now: number): num
  * ignores anything that isn't theirs to say.
  */
 export async function fixerProText(h: HostedCleaner, tenant: Tenant, properties: Property[], input: { id: string; from: string; text: string; media: InboundMedia[] }): Promise<void> {
-  const now = h.now().getTime();
-  const ranked = properties.map((property) => ({ property, rank: visitRank(readOrNone(propertyFolder(h.dataRoot, tenant.id, property)), input.from, now) }));
-  const property = ranked.reduce((best, next) => (next.rank > best.rank ? next : best)).property;
+  const property = proProperty(h, tenant, properties, input.from);
   try {
     await fixerDesk(h, tenant, property).proInbound({ id: input.id, from: input.from, text: input.text, ...(input.media.length > 0 ? { media: input.media } : {}) });
   } catch {
     // Never the text: it can hold a price or anything the pro wrote.
     h.log(`Fixer Core couldn't take a pro's text for ${tenant.id}/${property.id}.`);
+  }
+}
+
+/** Of `properties`, the one a pro's text or voicemail is about: their visit under way, then a started booking, then any booking, else the first. */
+function proProperty(h: HostedCleaner, tenant: Tenant, properties: Property[], from: string): Property {
+  const now = h.now().getTime();
+  const ranked = properties.map((property) => ({ property, rank: visitRank(readOrNone(propertyFolder(h.dataRoot, tenant.id, property)), from, now) }));
+  return ranked.reduce((best, next) => (next.rank > best.rank ? next : best)).property;
+}
+
+/** A pro's voicemail transcript, for one of `properties` (proRoute's), picked as for a text. News only. */
+export async function fixerProVoicemail(h: HostedCleaner, tenant: Tenant, properties: Property[], input: { id: string; from: string; text: string; status: "completed" | "failed"; seconds?: number }): Promise<void> {
+  const property = proProperty(h, tenant, properties, input.from);
+  try {
+    await fixerDesk(h, tenant, property).proVoicemail(input);
+  } catch {
+    // Never the transcript: it can hold anything the pro said.
+    h.log(`Fixer Core couldn't take a pro's voicemail for ${tenant.id}/${property.id}.`);
   }
 }
 

@@ -10,7 +10,12 @@ import { formParams, verifyTwilioSignature } from "../messaging/twilio/signature
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { isLandlord } from "./lineRouter";
 import { accountPeople } from "./sharedPeople";
-
+import { fixerProVoicemail } from "./fixer";
+import { propertyContext } from "../cleaner-core/hosted/router";
+import { liveDeskFor } from "../cleaner-core/liveDesk";
+import type { Property } from "../cleaner-core/hosted/properties";
+import { redactDigits } from "../fixer-core/desk";
+import { proVoicemailNews } from "../fixer-core/texts";
 /**
  * Calls to an account's line: a known caller leaves a voicemail, Twilio transcribes it, and the
  * transcript becomes news for the host. Nobody else is recorded.
@@ -90,4 +95,60 @@ export async function handleVoiceCall(h: HostedCleaner, r: HostedRequest, tenant
   if (!who || !origin || !new VoiceCalls(tenantFolder(h.dataRoot, tenant.id), () => h.now()).allow(from)) return r.send(200, "text/xml", noCallsTwiml());
   const record = `<Record maxLength="120" timeout="5" playBeep="true" transcribe="true" transcribeCallback="${escape(`${origin}${VOICE_TRANSCRIPT_PATH}`)}"/>`;
   r.send(200, "text/xml", twiml([say(GREETING), record, "<Hangup/>"]));
+}
+
+export interface Voicemail {
+  recordingSid: string;
+  from: string;
+  text: string;
+  status: "completed" | "failed";
+  seconds?: number;
+}
+
+/** Leaves a note for the host through the property's Cleaner Core. False when Cleaner Core doesn't run there. */
+export type CleanerNote = (property: Property, id: string, text: string) => Promise<boolean | void>;
+
+const cleanerNote = (h: HostedCleaner, tenant: Tenant): CleanerNote => async (property, id, text) => {
+  if (!property.flows.cleaning.on) return false;
+  const ctx = propertyContext(h, tenant, property);
+  return liveDeskFor(ctx.root, ctx.env, () => h.now()).noteForHost(id, text);
+};
+
+/**
+ * Where a voicemail goes: a pro's to Fixer Core, as news on their job; someone else saved on a property
+ * (cleaner, co-host) to that property's Cleaner Core, as a note for the host. Never anything else.
+ */
+export async function routeVoicemail(h: HostedCleaner, tenant: Tenant, mail: Voicemail, note: CleanerNote = cleanerNote(h, tenant)): Promise<void> {
+  const people = await accountPeople(h, tenant);
+  const pros = proRoute(tenant, people, mail.from);
+  if (pros) {
+    await fixerProVoicemail(h, tenant, pros, { id: mail.recordingSid, from: mail.from, text: mail.text, status: mail.status, ...(mail.seconds !== undefined ? { seconds: mail.seconds } : {}) });
+    return;
+  }
+  const person = people.person(mail.from);
+  const property = tenant.properties.find((p) => person?.where.some((w) => w.propertyId === p.id && w.role !== "pro"));
+  if (!person || !property) return;
+  const words = redactDigits(mail.text).trim().slice(0, 600);
+  const short = mail.seconds !== undefined && mail.seconds < 2;
+  const text = proVoicemailNews({ proName: person.name ?? "Someone", ...(mail.status === "failed" ? { failed: true } : {}), ...(words && !short ? { text: words } : {}) });
+  if ((await note(property, `voicemail:${mail.recordingSid}`, text)) === false) h.log(`A voicemail reached ${tenant.id} for a property without Cleaner Core.`);
+}
+
+/** Twilio's transcript of a voicemail. Always answered 200 once signed, so Twilio doesn't retry it. */
+export async function handleVoiceTranscript(h: HostedCleaner, r: HostedRequest, tenant: Tenant, rawBody: Buffer, signedUrl: string | undefined): Promise<void> {
+  const fields = formParams(rawBody);
+  if (!signedCall(h, r, fields, signedUrl)) return r.send(403, "text/plain", "Forbidden");
+  const from = parsePhone(fields.From ?? "") ?? "";
+  const recordingSid = fields.RecordingSid ?? "";
+  if (from && /^RE[0-9a-zA-Z]{2,64}$/.test(recordingSid)) {
+    const seconds = Number(fields.RecordingDuration);
+    await routeVoicemail(h, tenant, {
+      recordingSid,
+      from,
+      text: fields.TranscriptionText ?? "",
+      status: fields.TranscriptionStatus === "failed" ? "failed" : "completed",
+      ...(Number.isFinite(seconds) && fields.RecordingDuration !== undefined ? { seconds } : {}),
+    }).catch(() => h.log(`A voicemail for ${tenant.id} couldn't be taken.`));
+  }
+  r.send(200, "text/xml", twiml([]));
 }
