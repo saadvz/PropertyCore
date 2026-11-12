@@ -78,12 +78,14 @@ Then call the step's tool.
    back first), and `leadDays`. Then `save_fixer_settings` with
    `upkeepDone: true`. `checkInBufferMinutes` and `cleaningMinutes` are
    `save_fixer_settings` too, if the host wants to change them.
-6. **Recurring task:** create the **Fixer Core** recurring task yourself, every
+6. **Alerts:** Muse has no alerts step. Your hourly task reads the news, so
+   never call `save_repair_alerts`.
+7. **Recurring task:** create the **Fixer Core** recurring task yourself, every
    hour unless the host picks another, from
    [`references/fixer-core-task.md`](references/fixer-core-task.md), with its
    prompt word for word. One task covers every property with Fixer Core on, so
    reuse it if it's already there. Then confirm with the host that it's set.
-7. **Review and Activate:** summarize the pros and upkeep in your
+8. **Review and Activate:** summarize the pros and upkeep in your
    own words. On the host's Activate, call `activate_fixer`.
 
 To drop a pro or an upkeep item, use `remove_pro` or `remove_upkeep`. After Activate, every change (a pro, upkeep, a setting, the address) takes the

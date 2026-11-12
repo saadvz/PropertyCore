@@ -95,6 +95,20 @@ describe("Fixer Core agent instructions", () => {
     });
   }
 
+  it("both alerts routines call check_fixes on repairs.update, and the guide sets alerts up with save_repair_alerts", () => {
+    for (const file of ["property-core-template/routines/property-core-alerts.md", "cleaner-template/routines/cleaner-core-alerts.md"]) {
+      const text = read(file);
+      expect(text, file).toContain("repairs.update");
+      expect(text, file).toContain("check_fixes");
+    }
+    const shared = read("property-core-template/routines/property-core-alerts.md");
+    expect(shared).toContain("cleaning.update");
+    expect(shared).toContain("check_now");
+    const guide = read(BOOTSTRAP).replace(/\s+/g, " ");
+    expect(guide).toContain("`save_repair_alerts`");
+    expect(guide).toContain("property-core-template/routines/property-core-alerts.md");
+  });
+
   it("the client matrix points at the real routine and task", () => {
     const matrix = read("docs/client-matrix.md");
     expect(matrix).toContain("fixer-template/routines/fixer-core-check.md");

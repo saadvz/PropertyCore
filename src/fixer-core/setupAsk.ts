@@ -8,7 +8,7 @@ import { TRADES, type FixerFile, type Pro, type Trade } from "./store";
  * choices, and the agent asks one short question per message in its own words.
  */
 
-export type FixerStep = "pros" | "ask-cleaner" | "upkeep" | "review";
+export type FixerStep = "pros" | "ask-cleaner" | "alerts" | "upkeep" | "review";
 
 export interface DraftPro {
   id: string;
@@ -86,8 +86,23 @@ const UPKEEP_QUESTION: AskQuestion = {
     "Suggest gutters in spring and fall, HVAC filters every 3 months, and smoke detectors twice a year. For each one: the trade, what it is, the schedule (every so many days, a day of the month, or another rule; call preview_schedule and read the next 3 dates back before saving), and optionally a pro. Save it with save_upkeep. Not by bookings. When that's all (none is fine), call save_fixer_settings with upkeepDone: true.",
 };
 
-/** The next setup question. `cleaningOn` and `supplyOn` say whether the cleaner and Supply Core run on the property. */
-export function fixerSetupAsk(file: FixerFile, hub: Hub, cleaningOn: boolean, supplyOn: boolean): FixerAsk | undefined {
+const ALERTS_QUESTION: AskQuestion = {
+  field: "alerts",
+  ask: "Want me to tell you the moment a pro texts or calls back? I'll set up an alert for this chat. You'll copy two values into secure cards.",
+  required: true,
+  options: [
+    { value: "yes", label: "Yes" },
+    { value: "not-now", label: "Not now" },
+  ],
+  how:
+    "On Yes: create the Property Core Alerts routine from property-core-template/routines/property-core-alerts.md. Only the host can see its webhook address and key. Right after you create it, send the host a link that opens its Webhook URL field directly and one that opens its Webhook key field directly, with one secure card for each, the address first. Never send a link to the Routines page. Then call save_repair_alerts to get a one-time upload link, and POST JSON {\"url\": \"<webhook address>\", \"token\": \"<webhook key>\"} to it from your own cloud computer. Never put them in chat. On Not now: save_fixer_settings with alertsSkipped: true.",
+};
+
+/**
+ * The next setup question. `cleaningOn` and `supplyOn` say whether the cleaner and Supply Core run on the property;
+ * `alertsWanted` whether this chat can be woken and no alerts routine reaches it yet.
+ */
+export function fixerSetupAsk(file: FixerFile, hub: Hub, cleaningOn: boolean, supplyOn: boolean, alertsWanted = false): FixerAsk | undefined {
   if (file.settings.activatedAt) return undefined;
   if (!file.setup.prosDone) {
     const drafts = draftsByTrade(file);
@@ -112,6 +127,7 @@ export function fixerSetupAsk(file: FixerFile, hub: Hub, cleaningOn: boolean, su
     };
   }
   if (!file.setup.upkeepDone) return { step: "upkeep", tool: "save_upkeep", questions: [UPKEEP_QUESTION] };
+  if (alertsWanted && !file.setup.alertsDone && !file.setup.alertsSkipped) return { step: "alerts", tool: "save_repair_alerts", questions: [ALERTS_QUESTION] };
   const blockers = activateProblems(hub, file);
   return {
     step: "review",

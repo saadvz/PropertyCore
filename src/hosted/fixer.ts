@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { InboundMedia } from "../cleaner-core/photos";
 import { FIXER_AGENTS_ONLY, runsFixer, type CleanerAssistant } from "../cleaner-core/assistant";
-import { liveDeskFor } from "../cleaner-core/liveDesk";
+import { withCaller } from "../cleaner-core/callerContext";
+import { cleanerAlertFetch, liveDeskFor } from "../cleaner-core/liveDesk";
 import { sendLiveSms } from "../cleaner-core/liveSms";
 import { photoFolder, photoKey } from "../cleaner-core/photos";
 import { propertyBasePath, propertyFolder, type Property } from "../cleaner-core/hosted/properties";
@@ -87,6 +88,9 @@ export function fixerDesk(h: HostedCleaner, tenant: Tenant, property: Property):
       const key = env.CLEANER_CORE_ROUTINE_KEY?.trim();
       return url && key ? { url, key } : undefined;
     },
+    assistant: () => h.registry.primary(id, (grantId) => h.grantLive(grantId))?.assistant,
+    // Read on each delivery, so a test's stub of the routine webhook reaches Fixer Core too.
+    alertFetch: (url, init) => (cleanerAlertFetch() ?? ((u: string, i: typeof init) => fetch(u, i)))(url, init),
   });
 }
 
@@ -202,7 +206,7 @@ async function proSharedRefusal(h: HostedCleaner, tenant: Tenant, property: Prop
 }
 
 /** Answers one Fixer Core tool for the property. Undefined when the name isn't Fixer Core's. */
-export async function fixerCall(h: HostedCleaner, tenant: Tenant, property: Property, assistant: CleanerAssistant, name: string, args: Record<string, unknown>): Promise<FixerReply | undefined> {
+export async function fixerCall(h: HostedCleaner, tenant: Tenant, property: Property, assistant: CleanerAssistant, name: string, args: Record<string, unknown>, connectionId?: string): Promise<FixerReply | undefined> {
   if (!FIXER_TOOL_NAMES.has(name)) return undefined;
   if (!runsFixer(assistant)) return { text: FIXER_AGENTS_ONLY, isError: true };
   // The account's people list is moved from the older files before any pro is saved into it.
@@ -213,7 +217,8 @@ export async function fixerCall(h: HostedCleaner, tenant: Tenant, property: Prop
   }
   // With Cleaner Core on, its desk opens first, so its checks guard the hub's saves even after a restart.
   const cleaning = cleaningDesk(h, tenant, property);
-  const reply = await handleFixerTool(fixerDesk(h, tenant, property), name, args);
+  // As the calling chat, so an alerts link saves the routine for that chat.
+  const reply = await withCaller({ assistant, ...(connectionId ? { connectionId } : {}) }, () => handleFixerTool(fixerDesk(h, tenant, property), name, args));
   // Asking the cleaner "Anything broken?" follows Fixer Core's settings: Cleaner Core's engine reads them again.
   if (reply && !reply.isError && (name === "save_fixer_settings" || name === "activate_fixer")) cleaning?.refreshSupplyAsk();
   return reply;

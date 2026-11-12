@@ -1,3 +1,4 @@
+import type { CleanerAssistant } from "../cleaner-core/assistant";
 import { createHash, randomBytes, randomInt } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -182,7 +183,9 @@ export interface FixerSettings {
 export interface FixerFile {
   settings: FixerSettings;
   /** Setup steps the host finished that leave no other trace. */
-  setup: { prosDone?: true; cleanerAsked?: true; upkeepDone?: true; noCalendar?: true };
+  setup: { prosDone?: true; cleanerAsked?: true; upkeepDone?: true; noCalendar?: true; alertsDone?: true; alertsSkipped?: true };
+  /** The one-time link for the alerts routine's address and key: only its code's sha256, expiry, and the chat that made it. */
+  alertUpload?: { hash: string; expiresAt: string; by?: { assistant: CleanerAssistant; connectionId?: string } };
   pros: Pro[];
   upkeep: Upkeep[];
   jobs: Job[];

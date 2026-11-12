@@ -79,6 +79,25 @@ describe("setup asks", () => {
     expect(await step(desk)).toBe("review");
   });
 
+  it("asks for alerts after upkeep only on Grok with no routine and Cleaner Core off, and not after Not now", async () => {
+    const { desk } = made({ assistant: () => "grok" });
+    await desk.saveSettings({ prosDone: true });
+    await desk.saveSettings({ upkeepDone: true });
+    expect(await step(desk)).toBe("alerts");
+    const ask = ((await desk.state()).structured!.ask as { questions: { ask: string; options?: { label: string }[] }[] }).questions[0]!;
+    expect(ask.ask).toBe("Want me to tell you the moment a pro texts or calls back? I'll set up an alert for this chat. You'll copy two values into secure cards.");
+    expect(ask.options!.map((o) => o.label)).toEqual(["Yes", "Not now"]);
+    expect((await desk.saveSettings({ alertsSkipped: true })).isError).toBe(false);
+    expect(await step(desk)).toBe("review");
+    for (const extra of [{ assistant: () => "muse" as const }, { assistant: () => "grok" as const, routine: () => ({ url: "https://example.com/hook", key: "made-up-key-123" }) }, { assistant: () => "grok" as const, cleaningOn: () => true }]) {
+      const other = made(extra).desk;
+      await other.saveSettings({ prosDone: true });
+      if (extra.cleaningOn) await other.saveSettings({ askCleaner: false });
+      await other.saveSettings({ upkeepDone: true });
+      expect(await step(other)).toBe("review");
+    }
+  });
+
   it("asks the pros as one card: every trade and None yet, pick all that apply", async () => {
     const { desk } = made();
     const question = ((await desk.state()).structured!.ask as { questions: { options?: { value: string }[]; multiple?: boolean; how?: string }[] }).questions[0]!;

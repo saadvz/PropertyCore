@@ -101,9 +101,12 @@ routine runs, it wakes once, and `check_now` returns all of them.
    is on, call `open_job` with `source: "cleaner"`, their words, and the
    message's photo ids, and `report_low` for any supplies they named when
    Supply Core is on. Never open a job for NONE.
-9. If the reply has `needsTimes`, ask the host for the checkout time and the
+9. If `eventType` is `repairs.update`, Fixer Core has news: call `check_fixes`
+   for each property with Fixer Core on and tell the host each `news` item
+   once, the urgent ones first, then stop.
+10. If the reply has `needsTimes`, ask the host for the checkout time and the
    next check-in time, then call `confirm_times` with each as 24-hour HH:MM.
-10. Never show a door code, an id, or the webhook payload.
+11. Never show a door code, an id, or the webhook payload.
 
 ## Connecting it
 

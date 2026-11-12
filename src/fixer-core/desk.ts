@@ -1,6 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
-import { GrokRoutineWebhookSink, repairsUpdateEvent } from "../alerts/operatorEvents";
+import { GrokRoutineWebhookSink, repairsUpdateEvent, testEvent } from "../alerts/operatorEvents";
+import { routineValuesRefused } from "../alerts/routineCheck";
+import type { CleanerAssistant } from "../cleaner-core/assistant";
+import { currentCaller, withCaller } from "../cleaner-core/callerContext";
 import { OperatorEventOutbox } from "../alerts/outbox";
 import { FileRuntimeStore } from "../storage/runtimeStore";
 import { localDateOf } from "../core/timezone";
@@ -17,7 +20,7 @@ import type { AccessRefusal as DoorRefusal } from "../hub/doorAccess";
 import { hubFor, propertyDetailsProblem, type Hub } from "../hub/hub";
 import type { Stay } from "../hub/store";
 import type { People } from "../hub/people";
-import { sameHash } from "../hub/uploadCode";
+import { sameHash, uploadHash } from "../hub/uploadCode";
 import { ConfirmationBook } from "../operator/confirmations";
 import { nextDates, scheduleProblem, type Schedule } from "../supply-core/schedule";
 import { supplyAskOn } from "../supply-core/store";
@@ -60,6 +63,8 @@ export interface FixerDeps {
   lineNumber?(): string | undefined;
   /** The account's alerts routine for its primary chat, read on each delivery and never kept here. */
   routine?(): { url: string; key: string } | undefined;
+  /** The account's primary chat, which gets the alerts. */
+  assistant?(): CleanerAssistant | undefined;
   /** Tests stub the routine's webhook. */
   alertFetch?: NonNullable<ConstructorParameters<typeof GrokRoutineWebhookSink>[1]>["fetch"];
 }
@@ -69,6 +74,12 @@ export type RevealRefusal = AccessRefusal | DoorRefusal | "no-job" | "off" | "da
 
 /** The visit page's answer. Never passed to a tool reply, a log line or a file. */
 export type RevealResult = { ok: true; code: string; lockLocation?: string } | { ok: false; reason: RevealRefusal };
+
+/** The alerts routine's one-time upload link, under the property's path. */
+export const FIXER_ALERT_UPLOAD_PREFIX = "/fixer-core/alert-routine/";
+const ALERT_UPLOAD_MINUTES = 10;
+const ALERT_UPLOAD_NEXT =
+  'From your own cloud computer, POST JSON {"url": "<webhook address>", "token": "<webhook key>"} to uploadUrl with Content-Type: application/json, using the values from the host\'s secure cards. Never put them in chat or in a tool argument. Then call get_fixer_state.';
 
 /** The visit page's path before its token. The page itself is in `visitPage.ts`. */
 export const FIXER_VISIT_PREFIX = "/fixer-core/visit/";
@@ -145,6 +156,8 @@ export interface SettingsInput {
   prosDone?: true;
   /** Setup: the host has no more upkeep to add. */
   upkeepDone?: true;
+  /** Setup: the host said Not now to alerts. */
+  alertsSkipped?: true;
   confirmation?: string;
 }
 
@@ -415,7 +428,67 @@ export class FixerDesk {
   }
 
   private askFor(file: FixerFile) {
-    return fixerSetupAsk(file, this.hub(), this.deps.cleaningOn?.() ?? false, supplyAskOn(this.root));
+    const cleaningOn = this.deps.cleaningOn?.() ?? false;
+    return fixerSetupAsk(file, this.hub(), cleaningOn, supplyAskOn(this.root), this.alertsWanted(cleaningOn));
+  }
+
+  /** A Grok Bot can be woken; with Cleaner Core on, its own setup connects the routine. */
+  private alertsWanted(cleaningOn: boolean): boolean {
+    return !cleaningOn && this.deps.assistant?.() === "grok" && !this.routineConnected();
+  }
+
+  /**
+   * save_repair_alerts: a one-time link for the alerts routine's address and key, posted from the agent's
+   * own computer. Only the code's sha256, its expiry and the chat that made it are kept.
+   */
+  issueAlertUpload(): Promise<FixerReply> {
+    return this.guarded({}, () => {
+      const file = this.read();
+      if (this.deps.cleaningOn?.()) return fail("Cleaner Core runs at this property: connect alerts with its save_alert_routine.");
+      const base = this.deps.publicBase?.();
+      if (!base) return fail("Upload links aren't available on this service yet.");
+      const code = randomBytes(32).toString("base64url");
+      const by = currentCaller();
+      file.alertUpload = { hash: uploadHash(code), expiresAt: new Date(this.deps.now().getTime() + ALERT_UPLOAD_MINUTES * 60_000).toISOString(), ...(by ? { by } : {}) };
+      this.write(file);
+      return ok({ uploadUrl: `${base}${FIXER_ALERT_UPLOAD_PREFIX}${code}`, expiresInMinutes: ALERT_UPLOAD_MINUTES, next: ALERT_UPLOAD_NEXT });
+    });
+  }
+
+  /**
+   * Saves the routine's address and key posted to the link, through `save` (the secret store, as the chat
+   * that made the link), and queues a test wake-up. Only a save uses the link up. Nothing posted is repeated.
+   */
+  uploadAlerts(code: string, body: Record<string, unknown>, save: (values: { CLEANER_CORE_ROUTINE_URL: string; CLEANER_CORE_ROUTINE_KEY: string }) => void): Promise<{ status: 200 | 400 | 404; body: Record<string, unknown> }> {
+    return this.serial(async () => {
+      const file = this.read();
+      const pending = file.alertUpload;
+      if (!pending || !sameHash(uploadHash(code), pending.hash) || this.deps.now().getTime() >= Date.parse(pending.expiresAt)) return { status: 404 as const, body: { ok: false, error: "This upload link isn't valid anymore. Call save_repair_alerts for a new one." } };
+      const url = typeof body.url === "string" ? body.url.trim() : "";
+      const given = typeof body.token === "string" ? body.token : typeof body.key === "string" ? body.key : "";
+      const token = given.trim();
+      if (routineValuesRefused(url, token) || this.opensDoor(token)) return { status: 400 as const, body: { ok: false, error: "Send the routine's https webhook address as url and its key as token." } };
+      const finish = () => save({ CLEANER_CORE_ROUTINE_URL: url, CLEANER_CORE_ROUTINE_KEY: token });
+      if (pending.by) withCaller(pending.by, finish);
+      else finish();
+      delete file.alertUpload;
+      file.setup.alertsDone = true;
+      this.write(file);
+      this.alerts.enqueue(testEvent(this.deps.now()));
+      void this.alerts.drain().catch(() => undefined);
+      return { status: 200 as const, body: { ok: true, message: "Alerts are connected." } };
+    });
+  }
+
+  /** True when the key, read as a base64 or base64url key, opens the saved door code. */
+  private opensDoor(token: string): boolean {
+    const door = this.door();
+    if (!door.saved()) return false;
+    for (const encoding of ["base64", "base64url"] as const) {
+      const key = Buffer.from(token, encoding);
+      if (key.length === 32 && door.opensWith(key)) return true;
+    }
+    return false;
   }
 
   /** One line for the host: on, the pro count and the open jobs. */
@@ -491,6 +564,7 @@ export class FixerDesk {
       }
       if (input.prosDone) file.setup.prosDone = true;
       if (input.upkeepDone) file.setup.upkeepDone = true;
+      if (input.alertsSkipped) file.setup.alertsSkipped = true;
       this.write(file);
       return ok({ saved: true, ...(this.askFor(file) ? { next: "Call get_fixer_state for the next step." } : {}) });
     });

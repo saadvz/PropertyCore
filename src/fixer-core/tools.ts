@@ -74,7 +74,7 @@ export const FIXER_TOOLS: FixerTool[] = [
   {
     name: "save_fixer_settings",
     title: "Save repair settings",
-    description: `Saves any of: checkInBufferMinutes (how long before check-in a pro must be gone), cleaningMinutes (how long a cleaning takes), askCleaner (ask the cleaner "Anything broken?" after each cleaning), prosDone (the pro list is final), upkeepDone (no more upkeep to add). ${AFTER_ACTIVATE} ${NO_CARDS}`,
+    description: `Saves any of: checkInBufferMinutes (how long before check-in a pro must be gone), cleaningMinutes (how long a cleaning takes), askCleaner (ask the cleaner "Anything broken?" after each cleaning), prosDone (the pro list is final), upkeepDone (no more upkeep to add), alertsSkipped (the host said Not now to alerts). ${AFTER_ACTIVATE} ${NO_CARDS}`,
     input: z
       .object({
         checkInBufferMinutes: z.number().int().optional(),
@@ -82,6 +82,7 @@ export const FIXER_TOOLS: FixerTool[] = [
         askCleaner: z.boolean().optional(),
         prosDone: z.literal(true).optional(),
         upkeepDone: z.literal(true).optional(),
+        alertsSkipped: z.literal(true).optional(),
         confirmation: Confirmation,
       })
       .strict(),
@@ -123,6 +124,13 @@ export const FIXER_TOOLS: FixerTool[] = [
     title: "Remove an upkeep item",
     description: `Removes an upkeep item. ${AFTER_ACTIVATE}`,
     input: z.object({ id: Id, confirmation: Confirmation }).strict(),
+  },
+  {
+    name: "save_repair_alerts",
+    title: "Connect repair alerts",
+    description:
+      "Connects the Property Core Alerts routine, so a pro's text or voicemail wakes you at once. Gives a one-time link: from your own cloud computer, POST the routine's webhook address and key to it as JSON {url, token}. Never send the link to the host, and never put the address or key in chat or in a tool argument.",
+    input: z.object({}).strict(),
   },
   {
     name: "activate_fixer",
@@ -327,6 +335,8 @@ export async function handleFixerTool(desk: FixerDesk, name: string, args: unkno
       return desk.checkFixes(input);
     case "open_job":
       return desk.openJob(input);
+    case "save_repair_alerts":
+      return desk.issueAlertUpload();
     case "approve_job":
       return desk.approveJob(input);
     case "add_candidates":

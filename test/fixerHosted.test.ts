@@ -354,3 +354,43 @@ describe("final review fixes on the shared service", () => {
     expect(readFixer(folder(m, tenant, property)).jobs[0]).toMatchObject({ id: jobId, state: "booked" });
   });
 });
+
+describe("save_repair_alerts (a Fixer-only property)", () => {
+  const HOOK = { url: "https://example.com/hook", token: "made-up-key-123" };
+
+  it("gives a one-time link that saves both values for the connection and repeats neither", SLOW, async () => {
+    const m = await start();
+    const { tenant, property, token } = await account(m);
+    await activeFixer(m, token, property);
+    const link = await m.toolAt(PATH, token, "save_repair_alerts", { property: property.id });
+    expect(link.isError, link.text).toBe(false);
+    const path = new URL(String(link.structured!.uploadUrl)).pathname;
+    const posted = await m.app.http(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(HOOK) });
+    const body = await posted.text();
+    expect(posted.status).toBe(200);
+    for (const said of [body, link.raw]) {
+      expect(said).not.toContain(HOOK.url);
+      expect(said).not.toContain(HOOK.token);
+    }
+    const grant = m.registry.get(tenant.id)!.connections[0]!.grantId;
+    expect(m.hosted().secrets.connection(tenant.id, grant)).toMatchObject({ CLEANER_CORE_ROUTINE_URL: HOOK.url, CLEANER_CORE_ROUTINE_KEY: HOOK.token });
+    const again = await m.app.http(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(HOOK) });
+    expect(again.status).toBe(404);
+    // A pro's text now wakes the routine with repairs.update.
+    await vi.waitFor(() => expect(m.wakes.some((w) => w.url === HOOK.url && JSON.parse(w.body).eventType === "installation.test")).toBe(true));
+    await m.text(LANE, JOE, "Running 10 minutes late", "SMfixeralert1");
+    await vi.waitFor(() => expect(m.wakes.some((w) => w.url === HOOK.url && JSON.parse(w.body).eventType === "repairs.update")).toBe(true));
+  });
+
+  it("refuses an http address or a short key", SLOW, async () => {
+    const m = await start();
+    const { property, token } = await account(m);
+    await activeFixer(m, token, property);
+    for (const bad of [{ url: "http://example.com/hook", token: HOOK.token }, { url: HOOK.url, token: "short" }, { url: HOOK.url, token: "••••••••••" }]) {
+      const link = await m.toolAt(PATH, token, "save_repair_alerts", { property: property.id });
+      const path = new URL(String(link.structured!.uploadUrl)).pathname;
+      const posted = await m.app.http(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(bad) });
+      expect(posted.status).toBe(400);
+    }
+  });
+});

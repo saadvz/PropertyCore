@@ -29,7 +29,8 @@ import { isPropertyId, propertyFolder, type Property } from "./properties";
 import { isTenantId, tenantFolder, type Tenant, type TenantRegistry } from "./registry";
 import { screenText } from "../../hosted/crossService";
 import { handleTenantMcp } from "../../hosted/frontMcp";
-import { fixerCodeChanged, fixerPhotoFolders, tickFixer } from "../../hosted/fixer";
+import { fixerCodeChanged, fixerDesk, fixerPhotoFolders, tickFixer } from "../../hosted/fixer";
+import { FIXER_ALERT_UPLOAD_PREFIX } from "../../fixer-core/desk";
 import { isVisitPath, serveFixerVisit } from "../../hosted/fixerVisit";
 import { handleLineText } from "../../hosted/lineRouter";
 import type { TouringFront } from "../../hosted/serviceTools";
@@ -369,6 +370,13 @@ function sendPhoto(r: HostedRequest, ctx: TenantContext, rest: string, now: () =
   return true;
 }
 
+/** The code of a Fixer Core alerts upload link, or undefined. */
+function fixerAlertUploadCode(rest: string): string | undefined {
+  if (!rest.startsWith(FIXER_ALERT_UPLOAD_PREFIX)) return undefined;
+  const code = rest.slice(FIXER_ALERT_UPLOAD_PREFIX.length);
+  return /^[A-Za-z0-9_-]{43}$/.test(code) ? code : undefined;
+}
+
 /**
  * A property where Fixer Core runs without Cleaner Core: the job photo links get_job_photos gives,
  * and the door code link from change_door_code, which saves to the hub's door access. Grok's own
@@ -378,6 +386,14 @@ async function handleFixerOnlyPath(h: HostedCleaner, r: HostedRequest, tenant: T
   const { method } = r;
   // Only a repair job's photos: Cleaner Core's, from when it ran here, stay off with it.
   if (method === "GET" && rest.startsWith(CLEANER_PHOTO_PREFIX)) return sendPhoto(r, ctx, rest, now, fixerPhotoFolders(h, tenant, property));
+  const alert = fixerAlertUploadCode(rest);
+  if (alert) {
+    if (method !== "POST") return false;
+    const read = await uploadBody(contentType, () => r.readCapped(ALERT_UPLOAD_MAX_BYTES));
+    const saved = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : await fixerDesk(h, tenant, property).uploadAlerts(alert, read.parsed, ctx.saveSecrets);
+    r.send(saved.status, JSON_TYPE, JSON.stringify(saved.body), saved.status === 413 ? { Connection: "close" } : {});
+    return true;
+  }
   const code = doorCodeUploadCode(rest);
   if (!code) return false;
   const door = hubFor(ctx.root, { now }).doorAccess(ctx.env);

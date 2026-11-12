@@ -259,7 +259,7 @@ async function repairCall(h: HostedCleaner, tenant: Tenant, property: Property, 
     return fixerOn ? fixerPhotos(h, tenant, property, args) : { text: flowOff("fixer", property.label), isError: true };
   }
   if (!property.flows.fixer.on) return { text: flowOff("fixer", property.label), isError: true };
-  return (await fixerCall(h, tenant, property, caller.assistant, name, args)) ?? { text: "Fixer Core couldn't answer that.", isError: true };
+  return (await fixerCall(h, tenant, property, caller.assistant, name, args, caller.grantId)) ?? { text: "Fixer Core couldn't answer that.", isError: true };
 }
 
 /** Adds draft.knownPeople to a property's setup draft, when the account has people on other properties. */
