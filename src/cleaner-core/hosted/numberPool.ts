@@ -23,6 +23,8 @@ export interface PoolNumber {
   returnedAt?: string;
   /** False when Twilio didn't take the webhook on the last attempt. */
   webhookOk?: boolean;
+  /** Whether Twilio took the voice webhook on the last attempt. Absent on a line pointed before voice. */
+  voiceOk?: boolean;
 }
 
 export type PoolState = "ready" | "resting" | "in-use";
@@ -159,6 +161,7 @@ export class NumberPool {
     entry.assignedAt = this.stamp();
     delete entry.returnedAt;
     delete entry.webhookOk;
+    delete entry.voiceOk;
     this.write(doc);
     return entry;
   }
@@ -170,6 +173,16 @@ export class NumberPool {
     const entry = doc.numbers.find((n) => n.number === number);
     if (!entry) return;
     entry.webhookOk = ok;
+    this.write(doc);
+  }
+
+  /** Records whether Twilio took the line's voice webhook. */
+  setVoice(raw: string, ok: boolean): void {
+    const number = parsePhone(raw);
+    const doc = this.read();
+    const entry = doc.numbers.find((n) => n.number === number);
+    if (!entry) return;
+    entry.voiceOk = ok;
     this.write(doc);
   }
 
@@ -187,6 +200,7 @@ export class NumberPool {
     delete entry.tenantId;
     delete entry.assignedAt;
     delete entry.webhookOk;
+    delete entry.voiceOk;
     entry.returnedAt = this.stamp();
     this.write(doc);
     return entry;

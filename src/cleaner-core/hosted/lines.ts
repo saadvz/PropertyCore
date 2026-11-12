@@ -4,7 +4,8 @@ import { NumberPool, PoolError, POOL_LOW_AT, poolRestMs } from "./numberPool";
 import type { Tenant } from "./registry";
 import type { HostedCleaner } from "./router";
 import { clearLineGroups } from "../liveSms";
-import { findIncomingNumber, pointSmsWebhook, releaseNumber } from "./twilioNumbers";
+import { findIncomingNumber, pointLineWebhooks, releaseNumber } from "./twilioNumbers";
+import { VOICE_PATH } from "../../hosted/voice";
 
 /**
  * Each account's one text line (saadvz/PropertyCore#163). The line exists for the cleaner, and maybe pros;
@@ -35,6 +36,29 @@ export function recordAccountLines(h: HostedCleaner): void {
 /** Where every account's line sends its texts. The `To` number picks the account. */
 export function lineWebhookUrl(h: HostedCleaner): string {
   return `${h.origin() ?? ""}${CLEANER_TWILIO_PATH}`;
+}
+
+/** Where every account's line sends its calls. The `To` number picks the account. */
+export function lineVoiceUrl(h: HostedCleaner): string {
+  return `${h.origin() ?? ""}${VOICE_PATH}`;
+}
+
+/**
+ * Points the voice webhook of each line in use that was pointed before voice, once. A refusal is
+ * logged and kept, so /admin's "point it again" retries it; the next start doesn't.
+ */
+export async function pointVoiceOnce(h: HostedCleaner): Promise<void> {
+  // Without the public address the webhook would point nowhere: the next start tries again.
+  if (!h.origin()) return;
+  const pool = numberPool(h);
+  for (const line of pool.list()) {
+    if (!line.tenantId || line.voiceOk !== undefined) continue;
+    const tenant = h.registry.get(line.tenantId);
+    if (!tenant || tenant.disabled) continue;
+    const sid = await lineSid(h.baseEnv(), pool, line.number);
+    if (!sid) continue;
+    await pointLine(h, pool, line.number, sid);
+  }
 }
 
 export type OpenRefusal = "bad-label" | "no-line";
@@ -98,9 +122,13 @@ async function lineSid(env: NodeJS.ProcessEnv, pool: NumberPool, number: string)
 }
 
 async function pointLine(h: HostedCleaner, pool: NumberPool, number: string, sid: string): Promise<boolean> {
-  const ok = await pointSmsWebhook(h.baseEnv(), sid, lineWebhookUrl(h));
+  const ok = await pointLineWebhooks(h.baseEnv(), sid, { sms: lineWebhookUrl(h), voice: lineVoiceUrl(h) });
   pool.setWebhook(number, ok);
-  if (!ok) h.log("Twilio didn't take a line's webhook. Point it again from the number pool on /admin.");
+  pool.setVoice(number, ok);
+  if (!ok) {
+    h.log("Twilio didn't take a line's webhook. Point it again from the number pool on /admin.");
+    h.log("Twilio didn't take a line's voice webhook. Point it again from the number pool on /admin.");
+  }
   return ok;
 }
 
@@ -122,7 +150,7 @@ export async function closeLine(h: HostedCleaner, tenant: Tenant, how: CloseLine
     h.log(`${tenant.id}'s line wasn't found on the Twilio account, or Twilio couldn't be reached. Clear its webhook in the Twilio console.`);
     return "not-found";
   }
-  await pointSmsWebhook(env, sid, "");
+  await pointLineWebhooks(env, sid, { sms: "", voice: "" });
   // A group text left on the line would stop the next account's group with the same phones.
   const groups = await clearLineGroups(env, tenant.twilioNumber);
   if (groups > 0) h.log(`Removed ${groups} group text${groups === 1 ? "" : "s"} from ${tenant.id}'s line.`);
