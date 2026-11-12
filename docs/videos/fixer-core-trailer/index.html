@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fixer Core Trailer</title>
+<style>
+@font-face { font-family: "Fraunces"; src: url(fonts/fraunces-latin.woff2) format("woff2"); font-weight: 100 900; }
+@font-face { font-family: "InterW"; src: url(fonts/inter-latin.woff2) format("woff2"); font-weight: 100 900; }
+:root {
+  --bg: #f5ede1; --ink: #2b2620; --orange: #d9653b; --green: #3e5b48; --chat: #3c9361;
+  --muted: #8a8279; --bubble: #efedea; --line: #e8e0d3; --paper: #fffdf8;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--bg); }
+body { font-family: "InterW", Inter, sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased; }
+#stage { position: relative; width: 1920px; height: 1080px; background: var(--bg); overflow: hidden; }
+.scene { position: absolute; inset: 0; opacity: 0; }
+[data-in] { opacity: 0; will-change: opacity, transform; }
+
+.kicker { position: absolute; left: 120px; top: 98px; font: 700 22px/1 "InterW"; letter-spacing: .2em; color: var(--green); text-transform: uppercase; }
+.head { position: absolute; left: 120px; font: 600 96px/1.02 "Fraunces"; letter-spacing: -.02em; color: var(--ink); }
+.head span { display: block; }
+.head .o { color: var(--orange); }
+.head .g { color: var(--green); }
+.sub { position: absolute; left: 120px; font: 500 58px/1.1 "Fraunces"; color: var(--green); letter-spacing: -.01em; }
+
+/* Chat window */
+.win { position: absolute; background: var(--paper); border-radius: 26px; box-shadow: 0 30px 80px rgba(80,60,30,.13), 0 0 0 1px #ece4d6; overflow: hidden; }
+.win .bar { height: 62px; display: flex; align-items: center; padding: 0 26px; border-bottom: 1px solid #efe8dc; gap: 10px; }
+.win .dot { width: 13px; height: 13px; border-radius: 50%; background: #e3d8c7; }
+.win .name { font: 600 21px "InterW"; margin-left: 14px; }
+.win .tag { margin-left: auto; font: 500 17px "InterW"; color: var(--muted); }
+.body { position: absolute; left: 0; right: 0; bottom: 0; overflow: hidden; }
+.stack { position: absolute; left: 0; right: 0; top: 0; padding: 28px 34px; display: flex; flex-direction: column; gap: 18px; }
+
+.msg { max-width: 78%; padding: 18px 24px; border-radius: 24px; font: 400 25px/1.38 "InterW"; }
+.msg.g { background: var(--bubble); align-self: flex-start; }
+.msg.h { background: var(--chat); color: #fff; align-self: flex-end; }
+.msg b { font-weight: 600; }
+.news { align-self: flex-start; max-width: 84%; background: #fff7ee; border: 1.5px solid #f1d3bd; border-radius: 22px; padding: 16px 22px; font: 400 24px/1.38 "InterW"; }
+.news .lbl { display: flex; align-items: center; gap: 10px; font: 700 15px "InterW"; letter-spacing: .14em; text-transform: uppercase; color: var(--orange); margin-bottom: 6px; }
+.ok { align-self: stretch; display: flex; align-items: center; gap: 14px; padding: 14px 22px; border-radius: 16px; background: #eef4ee; border: 1px solid #d9e8db; font: 500 22px "InterW"; color: #2f4d3a; }
+.ok i { font-style: normal; color: var(--chat); font-weight: 700; }
+
+.card { align-self: flex-start; background: #fff; border: 1.5px solid #ece5da; border-radius: 24px; padding: 22px 26px; min-width: 52%; }
+.card .q { font: 600 23px/1.35 "InterW"; color: #9a9289; margin-bottom: 14px; }
+.opt { display: flex; align-items: center; gap: 16px; font: 400 24px "InterW"; color: var(--ink); padding: 9px 0; transition: none; }
+.opt .k { width: 36px; height: 36px; border-radius: 8px; border: 1.5px solid #e5ded2; display: grid; place-items: center; font: 600 16px "InterW"; color: #b7aea2; flex: none; }
+.opt.on .k { background: var(--chat); border-color: var(--chat); color: #fff; }
+.card.decided .opt:not(.on) { opacity: .38; }
+.card.decided .q { opacity: .8; }
+.chips { display: flex; flex-wrap: wrap; gap: 12px; max-width: 640px; }
+.chip { display: flex; align-items: center; gap: 10px; padding: 10px 18px 10px 12px; border-radius: 14px; border: 1.5px solid #e8e1d5; font: 500 21px "InterW"; color: #5d564e; }
+.chip .bx { width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid #d9d1c4; display: grid; place-items: center; font-size: 15px; color: transparent; }
+.chip.on { border-color: #b9d8c2; background: #eef6f0; color: #24402e; }
+.chip.on .bx { background: var(--chat); border-color: var(--chat); color: #fff; }
+
+.rows { display: flex; flex-direction: column; }
+.row { display: grid; grid-template-columns: 150px 1fr auto; gap: 18px; align-items: center; padding: 14px 0; border-top: 1px solid #f0ebe2; font: 400 23px "InterW"; }
+.row:first-of-type { border-top: 0; }
+.row .t { font: 700 15px "InterW"; letter-spacing: .14em; text-transform: uppercase; color: var(--green); }
+.row .r { font: 500 19px "InterW"; color: var(--muted); }
+.pill { display: inline-block; padding: 5px 12px; border-radius: 999px; font: 600 16px "InterW"; background: #eef6f0; color: #2f6b45; }
+.pill.warn { background: #fbefe6; color: #b4532c; }
+.stars { color: #e2a33b; }
+.btn { display: inline-block; margin-top: 6px; padding: 14px 30px; border-radius: 14px; font: 600 23px "InterW"; background: #fff; border: 1.5px solid #d9d1c4; color: var(--ink); }
+.btn.on { background: var(--chat); border-color: var(--chat); color: #fff; }
+
+/* Phone */
+.phone { position: absolute; width: 560px; height: 1000px; border: 14px solid #2b2620; border-radius: 64px; background: #fff; box-shadow: 0 30px 80px rgba(80,60,30,.16); overflow: hidden; }
+.phone .top { position: absolute; top: 0; left: 0; right: 0; height: 118px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 22px; gap: 14px; font: 600 23px "InterW"; border-bottom: 1px solid #f1ece4; background: #fff; z-index: 2; }
+.phone .top .pl { width: 38px; height: 22px; border-radius: 11px; background: #5cc47f; }
+.phone .body { top: 118px; }
+.phone .stack { padding: 24px 22px; gap: 16px; }
+.phone .msg { font-size: 23px; max-width: 86%; padding: 16px 20px; }
+.phone .news { font-size: 22px; max-width: 92%; }
+.phone .card { min-width: 80%; padding: 18px 20px; }
+.phone .opt { font-size: 22px; }
+.phone .ok { font-size: 20px; padding: 12px 18px; }
+
+/* Problem list */
+.plist { position: absolute; left: 120px; top: 260px; width: 1680px; }
+.pitem { display: flex; align-items: center; gap: 30px; padding: 30px 0; border-top: 1.5px solid #e6dccb; font: 500 50px/1.15 "Fraunces"; color: var(--ink); letter-spacing: -.01em; }
+.pitem .n { width: 30px; height: 30px; border-radius: 50%; background: #e9a23b; flex: none; display: grid; place-items: center; font: 700 15px "InterW"; color: #fff; }
+
+/* Safe list */
+.slist { position: absolute; left: 860px; top: 210px; width: 940px; }
+.sitem { display: flex; align-items: center; gap: 24px; padding: 22px 0; border-top: 1.5px solid #e6dccb; font: 400 29px/1.3 "InterW"; }
+.sitem .n { width: 34px; height: 34px; border-radius: 50%; background: #e9a23b; flex: none; display: grid; place-items: center; font: 700 16px "InterW"; color: #fff; }
+
+/* Diagram */
+.node { position: absolute; width: 230px; height: 230px; border-radius: 50%; background: var(--green); color: #fff; display: grid; place-items: center; text-align: center; font: 600 40px/1.05 "Fraunces"; box-shadow: 0 20px 50px rgba(62,91,72,.25); }
+.nodecap { position: absolute; font: 700 18px "InterW"; letter-spacing: .2em; color: var(--green); text-transform: uppercase; text-align: center; }
+.ring { position: absolute; border-radius: 50%; border: 3px solid var(--green); opacity: 0; }
+.prorow { position: absolute; left: 1060px; width: 760px; height: 170px; background: #fff; border-radius: 26px; border: 1.5px solid #ece5da; box-shadow: 0 18px 50px rgba(80,60,30,.08); display: flex; align-items: center; padding: 0 30px; gap: 26px; }
+.prorow .ph { width: 72px; height: 72px; border-radius: 50%; background: #eef6f0; display: grid; place-items: center; flex: none; }
+.prorow .nm { font: 600 30px "InterW"; }
+.prorow .meta { font: 500 19px "InterW"; color: var(--muted); margin-top: 6px; }
+.prorow .st { margin-left: auto; text-align: right; position: relative; width: 260px; height: 80px; }
+.prorow .st > div { position: absolute; right: 0; top: 50%; transform: translateY(-50%); white-space: nowrap; }
+.calling { font: 500 22px "InterW"; color: var(--muted); }
+.res { font: 700 36px "Fraunces"; color: var(--ink); }
+.res small { display: block; font: 500 19px "InterW"; color: var(--muted); margin-top: 4px; text-align: right; }
+.res.wait { font: 600 22px/1.3 "InterW"; color: var(--orange); text-align: right; }
+
+.bub { position: absolute; background: #fff; border-radius: 18px; padding: 14px 20px; font: 500 22px/1.3 "InterW"; box-shadow: 0 10px 30px rgba(80,60,30,.1); white-space: nowrap; }
+.bub .who { display: block; font: 700 13px "InterW"; letter-spacing: .14em; text-transform: uppercase; color: var(--orange); margin-bottom: 4px; }
+.bub.dark { background: var(--green); color: #fff; }
+.bub.dark .who { color: #cfe3d5; }
+
+.checks { position: absolute; display: flex; flex-direction: column; gap: 12px; }
+.checks div { background: #fff; border-radius: 999px; padding: 10px 20px; font: 500 20px "InterW"; box-shadow: 0 6px 18px rgba(80,60,30,.07); white-space: nowrap; }
+.checks i { font-style: normal; color: var(--chat); font-weight: 700; margin-right: 8px; }
+.cap { position: absolute; font: 700 18px "InterW"; letter-spacing: .2em; color: #6f675d; text-transform: uppercase; text-align: center; }
+
+.vs { position: absolute; left: 120px; top: 830px; display: flex; gap: 22px; }
+.vs > div { width: 440px; border-radius: 22px; padding: 22px 26px; font: 400 23px/1.35 "InterW"; }
+.vs .a { background: #efe6d8; color: #6b6259; }
+.vs .b { background: #fff; border: 2px solid #b9d8c2; color: var(--ink); }
+.vs .lbl { display: block; font: 700 15px "InterW"; letter-spacing: .16em; text-transform: uppercase; margin-bottom: 8px; }
+.vs .a .lbl { color: #9a8f83; }
+.vs .b .lbl { color: var(--chat); }
+
+.title { position: absolute; left: 0; right: 0; text-align: center; font: 600 150px/1 "Fraunces"; letter-spacing: -.03em; }
+.tag2 { position: absolute; left: 0; right: 0; text-align: center; font: 400 32px "InterW"; color: #5d564e; }
+.endtag { position: absolute; left: 0; right: 0; text-align: center; font: 500 40px "Fraunces"; color: var(--green); }
+/* The Supply trailer's serif is Fraunces' text cut, not its thin display cut. */
+.head, .sub, .title, .endtag, .pitem, .node, .res { font-optical-sizing: none; font-variation-settings: "opsz" 18; }
+.fine { position: absolute; left: 0; right: 0; text-align: center; font: 400 22px "InterW"; color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="stage">
+
+<!-- 1 · Something breaks -->
+<section class="scene" data-start="0" data-end="7.2">
+  <div class="kicker" data-in="0.2">Lake House · Saturday, 1:50 PM</div>
+  <svg id="house1" class="house" data-in="0" data-fx="fade" data-d="0.8" style="position:absolute; left:760px; top:150px; width:1160px; height:812px" viewBox="0 0 1000 700"></svg>
+  <div class="bub" data-in="1.0" data-fx="pop" style="left:1010px; top:205px"><span class="who">Cleaner</span>The AC is blowing warm air.</div>
+  <div class="bub" data-in="1.9" data-fx="pop" style="left:1430px; top:330px"><span class="who">Cleaner</span>Dishwasher leaked again.</div>
+  <div class="bub" data-in="2.8" data-fx="pop" style="left:870px; top:840px"><span class="who">Guest</span>We land at 4. Is it cool inside?</div>
+  <div class="head" style="top:380px">
+    <span data-in="3.6">Something</span>
+    <span data-in="3.9">always breaks.</span>
+    <span class="o" data-in="4.8">Right before</span>
+    <span class="o" data-in="5.0">check-in.</span>
+  </div>
+</section>
+
+<!-- 2 · The problem -->
+<section class="scene" data-start="7.2" data-end="14.8">
+  <div class="kicker" data-in="0.1">The problem</div>
+  <div class="plist">
+    <div class="pitem" data-in="0.3"><span class="n">1</span>You call five pros. Three don't pick up.</div>
+    <div class="pitem" data-in="1.9"><span class="n">2</span>The one who calls back now has your cell.</div>
+    <div class="pitem" data-in="3.5"><span class="n">3</span>Quotes end up spread across texts and voicemails.</div>
+  </div>
+  <div class="sub" data-in="5.2" style="top:860px; color:#e3a487; font-size:46px">Lost afternoons. Unhappy guests. Your number everywhere.</div>
+</section>
+
+<!-- 3 · Title -->
+<section class="scene" data-start="14.8" data-end="19">
+  <div class="title" data-in="0.2" data-d="0.9" style="top:410px">Fixer Core</div>
+  <div class="tag2" data-in="0.9" style="top:590px">Your rental, kept fixed.</div>
+</section>
+
+<!-- 4 · Setup -->
+<section class="scene" data-start="19" data-end="37.4">
+  <div class="kicker" data-in="0.1">Setup</div>
+  <div class="head" style="top:330px">
+    <span data-in="0.3" data-out="6">Set it up in</span>
+    <span class="o" data-in="0.7" data-out="6">one chat with</span>
+    <span class="o" data-in="0.9" data-out="6">Grok.</span>
+  </div>
+  <div class="head" style="top:330px">
+    <span data-in="6.3" data-out="11.6">Tell it who</span>
+    <span class="o" data-in="6.6" data-out="11.6">you already</span>
+    <span class="o" data-in="6.8" data-out="11.6">call.</span>
+  </div>
+  <div class="head" style="top:330px">
+    <span data-in="11.9">Upkeep,</span>
+    <span class="o" data-in="12.2">on a schedule.</span>
+  </div>
+  <div class="sub" data-in="16.4" style="top:640px">Then switch it on.</div>
+
+  <div class="win" data-in="0" data-fx="fade" style="left:830px; top:100px; width:970px; height:880px">
+    <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="name">Grok</span><span class="tag">Fixer Core connected</span></div>
+    <div class="body" style="top:62px"><div class="stack">
+      <div class="msg g" data-in="0.6">This sets up Fixer Core, which gets the Lake House's repairs and upkeep done. Your address is already saved.</div>
+      <div class="card" data-in="2.0">
+        <div class="q">Which trades do you already have someone for? Pick all that apply.</div>
+        <div class="chips">
+          <div class="chip" data-cls="on@3.3"><span class="bx">✓</span>Plumber</div>
+          <div class="chip" data-cls="on@3.7"><span class="bx">✓</span>HVAC</div>
+          <div class="chip"><span class="bx">✓</span>Electrician</div>
+          <div class="chip" data-cls="on@4.1"><span class="bx">✓</span>Handyman</div>
+          <div class="chip"><span class="bx">✓</span>Gutters</div>
+          <div class="chip"><span class="bx">✓</span>Pest control</div>
+          <div class="chip"><span class="bx">✓</span>Appliance repair</div>
+          <div class="chip"><span class="bx">✓</span>Locksmith</div>
+          <div class="chip"><span class="bx">✓</span>None yet</div>
+        </div>
+      </div>
+      <div class="msg g" data-in="5.0">Who's your HVAC pro? Name and phone.</div>
+      <div class="msg h" data-in="6.0">CoolAir Co, (555) 010-4471</div>
+      <div class="card" data-in="7.0" style="min-width:74%">
+        <div class="q">Your pros, called in this order</div>
+        <div class="rows">
+          <div class="row"><span class="t">Plumber</span><span>Dave's Plumbing</span><span class="r">1st</span></div>
+          <div class="row"><span class="t">HVAC</span><span>CoolAir Co</span><span class="r">1st</span></div>
+          <div class="row"><span class="t">Handyman</span><span>Mike Torres</span><span class="r">1st</span></div>
+        </div>
+      </div>
+      <div class="card" data-in="9.0" data-cls="decided@10.4">
+        <div class="q">Want me to tell you the moment a pro texts or calls back?</div>
+        <div class="opt" data-cls="on@10.4"><span class="k">A</span>Yes, alert me</div>
+        <div class="opt"><span class="k">B</span>Not now</div>
+      </div>
+      <div class="msg g" data-in="11.2">Any regular upkeep, like HVAC filters or gutters?</div>
+      <div class="msg h" data-in="12.2">Filters every 90 days, gutters every April</div>
+      <div class="card" data-in="13.3" style="min-width:74%">
+        <div class="q">Upkeep, starting on its own</div>
+        <div class="rows">
+          <div class="row" style="grid-template-columns:1fr auto"><span><b>HVAC filters</b> · every 90 days</span><span class="r">Jan 10 · Apr 10 · Jul 9</span></div>
+          <div class="row" style="grid-template-columns:1fr auto"><span><b>Gutters</b> · every April</span><span class="r">Apr 1, 2027</span></div>
+        </div>
+      </div>
+      <div class="card" data-in="15.0">
+        <div class="q">Your pros and upkeep are set. Turn on Fixer Core?</div>
+        <span class="btn" data-cls="on@16.1">Activate</span>
+      </div>
+      <div class="ok" data-in="16.6"><i>✓</i>Fixer Core is on at the Lake House.</div>
+    </div></div>
+  </div>
+</section>
+
+<!-- 5 · A repair -->
+<section class="scene" data-start="37.4" data-end="45.6">
+  <div class="kicker" data-in="0.1">Saturday · 2:14 PM</div>
+  <div class="head" style="top:300px">
+    <span data-in="0.3">Something</span>
+    <span data-in="0.5">broke?</span>
+    <span class="o" data-in="0.9">Just say so.</span>
+  </div>
+  <div class="sub" data-in="3.4" style="top:700px">Grok finds the pros.<br>You pick who to call.</div>
+  <div class="win" data-in="0" data-fx="fade" style="left:830px; top:100px; width:970px; height:880px">
+    <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="name">Grok</span><span class="tag">Fixer Core connected</span></div>
+    <div class="body" style="top:62px"><div class="stack">
+      <div class="msg h" data-in="0.5">The AC at the Lake House is blowing warm. Guests check in at 4.</div>
+      <div class="msg g" data-in="1.6">CoolAir is booked until Tuesday. I found three HVAC pros near the Lake House:</div>
+      <div class="card" data-in="2.6" style="min-width:86%">
+        <div class="rows">
+          <div class="row" style="grid-template-columns:1fr auto auto"><span><b>Pine Ridge Air</b><br><span class="r"><span class="stars">★</span> 4.9 (212) · Licensed</span></span><span class="pill">Today</span><span></span></div>
+          <div class="row" style="grid-template-columns:1fr auto auto"><span><b>Birchwood HVAC</b><br><span class="r"><span class="stars">★</span> 4.7 (98) · Licensed</span></span><span class="pill">Today</span><span></span></div>
+          <div class="row" style="grid-template-columns:1fr auto auto"><span><b>Northshore Comfort</b><br><span class="r"><span class="stars">★</span> 4.8 (340) · Licensed</span></span><span class="pill warn">Tomorrow</span><span></span></div>
+        </div>
+      </div>
+      <div class="card" data-in="4.4" data-cls="decided@5.8">
+        <div class="q">Call Pine Ridge Air, then Birchwood HVAC, then Northshore Comfort?</div>
+        <div class="opt" data-cls="on@5.8"><span class="k">A</span>Call all three</div>
+        <div class="opt"><span class="k">B</span>Show me more</div>
+      </div>
+      <div class="msg g" data-in="6.6">On it. I'll get you a quote from each.</div>
+    </div></div>
+  </div>
+</section>
+
+<!-- 6 · Grok makes the calls -->
+<section class="scene" data-start="45.6" data-end="54.2">
+  <div class="kicker" data-in="0.1">Saturday · 2:16 PM</div>
+  <div class="head" style="top:190px">
+    <span data-in="0.3">Grok makes the calls.</span>
+    <span class="o" data-in="0.7">You don't.</span>
+  </div>
+  <svg style="position:absolute; inset:0; width:1920px; height:1080px" viewBox="0 0 1920 1080">
+    <path id="c1" d="M 640 720 C 820 720, 880 520, 1060 520" fill="none" stroke="#d6c8b3" stroke-width="3" stroke-dasharray="3 12" stroke-linecap="round" data-in="0.8" data-fx="fade"/>
+    <path id="c2" d="M 640 720 C 820 720, 880 720, 1060 720" fill="none" stroke="#d6c8b3" stroke-width="3" stroke-dasharray="3 12" stroke-linecap="round" data-in="1.1" data-fx="fade"/>
+    <path id="c3" d="M 640 720 C 820 720, 880 920, 1060 920" fill="none" stroke="#d6c8b3" stroke-width="3" stroke-dasharray="3 12" stroke-linecap="round" data-in="1.4" data-fx="fade"/>
+    <circle r="8" fill="#3e5b48" data-travel="c1,0.8,4.6,1.1"/>
+    <circle r="8" fill="#3e5b48" data-travel="c2,1.1,3.2,1.1"/>
+    <circle r="8" fill="#3e5b48" data-travel="c3,1.4,5.6,1.1"/>
+  </svg>
+  <div class="ring" data-pulse="0.8,5.8" style="left:410px; top:605px; width:230px; height:230px"></div>
+  <div class="node" data-in="0.4" data-fx="pop" style="left:410px; top:605px">Grok</div>
+  <div class="nodecap" data-in="0.6" style="left:325px; top:860px; width:400px">Calling for you</div>
+
+  <div class="prorow" data-in="0.8" style="top:435px">
+    <div class="ph" data-ring="0.8,4.6"><svg width="34" height="34" viewBox="0 0 24 24"><path fill="#3c9361" d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.6.1.3 0 .7-.2 1z"/></svg></div>
+    <div><div class="nm">Pine Ridge Air</div><div class="meta">★ 4.9 · Licensed · 6 mi</div></div>
+    <div class="st">
+      <div class="calling" data-in="0.9" data-out="4.6" data-fx="fade">Calling…</div>
+      <div class="res wait" data-in="4.8" data-fx="fade">Checking the truck for the part.<br>Will call back.</div>
+    </div>
+  </div>
+  <div class="prorow" data-in="1.1" style="top:635px">
+    <div class="ph" data-ring="1.1,3.2"><svg width="34" height="34" viewBox="0 0 24 24"><path fill="#3c9361" d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.6.1.3 0 .7-.2 1z"/></svg></div>
+    <div><div class="nm">Birchwood HVAC</div><div class="meta">★ 4.7 · Licensed · 9 mi</div></div>
+    <div class="st">
+      <div class="calling" data-in="1.2" data-out="3.2" data-fx="fade">Calling…</div>
+      <div class="res" data-in="3.4" data-fx="fade">$260<small>Today, 3:30 PM</small></div>
+    </div>
+  </div>
+  <div class="prorow" data-in="1.4" style="top:835px">
+    <div class="ph" data-ring="1.4,5.6"><svg width="34" height="34" viewBox="0 0 24 24"><path fill="#3c9361" d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.6.1.3 0 .7-.2 1z"/></svg></div>
+    <div><div class="nm">Northshore Comfort</div><div class="meta">★ 4.8 · Licensed · 14 mi</div></div>
+    <div class="st">
+      <div class="calling" data-in="1.5" data-out="5.6" data-fx="fade">Calling…</div>
+      <div class="res" data-in="5.8" data-fx="fade">$180<small>Tomorrow, 9 AM</small></div>
+    </div>
+  </div>
+  <div class="bub" data-in="5.6" data-fx="pop" style="left:1180px; top:330px"><span class="who">Pine Ridge Air</span>What number can I call you back on?</div>
+  <div class="bub dark" data-in="6.6" data-fx="pop" style="left:600px; top:410px"><span class="who">Grok</span>Call or text the Lake House line:<br>(555) 010-0142.</div>
+</section>
+
+<!-- 7 · The callback (only with Fixer Core) -->
+<section class="scene" data-start="54.2" data-end="67">
+  <div class="kicker" data-in="0.1">Only with Fixer Core</div>
+  <div class="head" style="top:150px; font-size:84px">
+    <span data-in="0.3" data-out="7.6">The pro calls back.</span>
+    <span class="o" data-in="0.7" data-out="7.6">Not your cell.</span>
+  </div>
+  <div class="head" style="top:150px; font-size:84px">
+    <span data-in="7.9">Grok makes the call.</span>
+    <span class="o" data-in="8.2">Fixer Core catches the reply.</span>
+  </div>
+
+  <svg id="pro" data-in="0" data-fx="fade" style="position:absolute; left:120px; top:420px; width:300px; height:560px" viewBox="0 0 300 560"></svg>
+  <div class="cap" data-in="0.2" style="left:70px; top:990px; width:400px">Pine Ridge Air · Pro</div>
+  <div class="bub" data-in="1.0" data-out="4.6" data-fx="pop" style="left:110px; top:370px"><span class="who">Calling</span>(555) 010-0142</div>
+  <div class="bub" data-in="6.4" data-fx="pop" style="left:110px; top:370px"><span class="who">Text</span>I'll send photos when it's done.</div>
+
+  <svg style="position:absolute; inset:0; width:1920px; height:1080px" viewBox="0 0 1920 1080">
+    <path id="l1" d="M 400 640 C 520 560, 600 560, 700 640" fill="none" stroke="#d6c8b3" stroke-width="3" stroke-dasharray="3 12" stroke-linecap="round" data-in="0.6" data-fx="fade"/>
+    <path id="l2" d="M 940 640 C 1040 560, 1120 560, 1230 640" fill="none" stroke="#d6c8b3" stroke-width="3" stroke-dasharray="3 12" stroke-linecap="round" data-in="0.6" data-fx="fade"/>
+    <circle r="8" fill="#3e5b48" data-travel="l1,1.0,4.4,1.2"/>
+    <circle r="8" fill="#d9653b" data-travel="l2,4.4,5.4,1.0"/>
+    <circle r="8" fill="#3e5b48" data-travel="l1,6.4,7.4,1.0"/>
+    <circle r="8" fill="#d9653b" data-travel="l2,7.0,8.0,1.0"/>
+  </svg>
+  <div class="ring" data-pulse="1.0,5.0" style="left:705px; top:520px; width:230px; height:230px"></div>
+  <div class="node" data-in="0.3" data-fx="pop" style="left:705px; top:520px; font-size:36px">Fixer<br>Core</div>
+  <div class="nodecap" data-in="0.5" style="left:620px; top:770px; width:400px">Your line<br><span style="letter-spacing:.06em; font-size:20px; color:#6f675d">(555) 010-0142</span></div>
+  <div class="checks" style="left:690px; top:860px">
+    <div data-in="2.0"><i>✓</i>A pro on your job</div>
+    <div data-in="2.9"><i>✓</i>Voicemail taken</div>
+    <div data-in="3.8"><i>✓</i>Turned into text</div>
+  </div>
+  <div id="wave" data-in="1.8" data-out="4.2" data-fx="fade" data-wave="1.8,4.2" style="position:absolute; left:760px; top:470px; width:120px; height:40px; display:flex; gap:6px; align-items:center; justify-content:center"></div>
+
+  <div class="phone" data-in="0" data-fx="fade" style="left:1240px; top:330px; height:720px">
+    <div class="top"><span class="pl"></span>Grok</div>
+    <div class="body"><div class="stack">
+      <div class="msg g">On it. I'll get you a quote from each.</div>
+      <div class="news" data-in="4.6"><div class="lbl">● Voicemail</div>Pine Ridge Air left a voicemail: "Found the part on the truck. I can be there at 2:45, about $210."</div>
+      <div class="news" data-in="7.2"><div class="lbl">● Text</div>Pine Ridge Air texted: "I'll send photos when it's done."</div>
+    </div></div>
+  </div>
+</section>
+
+<!-- 8 · Compare and book -->
+<section class="scene" data-start="67" data-end="77.6">
+  <div class="kicker" data-in="0.1">Saturday · 2:31 PM</div>
+  <div class="head" style="top:300px">
+    <span data-in="0.3">Every quote,</span>
+    <span data-in="0.5">side by side.</span>
+    <span class="o" data-in="3.4">It waits for</span>
+    <span class="o" data-in="3.6">your yes.</span>
+  </div>
+  <div class="sub" data-in="7.4" style="top:760px">Then the door opens<br>for that pro alone.</div>
+  <div class="phone" data-in="0" data-fx="fade" style="left:1180px; top:40px">
+    <div class="top"><span class="pl"></span>Grok</div>
+    <div class="body"><div class="stack">
+      <div class="msg g" data-in="0.4">All three quotes are in:</div>
+      <div class="card" data-in="0.9" style="min-width:100%; padding:10px 20px">
+        <div class="rows">
+          <div class="row" style="grid-template-columns:1fr auto; font-size:21px"><span><b>Pine Ridge Air</b><br><span class="r">Today, 2:45 · ★ 4.9</span></span><span class="res" style="font-size:30px">$210</span></div>
+          <div class="row" style="grid-template-columns:1fr auto; font-size:21px"><span><b>Birchwood HVAC</b><br><span class="r">Today, 3:30 · ★ 4.7</span></span><span class="res" style="font-size:30px">$260</span></div>
+          <div class="row" style="grid-template-columns:1fr auto; font-size:21px"><span><b>Northshore Comfort</b><br><span class="r">Tomorrow, after check-in</span></span><span class="res" style="font-size:30px">$180</span></div>
+        </div>
+      </div>
+      <div class="msg h" data-in="2.4">Pine Ridge</div>
+      <div class="card" data-in="3.2" data-cls="decided@4.9">
+        <div class="q" style="color:#5d564e">Pine Ridge Air can come Saturday 2:45 to 3:30, about $210. Book it and let them in with the door code?</div>
+        <div class="opt" data-cls="on@4.9"><span class="k">A</span>Book it</div>
+        <div class="opt"><span class="k">B</span>Not yet</div>
+      </div>
+      <div class="msg g" data-in="5.6">Booked. I told Pine Ridge Air. The door code goes only to them, just before the visit.</div>
+      <div class="ok" data-in="7.0"><i>✓</i>2:31 · Door code sent to Pine Ridge Air</div>
+      <div class="ok" data-in="7.8"><i>✓</i>3:22 · Fixed. 2 photos in</div>
+      <div class="ok" data-in="8.6"><i>✓</i>$210 logged to the Lake House</div>
+    </div></div>
+  </div>
+</section>
+
+<!-- 9 · Safe by design -->
+<section class="scene" data-start="77.6" data-end="83.6">
+  <div class="kicker" data-in="0.1">Safe by design</div>
+  <div class="head" style="top:360px">
+    <span data-in="0.3">You stay</span>
+    <span class="o" data-in="0.6">in charge.</span>
+  </div>
+  <div class="slist">
+    <div class="sitem" data-in="0.6"><span class="n">1</span>Only pros you approve are contacted.</div>
+    <div class="sitem" data-in="1.2"><span class="n">2</span>Nothing is booked without your yes.</div>
+    <div class="sitem" data-in="1.8"><span class="n">3</span>A time over a guest stay is never booked.</div>
+    <div class="sitem" data-in="2.4"><span class="n">4</span>Pros reach your line, never your own phone.</div>
+    <div class="sitem" data-in="3.0"><span class="n">5</span>The door code goes to the booked pro only.</div>
+    <div class="sitem" data-in="3.6"><span class="n">6</span>It never pays anyone. Every cost is logged.</div>
+  </div>
+</section>
+
+<!-- 10 · End -->
+<section class="scene" data-start="83.6" data-end="90">
+  <svg id="house2" class="house" data-in="0.1" data-fx="pop" data-d="0.9" style="position:absolute; left:660px; top:120px; width:600px; height:420px" viewBox="0 0 1000 700"></svg>
+  <div class="title" data-in="0.5" style="top:560px; font-size:130px">Fixer Core</div>
+  <div class="endtag" data-in="1.0" style="top:715px">Repairs and upkeep, handled with Grok.</div>
+  <div class="fine" data-in="1.6" style="top:800px">Open source. Built for everyone.</div>
+</section>
+
+</div>
+
+<script>
+const DURATION = 90;
+const FPS = 30;
+const clamp = (x) => Math.max(0, Math.min(1, x));
+const ease = (x) => 1 - Math.pow(1 - clamp(x), 3);
+
+/* ---------- Illustrations ---------- */
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent.appendChild(e); return e; }
+const pts = (a) => a.map((p) => p.join(",")).join(" ");
+function pine(svg, x, y, s) {
+  el("rect", { x: x - 5 * s, y: y - 4 * s, width: 10 * s, height: 34 * s, fill: "#6b4a32" }, svg);
+  const g = ["#4e7258", "#456a50", "#3e5f48"];
+  for (let i = 0; i < 3; i++) {
+    const top = y - 150 * s + i * 42 * s, w = (50 + i * 16) * s;
+    el("polygon", { points: pts([[x, top], [x + w, top + 78 * s], [x - w, top + 78 * s]]), fill: g[i] }, svg);
+  }
+}
+function house(svg) {
+  const defs = el("defs", {}, svg);
+  const rg = el("radialGradient", { id: svg.id + "g" }, defs);
+  el("stop", { offset: "55%", "stop-color": "#bccf98" }, rg);
+  el("stop", { offset: "100%", "stop-color": "#bccf98", "stop-opacity": "0" }, rg);
+  el("ellipse", { cx: 520, cy: 520, rx: 470, ry: 190, fill: `url(#${svg.id}g)` }, svg);
+  el("ellipse", { cx: 900, cy: 450, rx: 120, ry: 48, fill: "#9fc2c4", stroke: "#c7dadb", "stroke-width": 6 }, svg);
+  for (let i = 0; i < 6; i++) el("polygon", { points: pts([[150 + i * 48, 600 - i * 26], [190 + i * 48, 622 - i * 26], [222 + i * 48, 604 - i * 26], [182 + i * 48, 582 - i * 26]]), fill: "#e9dcc4" }, svg);
+  pine(svg, 200, 360, 1.0); pine(svg, 470, 180, 0.9); pine(svg, 880, 610, 1.1); pine(svg, 960, 420, 1.3);
+  const u = [0.87, 0.5], v = [0.87, -0.5];
+  const add = (p, d, k) => [p[0] + d[0] * k, p[1] + d[1] * k];
+  const P0 = [270, 440], P1 = add(P0, u, 250), P2 = add(P1, v, 310), H = 200;
+  const up = (p, h) => [p[0], p[1] - h];
+  const P0t = up(P0, H), P1t = up(P1, H), P2t = up(P2, H);
+  const apex = up(add(P0, u, 125), H + 125), apex2 = add(apex, v, 310);
+  el("polygon", { points: pts([P1, P2, P2t, P1t]), fill: "#f1e3cc", stroke: "#7a4a35", "stroke-width": 2 }, svg);
+  el("polygon", { points: pts([P0, P1, P1t, apex, P0t]), fill: "#fbf4e6", stroke: "#7a4a35", "stroke-width": 2 }, svg);
+  for (let k = 1; k < 10; k++) {
+    const h = (H * k) / 10;
+    el("line", { x1: P0[0], y1: P0[1] - h, x2: P1[0], y2: P1[1] - h, stroke: "#eadfcb", "stroke-width": 1.5 }, svg);
+    el("line", { x1: P1[0], y1: P1[1] - h, x2: P2[0], y2: P2[1] - h, stroke: "#e3d3b8", "stroke-width": 1.5 }, svg);
+  }
+  const o = 18;
+  const eA = add(add(P1t, u, 14), [0, 1], 6), eB = add(add(P2t, v, o), u, 14);
+  const rA = add(apex, v, -o), rB = add(apex2, v, o);
+  el("polygon", { points: pts([rA, rB, eB, add(eA, v, -o)]), fill: "#8b3f2c", stroke: "#6e2f21", "stroke-width": 2 }, svg);
+  for (let k = 1; k < 16; k++) {
+    const a = add(rA, v, (k * (310 + 2 * o)) / 16), b = add(add(eA, v, -o), v, (k * (310 + 2 * o)) / 16);
+    el("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: "#7c3727", "stroke-width": 1.5 }, svg);
+  }
+  el("polyline", { points: pts([add(P0t, u, -14), apex, add(P1t, u, 14)]), fill: "none", stroke: "#8b3f2c", "stroke-width": 7, "stroke-linejoin": "round" }, svg);
+  // Chimney: a box standing on the roof slope.
+  const slope = [P1t[0] - apex[0], P1t[1] - apex[1]];
+  const c0 = add(add(apex, v, 200), slope, 0.3);
+  const cA = c0, cB = add(c0, u, 30), cC = add(cB, v, 26), CH = 70;
+  el("polygon", { points: pts([cA, cB, up(cB, CH), up(cA, CH)]), fill: "#b45c43", stroke: "#7a3a28", "stroke-width": 2 }, svg);
+  el("polygon", { points: pts([cB, cC, up(cC, CH), up(cB, CH)]), fill: "#99482f", stroke: "#7a3a28", "stroke-width": 2 }, svg);
+  el("polygon", { points: pts([up(cA, CH), up(cB, CH), up(cC, CH), up(add(cA, v, 26), CH)]), fill: "#c46b50", stroke: "#7a3a28", "stroke-width": 2 }, svg);
+  const quad = (base, d, w, h) => pts([base, add(base, d, w), up(add(base, d, w), h), up(base, h)]);
+  const D = add(P0, u, 45);
+  el("polygon", { points: quad(D, u, 50, 120), fill: "#efb23e", stroke: "#7a4a35", "stroke-width": 2 }, svg);
+  el("circle", { cx: D[0] + 40, cy: D[1] - 34, r: 3.5, fill: "#6e2f21" }, svg);
+  const win = (base, d) => { el("polygon", { points: quad(base, d, 64, 70), fill: "#cfe1e6", stroke: "#7a4a35", "stroke-width": 2.5 }, svg); const m = add(base, d, 32); el("line", { x1: m[0], y1: m[1], x2: m[0], y2: m[1] - 70, stroke: "#fff", "stroke-width": 3 }, svg); };
+  win(up(add(P0, u, 135), 40), u);
+  win(up(add(P1, v, 50), 40), v); win(up(add(P1, v, 195), 40), v);
+  el("polygon", { points: quad(up(add(P0, u, 103), 230), u, 44, 46), fill: "#cfe1e6", stroke: "#7a4a35", "stroke-width": 2.5 }, svg);
+}
+
+function person(svg, o) {
+  const g = el("g", {}, svg);
+  el("ellipse", { cx: 150, cy: 545, rx: 95, ry: 12, fill: "#e3d6c2" }, g);
+  el("rect", { x: 102, y: 330, width: 40, height: 205, rx: 18, fill: o.pants }, g);
+  el("rect", { x: 158, y: 330, width: 40, height: 205, rx: 18, fill: o.pants }, g);
+  el("ellipse", { cx: 118, cy: 535, rx: 30, ry: 12, fill: "#3a2a20" }, g);
+  el("ellipse", { cx: 184, cy: 535, rx: 30, ry: 12, fill: "#3a2a20" }, g);
+  el("path", { d: "M 84 200 Q 84 160 150 160 Q 216 160 216 200 L 222 360 L 78 360 Z", fill: o.shirt }, g);
+  el("rect", { x: 132, y: 140, width: 36, height: 30, rx: 10, fill: o.skin }, g);
+  el("circle", { cx: 150, cy: 105, r: 50, fill: o.skin }, g);
+  // cap
+  el("path", { d: "M 100 100 Q 100 52 150 52 Q 200 52 200 100 Z", fill: o.cap }, g);
+  el("rect", { x: 186, y: 90, width: 46, height: 12, rx: 6, fill: o.cap }, g);
+  el("circle", { cx: 166, cy: 112, r: 4.5, fill: "#2b2620" }, g);
+  el("path", { d: "M 152 132 Q 164 140 176 132", fill: "none", stroke: "#2b2620", "stroke-width": 3.5, "stroke-linecap": "round" }, g);
+  // left arm down, right arm up to ear with phone
+  el("path", { d: "M 92 200 Q 60 280 76 350", fill: "none", stroke: o.shirt, "stroke-width": 36, "stroke-linecap": "round" }, g);
+  el("circle", { cx: 76, cy: 356, r: 17, fill: o.skin }, g);
+  el("path", { d: "M 208 200 Q 252 200 226 132", fill: "none", stroke: o.shirt, "stroke-width": 36, "stroke-linecap": "round" }, g);
+  el("rect", { x: 196, y: 84, width: 30, height: 56, rx: 7, fill: "#2b2620" }, g);
+  el("circle", { cx: 222, cy: 130, r: 16, fill: o.skin }, g);
+  // logo patch
+  el("rect", { x: 160, y: 210, width: 36, height: 22, rx: 5, fill: "#fff", opacity: .85 }, g);
+}
+
+/* ---------- Timeline ---------- */
+const items = [];
+const travels = [], pulses = [], rings = [], waves = [], classes = [];
+const chats = [];
+
+function init() {
+  house(document.getElementById("house1"));
+  house(document.getElementById("house2"));
+  person(document.getElementById("pro"), { skin: "#c98f68", shirt: "#3e6f8f", pants: "#2f3b44", cap: "#d9653b" });
+  const wave = document.getElementById("wave");
+  for (let i = 0; i < 9; i++) { const b = document.createElement("div"); b.style.cssText = "width:7px;border-radius:4px;background:#d9653b;height:10px"; wave.appendChild(b); }
+
+  for (const sc of document.querySelectorAll(".scene")) {
+    const s = +sc.dataset.start, e = +sc.dataset.end;
+    items.push({ el: sc, tin: s, tout: e - 0.45, d: 0.45, fx: "fade", scene: true });
+    for (const n of sc.querySelectorAll("[data-in]")) {
+      items.push({ el: n, tin: s + +n.dataset.in, tout: n.dataset.out ? s + +n.dataset.out : 1e9, d: +(n.dataset.d || 0.6), fx: n.dataset.fx || "up" });
+    }
+    for (const n of sc.querySelectorAll("[data-travel]")) {
+      const [id, a, b, p] = n.dataset.travel.split(",");
+      travels.push({ el: n, path: document.getElementById(id), a: s + +a, b: s + +b, p: +p });
+    }
+    for (const n of sc.querySelectorAll("[data-pulse]")) { const [a, b] = n.dataset.pulse.split(",").map(Number); pulses.push({ el: n, a: s + a, b: s + b }); }
+    for (const n of sc.querySelectorAll("[data-ring]")) { const [a, b] = n.dataset.ring.split(",").map(Number); rings.push({ el: n, a: s + a, b: s + b }); }
+    for (const n of sc.querySelectorAll("[data-wave]")) { const [a, b] = n.dataset.wave.split(",").map(Number); waves.push({ el: n, a: s + a, b: s + b }); }
+    for (const n of sc.querySelectorAll("[data-cls]")) {
+      for (const part of n.dataset.cls.split(",")) { const [c, at] = part.split("@"); classes.push({ el: n, c, at: s + +at }); }
+    }
+    for (const body of sc.querySelectorAll(".body")) {
+      const stack = body.querySelector(".stack");
+      const kids = [...stack.children];
+      const viewH = body.clientHeight;
+      const pad = 28;
+      const steps = kids.map((k) => ({ at: k.dataset.in ? s + +k.dataset.in : -1, need: Math.max(0, k.offsetTop + k.offsetHeight + pad - viewH) }));
+      chats.push({ stack, steps });
+    }
+  }
+}
+
+function seek(t) {
+  for (const it of items) {
+    const a = ease((t - it.tin) / it.d), b = ease((t - it.tout) / 0.45);
+    const op = a * (1 - b);
+    it.el.style.opacity = op.toFixed(4);
+    if (it.scene) { it.el.style.visibility = op <= 0.001 ? "hidden" : "visible"; continue; }
+    let tr = "";
+    if (it.fx === "up") tr = `translateY(${((1 - a) * 22).toFixed(2)}px)`;
+    else if (it.fx === "pop") tr = `scale(${(0.92 + 0.08 * a).toFixed(4)})`;
+    if (it.el instanceof SVGElement && it.el.tagName !== "svg") it.el.setAttribute("opacity", op.toFixed(4));
+    else it.el.style.transform = tr;
+  }
+  for (const c of classes) c.el.classList.toggle(c.c, t >= c.at);
+  for (const ch of chats) {
+    let off = 0, prev = 0;
+    for (const st of ch.steps) {
+      if (st.at < 0) { prev = st.need; off = st.need; continue; }
+      if (t < st.at) break;
+      off = prev + (st.need - prev) * ease((t - st.at) / 0.6);
+      prev = st.need;
+    }
+    ch.stack.style.transform = `translateY(${(-off).toFixed(2)}px)`;
+  }
+  for (const tr of travels) {
+    if (t < tr.a || t > tr.b) { tr.el.setAttribute("opacity", 0); continue; }
+    const f = ((t - tr.a) % tr.p) / tr.p;
+    const L = tr.path.getTotalLength();
+    const p = tr.path.getPointAtLength(L * f);
+    tr.el.setAttribute("cx", p.x); tr.el.setAttribute("cy", p.y);
+    tr.el.setAttribute("opacity", Math.min(1, Math.sin(Math.PI * f) * 2).toFixed(3));
+  }
+  for (const p of pulses) {
+    if (t < p.a || t > p.b) { p.el.style.opacity = 0; continue; }
+    const f = ((t - p.a) % 1.4) / 1.4;
+    p.el.style.opacity = (0.5 * (1 - f)).toFixed(3);
+    p.el.style.transform = `scale(${1 + 0.35 * f})`;
+  }
+  for (const r of rings) {
+    const on = t >= r.a && t <= r.b;
+    const w = on ? Math.sin((t - r.a) * 38) * (Math.sin((t - r.a) * 4) > 0 ? 14 : 0) : 0;
+    r.el.style.transform = `rotate(${w.toFixed(2)}deg)`;
+  }
+  for (const w of waves) {
+    const bars = w.el.children;
+    for (let i = 0; i < bars.length; i++) {
+      const h = t >= w.a && t <= w.b ? 8 + 30 * Math.abs(Math.sin(t * 7 + i * 1.3) * Math.cos(t * 3.1 + i * 0.7)) : 8;
+      bars[i].style.height = h.toFixed(1) + "px";
+    }
+  }
+}
+
+window.DURATION = DURATION; window.FPS = FPS; window.seek = seek;
+window.ready = document.fonts.ready.then(() => { init(); seek(0); return true; });
+
+// Preview: play in real time unless ?render. ?t=42 starts at 42s. Space pauses, arrows scrub.
+const params = new URLSearchParams(location.search);
+if (!params.has("render")) {
+  window.ready.then(() => {
+    let t = +(params.get("t") || 0), playing = true, last = performance.now();
+    addEventListener("keydown", (e) => { if (e.key === " ") playing = !playing; if (e.key === "ArrowRight") t += 2; if (e.key === "ArrowLeft") t = Math.max(0, t - 2); });
+    const loop = (now) => { if (playing) t += (now - last) / 1000; last = now; if (t > DURATION) t = 0; seek(t); requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+  });
+}
+</script>
+</body>
+</html>
