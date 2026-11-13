@@ -67,16 +67,26 @@ const TRADE_LABELS: Record<Trade, string> = {
   locksmith: "Locksmith",
 };
 
-const PROS_QUESTION: AskQuestion = {
-  field: "pros",
-  ask: "which of these trades the host already has someone they call for",
-  required: true,
-  options: [...TRADES.map((trade) => ({ value: trade, label: TRADE_LABELS[trade] })), { value: "none", label: "None yet" }],
-  multiple: true,
-  example: "Joe's Plumbing, 201-555-0142",
-  how:
-    "Ask this once, as one choice card with every trade and None yet, where the host picks all that apply. Never ask trade by trade, and never ask about a trade they didn't pick. Then, for each trade they picked, ask for that pro's name and phone, one per message. If you can read their contacts, receipts and emails, draft pros from them first with save_pro and draft: true, and confirm each drafted pro with the host, one per message: name the pro and their trade, with Yes, Change it and Remove as a choice card. Confirm with save_pro { confirm: [ids] }. For each trade, put the pros in the order to call them with preferredFor ranks. When the list is final (none is fine), call save_fixer_settings with prosDone: true.",
-};
+/** The pros, in two cards: Grok's choice card shows only a few options, so each has at most five. */
+const PROS_QUESTIONS: AskQuestion[] = [
+  {
+    field: "pros",
+    ask: "which of these trades the host already has someone they call for",
+    required: true,
+    options: [...(["plumbing", "hvac", "electrical", "handyman"] as const).map((trade) => ({ value: trade, label: TRADE_LABELS[trade] })), { value: "none", label: "None of these" }],
+    multiple: true,
+    example: "Joe's Plumbing, 201-555-0142",
+    how:
+      "Ask two choice cards, one card per message, where the host picks all that apply: this one, then the next. Never ask trade by trade, and never ask about a trade they didn't pick. Then, for each trade they picked on either card, ask for that pro's name and phone, one per message. If you can read their contacts, receipts and emails, draft pros from them first with save_pro and draft: true, and confirm each drafted pro with the host, one per message: name the pro and their trade, with Yes, Change it and Remove as a choice card. Confirm with save_pro { confirm: [ids] }. For each trade, put the pros in the order to call them with preferredFor ranks. When the list is final (none is fine), call save_fixer_settings with prosDone: true.",
+  },
+  {
+    field: "pros-more",
+    ask: "which of these other trades the host already has someone they call for",
+    required: true,
+    options: [...(["gutters", "pest-control", "appliance", "locksmith"] as const).map((trade) => ({ value: trade, label: TRADE_LABELS[trade] })), { value: "none", label: "None of these" }],
+    multiple: true,
+  },
+];
 
 const UPKEEP_QUESTION: AskQuestion = {
   field: "upkeep",
@@ -106,7 +116,7 @@ export function fixerSetupAsk(file: FixerFile, hub: Hub, cleaningOn: boolean, su
   if (file.settings.activatedAt) return undefined;
   if (!file.setup.prosDone) {
     const drafts = draftsByTrade(file);
-    return { step: "pros", tool: "save_pro", questions: [PROS_QUESTION], ...(drafts.length > 0 ? { drafts } : {}) };
+    return { step: "pros", tool: "save_pro", questions: PROS_QUESTIONS, ...(drafts.length > 0 ? { drafts } : {}) };
   }
   if (cleaningOn && !file.setup.cleanerAsked) {
     return {

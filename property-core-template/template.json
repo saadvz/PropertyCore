@@ -12,7 +12,8 @@
     "bootstrap": {
       "cleaning": "CLEANER_CORE_BOOTSTRAP.md",
       "supplies": "SUPPLY_CORE_BOOTSTRAP.md",
-      "touring": "GROK_BOOTSTRAP.md"
+      "touring": "GROK_BOOTSTRAP.md",
+      "repairs": "FIXER_CORE_BOOTSTRAP.md"
     },
     "note": "The public repository. Grok clones it only to read the chosen flow's guide and these files. It never runs anything from the clone."
   },
@@ -28,6 +29,13 @@
       "name": "Supply Core",
       "choice": "Supply Core: supplies reordered for a property",
       "profile": "../supply-template/bot-profile.md"
+    },
+    {
+      "service": "fixer",
+      "name": "Fixer Core",
+      "choice": "Fixer Core: repairs and upkeep for a property",
+      "profile": "../FIXER_CORE_BOOTSTRAP.md",
+      "note": "Offered only on a service with FIXER_CORE=1. Elsewhere set_flows answers that it isn't available yet."
     },
     {
       "service": "touring",
@@ -85,18 +93,50 @@
       "doc": "../cleaner-template/routines/cleaner-core-check.md",
       "trigger": "scheduled",
       "schedule": "Every 5 minutes for a demo, and hourly otherwise.",
-      "allowedTools": ["check_now", "confirm_times", "get_state", "save_arrival", "get_job_photos", "save_draft"],
+      "allowedTools": [
+        "check_now",
+        "confirm_times",
+        "get_state",
+        "save_arrival",
+        "get_job_photos",
+        "save_draft"
+      ],
       "credentialsTravelWithTemplate": false,
-      "supplyTools": ["get_supply_state", "report_low", "check_supplies", "check_cart", "approve_cart", "record_order", "record_problem", "mark_delivered"]
+      "supplyTools": [
+        "get_supply_state",
+        "report_low",
+        "check_supplies",
+        "check_cart",
+        "approve_cart",
+        "record_order",
+        "record_problem",
+        "mark_delivered"
+      ]
     },
     {
       "name": "Cleaner Core Alerts",
       "service": "cleaning",
       "doc": "../cleaner-template/routines/cleaner-core-alerts.md",
       "trigger": "authenticated-webhook",
-      "allowedTools": ["check_now", "confirm_times", "get_state", "save_arrival", "get_job_photos", "save_draft"],
+      "allowedTools": [
+        "check_now",
+        "confirm_times",
+        "get_state",
+        "save_arrival",
+        "get_job_photos",
+        "save_draft"
+      ],
       "credentialsTravelWithTemplate": false,
-      "supplyTools": ["get_supply_state", "report_low", "check_supplies", "check_cart", "approve_cart", "record_order", "record_problem", "mark_delivered"]
+      "supplyTools": [
+        "get_supply_state",
+        "report_low",
+        "check_supplies",
+        "check_cart",
+        "approve_cart",
+        "record_order",
+        "record_problem",
+        "mark_delivered"
+      ]
     },
     {
       "name": "Supply Core Check",
@@ -104,26 +144,99 @@
       "doc": "../supply-template/routines/supply-core-check.md",
       "trigger": "scheduled",
       "schedule": "Daily at the check time the host picked (10:00 unless they chose another).",
-      "allowedTools": ["get_supply_state", "check_supplies", "check_cart", "approve_cart", "record_order", "record_problem", "mark_delivered"],
+      "allowedTools": [
+        "get_supply_state",
+        "check_supplies",
+        "check_cart",
+        "approve_cart",
+        "record_order",
+        "record_problem",
+        "mark_delivered"
+      ],
       "credentialsTravelWithTemplate": false
+    },
+    {
+      "name": "Fixer Core Check",
+      "service": "fixer",
+      "doc": "../fixer-template/routines/fixer-core-check.md",
+      "trigger": "scheduled",
+      "schedule": "Hourly, unless the host picks another.",
+      "allowedTools": [
+        "get_state",
+        "get_fixer_state",
+        "check_fixes",
+        "contact_pro",
+        "record_contact",
+        "open_job",
+        "approve_job",
+        "approve_booking",
+        "pick_pros",
+        "pick_quote",
+        "save_pro",
+        "skip_question",
+        "change_door_code"
+      ],
+      "credentialsTravelWithTemplate": false
+    },
+    {
+      "name": "Property Core Alerts",
+      "service": "fixer",
+      "doc": "routines/property-core-alerts.md",
+      "trigger": "authenticated-webhook",
+      "allowedTools": [
+        "get_state",
+        "check_fixes",
+        "check_now",
+        "confirm_times",
+        "save_arrival",
+        "get_job_photos",
+        "save_draft"
+      ],
+      "credentialsTravelWithTemplate": false,
+      "note": "Fixer Core's setup creates it when the account has no alerts routine yet. It handles repairs.update and cleaning.update."
     },
     {
       "name": "Tour Core Operator Updates",
       "service": "touring",
       "doc": "../grok-template/routines/operator-updates.md",
       "trigger": "authenticated-webhook",
-      "allowedTools": ["get_inbox", "get_tours", "reply_to_time_request", "resolve_issue", "schedule_tour"],
+      "allowedTools": [
+        "get_inbox",
+        "get_tours",
+        "reply_to_time_request",
+        "resolve_issue",
+        "schedule_tour"
+      ],
       "credentialsTravelWithTemplate": false,
       "parked": true
     }
   ],
   "marketplace": {
-    "ships": ["the bot profile and standing instructions, which name the repository and the hosted address", "the seven Tour Core skills, kept for touring accounts while touring is parked"],
-    "neverShips": ["memories from a real setup", "any routine's webhook address or key", "OAuth tokens", "Google OAuth tokens", "Twilio credentials", "a door code", "card details or Vault contents", "phone numbers", "live booking, cleaning, order, or tour records"],
-    "activation": "A host adds the bot from the team template link and says Set up Property Core, or pastes the prompt into a new bot. It connects to hostedPropertyCoreUrl/mcp, the host signs in or types their invite code from Saad and clicks Allow, then adds a property and picks Cleaner Core, Supply Core, or both for it. Each routine is created during setup for the flows turned on. They never run a server.",
+    "ships": [
+      "the bot profile and standing instructions, which name the repository and the hosted address",
+      "the seven Tour Core skills, kept for touring accounts while touring is parked"
+    ],
+    "neverShips": [
+      "memories from a real setup",
+      "any routine's webhook address or key",
+      "OAuth tokens",
+      "Google OAuth tokens",
+      "Twilio credentials",
+      "a door code",
+      "card details or Vault contents",
+      "phone numbers",
+      "live booking, cleaning, order, or tour records"
+    ],
+    "activation": "A host adds the bot from the team template link and says Set up Property Core, or pastes the prompt into a new bot. It connects to hostedPropertyCoreUrl/mcp, the host signs in or types their invite code from Saad and clicks Allow, then adds a property and picks Cleaner Core, Supply Core, or Fixer Core for it. Each routine is created during setup for the flows turned on. They never run a server.",
     "build": "README.md#build-the-team-template"
   },
-  "suggestedPrompts": ["Set up Property Core", "Set up a cleaner for my property", "Set up Supply Core", "What's next?"],
+  "suggestedPrompts": [
+    "Set up Property Core",
+    "Set up a cleaner for my property",
+    "Set up Supply Core",
+    "Set up repairs",
+    "What's next?"
+  ],
   "neverIncluded": [
     "a door code",
     "any routine's webhook address or key",
@@ -135,12 +248,5 @@
     "calendar links",
     "live booking, cleaning, order, message, photo, or tour records",
     "a private repository address"
-  ],
-  "comingNext": [
-    {
-      "service": "fixer",
-      "name": "Fixer Core",
-      "note": "Repairs and upkeep. set_flows refuses fixer until it ships."
-    }
   ]
 }

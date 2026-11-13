@@ -66,6 +66,7 @@ const SAMPLES: Record<string, { method: keyof FixerDesk; args: Record<string, un
   change_door_code: { method: "changeDoorCode", args: { jobId: "job_abcdefghij" } },
   raise_price: { method: "raisePrice", args: { jobId: "job_abcdefghij", cents: 42000 }, passes: ["job_abcdefghij", 42000, "agent"] },
   save_repair_alerts: { method: "issueAlertUpload", args: {}, passes: "none" },
+  pick_quote: { method: "pickQuote", args: { jobId: "job_abcdefghij", proId: "pro_abcdefgh", costLineCents: 20000 } },
 };
 
 /** A desk that records each call and answers ok. */
@@ -83,7 +84,7 @@ function spyDesk() {
 describe("Fixer Core's tool table", () => {
   it("has the spec's tools and the extras, and leaves the front's and the page's out", () => {
     const spec = ["get_fixer_state", "save_fixer_settings", "save_pro", "remove_pro", "save_upkeep", "remove_upkeep", "activate_fixer", "check_fixes", "open_job", "approve_job", "add_candidates", "pick_pros", "contact_pro", "record_contact", "approve_booking", "visit_link", "revoke_visit", "extend_visit", "record_done", "record_cost", "cancel_job"];
-    const extras = ["guests_left", "skip_question", "change_door_code", "reschedule_job", "save_fixer_property", "save_fixer_sources", "raise_price", "save_repair_alerts"];
+    const extras = ["guests_left", "skip_question", "change_door_code", "reschedule_job", "save_fixer_property", "save_fixer_sources", "raise_price", "save_repair_alerts", "pick_quote"];
     expect([...FIXER_TOOL_NAMES].sort()).toEqual([...spec, ...extras].sort());
     expect(Object.keys(SAMPLES).sort()).toEqual([...FIXER_TOOL_NAMES].sort());
     // Answered by the front (Cleaner Core's photos, Supply Core's preview), and the page's reveal is never a tool.
@@ -249,5 +250,13 @@ describe("the hub's setup through Fixer Core", () => {
     const fresh2 = (await handleFixerTool(desk, "save_fixer_property", move))!;
     expect((await handleFixerTool(desk, "save_fixer_property", { ...move, confirmation: (fresh2.structured!.confirmation as { code: string }).code }))?.isError).toBe(false);
     expect(hub().property().address).toBe(move.address);
+  });
+});
+
+describe("quotes-only in the tool text", () => {
+  it("record_contact and check_fixes describe quotes-only repairs", () => {
+    const text = (name: string) => FIXER_TOOLS.find((tool) => tool.name === name)!.description;
+    expect(text("record_contact")).toContain("quotes-only");
+    expect(text("check_fixes")).toContain("quotesReady");
   });
 });

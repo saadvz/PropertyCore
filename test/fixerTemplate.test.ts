@@ -27,7 +27,7 @@ const RULES = [
   "Never pass a card number to Fixer Core.",
 ];
 
-const CHECK_FIXES_KEYS = ["needsGo", "upkeepDue", "contactNext", "unconfirmed", "followUps", "held", "delays", "preferredAsk", "rotationAsk", "news"];
+const CHECK_FIXES_KEYS = ["needsGo", "upkeepDue", "contactNext", "quotesReady", "unconfirmed", "followUps", "held", "delays", "preferredAsk", "rotationAsk", "news"];
 
 /** Every snake_case word in backticks that looks like a tool call. */
 function toolsNamed(text: string): string[] {

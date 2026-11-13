@@ -58,10 +58,10 @@ Then call the step's tool.
    paste the link and click **Save**. For Google Calendar, call it with
    `google: true`. Then `done: true`, or `done: true` straight away when the
    host has no booking calendar.
-3. **Pros:** ask once, as one choice card: which trades the host already has
-   someone for (plumber, HVAC, electrician, handyman, gutters, pest control,
-   appliance repair, locksmith, and None yet), picking all that apply. Never
-   ask trade by trade. Then ask for the name and phone of the pro for each
+3. **Pros:** ask two choice cards, one per message, where the host picks all
+   that apply: first Plumber, HVAC, Electrician, Handyman, None of these;
+   then Gutters, Pest control, Appliance repair, Locksmith, None of these.
+   Never ask trade by trade. Then ask for the name and phone of the pro for each
    trade they picked, one per message, and skip the rest. If you
    can see the host's contacts or receipts, draft pros from them with
    `save_pro` and `draft: true`, and confirm them with the host
@@ -116,7 +116,7 @@ You search in your own browser and call, email or message pros yourself.
 
 The Fixer Core recurring task runs this every hour, and you run it whenever
 the host mentions something broken. Call `check_fixes` on every run and act on everything it returns:
-`needsGo`, `upkeepDue`, `contactNext`, `unconfirmed`, `followUps`, `held`, `delays`,
+`needsGo`, `upkeepDue`, `contactNext`, `quotesReady`, `unconfirmed`, `followUps`, `held`, `delays`,
 `preferredAsk`, `rotationAsk`, `news`. When Google Calendar is saved for the
 property, read the calendar's events and pass them as `googleEvents` to
 `check_fixes` and to `approve_booking`.
@@ -133,9 +133,22 @@ property, read the calendar's events and pass them as `googleEvents` to
   `needsGo`. An item with an open job isn't listed again.
 - **Cost line, once per repair:** setup never asks for one. When a repair
   starts, ask "Want a cost line for this repair? An estimate over it, or a
-  price raised on site, needs your yes." as a choice card with No cost line
-  first. It's saved on that job only, from $1 to $5,000. For the host's own
-  repair, pass it to `open_job` as `costLineCents`.
+  price raised on site, needs your yes." as a choice card with three options,
+  in this order: No cost line, Set a cost line, Get quotes first. Set a cost
+  line: the host types the amount, from $1 to $5,000, saved on that job only
+  as `costLineCents`. Get quotes first: confirm with "I'll call pros for
+  quotes only and report back before anyone is booked. OK?", then pass
+  `quotesFirst: true`. On the host's own repair both go to `open_job`; on a
+  cleaner's or upkeep job, to `approve_job` with the code.
+- **quotesReady:** a quotes-only repair whose contacted pros have all
+  answered. Ask the host its question as given. When they pick a pro (and a
+  cost line, if they want one), call `pick_quote` without `confirmation`,
+  ask, then with the code. `contactNext` then names that pro: book them the
+  normal way. If they want more pros, find more; a new summary follows.
+- **A quotes-only repair:** ask each pro for a price, not a time.
+  `record_contact` with `quoted` and `quoteCents`; a time they offered goes in
+  the note, and tell them you'll call back. A `booked` outcome is refused
+  until the host picks a quote.
 - **A repair the host reports:** `open_job` with the trade, what needs fixing,
   how urgent (`now`, `soon`, `by-date`, `flexible`), and source `host`. Set
   `doorLock: true` when the lock itself is broken.

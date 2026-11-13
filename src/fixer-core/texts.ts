@@ -12,7 +12,7 @@ export function dollars(cents: number): string {
 }
 
 /** `$180` when the cents are 0, else `$180.50`. */
-function shortDollars(cents: number): string {
+export function shortDollars(cents: number): string {
   return cents % 100 === 0 ? `$${(cents / 100).toLocaleString("en-US")}` : dollars(cents);
 }
 
@@ -265,4 +265,11 @@ export function fixerOffQuestion(f: { label: string; jobs: { what: string; proNa
 /** After Activate, changing the property's address takes the host's yes (design pass). */
 export function propertyQuestion(f: { address: string }): string {
   return `Save ${f.address} as the property's address for repairs?`;
+}
+
+/** A quotes-only repair's summary for the host, once every contacted pro answered. */
+export function quotesQuestion(f: { what: string; quotes: { name: string; cents: number; note?: string }[] }): string {
+  if (f.quotes.length === 0) return `No quotes yet for ${f.what}. Want me to find more pros?`;
+  const list = f.quotes.map((q) => `${q.name} ${shortDollars(q.cents)}${q.note ? ` (${q.note})` : ""}`).join(", ");
+  return `Quotes for ${f.what}: ${list}. Who should I book, and want a cost line?`;
 }

@@ -126,6 +126,12 @@ export const FIXER_TOOLS: FixerTool[] = [
     input: z.object({ id: Id, confirmation: Confirmation }).strict(),
   },
   {
+    name: "pick_quote",
+    title: "Pick a quote",
+    description: `For a quotes-only repair, after quotesReady: the pro the host picked (proId) and, if they want one, a cost line (costLineCents). ${TWO_CALL} Then check_fixes names that pro in contactNext to book the normal way.`,
+    input: z.object({ jobId: Id, proId: Id, costLineCents: Cents.optional(), confirmation: Confirmation }).strict(),
+  },
+  {
     name: "save_repair_alerts",
     title: "Connect repair alerts",
     description:
@@ -142,14 +148,14 @@ export const FIXER_TOOLS: FixerTool[] = [
     name: "check_fixes",
     title: "What repairs need",
     description:
-      "The repair pass: jobs waiting for the host's go, upkeep due, the preferred pro to contact, the times a pro can come for each job, contacts with no outcome, follow-ups due, holds, delays, and questions for the host. Call it on every routine run and act on what it returns. Pass googleEvents when the bookings are in Google Calendar.",
+      "The repair pass: jobs waiting for the host's go, upkeep due, the preferred pro to contact, the times a pro can come for each job, contacts with no outcome, follow-ups due, holds, delays, questions for the host, and quotesReady (a quotes-only repair's quotes, once every pro answered). Call it on every routine run and act on what it returns. Pass googleEvents when the bookings are in Google Calendar.",
     input: z.object({ googleEvents: GoogleEvents.optional() }).strict(),
   },
   {
     name: "open_job",
     title: "Open a repair job",
     description:
-      'Opens a repair: trade, what needs fixing (under 300 characters, in the reporter\'s words), urgency (now, soon, by-date with byDate, or flexible), and source (host, cleaner, or upkeep with the upkeep id as sourceRef). For a cleaner\'s report, pass the message\'s photo ids as photoMessageIds and the cleaner\'s name. doorLock: true when the lock itself is broken. costLineCents, on the host\'s own job only, when the host wants a cost line for this repair: an estimate over it, no estimate, or a price raised on site then needs their yes. Ask the host before you open their job, and leave it out for no line. A host\'s job starts at once; a cleaner\'s or upkeep job waits for the host\'s go with approve_job.',
+      'Opens a repair: trade, what needs fixing (under 300 characters, in the reporter\'s words), urgency (now, soon, by-date with byDate, or flexible), and source (host, cleaner, or upkeep with the upkeep id as sourceRef). For a cleaner\'s report, pass the message\'s photo ids as photoMessageIds and the cleaner\'s name. doorLock: true when the lock itself is broken. costLineCents, on the host\'s own job only, when the host wants a cost line for this repair: an estimate over it, no estimate, or a price raised on site then needs their yes. Ask the host before you open their job, and leave it out for no line. quotesFirst: true when the host chose Get quotes first: pros are asked for a price only, and nothing is booked until pick_quote. A host\'s job starts at once; a cleaner\'s or upkeep job waits for the host\'s go with approve_job.',
     input: z
       .object({
         trade: Trade,
@@ -162,14 +168,15 @@ export const FIXER_TOOLS: FixerTool[] = [
         cleanerName: z.string().max(80).optional(),
         doorLock: z.literal(true).optional(),
         costLineCents: Cents.optional(),
+        quotesFirst: z.literal(true).optional(),
       })
       .strict(),
   },
   {
     name: "approve_job",
     title: "The host's go for a job",
-    description: `For a job from the cleaner or upkeep: ${TWO_CALL} After the host's yes, ask whether they want a cost line for this repair, and pass it as costLineCents on the call with the code; leave it out for no line. no: true when the host says no, which cancels the job.`,
-    input: z.object({ jobId: Id, no: z.literal(true).optional(), costLineCents: Cents.optional(), confirmation: Confirmation }).strict(),
+    description: `For a job from the cleaner or upkeep: ${TWO_CALL} After the host's yes, ask whether they want a cost line for this repair, and pass it as costLineCents on the call with the code (or quotesFirst: true for Get quotes first); leave it out for no line. no: true when the host says no, which cancels the job.`,
+    input: z.object({ jobId: Id, no: z.literal(true).optional(), costLineCents: Cents.optional(), quotesFirst: z.literal(true).optional(), confirmation: Confirmation }).strict(),
   },
   {
     name: "add_candidates",
@@ -192,7 +199,7 @@ export const FIXER_TOOLS: FixerTool[] = [
   {
     name: "record_contact",
     title: "Record what a pro said",
-    description: "The outcome of a contact, with its contactToken: booked (with from and until as ISO times, and estimateCents when they gave one), quoted (quoteCents), no-answer, declined, or waiting (followUpAt when they said when). A booking runs Fixer Core's checks and gives the host's question.",
+    description: "The outcome of a contact, with its contactToken: booked (with from and until as ISO times, and estimateCents when they gave one), quoted (quoteCents), no-answer, declined, or waiting (followUpAt when they said when). A booking runs Fixer Core's checks and gives the host's question. On a quotes-only repair, booked is refused: record quoted, with any time they offered in the note.",
     input: z
       .object({
         contactToken: z.string().max(80),
@@ -335,6 +342,8 @@ export async function handleFixerTool(desk: FixerDesk, name: string, args: unkno
       return desk.checkFixes(input);
     case "open_job":
       return desk.openJob(input);
+    case "pick_quote":
+      return desk.pickQuote(input);
     case "save_repair_alerts":
       return desk.issueAlertUpload();
     case "approve_job":

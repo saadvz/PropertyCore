@@ -22,8 +22,8 @@ const TEMPLATE_LINK = "https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ";
  * Base64, so a hex digest never holds a run of digits the door-code scan mistakes for a code.
  */
 const PROMPT_PINS: Record<string, string> = {
-  [`${ENTRY}/SETUP_PROMPT.md`]: "Z6ciZHJZVW6BYg+bk10gjZjFs3KCp3TFY3mowm72ypY=",
-  [`${ENTRY}/muse/SETUP_PROMPT.md`]: "DrYvPEjdIv2tSPwHMDd6WHA3WbHZPqc5HNtkHl+krIc=",
+  [`${ENTRY}/SETUP_PROMPT.md`]: "tlwI6CbPtnVzyH8P2ItCNLpMTZXW/ujVjH4cOksPyP4=",
+  [`${ENTRY}/muse/SETUP_PROMPT.md`]: "DvOMKs8e3rWFtbQ4qrmn4iCh7Vh5sF2wyYc+hfKphFk=",
 };
 
 /** The prompt inside a SETUP_PROMPT.md's text block. */
@@ -50,12 +50,40 @@ const REDIRECTS = [
 
 const HTML_GUIDES = ["grok", "muse", "claude", "chatgpt"].map((agent) => `docs/property-core-${agent}-setup.html`);
 
+describe("the Grok template's Fixer Core", () => {
+  const template = JSON.parse(read(`${ENTRY}/template.json`)) as {
+    repository: { bootstrap: Record<string, string> };
+    services: { service: string }[];
+    routines: { name: string; service: string; doc: string }[];
+    suggestedPrompts: string[];
+    comingNext?: { service: string }[];
+  };
+
+  it("offers Fixer Core as a flow, with its guide, its routines and a prompt, and no longer as coming next", () => {
+    expect(template.services.map((s) => s.service)).toContain("fixer");
+    expect(template.repository.bootstrap.repairs).toBe("FIXER_CORE_BOOTSTRAP.md");
+    const routines = template.routines.filter((r) => r.service === "fixer").map((r) => [r.name, r.doc]);
+    expect(routines).toEqual([
+      ["Fixer Core Check", "../fixer-template/routines/fixer-core-check.md"],
+      ["Property Core Alerts", "routines/property-core-alerts.md"],
+    ]);
+    for (const [, doc] of routines) expect(existsSync(join(REPO_ROOT, ENTRY, doc!)), doc).toBe(true);
+    expect(template.suggestedPrompts).toContain("Set up repairs");
+    expect((template.comingNext ?? []).map((c) => c.service)).not.toContain("fixer");
+  });
+
+  it("the profile offers Fixer Core in the flow choice card", () => {
+    const profile = read(`${ENTRY}/bot-profile.md`).replace(/\s+/g, " ");
+    expect(profile).toContain("Cleaner Core, Supply Core, or Fixer Core for repairs, as a choice card");
+  });
+});
+
 describe("the entry prompts", () => {
-  it.each(Object.keys(PROMPT_PINS))("%s is pinned and offers Cleaner Core and Supply Core, never Tour Core", (rel) => {
+  it.each(Object.keys(PROMPT_PINS))("%s is pinned and offers Cleaner Core, Supply Core and Fixer Core, never Tour Core", (rel) => {
     expect(createHash("sha256").update(read(rel)).digest("base64")).toBe(PROMPT_PINS[rel]);
     const prompt = promptOf(rel);
     expect(prompt).toContain(REPO);
-    expect(prompt).toContain("Cleaner Core, Supply Core, or both");
+    expect(prompt).toContain("Cleaner Core, Supply Core, or Fixer Core for repairs");
     expect(prompt).toContain("get_state");
     expect(prompt).not.toMatch(/Tour Core|touring|tours/i);
     expect(prompt).toMatch(/Do not start anything on your computer\./);
@@ -140,7 +168,7 @@ describe("the entry folder", () => {
   it("turns on Supply Core in the Grok bot, with its guide, routine, and Vault", () => {
     const m = json<{ repository: { bootstrap: Record<string, string> }; services: { service: string; parked?: string }[]; routines: { name: string; service: string }[]; integrations: { name: string; service?: string }[]; suggestedPrompts: string[] }>(`${ENTRY}/template.json`);
     expect(m.repository.bootstrap.supplies).toBe("SUPPLY_CORE_BOOTSTRAP.md");
-    expect(m.services.filter((s) => !s.parked).map((s) => s.service)).toEqual(["cleaning", "supplies"]);
+    expect(m.services.filter((s) => !s.parked).map((s) => s.service)).toEqual(["cleaning", "supplies", "fixer"]);
     expect(m.services.find((s) => s.service === "touring")?.parked).toBeTruthy();
     expect(m.routines.filter((r) => r.service === "supplies").map((r) => r.name)).toEqual(["Supply Core Check"]);
     expect(m.integrations).toContainEqual(expect.objectContaining({ name: "Grok shopping and Vault", service: "supplies" }));
