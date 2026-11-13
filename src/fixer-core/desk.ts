@@ -1629,6 +1629,11 @@ export class FixerDesk {
           out.push({ jobId: job.id, proId: pick.proId, name, reach: this.reachOfId(file, job, pick.proId) });
           continue;
         }
+        // The picked pro can't be contacted any more (removed, say): back to quotes-only, so the host hears the rest.
+        job.quotesFirst = true;
+        delete job.quotePick;
+        delete job.quotesToldAt;
+        continue;
       }
       const next = this.topPro(file, job.trade, job.contacts.map((contact) => contact.to));
       if (!next || !contactAllowed(job, next.pro.id, file.pros).ok) continue;
@@ -1649,16 +1654,21 @@ export class FixerDesk {
       const job = this.jobOf(file, input.jobId);
       if (!job) return fail("There's no job with that id. Call get_fixer_state for the list.");
       if (!isOpen(job) || !job.quotesFirst) return fail("That repair isn't getting quotes first.");
-      if (typeof input.proId !== "string" || !job.contacts.some((c) => !c.cancelled && c.to === input.proId && c.outcome === "quoted")) return fail("Pick a pro who gave a quote on this repair.");
+      const live = job.contacts.filter((c) => !c.cancelled);
+      if (live.some((c) => c.outcome === undefined || c.outcome === "waiting")) return fail("Not every pro has answered yet. Record what each one said first.");
+      // The pro's latest answer has to be a quote: an older quote they took back doesn't count.
+      const latest = typeof input.proId === "string" ? live.filter((c) => c.to === input.proId).at(-1) : undefined;
+      if (!latest || latest.outcome !== "quoted" || !latest.quote) return fail("Pick a pro who gave a quote on this repair.");
       if (input.costLineCents !== undefined && !isInt(input.costLineCents, 100, 500_000)) return fail(COST_LINE_RANGE);
-      const name = this.nameOf(file, job, input.proId) ?? "That pro";
+      const name = this.nameOf(file, job, latest.to) ?? "That pro";
       const line = input.costLineCents !== undefined ? ` with a ${shortDollars(input.costLineCents)} cost line` : "";
-      const gate = this.approved(file, "fixer-pick-quote", job.id, input, `Book ${name} for ${job.what}${line}?`);
+      // Bound to the quote too: a new price means a new question.
+      const gate = this.approved(file, "fixer-pick-quote", job.id, { ...input, quoteCents: latest.quote.cents } as typeof input, `Book ${name} at ${shortDollars(latest.quote.cents)} for ${job.what}${line}?`);
       if (gate !== "go") return gate;
       delete job.quotesFirst;
       delete job.quotesToldAt;
       if (input.costLineCents !== undefined) job.costLineCents = input.costLineCents;
-      job.quotePick = { proId: input.proId, at: this.deps.now().toISOString() };
+      job.quotePick = { proId: latest.to, at: this.deps.now().toISOString() };
       this.write(file);
       return ok({ picked: true, jobId: job.id, next: `Call check_fixes: contactNext names ${name} to book.` });
     });
@@ -1680,7 +1690,8 @@ export class FixerDesk {
       if (job.quotesToldAt && !contacts.some((c) => (c.outcomeAt ?? c.at) > job.quotesToldAt!)) continue;
       // Each pro once, by their latest contact.
       const latest = new Map(contacts.map((c) => [c.to, c]));
-      const quotes = [...latest.values()].filter((c) => c.outcome === "quoted" && c.quote).map((c) => ({ proId: c.to, name: this.nameOf(file, job, c.to) ?? "A pro", cents: c.quote!.cents, ...(c.quote!.note ? { note: c.quote!.note } : {}) }));
+      // A pro who can't be contacted any more (removed, say) isn't offered.
+      const quotes = [...latest.values()].filter((c) => c.outcome === "quoted" && c.quote && this.nameOf(file, job, c.to) !== undefined && contactAllowed(job, c.to, file.pros).ok).map((c) => ({ proId: c.to, name: this.nameOf(file, job, c.to) ?? "A pro", cents: c.quote!.cents, ...(c.quote!.note ? { note: c.quote!.note } : {}) }));
       out.push({ jobId: job.id, quotes, question: quotesQuestion({ what: job.what, quotes }) });
       job.quotesToldAt = this.deps.now().toISOString();
     }

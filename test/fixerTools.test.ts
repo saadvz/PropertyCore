@@ -252,3 +252,11 @@ describe("the hub's setup through Fixer Core", () => {
     expect(hub().property().address).toBe(move.address);
   });
 });
+
+describe("quotes-only in the tool text", () => {
+  it("record_contact and check_fixes describe quotes-only repairs", () => {
+    const text = (name: string) => FIXER_TOOLS.find((tool) => tool.name === name)!.description;
+    expect(text("record_contact")).toContain("quotes-only");
+    expect(text("check_fixes")).toContain("quotesReady");
+  });
+});

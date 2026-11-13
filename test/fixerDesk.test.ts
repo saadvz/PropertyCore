@@ -982,7 +982,7 @@ describe("quotes first", () => {
     const joe = await w.contact(w.joe);
     await w.desk.recordContact({ contactToken: joe, outcome: "quoted", quoteCents: 15000 });
     const ask = await w.desk.pickQuote({ jobId: w.job().id, proId: w.joe, costLineCents: 20_000 });
-    expect(ask.structured!.question).toBe("Book Joe's Plumbing for Kitchen sink leaks with a $200 cost line?");
+    expect(ask.structured!.question).toBe("Book Joe's Plumbing at $150 for Kitchen sink leaks with a $200 cost line?");
     expect(w.job().quotesFirst).toBe(true);
     expect((await w.desk.pickQuote({ jobId: w.job().id, proId: w.joe, costLineCents: 20_000, confirmation: codeOf(ask) })).isError).toBe(false);
     expect(w.job()).toMatchObject({ costLineCents: 20_000 });
@@ -1049,6 +1049,47 @@ describe("quotes first", () => {
     expect(w.job().quotesFirst).toBe(true);
     const listed = await ready(w.desk);
     expect(listed[0]!.quotes.map((q) => q.proId)).toEqual([w.rita]);
+  });
+
+  it("pick_quote asks with the price and is bound to it: a new quote makes the old code stale", async () => {
+    const w = await quotesJob();
+    const joe = await w.contact(w.joe);
+    await w.desk.recordContact({ contactToken: joe, outcome: "quoted", quoteCents: 15000 });
+    await w.desk.recordContact({ contactToken: await w.contact(w.rita), outcome: "declined" });
+    const ask = await w.desk.pickQuote({ jobId: w.job().id, proId: w.joe });
+    expect(ask.structured!.question).toBe("Book Joe's Plumbing at $150 for Kitchen sink leaks?");
+    w.clock.at = new Date(NOW.getTime() + 60_000);
+    await w.desk.recordContact({ contactToken: await w.contact(w.joe), outcome: "quoted", quoteCents: 40000 });
+    expect((await w.desk.pickQuote({ jobId: w.job().id, proId: w.joe, confirmation: codeOf(ask) })).isError).toBe(true);
+    expect(w.job().quotesFirst).toBe(true);
+  });
+
+  it("pick_quote refuses a pro whose latest answer isn't a quote, and while a pro hasn't answered", async () => {
+    const w = await quotesJob();
+    await w.desk.recordContact({ contactToken: await w.contact(w.joe), outcome: "quoted", quoteCents: 15000 });
+    const rita = await w.contact(w.rita);
+    const waiting = await w.desk.pickQuote({ jobId: w.job().id, proId: w.joe });
+    expect(waiting.isError).toBe(true);
+    expect(waiting.text).toBe("Not every pro has answered yet. Record what each one said first.");
+    await w.desk.recordContact({ contactToken: rita, outcome: "declined" });
+    w.clock.at = new Date(NOW.getTime() + 60_000);
+    await w.desk.recordContact({ contactToken: await w.contact(w.joe), outcome: "declined" });
+    expect((await w.desk.pickQuote({ jobId: w.job().id, proId: w.joe })).isError).toBe(true);
+  });
+
+  it("when the picked pro was removed, quotes-only comes back and the host hears the rest", async () => {
+    const w = await quotesJob();
+    await w.desk.recordContact({ contactToken: await w.contact(w.joe), outcome: "quoted", quoteCents: 15000 });
+    await w.desk.recordContact({ contactToken: await w.contact(w.rita), outcome: "quoted", quoteCents: 22000 });
+    await ready(w.desk);
+    const ask = await w.desk.pickQuote({ jobId: w.job().id, proId: w.joe });
+    await w.desk.pickQuote({ jobId: w.job().id, proId: w.joe, confirmation: codeOf(ask) });
+    const remove = await w.desk.removePro({ id: w.joe });
+    await w.desk.removePro({ id: w.joe, confirmation: codeOf(remove) });
+    const reply = (await w.desk.checkFixes({})).structured as { contactNext: { proId: string }[]; quotesReady: { quotes: { proId: string }[] }[] };
+    expect(reply.contactNext.map((c) => c.proId)).not.toContain(w.joe);
+    expect(reply.quotesReady[0]!.quotes.map((q) => q.proId)).toEqual([w.rita]);
+    expect(w.job().quotesFirst).toBe(true);
   });
 });
 

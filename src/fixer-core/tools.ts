@@ -148,7 +148,7 @@ export const FIXER_TOOLS: FixerTool[] = [
     name: "check_fixes",
     title: "What repairs need",
     description:
-      "The repair pass: jobs waiting for the host's go, upkeep due, the preferred pro to contact, the times a pro can come for each job, contacts with no outcome, follow-ups due, holds, delays, and questions for the host. Call it on every routine run and act on what it returns. Pass googleEvents when the bookings are in Google Calendar.",
+      "The repair pass: jobs waiting for the host's go, upkeep due, the preferred pro to contact, the times a pro can come for each job, contacts with no outcome, follow-ups due, holds, delays, questions for the host, and quotesReady (a quotes-only repair's quotes, once every pro answered). Call it on every routine run and act on what it returns. Pass googleEvents when the bookings are in Google Calendar.",
     input: z.object({ googleEvents: GoogleEvents.optional() }).strict(),
   },
   {
@@ -199,7 +199,7 @@ export const FIXER_TOOLS: FixerTool[] = [
   {
     name: "record_contact",
     title: "Record what a pro said",
-    description: "The outcome of a contact, with its contactToken: booked (with from and until as ISO times, and estimateCents when they gave one), quoted (quoteCents), no-answer, declined, or waiting (followUpAt when they said when). A booking runs Fixer Core's checks and gives the host's question.",
+    description: "The outcome of a contact, with its contactToken: booked (with from and until as ISO times, and estimateCents when they gave one), quoted (quoteCents), no-answer, declined, or waiting (followUpAt when they said when). A booking runs Fixer Core's checks and gives the host's question. On a quotes-only repair, booked is refused: record quoted, with any time they offered in the note.",
     input: z
       .object({
         contactToken: z.string().max(80),
