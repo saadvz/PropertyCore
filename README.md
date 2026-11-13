@@ -30,7 +30,7 @@ Your agent never asks for the code, a password, or a door code in chat.
 - **Grok Bot:** add the Property Core team template from https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ, or paste
   the prompt in [`property-core-template/SETUP_PROMPT.md`](property-core-template/SETUP_PROMPT.md) into a
   new Grok Bot. Then say "Set up Property Core". The bot adds your property and asks whether you want
-  Cleaner Core, Supply Core, or both there.
+  Cleaner Core, Supply Core, or Fixer Core (repairs) there.
 - **Muse (beta):** paste the prompt in
   [`property-core-template/muse/SETUP_PROMPT.md`](property-core-template/muse/SETUP_PROMPT.md) into a new
   Muse chat. It works the same way.

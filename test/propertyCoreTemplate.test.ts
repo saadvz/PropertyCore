@@ -62,7 +62,7 @@ describe("Property Core template", () => {
 
   it("starts from get_state, adds properties, and turns flows on with set_flows, never picking a service", () => {
     expect(propertyFlow(profile())).toBe(true);
-    expect(manifest().services.map((s) => s.service).sort()).toEqual(["cleaning", "supplies", "touring"]);
+    expect(manifest().services.map((s) => s.service).sort()).toEqual(["cleaning", "fixer", "supplies", "touring"]);
   });
 
   it("carries each service's routines, the same ones its own template defines", () => {
