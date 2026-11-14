@@ -1,0 +1,17 @@
+From: Airbnb <express@airbnb.com>
+Subject: Reservation confirmed - Priya Shah arrives Jan 3
+
+New booking confirmed! Priya arrives Jan 3.
+
+Harbor Cottage by the Water
+Private room
+
+Check-in                 Checkout
+Sat, Jan 3               Mon, Jan 5
+4:00 PM                  10:00 AM
+
+Guests
+3 guests
+
+Confirmation code
+HMB7TT3P2M

@@ -1,0 +1,6 @@
+From: Airbnb <automated@airbnb.com>
+Subject: Reservation canceled
+
+Your guest canceled. The dates are open again on your calendar.
+
+Confirmation code: HMXK4Q2Z9R
