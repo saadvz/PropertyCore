@@ -7,6 +7,7 @@ import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { Property } from "../cleaner-core/hosted/properties";
 import { promoteRoutineOwner, propertyContext, shareRoutine, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
 import { sweepHeldTexts } from "./lineRouter";
+import { bookingEmailProperty } from "./bookingEmailRoute";
 import { signUpFlag } from "./signUp";
 import { afterPeopleSaved, draftPeople, peopleRefusal } from "./sharedPeople";
 import { attachToolListStream, noteInitialized } from "../mcp/toolListChanged";
@@ -226,6 +227,12 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
   // A held text on the shared line that nobody answered for 2 hours is dropped here, with a note for the host.
   if (name === "check_now") await sweepHeldTexts(h, tenant);
   if (name === "check_now" && !namesProperty(args) && !googleEvents && tenant.properties.length > 1) return checkEveryProperty(h, r, tenant, caller, args);
+  // An Airbnb booking email that names no property goes to the one whose listing it matches.
+  if (name === "read_booking_email" && !namesProperty(args) && tenant.properties.length > 1) {
+    const routed = bookingEmailProperty(h.dataRoot, tenant, args, () => h.now());
+    if ("refusal" in routed) return { text: routed.refusal, isError: true };
+    return cleaningTool(h, r, tenant, routed.property, caller, name, (args ?? {}) as Record<string, unknown>);
+  }
   const resolved = resolveProperty(tenant, args);
   if ("refusal" in resolved) return { text: resolved.refusal, isError: true };
   const { property } = resolved;
