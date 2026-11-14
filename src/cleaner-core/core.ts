@@ -94,6 +94,8 @@ export interface JobView {
   id: string;
   departingUid: string;
   arrivingUid: string | null;
+  /** Check-in date of the departing stay, when it was read. */
+  checkInDate?: string;
   status: JobStatus;
   live: boolean;
   textsBlocked: boolean;
@@ -476,6 +478,15 @@ export interface CleanerCore {
    * Offers still go one at a time.
    */
   setOpenTimes(input: { checkout: number; checkIn: number }): Promise<{ timed: number; sent: CleanerText[] }>;
+  /**
+   * Times one named cleaning, in minutes after midnight, as an Airbnb email gives them (#244): the
+   * same facts confirm_times adds, then whatever the existing rules send for a changed time. A side
+   * left out is unchanged. Refused for a cleaning called off, declined, under way or done, and for
+   * one whose door code already went out.
+   */
+  setJobTimes(input: { jobId: string; checkout?: number; checkIn?: number }): Promise<{ applied: boolean; reason?: "unknown" | "closed" | "code-sent"; sent: CleanerText[] }>;
+  /** Calls off one cleaning on the host's yes, the way a stay leaving the calendar does. Never one cleared or under way. */
+  callOffJob(jobId: string): Promise<{ calledOff: boolean; sent: CleanerText[] }>;
   /** The host told Grok the guests have left. The door code goes out under the same rules as before. */
   hostDeparture(id: string): Promise<ReceiveResult>;
   /** The host told Grok to send an uncertain offer or reminder once more. */
@@ -677,6 +688,8 @@ interface Job {
   sourceSequence: number;
   contentHash: string;
   canceled: boolean;
+  /** Called off on the host's yes while the calendar still showed the stay. Only a new checkout date brings it back. */
+  calledOff?: boolean;
   declined: boolean;
   announced: Announced | null;
   started: boolean;
@@ -1411,6 +1424,40 @@ class Engine implements CleanerCore {
     const sent = timed === 0 || this.optedOut || this.problemHold ? [] : await this.drainOne();
     this.save();
     return { timed, sent };
+  }
+
+  async setJobTimes(input: { jobId: string; checkout?: number; checkIn?: number }): Promise<{ applied: boolean; reason?: "unknown" | "closed" | "code-sent"; sent: CleanerText[] }> {
+    const job = this.jobsState.find((item) => item.id === input.jobId);
+    if (!job) return { applied: false, reason: "unknown", sent: [] };
+    if (job.canceled || job.declined || job.done || job.started) return { applied: false, reason: "closed", sent: [] };
+    if (this.pinDelivered(job)) return { applied: false, reason: "code-sent", sent: [] };
+    const before = JSON.stringify([this.latestFact(job.id, "checkout")?.minutes, this.latestFact(job.id, "checkin")?.minutes]);
+    if (input.checkout !== undefined) this.addFact(job.id, "checkout", input.checkout);
+    if (input.checkIn !== undefined && job.nextCheckInDate) this.addFact(job.id, "checkin", input.checkIn);
+    const changed = JSON.stringify([this.latestFact(job.id, "checkout")?.minutes, this.latestFact(job.id, "checkin")?.minutes]) !== before;
+    const sent = !changed || !this.enabled || !this.everConsented || this.optedOut || this.problemHold ? [] : await this.drainOne();
+    this.save();
+    return { applied: true, sent };
+  }
+
+  async callOffJob(jobId: string): Promise<{ calledOff: boolean; sent: CleanerText[] }> {
+    const job = this.jobsState.find((item) => item.id === jobId);
+    if (!job || job.canceled || job.declined || job.done || job.started || this.pinDelivered(job)) return { calledOff: false, sent: [] };
+    const status = this.derive(job);
+    if (status === "cleared" || status === "in_progress") return { calledOff: false, sent: [] };
+    // The same call-off as a stay leaving the calendar: no reminder, door code, or offer follows.
+    job.canceled = true;
+    job.calledOff = true;
+    job.version += 1;
+    this.counters.canceled += 1;
+    this.tombstones.push({ uid: job.id, version: job.version, contentHash: job.contentHash });
+    this.dropClearance(job.id);
+    this.cancelUnsentPin(job.id);
+    this.cancelPendingReminders(job.id);
+    const draft = this.enabled && !this.optedOut ? this.noticeFor(job) : null;
+    const text = draft ? await this.emit(draft) : null;
+    this.save();
+    return { calledOff: true, sent: text ? [text] : [] };
   }
 
   holdNotice(): string | undefined {
@@ -2429,6 +2476,8 @@ class Engine implements CleanerCore {
         continue;
       }
       if (existing.canceled && turnover.contentHash === existing.contentHash) continue;
+      // The host called this stay off while the calendar still showed it. A new next booking doesn't bring it back; a new checkout date does.
+      if (existing.canceled && existing.calledOff && turnover.checkoutDate === existing.checkoutDate) continue;
       // Sequence numbers from different sources don't compare, so a stay taken over from another UID skips this.
       if (!moved.has(existing.id) && turnover.sequence < existing.sourceSequence) continue;
       // The stay's check-in is not part of the content hash, so it is kept up to date here.
@@ -2451,6 +2500,7 @@ class Engine implements CleanerCore {
       existing.sourceSequence = turnover.sequence;
       existing.version += 1;
       existing.canceled = false;
+      delete existing.calledOff;
       if (checkoutDateChanged) {
         this.clearHostTime(existing.id, "checkout");
         this.dropClearance(existing.id);
@@ -3412,6 +3462,7 @@ class Engine implements CleanerCore {
       id: job.id,
       departingUid: job.departingUid,
       arrivingUid: job.arrivingUid,
+      ...(job.checkInDate ? { checkInDate: job.checkInDate } : {}),
       status,
       live,
       textsBlocked: !live || this.optedOut || this.problemHold,
