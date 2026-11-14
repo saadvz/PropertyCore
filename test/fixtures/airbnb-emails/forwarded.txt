@@ -1,0 +1,19 @@
+From: Cory Host <cory@example.com>
+Subject: Fwd: Reservation confirmed - Jamie Rivera arrives Oct 18
+
+---------- Forwarded message ---------
+From: Airbnb <automated@airbnb.com>
+
+Harbor Cottage by the Water
+Entire home/apt
+
+Check-in
+Sun, Oct 18
+3:00 PM
+
+Checkout
+Thu, Oct 22
+12:00 PM
+
+Confirmation code
+HMXK4Q2Z9R

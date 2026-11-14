@@ -50,7 +50,7 @@ After Activate, `get_state` asks for the first booking's times. Call `confirm_ti
 
 Call `check_now` when a routine wakes you or the host says "check my calendars".
 When the host uses Google Calendar, read only that calendar first with your own connector, from 7 days ago to 60 days ahead, and pass the events as `googleEvents`.
-Ask the host to enter each stay as a timed event, from check-in to checkout.
+Ask the host to enter each stay as a timed event, from check-in to checkout. With the host's email connected to you, pass each Airbnb reservation email (confirmed, changed or cancelled) to `read_booking_email` as it arrives, exactly as received (`from`, `subject`, plain-text `body`, `messageId`, `receivedAt`); never a guest message or a forward. Without it, say once that connecting it gives Cleaner Core each booking's exact times. The calendar still decides which nights are booked. On `mismatch`, ask whether the listing is this property and on yes call again with `thisListing: true`. On `asked`, show the host `next` and `texts`, and call again with the `confirmation` code only after their yes.
 
 - **New booking.** The alert names the stay and the usual times. When the host says yes, call `confirm_times` with those times.
 - **`needsTimes`.** Ask for the checkout time and the next check-in time. Then call `confirm_times`.

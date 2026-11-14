@@ -45,6 +45,8 @@ export interface HubFile {
   stays?: Stay[];
   /** Calendars only one flow had when the data moved. Never read; names shown, links never. */
   calendarsSetAside?: StoredCalendar[];
+  /** The Airbnb listing titles the host said are this property's, for matching booking emails (#244). */
+  airbnbListings?: string[];
 }
 
 export function emptyHub(): HubFile {

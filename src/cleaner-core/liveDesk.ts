@@ -37,6 +37,7 @@ import { accountOf, peopleFor, resetPeople, streetOf, type MoveSource, type Peop
 import { containsCodeToken, redactPhone } from "./redact";
 import { isScratchTestNumber } from "./scratch";
 import { guestyLiteSource, icalSource, type BookingSource, type GoogleEventList } from "../hub/sources";
+import { CANCEL_ACTION, emailFacts, retryPendingEmails, takeBookingEmail, type EmailDesk, type EmailInput } from "./bookingEmailDesk";
 import {
   SCRATCH_NUMBER_REFUSAL,
   SCRATCH_PROPERTY_REFUSAL,
@@ -1757,6 +1758,8 @@ export class LiveDesk {
     if (!this.file.checked && !this.file.texting && this.routineReady()) return this.reply({ alerts: [], messages: [], next: NOT_ACTIVE_YET });
     if (!this.file.checked || !engine) return this.fail("Run the checks first.");
     const read = await this.readCalendars(input.googleEvents);
+    // Airbnb emails whose stay wasn't on the calendar yet get their times now, or a question after 3 hours.
+    await retryPendingEmails(this.emailDesk(input.googleEvents));
     await engine.runReminders();
     this.syncHold();
     this.nudgeCheckout(engine);
@@ -1829,6 +1832,7 @@ export class LiveDesk {
       return this.fail(GOOGLE_UNREAD);
     }
     this.file.checked = true;
+    await retryPendingEmails(this.emailDesk(input.googleEvents));
     // run_checks' own reply already asks for the times, so its new-booking alert counts as shown too.
     const seen = [...this.visibleNotes(engine), ...this.newBookingAlert(engine)].map((note) => note.id);
     this.file.alertsShown = [...new Set([...(this.file.alertsShown ?? []), ...seen])];
@@ -2112,6 +2116,46 @@ export class LiveDesk {
   /** Supply Core turned on, off, or activated: the engine reopens before the next step and reads it. */
   refreshSupplyAsk(): void {
     this.stale = true;
+  }
+
+  /**
+   * One Airbnb reservation email the host's agent fetched from the host's connected mailbox (#244).
+   * Its times go on the matching cleanings; when it disagrees with the calendar or the property,
+   * nothing changes and the host is asked. See src/cleaner-core/bookingEmailDesk.ts.
+   */
+  readBookingEmail(input: EmailInput & { googleEvents?: GoogleEventList }, pinKey?: Buffer): Promise<ToolReply> {
+    return this.serial(async () => {
+      this.resume();
+      this.openSeal(pinKey);
+      if (this.file.choice !== "cleaners") return this.fail(PICK_FIRST);
+      const { googleEvents, ...email } = input;
+      const answer = await takeBookingEmail(this.emailDesk(googleEvents), email);
+      this.syncHold();
+      this.persist();
+      return answer.ok ? this.reply(answer.result) : this.fail(answer.error);
+    });
+  }
+
+  /** What the booking email code may use of this desk. */
+  private emailDesk(googleEvents: GoogleEventList | undefined): EmailDesk {
+    return {
+      root: this.root,
+      now: () => this.now(),
+      engine: () => (this.file.checked ? this.engine : undefined),
+      place: () => this.place,
+      listings: () => this.hub.airbnbListings(),
+      addListing: (title) => this.hub.addAirbnbListing(title),
+      carriesCode: (text) => this.carriesCode(text) || this.leaks(text),
+      readCalendars: async () => {
+        if (!this.engine || !this.file.checked) return false;
+        if (this.hub.google() && !googleEvents) return false;
+        await this.readCalendars(googleEvents);
+        return true;
+      },
+      cleanerName: () => this.file.cleanerName ?? "your cleaner",
+      issueApproval: (target, fingerprint, next) => this.approvals.issue(CANCEL_ACTION, target, fingerprint, next),
+      redeem: (code, target, fingerprint) => this.redeemed(this.approvals, code, CANCEL_ACTION, target, fingerprint),
+    };
   }
 
   getTurns(): Promise<ToolReply> {
@@ -3658,8 +3702,10 @@ export class LiveDesk {
 
   private turns(): Record<string, unknown>[] {
     if (!this.engine) return [];
+    const facts = emailFacts(this.root);
     return this.engine.jobs().map((job) => ({
       checkoutDate: job.checkoutDate,
+      ...(job.checkInDate ? facts.get(`${job.checkInDate}|${job.checkoutDate}`) : {}),
       nextCheckInDate: job.nextCheckInDate,
       checkoutTime: job.checkoutTime,
       nextCheckInTime: job.nextCheckInTime,

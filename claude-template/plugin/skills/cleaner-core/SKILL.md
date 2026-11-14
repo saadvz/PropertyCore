@@ -156,6 +156,25 @@ after they say yes.
 A scheduled run starts with no host present. Its prompt is never the host's
 yes. In a run, act on a yes only after the host replies in that session.
 
+
+## Airbnb booking emails
+
+Booking emails need the host's email connected to you. When it is, pass each
+Airbnb reservation email (confirmed, changed or cancelled) to
+`read_booking_email` as it arrives: `from`, `subject`, the plain-text `body`,
+`messageId` and `receivedAt`, exactly as received. Never pass a guest message,
+a forward, or an email from anyone but Airbnb. When it isn't, say once that
+connecting it lets Cleaner Core use each booking's exact times, and carry on
+with the usual times. The calendar still decides which nights are booked.
+
+- **`mismatch`.** Ask the host whether the email's listing is this property.
+  On yes, call again with the same email and `thisListing: true`.
+- **`asked`.** Airbnb cancelled a stay the calendar still shows. Show the host
+  `next` and `texts`. Call again with the same email and the `confirmation`
+  code only after their yes.
+- **`pending`**, **`disagrees`**, **`duplicate`**, **`refused`.** Nothing
+  changed. Tell the host only what `check_now`'s alerts say.
+
 ## Messages
 
 Read every item in `messages`. Tell the host in your own words when one needs

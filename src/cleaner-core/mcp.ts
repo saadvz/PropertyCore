@@ -176,6 +176,24 @@ const TOOLS = [
     input: z.object({ googleEvents: z.object({ timeZone: z.string().optional(), items: z.array(z.unknown()) }).optional() }),
   },
   {
+    name: "read_booking_email",
+    title: "Read an Airbnb booking email",
+    description:
+      "Reads one Airbnb reservation email (confirmed, changed or cancelled) that you fetched from the host's connected email, and puts its check-in and checkout times, guest count and confirmation code on the matching cleanings. The calendar still decides which nights are booked. Pass the email exactly as received; a door code in it is never kept. An email that doesn't match this property or the calendar changes nothing and asks the host. thisListing: true only after the host said the email's listing is this property. confirmation only after the host's yes to calling off a cancelled stay, with the same email. When the host uses Google Calendar, pass its events as googleEvents.",
+    input: z.object({
+      email: z.object({
+        from: z.string().max(500),
+        subject: z.string().max(1000),
+        body: z.string().max(50_000),
+        messageId: z.string().max(500).optional(),
+        receivedAt: z.string().max(40).optional(),
+      }),
+      thisListing: z.boolean().optional(),
+      confirmation: z.string().max(40).optional(),
+      googleEvents: z.object({ timeZone: z.string().optional(), items: z.array(z.unknown()) }).optional(),
+    }),
+  },
+  {
     name: "save_arrival",
     title: "Save the arrival time",
     description: "Saves the cleaner's arrival time after you read it in their message, as a 24-hour HH:MM time like 11:30.",
@@ -466,6 +484,8 @@ async function callTool(desk: LiveDesk, name: ToolName, args: object, pinKey: Bu
       return desk.runChecks(args as { googleEvents?: GoogleEventList });
     case "check_now":
       return desk.checkNow(args as { googleEvents?: GoogleEventList }, saveSecrets);
+    case "read_booking_email":
+      return desk.readBookingEmail(args as Parameters<LiveDesk["readBookingEmail"]>[0], pinKey);
     case "save_arrival":
       return desk.saveArrival(args as { time?: string });
     case "get_job_photos":
