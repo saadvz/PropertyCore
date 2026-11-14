@@ -34,3 +34,8 @@ export function fixerCoreOn(env: NodeJS.ProcessEnv = process.env): boolean {
 export function tourCoreTenants(env: NodeJS.ProcessEnv = process.env): boolean {
   return isOn(env.TOUR_CORE_TENANTS);
 }
+
+/** The hours log (#238) on the multi-tenant service. Off unless HOURS_LOG is exactly "1" or "true". */
+export function hoursLogOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isOn(env.HOURS_LOG);
+}
