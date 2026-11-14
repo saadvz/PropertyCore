@@ -121,6 +121,12 @@ Made on 2026-11-08.
     finds pros with its own search. The question comes back after the first
     real repairs.
 
+Open: which system holds an owner's pros and upkeep schedules, Butler or
+Fixer Core (#245). It must be settled before Fixer Core is switched on. The
+proposed answer, splitting the records by job, is in
+`docs/superpowers/specs/2026-11-14-butler-fixer-core-records-design.md`.
+When Saad decides, it becomes Decision 13 here.
+
 ## Not in this version
 
 - Paying a pro, a payment link, or holding any card or bank detail.
