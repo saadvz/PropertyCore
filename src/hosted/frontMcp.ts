@@ -17,6 +17,7 @@ import { FRONT_TOOL_NAMES, handleFrontTool, listedFrontTools, scratchFor, toolsF
 import { setFlows, type FlowInput } from "./service";
 import { accountState, accountTools, addProperty, flowOff, resolveProperty, withPropertyArg, type PropertyStates } from "./propertyTools";
 import { listedChooseSupplies, listedSupplyFront, SUPPLY_FRONT_NAMES, suppliesLine, supplyCall, supplyDesk } from "./supplies";
+import { HOURS_FRONT_NAMES, hoursCall, listedHoursFront } from "./hours";
 import { FIXER_FRONT_NAMES, fixerCall, fixerDesk, fixerPhotos, fixerPreview, listedFixerFront, namesRepairJob, repairsLine } from "./fixer";
 import { taskWarning } from "./touringAlerts";
 import { callWorkerMcp, forwardMcp, type WorkerTarget } from "./touringForward";
@@ -192,6 +193,7 @@ async function propertyToolList(h: HostedCleaner, r: HostedRequest, tenant: Tena
     const listed = new Set(tools.map((tool) => tool.name));
     tools.push(...listedFixerFront(caller.assistant).filter((tool) => !listed.has(tool.name)).map((tool) => withPropertyArg(tool, required)));
   }
+  tools.push(...listedHoursFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   return tools;
 }
 
@@ -208,6 +210,11 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
     // A property that turns cleaning on starts with the account's routine connected.
     if (!reply.isError) await shareRoutine(h, tenant.id);
     return reply;
+  }
+  if (HOURS_FRONT_NAMES.has(name)) {
+    const resolved = resolveProperty(tenant, args);
+    if ("refusal" in resolved) return { text: resolved.refusal, isError: true };
+    return hoursCall(h, tenant, resolved.property, name, resolved.args);
   }
   const fixer = FIXER_FRONT_NAMES.has(name);
   const shared = name === "preview_schedule" || name === "get_job_photos";
