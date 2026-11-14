@@ -204,6 +204,22 @@ export class Hub {
     return this.file.google === true;
   }
 
+  /** The Airbnb listing titles saved for this property. */
+  airbnbListings(): string[] {
+    return [...(this.file.airbnbListings ?? [])];
+  }
+
+  /** Saves an Airbnb listing title the host said is this property's. One that carries the door code is refused. */
+  addAirbnbListing(title: string): HubSave {
+    const text = title.trim();
+    if (!text || text.length > 200) return { ok: false, reason: "code", error: "That listing title is empty or too long." };
+    if (this.carriesCode(text)) return { ok: false, reason: "code", error: DOOR_CODE_IN_CHAT };
+    const saved = this.file.airbnbListings ?? [];
+    if (!saved.includes(text)) this.file = { ...this.file, airbnbListings: [...saved, text].slice(-10) };
+    this.save();
+    return { ok: true };
+  }
+
   calendarsDone(): boolean {
     return this.file.calendarsDone === true;
   }
