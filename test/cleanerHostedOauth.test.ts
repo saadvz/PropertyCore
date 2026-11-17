@@ -150,7 +150,10 @@ describe("the invite code on the Allow page", () => {
     expect(html).toContain('<link rel="stylesheet" href="/connect.css" />');
     expect(html).toContain("<h1>Let Grok Bot run the day-to-day. You keep the keys.</h1>");
     expect(html).toContain("After you decide, you'll be sent back to Grok Bot.");
-    expect(html).toContain('class="match-code">');
+    // The chat shows no connection code, so the page shows none to match. Allow still sends it.
+    expect(html).not.toContain("match-code");
+    expect(html).not.toContain("Connection code");
+    expect(html).toMatch(/id="oauth-allow" data-code="\d{3} \d{3}"/);
     // The card each ending shows waits hidden on the page.
     for (const id of ["oauth-done-approved", "oauth-done-denied", "oauth-done-expired"]) expect(html).toContain(`id="${id}" hidden`);
     expect(html).toContain('In Grok Bot, say &quot;Set up Property Core&quot;.');
@@ -165,7 +168,14 @@ describe("the invite code on the Allow page", () => {
     expect(font.bytes().equals(readFileSync("src/web/public/fonts/plus-jakarta-sans-latin.woff2"))).toBe(true);
   });
 
-  it("shows a problem page in the connect page's style", () => {
+  it("still shows the code to check when the approval happens on the Cleaner Core computer", () => {
+    const html = consentPage({ requestId: "r", matchCode: "123 456", clientName: "Claude", redirectHost: "claude.ai", hosted: false, label: "Cleaner Core", assistant: "claude" });
+    expect(html).toContain('<span class="match-code">123 456</span>');
+    expect(html).toContain("Check it matches the one on your computer.");
+    expect(html).not.toContain('id="oauth-allow"');
+  });
+
+    it("shows a problem page in the connect page's style", () => {
     const html = problemPage("This request is finished", "It was already used or it expired.", "wait");
     expect(html).toContain('<link rel="stylesheet" href="/connect.css" />');
     expect(html).toContain('<div class="pc-badge wait">');
