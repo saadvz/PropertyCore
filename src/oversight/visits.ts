@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mayHoldCode } from "../hub/codeText";
 
 /**
- * Expected visits (#240): the manager said "I'll stop by", or sent a calendar invite, and the host's agent saved
+ * Expected visits (#240): someone told the host "I'll stop by", or sent a calendar invite, and the host's agent saved
  * it after reading it back. Nothing is created ahead of time or from a guess.
  */
 
