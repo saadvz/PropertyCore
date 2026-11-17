@@ -21,6 +21,8 @@ const Cents = z.number().int();
 const Ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const Instant = z.string().max(40);
 const Trade = z.enum(TRADES);
+const Clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+const Workday = z.enum(["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]);
 const Confirmation = z.string().max(40).optional();
 const Reach = z.object({ phone: z.string().max(20).optional(), email: z.string().max(120).optional(), website: z.string().max(300).optional(), bookingUrl: z.string().max(300).optional() }).strict();
 /** Upkeep runs every so many days, on a day of the month, or on another rule; never by bookings. */
@@ -295,6 +297,37 @@ export const FIXER_TOOLS: FixerTool[] = [
     description: "The host's yes to changing the door code after a visit: gives a one-time link for the host alone. They set the new code on the lock first, then save it through the link. Never ask for the code in chat.",
     input: z.object({ jobId: Id }).strict(),
   },
+  {
+    name: "save_repair_block",
+    title: "Close days for repairs",
+    description: `Saves days closed for repairs, firstDay to lastDay (local dates, inclusive, at most 92 days), with the jobs they're for. Pros can be booked inside them. It answers whether the booking calendar already shows them closed, the nights still open, and any guest stay inside them. Fixer Core can't write to the booking calendar yet: when nights are open, the host closes them there. It always takes the host's yes: ${TWO_CALL}`,
+    input: z.object({ firstDay: Ymd, lastDay: Ymd, jobIds: z.array(Id).max(10).optional(), confirmation: Confirmation }).strict(),
+  },
+  {
+    name: "remove_repair_block",
+    title: "Reopen repair days",
+    description: `Stops holding a repair block's days for repairs. It takes the host's yes: ${TWO_CALL}`,
+    input: z.object({ blockId: Id, confirmation: Confirmation }).strict(),
+  },
+  {
+    name: "record_guest_answer",
+    title: "Record the guest's answer",
+    description:
+      "For an urgent job (urgency now) whose pro can only come during a guest's stay: records that the guest was asked (answer asked), or what they said: yes with the from and until they agreed to, or no. via is text, platform, or host when the host passed it on. It approves nothing. A yes on a pending booking gives the host's question; a no on a booked visit stops its door code and tells the host.",
+    input: z.object({ jobId: Id, answer: z.enum(["asked", "yes", "no"]), from: Instant.optional(), until: Instant.optional(), via: z.enum(["text", "platform", "host"]) }).strict(),
+  },
+  {
+    name: "urgent_timeline",
+    title: "Timeline for the platform",
+    description: "A job's timeline, oldest first: reported, the guest asked and their answers, the host's yes, each time the door code was shown, done, and photos. Names and times only, never a code, phone number or cost. Give it to the host for the booking platform.",
+    input: z.object({ jobId: Id }).strict(),
+  },
+  {
+    name: "save_crew_schedule",
+    title: "Save a crew's schedule",
+    description: `For a job a crew works over several days: the days (firstDay to lastDay, local dates, at most 92 days), the workdays (MON to SUN), the hours (start and end, 24-hour, same day), and days off (skipDays). It answers each workday's window, any day a guest stay touches, and the span to book: record_contact with booked from the first window's start until the last window's end. Only before the job is booked. The host lets the crew in until crew codes exist. It takes the host's yes: ${TWO_CALL}`,
+    input: z.object({ jobId: Id, firstDay: Ymd, lastDay: Ymd, workdays: z.array(Workday).min(1).max(7), start: Clock, end: Clock, skipDays: z.array(Ymd).max(31).optional(), confirmation: Confirmation }).strict(),
+  },
 ];
 
 export const FIXER_TOOL_NAMES: ReadonlySet<string> = new Set(FIXER_TOOLS.map((tool) => tool.name));
@@ -382,6 +415,16 @@ export async function handleFixerTool(desk: FixerDesk, name: string, args: unkno
       return desk.skipQuestion(input);
     case "change_door_code":
       return desk.changeDoorCode(input);
+    case "save_repair_block":
+      return desk.saveRepairBlock(input);
+    case "remove_repair_block":
+      return desk.removeRepairBlock(input);
+    case "record_guest_answer":
+      return desk.recordGuestAnswer(input);
+    case "urgent_timeline":
+      return desk.urgentTimeline(input);
+    case "save_crew_schedule":
+      return desk.saveCrewSchedule(input);
   }
   return undefined;
 }
