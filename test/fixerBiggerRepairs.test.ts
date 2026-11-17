@@ -254,3 +254,105 @@ describe("a crew's schedule", () => {
   const WEEK = { firstDay: "2026-11-16", lastDay: "2026-11-20", workdays: ["MON", "TUE", "WED", "THU", "FRI"] as ("MON" | "TUE" | "WED" | "THU" | "FRI")[], start: "08:00", end: "17:00" };
   const SPAN = { from: "2026-11-16T13:00:00.000Z", until: "2026-11-20T22:00:00.000Z" };
   const save = (w: World) => twice((input) => w.desk().saveCrewSchedule(input), { jobId: w.job().id, ...WEEK });
+  const offer = async (w: World, span: { from: string; until: string }) => w.desk().recordContact({ contactToken: await w.contact(), outcome: "booked", ...span, estimateCents: 400000 });
+
+  it("saves in two calls and answers each workday's window", async () => {
+    const w = await setup();
+    const first = await w.desk().saveCrewSchedule({ jobId: w.job().id, ...WEEK });
+    expect(first.structured!.question).toContain("Mon, Tue, Wed, Thu, Fri, 08:00 to 17:00");
+    const reply = await w.desk().saveCrewSchedule({ jobId: w.job().id, ...WEEK, confirmation: codeOf(first) });
+    expect(reply.structured).toMatchObject({ saved: true, workdays: 5, first: { day: "2026-11-16", from: SPAN.from, until: "2026-11-16T22:00:00.000Z" }, span: SPAN, conflicts: [] });
+    expect(w.job().crew).toEqual(WEEK);
+    const open = ((await w.desk().state()).structured!.summary as { openJobs: Record<string, unknown>[] }).openJobs;
+    expect(open[0]).toMatchObject({ crew: WEEK });
+  });
+
+  it("refuses a schedule once a visit is booked", async () => {
+    const w = await setup();
+    await offer(w, TUE);
+    await twice((input) => w.desk().approveBooking(input), { jobId: w.job().id });
+    expect((await w.desk().saveCrewSchedule({ jobId: w.job().id, ...WEEK })).isError).toBe(true);
+  });
+
+  it("books the whole schedule only, and the host lets the crew in", async () => {
+    const w = await setup();
+    await save(w);
+    const wrong = await offer(w, TUE);
+    expect(wrong.isError).toBe(true);
+    expect(wrong.text).toContain("books its saved schedule");
+    const right = await w.desk().recordContact({ contactToken: w.job().contacts[0]!.token, outcome: "booked", ...SPAN, estimateCents: 400000 });
+    expect(right.structured).toMatchObject({ access: "host" });
+    expect(String(right.structured!.question)).toMatch(/you'll let them in\?$/);
+    expect((await w.desk().approveBooking({ jobId: w.job().id, access: "code" })).isError).toBe(true);
+    expect((await twice((input) => w.desk().approveBooking(input), { jobId: w.job().id })).structured).toMatchObject({ booked: true, access: "host" });
+  });
+
+  it("refuses the booking when a guest stay touches a workday", async () => {
+    const w = await setup({ events: [["2026-11-18", "2026-11-19"]] });
+    const saved = await save(w);
+    expect((saved.structured!.conflicts as unknown[]).length).toBeGreaterThan(0);
+    const reply = await offer(w, SPAN);
+    expect(reply.structured!.question).toBeUndefined();
+    expect(String(reply.structured!.next)).toContain("overlaps a guest stay");
+  });
+});
+
+describe("review fixes", () => {
+  const WEEK = { firstDay: "2026-11-16", lastDay: "2026-11-20", workdays: ["MON", "TUE", "WED", "THU", "FRI"] as ("MON" | "TUE" | "WED" | "THU" | "FRI")[], start: "08:00", end: "17:00" };
+  const SPAN = { from: "2026-11-16T13:00:00.000Z", until: "2026-11-20T22:00:00.000Z" };
+
+  it("never shows the code inside a calendar block, which can be a guest booking a calendar labels Not available", async () => {
+    const w = await setup({ events: [["2026-11-16", "2026-11-21", "CLOSED - Not available"]] });
+    await twice((input) => w.desk().saveRepairBlock(input), BLOCK);
+    const offer = await w.desk().recordContact({ contactToken: await w.contact(), outcome: "booked", ...TUE, estimateCents: 18000 });
+    expect(offer.structured).toMatchObject({ access: "host" });
+    expect((await w.desk().approveBooking({ jobId: w.job().id, access: "code" })).isError).toBe(true);
+    await twice((input) => w.desk().approveBooking(input), { jobId: w.job().id });
+    w.setNow("2026-11-17T15:00:00.000Z");
+    expect((await w.desk().revealCode(w.job().id)).ok).toBe(false);
+  });
+
+  it("refuses a new crew schedule while a booking waits, and checks the span again at the host's yes", async () => {
+    const w = await setup();
+    await twice((input) => w.desk().saveCrewSchedule(input), { jobId: w.job().id, ...WEEK });
+    await w.desk().recordContact({ contactToken: await w.contact(), outcome: "booked", ...SPAN, estimateCents: 400000 });
+    expect((await w.desk().saveCrewSchedule({ jobId: w.job().id, ...WEEK, firstDay: "2026-11-30", lastDay: "2026-12-04" })).isError).toBe(true);
+  });
+
+  it("says a crew booking runs over several days in the host's question", async () => {
+    const w = await setup();
+    await twice((input) => w.desk().saveCrewSchedule(input), { jobId: w.job().id, ...WEEK });
+    const reply = await w.desk().recordContact({ contactToken: await w.contact(), outcome: "booked", ...SPAN, estimateCents: 400000 });
+    expect(reply.structured!.question).toBe("Joe's Plumbing can come Monday 8 to Friday 5, about $4,000. That's the crew's schedule: Mon, Tue, Wed, Thu, Fri, 08:00 to 17:00. Book it and you'll let them in?");
+  });
+});
+
+describe("review fixes: urgent visits", () => {
+  const STAY: Event = ["2026-11-15", "2026-11-20"];
+  const AGREED = { from: "2026-11-17T14:00:00.000Z", until: "2026-11-17T18:00:00.000Z" };
+  async function bookedUrgent() {
+    const w = await setup({ events: [STAY], urgency: "now" });
+    await w.desk().recordContact({ contactToken: await w.contact(), outcome: "booked", ...TUE, estimateCents: 18000 });
+    await w.desk().recordGuestAnswer({ jobId: w.job().id, answer: "yes", ...AGREED, via: "text" });
+    await twice((input) => w.desk().approveBooking(input), { jobId: w.job().id });
+    return w;
+  }
+
+  it("after the guest's no, says the pro already saw the code, asks about changing it, and a later yes doesn't reopen it", async () => {
+    const w = await bookedUrgent();
+    w.setNow("2026-11-17T15:05:00.000Z");
+    expect((await w.desk().revealCode(w.job().id)).ok).toBe(true);
+    w.setNow("2026-11-17T15:10:00.000Z");
+    const no = await w.desk().recordGuestAnswer({ jobId: w.job().id, answer: "no", via: "text" });
+    expect(no.structured!.rotationAsk).toBeDefined();
+    const news = (await w.desk().checkFixes({})).structured!.news as { kind: string; text?: string }[];
+    expect(news.find((n) => n.kind === "guest-withdrew")!.text).toContain("already saw the door code");
+    await w.desk().recordGuestAnswer({ jobId: w.job().id, answer: "yes", ...AGREED, via: "text" });
+    expect(await w.desk().revealCode(w.job().id)).toEqual({ ok: false, reason: "guest-not-agreed" });
+  });
+
+  it("refuses to extend an urgent visit past checkout or beyond 4 hours", async () => {
+    const w = await bookedUrgent();
+    expect((await w.desk().extendVisit({ jobId: w.job().id, until: "2026-11-17T20:00:00.000Z" })).isError).toBe(true);
+  });
+});
