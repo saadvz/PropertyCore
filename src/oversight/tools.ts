@@ -9,7 +9,7 @@ const ADD = {
   name: "add_expected_visit",
   title: "Expect a visit",
   description:
-    "Saves a visit the host expects at the property, like the manager saying \"I'll stop by Thursday afternoon\". If no one comes in, it's flagged the same day: 1 hour after the window, or at 8 PM for an all-day visit. From the manager's text: give who, date, and from and to when there's a time. Loose words get a suggested window the host can change: morning 08:00-12:00, afternoon 12:00-17:00, evening 17:00-20:00. No time at all is an all-day visit. Read the visit back to the host (\"Mike Doyle, Thursday Nov 19, 12 to 5 PM?\") and save only after they agree. From a calendar invite the manager sent: pass the invite's text as invite, with who if it doesn't name the organizer. The first call reads it back without saving; call again with confirm: true once the host agrees. Never create a visit the host didn't give. No door codes in who or note. Nothing is sent to anyone from here.",
+    "Saves a visit the host expects at the property, like someone telling the host \"I'll stop by Thursday afternoon\": a property manager, a cleaner, a handyman or a friend. If no one comes in, it's flagged the same day: 1 hour after the window, or at 8 PM for an all-day visit. From what the host says or forwards: give who, date, and from and to when there's a time. Loose words get a suggested window the host can change: morning 08:00-12:00, afternoon 12:00-17:00, evening 17:00-20:00. No time at all is an all-day visit. Read the visit back to the host (\"Mike Doyle, Thursday Nov 19, 12 to 5 PM?\") and save only after they agree. From a calendar invite the visitor sent: pass the invite's text as invite, with who if it doesn't name the organizer. The first call reads it back without saving; call again with confirm: true once the host agrees. Never create a visit the host didn't give. No door codes in who or note. Nothing is sent to anyone from here.",
   inputSchema: {
     type: "object",
     properties: {
@@ -35,7 +35,7 @@ const LIST = {
 const CANCEL = {
   name: "cancel_expected_visit",
   title: "Cancel an expected visit",
-  description: "Cancels one expected visit by its id, like when the manager moves it. Call it only after the host says so. A moved visit is cancelled and saved again on the new day.",
+  description: "Cancels one expected visit by its id, like when the visitor moves it. Call it only after the host says so. A moved visit is cancelled and saved again on the new day.",
   inputSchema: { type: "object", properties: { id: { type: "string", description: "The visit's id from list_expected_visits." } }, required: ["id"], additionalProperties: false },
 };
 
