@@ -4,7 +4,7 @@ import { mayHoldCode } from "../hub/codeText";
 import { MAX_NOTE, MAX_WHO, type VisitInput } from "./visits";
 
 /**
- * An expected visit read from a calendar invite the manager sent (#240). The date and times are read in code, in
+ * An expected visit read from a calendar invite the visitor sent (#240). The date and times are read in code, in
  * the property's time zone, and never guessed: a time zone it can't read, a repeating invite, or one over more
  * than a day is refused, and the agent asks the host instead. Only the organizer's name and the title are kept;
  * the description, location and attendees never are.
