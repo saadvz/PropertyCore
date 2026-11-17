@@ -29,7 +29,7 @@ import { holdsOtherRole, priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
 import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, shortDollars, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
-import { TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
+import { MAX_HOST_STEPS, TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type HostStep, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
 /**
  * Fixer Core's desk: every tool's behaviour over one property's `fixer.json`. One call at a time.
@@ -243,6 +243,12 @@ const URGENCIES = ["now", "soon", "by-date", "flexible"] as const;
 const NOT_BOOKED = new Set<Job["state"]>(["requested", "shortlisted", "contacted"]);
 
 /** What a booking was checked against, as its fingerprint. */
+/** Keeps one of the host's approvals on the job for the hours log (#238), the oldest dropped past the cap. */
+function noteHostStep(job: Job, step: HostStep): void {
+  const steps = [...(job.hostSteps ?? []), step];
+  job.hostSteps = steps.slice(-MAX_HOST_STEPS);
+}
+
 function fingerprintOf(b: { proId: string; from: string; until: string; estimateCents?: number; access: "code" | "host" }, order?: "before" | "after"): string {
   return bookingFingerprint({ proId: b.proId, from: b.from, until: b.until, ...(b.estimateCents !== undefined ? { estimateCents: b.estimateCents } : {}), access: b.access, ...(order ? { cleaningOrder: order } : {}) });
 }
@@ -942,7 +948,10 @@ export class FixerDesk {
       if (input.doorLock) job.doorLock = true;
       if (input.costLineCents !== undefined) job.costLineCents = input.costLineCents;
       if (input.quotesFirst) job.quotesFirst = true;
-      if (input.source === "host") job.hostGo = { at: now };
+      if (input.source === "host") {
+        job.hostGo = { at: now };
+        noteHostStep(job, { kind: "approve-repair", at: now });
+      }
       const key = `fixer:${job.id}`;
       for (const id of photoIds) {
         const before = photoCount(this.root, key);
@@ -975,6 +984,7 @@ export class FixerDesk {
       const gate = this.approved(file, "fixer-job-go", job.id, { jobId: job.id, ...(input.confirmation !== undefined ? { confirmation: input.confirmation } : {}) } as ApproveJobInput, this.goQuestion(file, job));
       if (gate !== "go") return gate;
       job.hostGo = { at: this.deps.now().toISOString() };
+      noteHostStep(job, { kind: "approve-repair", at: job.hostGo.at });
       if (input.costLineCents !== undefined) job.costLineCents = input.costLineCents;
       if (input.quotesFirst === true) job.quotesFirst = true;
       this.write(file);
@@ -1396,6 +1406,7 @@ export class FixerDesk {
         fingerprint: fingerprintOf(target, order),
       };
       job.booking = booked;
+      noteHostStep(job, { kind: "approve-booking", at: booked.hostYes!.at, proId: booked.proId });
       if (order) job.cleaningOrder = order;
       job.state = "booked";
       this.write(file);
@@ -1428,6 +1439,7 @@ export class FixerDesk {
     const gate = this.confirm("fixer-revised", job.id, tokenHash(JSON.stringify([booking.fingerprint, revised.cents])), input.confirmation, question);
     if (gate !== "go") return gate;
     revised.hostYes = { at: this.deps.now().toISOString() };
+    noteHostStep(job, { kind: "approve-price", at: revised.hostYes.at, proId: booking.proId, cents: revised.cents });
     this.write(file);
     return ok({ approved: true, jobId: job.id, revised: true, tellPro: { name, reach: this.reachOfId(file, job, booking.proId) }, next: `Tell ${name} to go ahead.` });
   }
@@ -1669,6 +1681,7 @@ export class FixerDesk {
       delete job.quotesToldAt;
       if (input.costLineCents !== undefined) job.costLineCents = input.costLineCents;
       job.quotePick = { proId: latest.to, at: this.deps.now().toISOString() };
+      noteHostStep(job, { kind: "pick-quote", at: job.quotePick.at, proId: latest.to });
       this.write(file);
       return ok({ picked: true, jobId: job.id, next: `Call check_fixes: contactNext names ${name} to book.` });
     });
@@ -2048,6 +2061,7 @@ export class FixerDesk {
   /** Logs the amount. Over the cost line, or more than 20% over what was expected, the host is told once. */
   private logCost(file: FixerFile, job: Job, cents: number, by: "pro" | "agent" | "host", note: string | undefined, notes: HostNote[]): void {
     job.cost = { cents, by, at: this.deps.now().toISOString(), ...(note ? { note } : {}) };
+    if (by === "host") noteHostStep(job, { kind: "record-cost", at: job.cost.at, cents });
     const line = job.costLineCents;
     const estimateCents = this.expectedCents(file, job);
     if (job.news.some((item) => item.kind === "cost-over") || !costNews(line, estimateCents, cents)) return;
@@ -2059,6 +2073,7 @@ export class FixerDesk {
     const at = this.deps.now().toISOString();
     job.state = "done";
     job.done = { at, by, ...(note ? { note } : {}) };
+    if (by === "host") noteHostStep(job, { kind: "confirm-repair", at });
     const pro = file.pros.find((entry) => entry.id === job.booking?.proId && entry.status === "saved");
     if (pro) pro.lastJobAt = at;
     const item = job.source === "upkeep" ? file.upkeep.find((entry) => entry.id === job.sourceRef) : undefined;
