@@ -344,6 +344,11 @@ export function guestWithdrewNews(f: { proName: string; codeSeen: boolean }): st
   return `The guest said no to ${f.proName}'s visit during their stay. ${code} Reschedule or cancel the visit?`;
 }
 
+/** An urgent visit whose guest stay changed or left the calendar: the guest's okay was for that stay, so the code stays off. */
+export function urgentStayChangedNews(f: { proName: string; from: string; timeZone: string }): string {
+  return `The guest stay ${f.proName}'s repair visit ${formatWeekday(new Date(f.from), f.timeZone)} ${hourOf(f.from, f.timeZone)} was approved for has changed or left the calendar. The guest's okay was for that stay, so the door code won't go out for it. Let ${f.proName} in yourself, reschedule, or cancel the visit?`;
+}
+
 /** A visit inside a calendar block: Fixer Core can't tell a repair block from a booking a calendar labels "Not available". */
 export const BLOCK_HOST_ACCESS = "That visit is inside a block on the booking calendar, and a calendar can label a real booking as a block, so the door code never goes out there. The host lets the pro in: book it with access host.";
 
