@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Stay } from "../src/hub/store.js";
-import { stayKey, urgentAccessCheck, urgentTimeline, urgentVisitHolds, type GuestAnswer, type UrgentVisitInput } from "../src/fixer-core/urgentVisit.js";
+import { stayKey, timelineText, urgentAccessCheck, urgentTimeline, urgentVisitHolds, type GuestAnswer, type UrgentVisitInput } from "../src/fixer-core/urgentVisit.js";
 
 const guestStay: Stay = { checkIn: "2026-12-01", checkout: "2026-12-08", kind: "stay" };
 const visit = { from: "2026-12-04T14:00:00.000Z", until: "2026-12-04T16:00:00.000Z" };
@@ -108,5 +108,18 @@ describe("urgentTimeline", () => {
     const entries = urgentTimeline(input);
     expect(entries.find((e) => e.kind === "guest-agreed")!.text).toMatch(/1:00 PM.*5:00 PM/);
     expect(entries.find((e) => e.kind === "code-shown")!.text).toContain("Ace Pest");
+  });
+});
+
+describe("timelineText", () => {
+  it("removes amounts written with words or other currency marks", () => {
+    const text = timelineText("Paid 180 dollars, two hundred and fifty bucks for parts, a grand for labor, 50 USD tip, USD 20, €40, £15, 30$ and 75 cents");
+    for (const gone of ["180", "two hundred", "fifty bucks", "a grand", "50 USD", "USD 20", "€40", "£15", "30$", "75 cents"]) expect(text).not.toContain(gone);
+    expect(text).toContain("Paid");
+    expect(text).toContain("for parts");
+  });
+
+  it("leaves ordinary words and small counts alone", () => {
+    expect(timelineText("Two rooms, one trap left under the sink")).toBe("Two rooms, one trap left under the sink");
   });
 });
