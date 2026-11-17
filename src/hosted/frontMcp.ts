@@ -19,6 +19,7 @@ import { setFlows, type FlowInput } from "./service";
 import { accountState, accountTools, addProperty, flowOff, resolveProperty, withPropertyArg, type PropertyStates } from "./propertyTools";
 import { listedChooseSupplies, listedSupplyFront, SUPPLY_FRONT_NAMES, suppliesLine, supplyCall, supplyDesk } from "./supplies";
 import { HOURS_FRONT_NAMES, hoursCall, listedHoursFront } from "./hours";
+import { listedOversightFront, OVERSIGHT_FRONT_NAMES, oversightCall } from "./oversight";
 import { listedStayCheckFront, STAY_CHECK_FRONT_NAMES, stayCheckCall } from "./stayCheck";
 import { FIXER_FRONT_NAMES, fixerCall, fixerDesk, fixerPhotos, fixerPreview, listedFixerFront, namesRepairJob, repairsLine } from "./fixer";
 import { taskWarning } from "./touringAlerts";
@@ -197,6 +198,7 @@ async function propertyToolList(h: HostedCleaner, r: HostedRequest, tenant: Tena
   }
   tools.push(...listedHoursFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   tools.push(...listedStayCheckFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
+  tools.push(...listedOversightFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   return tools;
 }
 
@@ -223,6 +225,11 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
     const resolved = resolveProperty(tenant, args);
     if ("refusal" in resolved) return { text: resolved.refusal, isError: true };
     return stayCheckCall(h, tenant, resolved.property, name, resolved.args);
+  }
+  if (OVERSIGHT_FRONT_NAMES.has(name)) {
+    const resolved = resolveProperty(tenant, args);
+    if ("refusal" in resolved) return { text: resolved.refusal, isError: true };
+    return oversightCall(h, tenant, resolved.property, name, resolved.args);
   }
   const fixer = FIXER_FRONT_NAMES.has(name);
   const shared = name === "preview_schedule" || name === "get_job_photos";

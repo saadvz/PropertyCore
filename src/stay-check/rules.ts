@@ -1,4 +1,4 @@
-import { redactBookingEmail } from "../hub/airbnbEmail";
+import { mayHoldCode } from "../hub/codeText";
 import type { StayCheckFile } from "./store";
 
 /**
@@ -28,10 +28,6 @@ export const MAX_RULE_TEXT = 200;
 export const MAX_SIGHTINGS = 3;
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
-/** Four or more digits in a row, alone or split by single spaces, dots or dashes. */
-const LONG_NUMBER = /\d(?:[\s.-]?\d){3,}/;
-/** Clock times like 22:00 or 7:30, taken out before the long-number scan so "Quiet 22:00-07:00" reads as times. */
-const CLOCK_TIME = /\b\d{1,2}:\d{2}\b/g;
 
 export const isCheckKind = (value: unknown): value is CheckKind => typeof value === "string" && (CHECK_KINDS as readonly string[]).includes(value);
 export const isClock = (value: unknown): value is string => typeof value === "string" && CLOCK.test(value);
@@ -66,7 +62,7 @@ export function rulesProblem(rules: unknown): string | undefined {
     const { text, check } = rule as Record<string, unknown>;
     if (typeof text !== "string" || !text.trim() || text.length > MAX_RULE_TEXT) return `Give each house rule in 1 to ${MAX_RULE_TEXT} characters.`;
     // The refusal names the rule by its place, never by its words, so a code isn't repeated back.
-    if (LONG_NUMBER.test(text.replace(CLOCK_TIME, " ")) || redactBookingEmail(text) !== text) return `Keep door codes out of house rules. Give rule ${index + 1} without the number.`;
+    if (mayHoldCode(text)) return `Keep door codes out of house rules. Give rule ${index + 1} without the number.`;
     if (check === undefined) continue;
     const problem = checkProblem(check);
     if (problem) return problem;
