@@ -8,7 +8,7 @@ import { OversightFileError, readOversight, writeOversight, type OversightFile }
 import { cleanVisit, isDate, MAX_OPEN_VISITS, newVisitId, sameVisit, visitProblem, type ExpectedVisit, type VisitInput } from "./visits";
 
 /**
- * Expected visits for one property (#240): save one from the manager's text or a calendar invite, list and cancel
+ * Expected visits for one property (#240): save one from what the host says or a calendar invite, list and cancel
  * them, and run one day against given entry events. It texts nobody: the result goes back to the caller, and
  * sending is #250's.
  */
@@ -62,7 +62,7 @@ export class OversightDesk {
   }
 
   /**
-   * Saves one expected visit: `who`, `date`, `from`/`to` and `note` from the manager's text, or `invite` (the
+   * Saves one expected visit: `who`, `date`, `from`/`to` and `note` from what the host says, or `invite` (the
    * invite's text). An invite is read back without saving until `confirm` is true.
    */
   addVisit(input: { who?: unknown; date?: unknown; from?: unknown; to?: unknown; note?: unknown; invite?: unknown; confirm?: unknown }): OversightReply {
