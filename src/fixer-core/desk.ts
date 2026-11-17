@@ -1760,6 +1760,225 @@ export class FixerDesk {
     });
   }
 
+  /** A crew schedule's windows against the stays, and the span a booking must cover: first window's start to last window's end. */
+  private crewPlan(file: FixerFile, crew: CrewSchedule): ReturnType<typeof crewWindows> & { span?: { from: string; until: string } } {
+    const plan = crewWindows(crew, { ...this.occupyInput(file), stays: this.crewStays(file) });
+    // The span runs over the schedule's whole days, so a clipped day still counts as a conflict, never a shorter span.
+    const full = crewWindows(crew, { ...this.occupyInput(file), stays: [] }).windows;
+    return { ...plan, ...(full.length > 0 ? { span: { from: full[0]!.from, until: full[full.length - 1]!.until } } : {}) };
+  }
+
+  /** save_crew_schedule (#243): a crew's workdays and hours on a job, with the host's yes, before it is booked. */
+  saveCrewSchedule(input: Partial<CrewSchedule> & { jobId?: string; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      if (!job || !isOpen(job)) return fail("There's no open job with that id. Call get_fixer_state for the list.");
+      if (liveBooking(job)) return fail("This job is already booked. Reschedule it first to change the crew's schedule.");
+      if (job.booking && !job.booking.hostYes) return fail("A booking is waiting for the host's yes on this job. Settle it, or ask the pro again with reschedule_job, before changing the crew's schedule.");
+      const crew: CrewSchedule = { firstDay: input.firstDay ?? "", lastDay: input.lastDay ?? "", workdays: input.workdays ?? [], start: input.start ?? "", end: input.end ?? "", ...(input.skipDays ? { skipDays: input.skipDays } : {}) };
+      const problem = crewScheduleProblem(crew, this.today());
+      if (problem) return fail(problem);
+      const plan = this.crewPlan(file, crew);
+      if (!plan.span) return fail("None of those days is a workday. Check the days and the workdays.");
+      const days = new Set(crewWindows(crew, { ...this.occupyInput(file), stays: [] }).windows.map((w) => w.day)).size;
+      const gate = this.confirm("fixer-crew", job.id, tokenHash(JSON.stringify(crew)), input.confirmation, crewScheduleQuestion({ ...crew, windows: days }));
+      if (gate !== "go") return gate;
+      job.crew = crew;
+      this.write(file);
+      const full = crewWindows(crew, { ...this.occupyInput(file), stays: [] }).windows;
+      return ok({
+        saved: true,
+        jobId: job.id,
+        workdays: days,
+        first: full[0],
+        last: full[full.length - 1],
+        span: plan.span,
+        conflicts: plan.conflicts,
+        next: plan.conflicts.length > 0 ? "A guest stay touches some workdays, so the crew can't be booked yet. Tell the host which days, and save a schedule that avoids them." : `Book the crew for the whole schedule: record_contact with booked from ${plan.span.from} until ${plan.span.until}. The host lets the crew in until crew codes exist.`,
+      });
+    });
+  }
+
+  /**
+   * The code for an urgent visit during a stay (#243): the usual checks, then only inside the visit itself (no
+   * early lead, the guest is inside), only while the guest's last answer is a yes that holds the whole visit.
+   */
+  private urgentAccess(file: FixerFile, job: Job, booking: Booking, overlaps: boolean): ReturnType<typeof accessCheck> {
+    const now = this.deps.now();
+    const pro = { reach: this.reachOfId(file, job, booking.proId) };
+    const base = accessCheck({ job, pro, now, checkoutDay: false, cleared: true, overlapsStay: overlaps, staysUnread: this.staysUnknown() });
+    if (!base.ok && base.reason !== "before-visit") return base;
+    // Once the guest said no after the host's yes, the code stays off for this visit, whatever they say later.
+    if (job.guest?.answers.some((answer) => answer.answer === "no" && booking.hostYes && answer.at >= booking.hostYes.at)) return { ok: false, reason: "guest-not-agreed" };
+    const guest = job.guest?.answers.at(-1);
+    const window = { from: booking.from, until: new Date(this.endOf(booking)).toISOString() };
+    const check = urgentAccessCheck({ window, stays: this.crewStays(file), times: this.occupyInput(file), ...(guest ? { guest } : {}), ...(booking.hostYes ? { hostYes: booking.hostYes } : {}), now, ...(pro.reach.phone ? { proPhone: pro.reach.phone } : {}), ...(job.doorLock ? { doorLock: true } : {}) });
+    if (check.ok) return check;
+    return { ok: false, reason: urgentReason(check.reason) };
+  }
+
+  /**
+   * record_guest_answer (#243): that the guest was asked about a visit during their stay, or what they answered.
+   * It approves nothing. A yes on a pending booking gives the host's question; a no on a booked visit stops its code.
+   */
+  recordGuestAnswer(input: { jobId?: string; answer?: "asked" | "yes" | "no"; from?: string; until?: string; via?: GuestAnswer["via"] }): Promise<FixerReply> {
+    return this.guarded(input, async () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      if (!job || !isOpen(job)) return fail("There's no open job with that id. Call get_fixer_state for the list.");
+      if (job.urgency !== "now" || job.crew) return fail("Only an urgent job (urgency now) can have a visit during a guest's stay.");
+      if (!["asked", "yes", "no"].includes(input.answer as string)) return fail("Say asked, yes or no.");
+      if (!["text", "platform", "host"].includes(input.via as string)) return fail("Say how the guest answered: text, platform, or host when the host passed it on.");
+      const at = this.deps.now().toISOString();
+      const record = (job.guest ??= { asked: [], answers: [] });
+      if (input.answer === "asked") {
+        record.asked.push(at);
+        this.write(file);
+        return ok({ recorded: true, jobId: job.id, next: "When the guest answers, call record_guest_answer with yes (and the time they agreed to) or no." });
+      }
+      const booking = job.booking;
+      const span = booking ? { from: booking.from, until: new Date(this.endOf(booking)).toISOString() } : undefined;
+      if (input.answer === "no") {
+        const key = booking?.urgentStay ?? (span && this.stayKeyOf(file, span)) ?? "";
+        record.answers.push({ stay: key, answer: "no", at, via: input.via! });
+        const notes: HostNote[] = [];
+        let rotationAsk: { jobId: string; question: string } | undefined;
+        if (booking?.urgentStay && liveBooking(job)) {
+          const proName = this.bookedName(file, job);
+          const codeSeen = (booking.revealedAt?.length ?? 0) > 0;
+          notes.push(this.fileNews(file, { kind: "guest-withdrew", jobId: job.id, text: guestWithdrewNews({ proName, codeSeen }), urgent: true }, `fixer:${job.id}:${visitTag(booking)}:guest-withdrew:${record.answers.length}`));
+          if (codeSeen) rotationAsk = this.askRotation(file, job, { open: true });
+        }
+        this.write(file);
+        await this.tell(notes);
+        return ok({ recorded: true, jobId: job.id, ...(rotationAsk ? { rotationAsk } : {}), next: notes.length > 0 ? `Tell ${this.bookedName(file, job)} not to come. Ask the host: reschedule_job or cancel_job?` : "Tell the host the guest said no, and ask the pro for a time after checkout." });
+      }
+      const from = input.from;
+      const until = input.until;
+      if (typeof from !== "string" || typeof until !== "string" || Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(until)) || Date.parse(until) <= Date.parse(from)) return fail("A yes needs the time the guest agreed to, as from and until.");
+      const window = { from: new Date(from).toISOString(), until: new Date(until).toISOString() };
+      const key = this.stayKeyOf(file, window);
+      if (!key) return fail("That time isn't during a guest stay. Book a visit outside a stay the normal way.");
+      record.answers.push({ stay: key, answer: "yes", window, at, via: input.via! });
+      this.write(file);
+      const reply: Record<string, unknown> = { recorded: true, jobId: job.id };
+      if (booking && !booking.hostYes && span) {
+        const name = this.nameOf(file, job, booking.proId) ?? "The pro";
+        const holds = this.urgentHolds(file, job, span) ?? [];
+        if (holds.length === 0) {
+          const { holds: gate } = await this.holdsFor(file, job, span, booking.estimateCents);
+          reply.question = this.questionFor(job, name, booking, booking.access, gate, true);
+          reply.next = "Ask the host this question, then call approve_booking.";
+        } else {
+          reply.next = urgentRefusal(holds[0]!, { proName: name });
+        }
+      }
+      return ok(reply);
+    });
+  }
+
+  /** urgent_timeline (#243): what happened, oldest first, for the platform. Names and times only. */
+  urgentTimeline(input: { jobId?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const job = this.jobOf(file, input.jobId);
+      if (!job) return fail(NO_JOB);
+      const booking = job.booking;
+      const timeline = urgentTimeline({
+        timeZone: this.timeZone(),
+        reportedAt: job.createdAt,
+        what: job.what,
+        proName: this.bookedName(file, job),
+        guestAskedAt: job.guest?.asked ?? [],
+        guestAnswers: job.guest?.answers ?? [],
+        ...(booking?.hostYes ? { hostYesAt: booking.hostYes.at } : {}),
+        codeShownAt: booking?.revealedAt ?? [],
+        ...(job.done ? { done: { at: job.done.at, ...(job.done.note ? { note: job.done.note } : {}) } } : {}),
+        photos: job.photos.map((photo) => ({ at: photo.at, from: photo.from })),
+      });
+      return ok({ jobId: job.id, timeline });
+    });
+  }
+
+  /** The saved blocks with what the last calendar read says, and who the door is for now. Nothing when none is saved. */
+  private blockSummary(file: FixerFile): { repairBlocks?: Record<string, unknown>[]; doorNow?: string } {
+    const blocks = file.repairBlocks ?? [];
+    if (blocks.length === 0) return {};
+    const stays = this.hub().stays() ?? [];
+    return {
+      repairBlocks: blocks.map((block) => ({ blockId: block.id, firstDay: block.firstDay, lastDay: block.lastDay, jobIds: block.jobIds, ...repairBlockStatus(block, stays) })),
+      doorNow: doorFor(this.deps.now(), blocks, stays, this.occupyInput(file)),
+    };
+  }
+
+  /**
+   * save_repair_block: days closed for repairs, always with the host's yes (#243). Pros can be booked inside them.
+   * Fixer Core can't write to the booking calendar yet, so while a night is still open the agent tells the host to close it.
+   */
+  saveRepairBlock(input: { firstDay?: string; lastDay?: string; jobIds?: string[]; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const days = { firstDay: input.firstDay ?? "", lastDay: input.lastDay ?? "" };
+      const problem = repairBlockProblem(days, this.today());
+      if (problem) return fail(problem);
+      const jobIds = input.jobIds ?? [];
+      if (!Array.isArray(jobIds) || jobIds.length > 10 || !jobIds.every((id) => file.jobs.some((job) => job.id === id && isOpen(job)))) return fail("Each job has to be an open job. Call get_fixer_state for the list.");
+      const blocks = file.repairBlocks ?? [];
+      if (blocks.length >= MAX_REPAIR_BLOCKS) return fail(`Up to ${MAX_REPAIR_BLOCKS} repair blocks can be saved. Remove an old one first.`);
+      const gate = this.confirm("fixer-block", `${days.firstDay}|${days.lastDay}`, tokenHash(JSON.stringify([days.firstDay, days.lastDay, [...jobIds].sort()])), input.confirmation, repairBlockQuestion(days));
+      if (gate !== "go") return gate;
+      const block: SavedBlock = { id: newId("blk_", 8), ...days, jobIds: [...new Set(jobIds)], savedAt: this.deps.now().toISOString() };
+      file.repairBlocks = [...blocks, block];
+      this.write(file);
+      const status = repairBlockStatus(block, this.hub().stays() ?? []);
+      return ok({ saved: true, blockId: block.id, ...status, next: status.onCalendar ? BLOCK_ON_CALENDAR_NEXT : blockCalendarNext(status) });
+    });
+  }
+
+  /** remove_repair_block: the host's yes in two calls. */
+  removeRepairBlock(input: { blockId?: string; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const block = (file.repairBlocks ?? []).find((entry) => entry.id === input.blockId);
+      if (!block) return fail("There's no repair block with that id. Call get_fixer_state for the list.");
+      const gate = this.confirm("fixer-block-remove", block.id, block.id, input.confirmation, removeRepairBlockQuestion(block));
+      if (gate !== "go") return gate;
+      file.repairBlocks = (file.repairBlocks ?? []).filter((entry) => entry.id !== block.id);
+      this.write(file);
+      return ok({ removed: true, blockId: block.id, next: "Tell the host the days are open again. Reopen them on the booking calendar only if they want guests then." });
+    });
+  }
+
+  /** check_fixes: once per block and set of open nights, and once per guest stay inside it (urgent). Only blocks not yet over. */
+  private blockPass(file: FixerFile, notes: HostNote[]): void {
+    const stays = this.hub().stays();
+    if (!stays) return;
+    const today = this.today();
+    for (const block of file.repairBlocks ?? []) {
+      if (block.lastDay < today) continue;
+      const status = repairBlockStatus(block, stays);
+      const told = (block.told ??= []);
+      const openKey = `open:${status.openNights.join(",")}`;
+      if (status.openNights.length > 0 && !told.includes(openKey)) {
+        told.push(openKey);
+        notes.push(this.fileNews(file, { kind: "repair-block-open", text: blockOpenNews({ ...block, openNights: status.openNights }) }, `fixer:${block.id}:${openKey}`));
+      }
+      for (const stay of status.collisions) {
+        const key = `stay:${stay.checkIn}|${stay.checkout}`;
+        if (told.includes(key)) continue;
+        told.push(key);
+        notes.push(this.fileNews(file, { kind: "repair-block-collision", text: blockCollisionNews({ ...block, checkIn: stay.checkIn, checkout: stay.checkout }), urgent: true }, `fixer:${block.id}:${key}`));
+      }
+    }
+  }
+
   /** The booked pro's or candidate's name. */
   private bookedName(file: FixerFile, job: Job): string {
     return (job.booking && this.nameOf(file, job, job.booking.proId)) ?? "The pro";
@@ -1809,15 +2028,21 @@ export class FixerDesk {
     const checkoutDay = (this.hub().stays() ?? []).some((stay) => stay.checkout === ymd);
     let cleared = file.clearedYmd === ymd;
     if (checkoutDay && !cleared && this.deps.cleanings) cleared = (await this.deps.cleanings(ymd))?.cleared === true;
-    const overlaps = booking ? this.staysOver(file, booking).length > 0 : false;
+    // A calendar block can be a real booking labelled "Not available": the code never goes inside one.
+    const overlaps = booking ? this.staysOver(file, booking, job).length > 0 || this.inCalendarBlock(file, { from: booking.from, until: new Date(this.endOf(booking)).toISOString() }) : false;
+    if (booking?.urgentStay) return this.urgentAccess(file, job, booking, overlaps);
     return accessCheck({ job, pro: booking ? { reach: this.reachOfId(file, job, booking.proId) } : undefined, now: this.deps.now(), checkoutDay, cleared, overlapsStay: overlaps, staysUnread: this.staysUnknown() });
   }
 
   /** The saved stays that overlap this visit, with its extension and the check-in buffer. */
-  private staysOver(file: FixerFile, booking: Booking): Stay[] {
+  private staysOver(file: FixerFile, booking: Booking, job?: Job): Stay[] {
+    // A crew works only its windows: a stay between workdays doesn't overlap the crew.
+    const crew = job?.crew;
+    if (crew) return this.crewStays(file).filter((stay) => crewWindows(crew, { ...this.occupyInput(file), stays: [stay] }).conflicts.length > 0);
     const span = { from: booking.from, until: new Date(this.endOf(booking)).toISOString() };
     const input = this.occupyInput(file);
-    return (this.hub().stays() ?? []).filter((stay) => overlapsStay(span, [stay], input));
+    // An urgent visit's own stay is the guest's okay, not an overlap.
+    return this.crewStays(file).filter((stay) => stayKey(stay) !== booking.urgentStay && overlapsStay(span, [stay], input));
   }
 
   /** Each booked visit a stay now overlaps: one host note per visit and stay, bound to the visit. */
@@ -1825,7 +2050,7 @@ export class FixerDesk {
     for (const job of file.jobs) {
       const booking = job.booking;
       if (!booking?.hostYes || !liveBooking(job)) continue;
-      for (const stay of this.staysOver(file, booking)) {
+      for (const stay of this.staysOver(file, booking, job)) {
         const key = `${stay.checkIn}|${stay.checkout}`;
         if (booking.stayNoted?.includes(key)) continue;
         (booking.stayNoted ??= []).push(key);
@@ -2172,8 +2397,12 @@ export class FixerDesk {
       if (typeof input.until !== "string" || Number.isNaN(Date.parse(input.until))) return fail("Say until when, as a date and time.");
       const until = new Date(input.until).toISOString();
       if (Date.parse(until) <= Math.max(this.endOf(booking), this.deps.now().getTime())) return fail("That isn't later than the visit's end now.");
-      if (overlapsStay({ from: booking.from, until }, this.hub().stays() ?? [], this.occupyInput(file))) {
+      if (overlapsStay({ from: booking.from, until }, this.crewStays(file).filter((stay) => stayKey(stay) !== booking.urgentStay), this.occupyInput(file))) {
         return fail(`That runs into the next check-in, or the ${file.settings.checkInBufferMinutes} minutes kept free before it. Pick an earlier time.`);
+      }
+      if (booking.urgentStay) {
+        const limit = urgentVisitHolds({ window: { from: booking.from, until }, stays: this.crewStays(file), times: this.occupyInput(file), hostYes: booking.hostYes }).find((hold) => hold === "spans-checkout" || hold === "too-long");
+        if (limit) return fail(urgentRefusal(limit, { proName: this.bookedName(file, job) }));
       }
       const proName = this.bookedName(file, job);
       const gate = this.confirm("fixer-extend", job.id, tokenHash(JSON.stringify([booking.fingerprint, until])), input.confirmation, extendQuestion({ proName, until, timeZone: this.timeZone() }));
@@ -2183,7 +2412,7 @@ export class FixerDesk {
       delete booking.visitToken;
       delete booking.visitRevokedAt;
       this.write(file);
-      return ok({ extended: true, jobId: job.id, until, tellPro: { name: proName, reach: this.reachOfId(file, job, booking.proId) }, next: `Tell ${proName} the new end. If they use the visit page, their old link has ended: call visit_link for a new one.` });
+      return ok({ extended: true, jobId: job.id, until, tellPro: { name: proName, reach: this.reachOfId(file, job, booking.proId) }, next: `Tell ${proName} the new end. If they use the visit page, their old link has ended: call visit_link for a new one.${booking.urgentStay ? " The door code stops at the time the guest agreed to: ask the guest for the extra time and call record_guest_answer with yes." : ""}` });
     });
   }
 
