@@ -745,6 +745,14 @@ interface HostFact {
   at?: string;
 }
 
+/** A host time cleared when its stay's dates moved, kept with the checkout it was for, for the hours log (#238). */
+interface ClearedHostFact extends HostFact {
+  checkoutDate: string;
+}
+
+/** The most cleared host times the store keeps; the oldest go first. */
+const MAX_CLEARED_HOST_FACTS = 200;
+
 interface Tombstone {
   uid: string;
   version: number;
@@ -769,6 +777,8 @@ interface Stored {
   tenantId?: string;
   jobs: Job[];
   hostFacts: HostFact[];
+  /** Host times a moved date cleared. Never read back by the engine: only the hours log reads them. */
+  clearedHostFacts?: ClearedHostFact[];
   tombstones: Tombstone[];
   outbox: OutboxItem[];
   inboundIds: string[];
@@ -832,6 +842,7 @@ class Engine implements CleanerCore {
   private readonly defaultCheckIn: number;
   private jobsState: Job[] = [];
   private hostFacts: HostFact[] = [];
+  private clearedHostFacts: ClearedHostFact[] = [];
   /** Set while the cleaner's YES sends a held update early. */
   private sendHeldUpdate = false;
   private tombstones: Tombstone[] = [];
@@ -2492,6 +2503,7 @@ class Engine implements CleanerCore {
       }
       const checkoutDateChanged = existing.checkoutDate !== turnover.checkoutDate;
       const checkInDateChanged = existing.nextCheckInDate !== turnover.nextCheckInDate;
+      const oldCheckout = existing.checkoutDate;
       existing.arrivingUid = turnover.arrivingUid;
       existing.checkoutDate = turnover.checkoutDate;
       existing.nextCheckInDate = turnover.nextCheckInDate;
@@ -2502,13 +2514,13 @@ class Engine implements CleanerCore {
       existing.canceled = false;
       delete existing.calledOff;
       if (checkoutDateChanged) {
-        this.clearHostTime(existing.id, "checkout");
+        this.clearHostTime(existing.id, "checkout", oldCheckout);
         this.dropClearance(existing.id);
         existing.started = false;
         existing.done = false;
         this.cancelUnsentPin(existing.id);
       }
-      if (checkInDateChanged) this.clearHostTime(existing.id, "checkin");
+      if (checkInDateChanged) this.clearHostTime(existing.id, "checkin", oldCheckout);
       this.cancelPendingReminders(existing.id);
     }
     for (const job of this.jobsState) {
@@ -3527,7 +3539,11 @@ class Engine implements CleanerCore {
     return job.announced.checkoutDate !== job.checkoutDate || job.announced.checkoutMinutes !== checkout.minutes;
   }
 
-  private clearHostTime(jobId: string, field: "checkout" | "checkin"): void {
+  /** Clears the host's times for a field. Each one with a save time is kept, with the checkout it was for. */
+  private clearHostTime(jobId: string, field: "checkout" | "checkin", checkoutDate: string): void {
+    const cleared = this.hostFacts.filter((fact) => fact.jobId === jobId && fact.field === field);
+    const kept = cleared.filter((fact) => fact.at).map((fact) => ({ ...fact, checkoutDate }));
+    if (kept.length > 0) this.clearedHostFacts = [...this.clearedHostFacts, ...kept].slice(-MAX_CLEARED_HOST_FACTS);
     this.hostFacts = this.hostFacts.filter((fact) => fact.jobId !== jobId || fact.field !== field);
   }
 
@@ -3842,6 +3858,7 @@ class Engine implements CleanerCore {
       return { ...rest, ...(typeof checkInDate === "string" ? { checkInDate } : {}), started: job.started === true, done: job.done === true };
     });
     this.hostFacts = record.hostFacts;
+    this.clearedHostFacts = record.clearedHostFacts ?? [];
     this.tombstones = record.tombstones;
     this.outboxState = record.outbox;
     this.inboundIds = record.inboundIds;
@@ -3898,6 +3915,7 @@ class Engine implements CleanerCore {
       tenantId: this.tenantId,
       jobs: this.jobsState,
       hostFacts: this.hostFacts,
+      ...(this.clearedHostFacts.length > 0 ? { clearedHostFacts: this.clearedHostFacts } : {}),
       tombstones: this.tombstones,
       outbox: this.outboxState,
       inboundIds: this.inboundIds,
