@@ -67,6 +67,11 @@ const SAMPLES: Record<string, { method: keyof FixerDesk; args: Record<string, un
   raise_price: { method: "raisePrice", args: { jobId: "job_abcdefghij", cents: 42000 }, passes: ["job_abcdefghij", 42000, "agent"] },
   save_repair_alerts: { method: "issueAlertUpload", args: {}, passes: "none" },
   pick_quote: { method: "pickQuote", args: { jobId: "job_abcdefghij", proId: "pro_abcdefgh", costLineCents: 20000 } },
+  save_repair_block: { method: "saveRepairBlock", args: { firstDay: "2026-11-16", lastDay: "2026-11-20", jobIds: ["job_abcdefghij"] } },
+  remove_repair_block: { method: "removeRepairBlock", args: { blockId: "blk_abcdefgh" } },
+  record_guest_answer: { method: "recordGuestAnswer", args: { jobId: "job_abcdefghij", answer: "yes", ...TUE, via: "text" } },
+  urgent_timeline: { method: "urgentTimeline", args: { jobId: "job_abcdefghij" } },
+  save_crew_schedule: { method: "saveCrewSchedule", args: { jobId: "job_abcdefghij", firstDay: "2026-11-16", lastDay: "2026-11-20", workdays: ["MON", "TUE"], start: "08:00", end: "17:00", skipDays: ["2026-11-17"] } },
 };
 
 /** A desk that records each call and answers ok. */
@@ -84,7 +89,7 @@ function spyDesk() {
 describe("Fixer Core's tool table", () => {
   it("has the spec's tools and the extras, and leaves the front's and the page's out", () => {
     const spec = ["get_fixer_state", "save_fixer_settings", "save_pro", "remove_pro", "save_upkeep", "remove_upkeep", "activate_fixer", "check_fixes", "open_job", "approve_job", "add_candidates", "pick_pros", "contact_pro", "record_contact", "approve_booking", "visit_link", "revoke_visit", "extend_visit", "record_done", "record_cost", "cancel_job"];
-    const extras = ["guests_left", "skip_question", "change_door_code", "reschedule_job", "save_fixer_property", "save_fixer_sources", "raise_price", "save_repair_alerts", "pick_quote"];
+    const extras = ["guests_left", "skip_question", "change_door_code", "reschedule_job", "save_fixer_property", "save_fixer_sources", "raise_price", "save_repair_alerts", "pick_quote", "save_repair_block", "remove_repair_block", "record_guest_answer", "urgent_timeline", "save_crew_schedule"];
     expect([...FIXER_TOOL_NAMES].sort()).toEqual([...spec, ...extras].sort());
     expect(Object.keys(SAMPLES).sort()).toEqual([...FIXER_TOOL_NAMES].sort());
     // Answered by the front (Cleaner Core's photos, Supply Core's preview), and the page's reveal is never a tool.
