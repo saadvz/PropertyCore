@@ -44,3 +44,8 @@ export function hoursLogOn(env: NodeJS.ProcessEnv = process.env): boolean {
 export function stayCheckOn(env: NodeJS.ProcessEnv = process.env): boolean {
   return isOn(env.STAY_CHECK);
 }
+
+/** Guest messages (#242) on the multi-tenant service. Off unless GUEST_MESSAGES is exactly "1" or "true". */
+export function guestMessagesOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isOn(env.GUEST_MESSAGES);
+}

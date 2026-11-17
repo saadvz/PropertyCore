@@ -194,6 +194,13 @@ const TOOLS = [
     }),
   },
   {
+    name: "set_late_checkout",
+    title: "Allow a late checkout",
+    description:
+      "Moves one stay's checkout to a later time after a guest asked and the host said yes. Call once without confirmation to get the change and a code, show the host, and call again with the code only after the host says yes. The cleaner hears through Cleaner Core's usual update text. A time that runs into the next guest's check-in is refused, and a cleaning whose door code went out is left alone.",
+    input: z.object({ checkout: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD"), time: z.string().regex(HOUR_MINUTE, "24-hour HH:MM"), confirmation: z.string().max(40).optional() }),
+  },
+  {
     name: "save_arrival",
     title: "Save the arrival time",
     description: "Saves the cleaner's arrival time after you read it in their message, as a 24-hour HH:MM time like 11:30.",
@@ -313,8 +320,15 @@ type ToolName = (typeof TOOLS)[number]["name"] | (typeof SCRATCH_TOOL_LIST)[numb
 /** Every tool Cleaner Core can list, Scratch ones included. The shared service uses it to tell a cleaning tool from a touring one. */
 export const CLEANER_TOOL_NAMES: readonly string[] = [...TOOLS, ...SCRATCH_TOOL_LIST].map((tool) => tool.name);
 
-function listedTools(scratchTools: boolean) {
-  return scratchTools ? [...TOOLS, ...SCRATCH_TOOL_LIST] : [...TOOLS];
+/** Guest messages (#242) are on for this desk. A desk stand-in without the check lists none of their tools. */
+function guestMessagesListed(desk: LiveDesk): boolean {
+  return typeof desk.guestMessagesOn === "function" && desk.guestMessagesOn();
+}
+
+/** set_late_checkout is listed only with guest messages (#242) on. */
+function listedTools(scratchTools: boolean, guestMessages = false) {
+  const tools = TOOLS.filter((tool) => guestMessages || tool.name !== "set_late_checkout");
+  return scratchTools ? [...tools, ...SCRATCH_TOOL_LIST] : tools;
 }
 
 const Request = z.object({
@@ -374,7 +388,7 @@ export async function handleCleanerMcpMessage(
   if (method === "ping") return rpcResult(id, {});
   if (method === "tools/list") {
     return rpcResult(id, {
-      tools: listedTools(scratchTools).map((tool) => {
+      tools: listedTools(scratchTools, guestMessagesListed(desk)).map((tool) => {
         const { $schema: _schema, ...inputSchema } = z.toJSONSchema(tool.input) as Record<string, unknown>;
         return { name: tool.name, title: tool.title, description: tool.description, inputSchema };
       }),
@@ -382,7 +396,7 @@ export async function handleCleanerMcpMessage(
   }
   if (method === "tools/call") {
     const name = typeof params?.name === "string" ? params.name : "";
-    const tool = listedTools(scratchTools).find((item) => item.name === name);
+    const tool = listedTools(scratchTools, guestMessagesListed(desk)).find((item) => item.name === name);
     if (!tool) return rpcError(id, -32602, "I can't do that from this chat.");
     const args = tool.input.safeParse(params?.arguments ?? {});
     if (!args.success) return rpcResult(id, { content: [{ type: "text", text: "That was missing something I need." }], isError: true });
@@ -486,6 +500,8 @@ async function callTool(desk: LiveDesk, name: ToolName, args: object, pinKey: Bu
       return desk.checkNow(args as { googleEvents?: GoogleEventList }, saveSecrets);
     case "read_booking_email":
       return desk.readBookingEmail(args as Parameters<LiveDesk["readBookingEmail"]>[0], pinKey);
+    case "set_late_checkout":
+      return desk.setLateCheckout(args as { checkout: string; time: string; confirmation?: string }, pinKey);
     case "save_arrival":
       return desk.saveArrival(args as { time?: string });
     case "get_job_photos":
