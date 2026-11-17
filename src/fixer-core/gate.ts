@@ -70,7 +70,7 @@ export function defaultAccess(job: Job, pro: { reach: { phone?: string } } | und
   return "code";
 }
 
-export type AccessRefusal = "not-booked" | "no-yes" | "host-access" | "no-phone" | "overlaps-stay" | "stays-unread" | "before-visit" | "after-visit" | "guests-not-left";
+export type AccessRefusal = "not-booked" | "no-yes" | "host-access" | "no-phone" | "overlaps-stay" | "stays-unread" | "before-visit" | "after-visit" | "guests-not-left" | "guest-not-agreed";
 
 /** May the visit page show the door code now? The window runs from 30 minutes before the visit. */
 export function accessCheck(input: {
