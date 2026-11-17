@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Expected visits saved from the manager's text or a calendar invite, and a pure same-day check of one day's entry events against them, run on sample events, with add/list/cancel tools on the shared service behind `REMOTE_OVERSIGHT`.
+**Goal:** Expected visits saved from what the host says or a calendar invite, and a pure same-day check of one day's entry events against them, run on sample events, with add/list/cancel tools on the shared service behind `REMOTE_OVERSIGHT`.
 
 **Architecture:** A new `src/oversight/` folder mirrors `src/stay-check/`: a JSON record in the property's folder, an invite reader, a pure `checkDay`, a desk per property, and tools listed by `src/hosted/oversight.ts` the way `src/hosted/stayCheck.ts` lists the house rules. Entry events use their own provider-neutral shape inside the folder; #180 fills it later.
 
