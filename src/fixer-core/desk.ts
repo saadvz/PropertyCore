@@ -27,9 +27,13 @@ import { supplyAskOn } from "../supply-core/store";
 import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
 import { holdsOtherRole, priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
+import { BLOCK_ON_CALENDAR_NEXT, blockCalendarNext, blockCollisionNews, blockOpenNews, BLOCK_HOST_ACCESS, CREW_HOST_ACCESS, crewScheduleQuestion, crewScheduleSentence, crewSpanRefusal, guestWithdrewNews, removeRepairBlockQuestion, repairBlockQuestion, URGENT_AGREED, URGENT_ASK_GUEST, urgentRefusal } from "./texts";
 import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, shortDollars, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
-import { TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type Booking, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
+import { doorFor, repairBlockProblem, repairBlockStatus, staysForCrew } from "./repairBlock";
+import { crewScheduleProblem, crewWindows, type CrewSchedule } from "./crewDays";
+import { stayKey, urgentAccessCheck, urgentStay, urgentTimeline, urgentVisitHolds, type GuestAnswer, type UrgentHold, type UrgentRefusal } from "./urgentVisit";
+import { MAX_REPAIR_BLOCKS, TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type SavedBlock, type Booking, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
 /**
  * Fixer Core's desk: every tool's behaviour over one property's `fixer.json`. One call at a time.
@@ -328,6 +332,15 @@ function renumber(file: FixerFile, trades: readonly Trade[], first?: Pro): void 
   }
 }
 
+/** An urgent visit's refusal as the visit page's reasons. */
+function urgentReason(reason: UrgentRefusal): AccessRefusal {
+  if (reason === "before-visit" || reason === "after-visit" || reason === "no-phone") return reason;
+  if (reason === "no-host-yes") return "no-yes";
+  if (reason === "door-lock") return "host-access";
+  if (reason === "no-guest-ok" || reason === "guest-declined" || reason === "guest-ok-other-stay" || reason === "guest-ok-other-window") return "guest-not-agreed";
+  return "overlaps-stay";
+}
+
 export class FixerDesk {
   private chain: Promise<unknown> = Promise.resolve();
   private readonly approvals: ConfirmationBook;
@@ -552,8 +565,9 @@ export class FixerDesk {
           pros,
           ...(drafts.length > 0 ? { drafts } : {}),
           upkeep: file.upkeep.map((item) => ({ upkeepId: item.id, trade: item.trade, what: item.what, schedule: item.schedule, leadDays: item.leadDays, ...(item.proId ? { proId: item.proId } : {}) })),
-          openJobs: file.jobs.filter(isOpen).map((job) => ({ jobId: job.id, trade: job.trade, what: job.what, state: job.state, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}) })),
+          openJobs: file.jobs.filter(isOpen).map((job) => ({ jobId: job.id, trade: job.trade, what: job.what, state: job.state, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}), ...(job.crew ? { crew: job.crew } : {}), ...(job.guest?.answers.length ? { guestAnswer: job.guest.answers.at(-1)!.answer } : {}) })),
           costLog: this.costLog(file),
+          ...this.blockSummary(file),
           checkInBufferMinutes: file.settings.checkInBufferMinutes,
           cleaningMinutes: file.settings.cleaningMinutes,
           askCleaner: file.settings.askCleaner,
@@ -999,7 +1013,7 @@ export class FixerDesk {
       }
     }
     return visitWindows({
-      stays,
+      stays: this.crewStays(file),
       timeZone,
       ...(property.checkoutTime ? { checkoutTime: property.checkoutTime } : {}),
       ...(property.checkInTime ? { checkInTime: property.checkInTime } : {}),
@@ -1260,6 +1274,11 @@ export class FixerDesk {
     };
   }
 
+  /** The stays to count as busy: calendar blocks are cut down to the parts outside saved repair blocks (#243). */
+  private crewStays(file: FixerFile): Stay[] {
+    return staysForCrew(this.hub().stays() ?? [], file.repairBlocks ?? []);
+  }
+
   private door() {
     return this.hub().doorAccess(this.deps.env ?? (() => process.env));
   }
@@ -1270,15 +1289,44 @@ export class FixerDesk {
 
   /** The gate holds for a span, with the windows they were checked against. */
   private async holdsFor(file: FixerFile, job: Job, span: { from: string; until: string }, estimateCents: number | undefined, order?: "before" | "after"): Promise<{ holds: BookingHold[]; windows: VisitWindow[] }> {
+    if (job.crew) {
+      // A crew books its saved schedule: it overlaps when a stay touches any workday's window.
+      const overlaps = this.crewPlan(file, job.crew).conflicts.length > 0;
+      const holds = bookingHolds({ span, windows: [span], overlaps, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}), ...(estimateCents !== undefined ? { estimateCents } : {}) });
+      return { holds, windows: [] };
+    }
     const windows = await this.windowsFor({ ...job, ...(order ? { cleaningOrder: order } : {}) });
-    const overlaps = overlapsStay(span, this.hub().stays() ?? [], this.occupyInput(file));
+    const overlaps = overlapsStay(span, this.crewStays(file), this.occupyInput(file));
     const holds = bookingHolds({ span, windows, overlaps, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}), ...(estimateCents !== undefined ? { estimateCents } : {}) });
     return { holds, windows };
   }
 
   /** The question for a booking, with the holds the host's yes would accept. */
-  private questionFor(job: Job, proName: string, b: { from: string; until: string; estimateCents?: number }, access: "code" | "host", holds: readonly BookingHold[]): string {
-    return bookingQuestion({ proName, from: b.from, until: b.until, timeZone: this.timeZone(), ...(b.estimateCents !== undefined ? { estimateCents: b.estimateCents } : {}), access, holds, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}) });
+  private questionFor(job: Job, proName: string, b: { from: string; until: string; estimateCents?: number }, access: "code" | "host", holds: readonly BookingHold[], urgent = false): string {
+    // An urgent visit the guest agreed to is during a stay by design: its window and overlap holds become one sentence.
+    const shown = urgent ? holds.filter((hold) => hold !== "outside-window" && hold !== "overlaps-stay") : holds;
+    return bookingQuestion({ proName, from: b.from, until: b.until, timeZone: this.timeZone(), ...(b.estimateCents !== undefined ? { estimateCents: b.estimateCents } : {}), access, holds: shown, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}), ...(urgent ? { extra: URGENT_AGREED } : job.crew ? { extra: crewScheduleSentence(job.crew) } : {}) });
+  }
+
+  /** True when the span touches a block on the booking calendar, inside a repair block or not. */
+  private inCalendarBlock(file: FixerFile, span: { from: string; until: string }): boolean {
+    return overlapsStay(span, (this.hub().stays() ?? []).filter((stay) => stay.kind === "block"), this.occupyInput(file));
+  }
+
+  /**
+   * Why an urgent visit over a guest stay can't be booked yet, the host's yes aside (#243). Undefined for a job that
+   * isn't urgent (urgency now) or is a crew job: those are never booked over a stay.
+   */
+  private urgentHolds(file: FixerFile, job: Job, span: { from: string; until: string }): UrgentHold[] | undefined {
+    if (job.urgency !== "now" || job.crew) return undefined;
+    const guest = job.guest?.answers.at(-1);
+    return urgentVisitHolds({ window: span, stays: this.crewStays(file), times: this.occupyInput(file), ...(guest ? { guest } : {}), hostYes: { at: this.deps.now().toISOString() } });
+  }
+
+  /** The key of the guest stay a span falls in, or undefined. */
+  private stayKeyOf(file: FixerFile, span: { from: string; until: string }): string | undefined {
+    const stay = urgentStay(span, this.crewStays(file), this.occupyInput(file));
+    return stay ? stayKey(stay) : undefined;
   }
 
   /** The pending booking a pro's "booked" gives: held for the host if it breaks a gate, kept on the contact if another is already pending. */
@@ -1291,6 +1339,10 @@ export class FixerDesk {
     if (Date.parse(from) <= this.deps.now().getTime()) return fail(PAST_SPAN);
     if (this.staysUnknown()) return fail(STAYS_UNREAD_BOOK);
     const span = { from: new Date(from).toISOString(), until: new Date(until).toISOString() };
+    if (job.crew) {
+      const plan = this.crewPlan(file, job.crew);
+      if (!plan.span || plan.span.from !== span.from || plan.span.until !== span.until) return fail(plan.span ? crewSpanRefusal(plan.span) : "No workday of the crew's schedule is left. Save a new schedule first.");
+    }
     const at = this.deps.now().toISOString();
     contact.outcome = "booked";
     contact.outcomeAt = at;
@@ -1303,7 +1355,7 @@ export class FixerDesk {
       return ok({ jobId: job.id, outcome: "booked", heldForHost: true, next: `${name} is another yes while ${this.nameOf(file, job, pending.proId) ?? "another pro"} is waiting on the host. Check check_fixes for the host to choose.` });
     }
     const { holds } = await this.holdsFor(file, job, span, input.estimateCents);
-    const access = defaultAccess(job, { reach: this.reachOfId(file, job, contact.to) }, this.codeSaved());
+    const access = job.crew || this.inCalendarBlock(file, span) ? "host" : defaultAccess(job, { reach: this.reachOfId(file, job, contact.to) }, this.codeSaved());
     const booking: Booking = {
       proId: contact.to,
       ...span,
@@ -1316,7 +1368,13 @@ export class FixerDesk {
     job.booking = booking;
     this.write(file);
     const reply: Record<string, unknown> = { jobId: job.id, outcome: "booked", access, ...(holds.length > 0 ? { heldFor: holds } : {}) };
-    if (holds.includes("overlaps-stay")) {
+    const urgent = holds.includes("overlaps-stay") ? this.urgentHolds(file, job, span) : undefined;
+    if (urgent?.length === 0) {
+      reply.question = this.questionFor(job, name, booking, access, holds, true);
+      reply.next = "Ask the host this question, then call approve_booking.";
+    } else if (urgent) {
+      reply.next = urgentRefusal(urgent[0]!, { proName: name });
+    } else if (holds.includes("overlaps-stay")) {
       reply.next = `That time overlaps a guest stay, so it can't be booked. Tell the host, and ask ${name} for another time.`;
     } else {
       reply.question = this.questionFor(job, name, booking, access, holds);
@@ -1366,7 +1424,12 @@ export class FixerDesk {
       const target = this.bookingTarget(file, job, input.proId);
       if (typeof target === "string") return fail(target);
       const name = this.nameOf(file, job, target.proId) ?? "The pro";
-      const access = input.access ?? target.access;
+      let access = input.access ?? target.access;
+      if (access === "code" && job.crew) return fail(CREW_HOST_ACCESS);
+      if (job.crew) {
+        const plan = this.crewPlan(file, job.crew);
+        if (!plan.span || plan.span.from !== target.from || plan.span.until !== target.until) return fail(plan.span ? crewSpanRefusal(plan.span) : "No workday of the crew's schedule is left. Save a new schedule first.");
+      }
       if (access === "code" && defaultAccess(job, { reach: this.reachOfId(file, job, target.proId) }, this.codeSaved()) !== "code") return fail("The door code can't go to this pro: there's no saved code, no phone for them, or the job is on the coded lock. Let them in yourself instead.");
       const order = input.cleaningOrder ?? target.cleaningOrder ?? job.cleaningOrder;
       // The stays and windows are read again now, so a yes after they changed is refused.
@@ -1375,11 +1438,18 @@ export class FixerDesk {
       if (this.staysUnknown()) return fail(STAYS_UNREAD_BOOK);
       const span = { from: target.from, until: target.until };
       if (Date.parse(span.from) <= this.deps.now().getTime()) return fail(PAST_SPAN);
+      if (access === "code" && this.inCalendarBlock(file, span)) {
+        if (input.access === "code") return fail(BLOCK_HOST_ACCESS);
+        access = "host";
+      }
       const { holds, windows } = await this.holdsFor(file, job, span, target.estimateCents, order);
-      if (holds.includes("overlaps-stay")) return fail(`That time overlaps a guest stay, so nothing is booked. Ask ${name} for another time.`);
+      const urgent = holds.includes("overlaps-stay") ? this.urgentHolds(file, job, span) : undefined;
+      if (urgent && urgent.length > 0) return fail(urgentRefusal(urgent[0]!, { proName: name }));
+      if (holds.includes("overlaps-stay") && !urgent) return fail(`That time overlaps a guest stay, so nothing is booked. Ask ${name} for another time.`);
+      const urgentKey = urgent ? this.stayKeyOf(file, span) : undefined;
       const checkoutDay = localYmd(new Date(span.from), this.timeZone());
       if (!order && windows.some((w) => w.cleaning && w.checkoutYmd === checkoutDay)) return ok({ question: cleaningOrderQuestion({ proName: name }), next: "Ask the host, then call approve_booking again with cleaningOrder set to before or after." });
-      const question = this.questionFor(job, name, target, access, holds);
+      const question = this.questionFor(job, name, target, access, holds, Boolean(urgentKey));
       const bound = tokenHash(JSON.stringify([target.fingerprint, access, order ?? null, [...holds].sort()]));
       const gate = this.confirm("fixer-book", job.id, bound, input.confirmation, question);
       if (gate !== "go") return gate;
@@ -1394,6 +1464,7 @@ export class FixerDesk {
         hostYes: { at: this.deps.now().toISOString() },
         ...(order ? { cleaningOrder: order } : {}),
         fingerprint: fingerprintOf(target, order),
+        ...(urgentKey ? { urgentStay: urgentKey } : {}),
       };
       job.booking = booked;
       if (order) job.cleaningOrder = order;
@@ -1570,7 +1641,7 @@ export class FixerDesk {
       const held = this.heldRevised(file, job);
       if (held) out.push({ jobId: job.id, revised: held });
       const live = job.booking;
-      if (live?.hostYes && liveBooking(job) && this.staysOver(file, live).length > 0) {
+      if (live?.hostYes && liveBooking(job) && this.staysOver(file, live, job).length > 0) {
         out.push({ jobId: job.id, proId: live.proId, name: this.bookedName(file, job), from: live.from, until: new Date(this.endOf(live)).toISOString(), overlapsStay: true, next: STAY_OVER_NEXT });
       }
       if (!isOpen(job) || liveBooking(job)) continue;
@@ -1716,6 +1787,7 @@ export class FixerDesk {
       // A stay read since a visit was booked: the host hears of it once, and it is held below.
       const notes: HostNote[] = [];
       this.overlapPass(file, notes);
+      this.blockPass(file, notes);
       const now = this.deps.now();
       const at = now.toISOString();
       const news: { jobId?: string; kind: string; at: string; text?: string; urgent?: true }[] = [];
