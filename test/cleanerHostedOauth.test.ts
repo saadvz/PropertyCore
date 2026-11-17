@@ -149,6 +149,7 @@ describe("the invite code on the Allow page", () => {
     expect(page.headers["content-security-policy"]).toContain("font-src 'self'");
     expect(html).toContain('<link rel="stylesheet" href="/connect.css" />');
     expect(html).toContain("<h1>Let Grok Bot run the day-to-day. You keep the keys.</h1>");
+    expect(html).toContain("After you decide, you'll be sent back to Grok Bot.");
     expect(html).toContain('class="match-code">');
     // The card each ending shows waits hidden on the page.
     for (const id of ["oauth-done-approved", "oauth-done-denied", "oauth-done-expired"]) expect(html).toContain(`id="${id}" hidden`);

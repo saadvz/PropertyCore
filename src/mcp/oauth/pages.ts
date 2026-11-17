@@ -277,7 +277,7 @@ ${list(words.cannot, lock)}
           </div>
           <div class="pc-head">
             <h2 id="oauth-heading">${heading}</h2>
-            <p class="pc-sub pc-wide"><strong>${escape(p.clientName)}</strong> ${escape(words.asking)} After you decide, you'll be sent back to ${escape(p.redirectHost)}.</p>
+            <p class="pc-sub pc-wide"><strong>${escape(p.clientName)}</strong> ${escape(words.asking)} After you decide, you'll be sent back to ${name}.</p>
           </div>
           ${fields}
           <div class="pc-mini pc-narrow">
