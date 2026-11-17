@@ -45,7 +45,7 @@ export function stayCheckOn(env: NodeJS.ProcessEnv = process.env): boolean {
   return isOn(env.STAY_CHECK);
 }
 
-/** Remote oversight's expected visits (#240) on the multi-tenant service. Off unless REMOTE_OVERSIGHT is exactly "1" or "true". */
-export function remoteOversightOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isOn(env.REMOTE_OVERSIGHT);
+/** Package arrivals (#241) on the multi-tenant service. Off unless PACKAGE_ARRIVALS is exactly "1" or "true". */
+export function packageArrivalsOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isOn(env.PACKAGE_ARRIVALS);
 }

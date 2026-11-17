@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { dollarsText, type PayRecord } from "../cleaner-core/payments";
 import { FIXER_FILE, readFixer, type FixerFile } from "../fixer-core/store";
 import { readHubFile, type Stay } from "../hub/store";
+import { effectiveSeen, PACKAGES_FILE, readPackages, supplyKey, type PackagesFile } from "../package-arrivals/store";
 import { readSupply, SUPPLY_FILE, type SupplyFile } from "../supply-core/store";
 import type { RowFact } from "./fact";
 import { routeFact } from "./ownerRules";
@@ -48,6 +50,7 @@ export interface PropertyRecords {
   pay: Record<string, PayRecord>;
   fixer?: FixerFile;
   supply?: SupplyFile;
+  packages?: PackagesFile;
 }
 
 export type RowSource = (records: PropertyRecords) => RowFact[];
@@ -99,6 +102,7 @@ export function readRecords(root: string): PropertyRecords {
   const hostName = str(live.hostName) ?? str(live.business);
   const fixer = existsSync(join(root, FIXER_FILE)) ? safe(() => readFixer(root)) : undefined;
   const supply = existsSync(join(root, SUPPLY_FILE)) ? safe(() => readSupply(root)) : undefined;
+  const packages = existsSync(join(root, PACKAGES_FILE)) ? safe(() => readPackages(root)) : undefined;
   return {
     ...(propertyName ? { propertyName } : {}),
     ...(property.timeZone ? { timeZone: property.timeZone } : {}),
@@ -110,6 +114,7 @@ export function readRecords(root: string): PropertyRecords {
     pay: live.pay && typeof live.pay === "object" ? (live.pay as Record<string, PayRecord>) : {},
     ...(fixer ? { fixer } : {}),
     ...(supply ? { supply } : {}),
+    ...(packages ? { packages } : {}),
   };
 }
 
@@ -240,6 +245,49 @@ export const supplyRows: RowSource = (records) => {
 };
 
 /**
+ * Package arrivals (#241): each seen delivery is Property Core's row at the drop, and each bring-in is the
+ * person's own: the cleaner's log for the cleaner, otherwise a helper log keyed by a hash, never their phone.
+ */
+export const packageRows: RowSource = (records) => {
+  const supply = records.supply;
+  if (!supply) return [];
+  const out: RowFact[] = [];
+  const itemName = (id: string) => supply.items.find((item) => item.id === id)?.name ?? "an item";
+  for (const order of supply.orders) {
+    if (order.status !== "placed" && order.status !== "delivered") continue;
+    // Only deliveries package arrivals registered: an older delivered order adds no row to a confirmed month.
+    const arrival = records.packages?.arrivals[supplyKey(order.id)];
+    if (!arrival) continue;
+    const seen = effectiveSeen(order, arrival);
+    if (!seen) continue;
+    const lines = order.items.map((line) => `${itemName(line.itemId)} x${line.qty}`).join(", ");
+    const what = `the package from ${order.store}${lines ? `: ${lines}` : ""}`;
+    const ref = `Supply Core order ${order.id}`;
+    out.push({ kind: "package-drop", actor: "system", log: "property-core", participant: "Property Core", at: seen.at, task: `Package delivered from ${order.store}${lines ? `: ${lines}` : ""}`, reference: `${ref}, seen by ${seen.how}`, onSite: false, timing: "system" });
+    const visit = arrival?.visit;
+    const inside = arrival?.broughtIn;
+    if (!visit || !inside) continue;
+    const cleaner = visit.role === "cleaner";
+    const name = visit.name ?? (cleaner ? (records.cleanerName ?? "Cleaner") : "Helper");
+    const helperLog = `helper:${createHash("sha256").update(visit.person).digest("hex").slice(0, 10)}` as const;
+    out.push({
+      kind: "bring-in",
+      actor: cleaner ? "cleaner" : "helper",
+      log: cleaner ? "cleaner" : helperLog,
+      participant: name,
+      at: inside.startedAt ?? inside.at,
+      ...(inside.startedAt ? { until: inside.at } : {}),
+      task: `Brought in ${what}`,
+      reference: `${ref}, bring-in`,
+      onSite: true,
+      timing: "measured",
+      ...(inside.startedAt ? {} : { needs: "No start time for bringing the package in, so the visit has no hours." }),
+    });
+  }
+  return out;
+};
+
+/**
  * The owners' own entries on their standing lock codes: arrival, departure and time on site, measured.
  * Waiting on the smart-lock connection (saadvz/PropertyCore#180) and the lock partner's event shape, so it
  * gives nothing yet. When it lands, each entry is one row: kind "owner-on-site", actor "host", log "owner",
@@ -247,7 +295,7 @@ export const supplyRows: RowSource = (records) => {
  */
 export const ownerLockEntries: RowSource = () => [];
 
-export const DEFAULT_SOURCES: readonly RowSource[] = [cleanerRows, fixerRows, supplyRows, ownerLockEntries];
+export const DEFAULT_SOURCES: readonly RowSource[] = [cleanerRows, fixerRows, supplyRows, packageRows, ownerLockEntries];
 
 const factKey = (fact: RowFact) => `${fact.kind}|${fact.reference}|${fact.at}`;
 
