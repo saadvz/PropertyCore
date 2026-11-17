@@ -101,7 +101,7 @@ describe("the booking email log", () => {
   it("gives the stay covering a night: its check-in night yes, its checkout night no, a cancelled one never", () => {
     const root = folder();
     appendBookingEmail(root, record("confirmed-stacked"));
-    expect(stayForNight(root, "2026-10-18")).toEqual({ checkIn: "2026-10-18", checkout: "2026-10-22", checkInTime: "15:00", checkoutTime: "12:00", guests: 3, confirmationCode: "HMXK4Q2Z9R" });
+    expect(stayForNight(root, "2026-10-18")).toEqual({ checkIn: "2026-10-18", checkout: "2026-10-22", checkInTime: "15:00", checkoutTime: "12:00", guests: 3, infants: 1, confirmationCode: "HMXK4Q2Z9R" });
     expect(stayForNight(root, "2026-10-21")?.confirmationCode).toBe("HMXK4Q2Z9R");
     expect(stayForNight(root, "2026-10-22")).toBeUndefined();
     appendBookingEmail(root, record("cancelled-range", "applied", "2026-10-16T15:00:00.000Z"));
