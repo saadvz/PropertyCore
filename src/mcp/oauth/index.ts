@@ -11,7 +11,7 @@ import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { RuntimeStore } from "../../storage/runtimeStore";
 import { AUTH_METHODS, checkClientMetadata, ClientMetadataError, GROK_LEGACY_REDIRECT_URIS, type RedirectPolicy } from "./clients";
 import { PAGE_HEADERS, problemPage } from "./pages";
-import { TourCoreOAuthProvider, type OAuthEndpoints, type OAuthResource, type ProviderOptions, type ResourceEndpoints } from "./provider";
+import { TourCoreOAuthProvider, type OAuthEndpoints, type PageRefusal, type OAuthResource, type ProviderOptions, type ResourceEndpoints } from "./provider";
 import { hashSecret, OAuthGrantStore } from "./store";
 
 export { CLEANER_SCOPE, endpointsFor, OPERATOR_SCOPE, type OAuthEndpoints, type OAuthResource, type ResourceEndpoints } from "./provider";
@@ -65,8 +65,11 @@ const oauthError = (res: Response, status: number, error: string, description: s
   res.status(status).set("Cache-Control", "no-store").json({ error, error_description: description });
 
 /** The connect page's answer to a phone code or an approval: { ok: true }, or 403 with the refusal. */
-const approvalAnswer = (res: Response, result: { ok: true } | { ok: false; message: string }) =>
-  res.status(result.ok ? 200 : 403).set("Cache-Control", "no-store").json(result.ok ? { ok: true } : { ok: false, error: { message: result.message } });
+const approvalAnswer = (res: Response, result: { ok: true } | PageRefusal) =>
+  res
+    .status(result.ok ? 200 : 403)
+    .set("Cache-Control", "no-store")
+    .json(result.ok ? { ok: true } : { ok: false, error: { message: result.message, ...(result.field ? { field: result.field } : {}) } });
 
 /** RFC 6749 §2.3.1: form-encoded credentials in the Basic header. */
 const formDecode = (s: string) => decodeURIComponent(s.replace(/\+/g, " "));
@@ -245,7 +248,7 @@ export class McpOAuth {
           status === "pending"
             ? [409, "Still waiting", "Approve or deny this connection on the Tour Core computer first."]
             : [410, "This request is finished", "It was already used or it expired. Start connecting again from Grok."];
-        res.status(code).set(PAGE_HEADERS).type("html").send(problemPage(title, message));
+        res.status(code).set(PAGE_HEADERS).type("html").send(problemPage(title, message, "wait"));
         return;
       }
       res.set(PAGE_HEADERS).redirect(302, to);

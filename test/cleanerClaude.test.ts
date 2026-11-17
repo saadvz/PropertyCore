@@ -115,7 +115,8 @@ describe("Cleaner Core for Grok stays as it was", () => {
   it("keeps Grok's redirect hosts and approval page", () => {
     expect(redirectHostsFromEnv({})).toEqual(DEFAULT_REDIRECT_HOSTS);
     const page = consentPage({ requestId: "r", matchCode: "123456", clientName: "Grok", redirectHost: "grok.com", hosted: true, firstClaim: true, label: "Cleaner Core" });
-    expect(page).toContain("<h1>Connect your Grok Bot to Cleaner Core</h1>");
+    expect(page).toContain("<title>Connect your Grok Bot to Cleaner Core</title>");
+    expect(page).toContain("<h1>Let Grok Bot run the day-to-day. You keep the keys.</h1>");
     expect(page).not.toContain("owner");
     expect(page).not.toContain("Claude");
   });
@@ -152,7 +153,8 @@ describe("Cleaner Core for Claude", () => {
     expect(CLAUDE_DESK_WORDING.pinFailed).toBe("The door code didn't reach the cleaner. Tell Claude the guests have left and I'll resend it.");
     expect(redirectHostsFromEnv({ CLEANER_CORE_ASSISTANT: "claude" })).toEqual([...DEFAULT_REDIRECT_HOSTS, "claude.ai"]);
     const page = consentPage({ requestId: "r", matchCode: "123456", clientName: "Claude", redirectHost: "claude.ai", hosted: true, firstClaim: true, label: "Cleaner Core", assistant: "claude" });
-    expect(page).toContain("<h1>Connect Claude to Cleaner Core</h1>");
+    expect(page).toContain("<title>Connect Claude to Cleaner Core</title>");
+    expect(page).toContain("<h1>Let Claude run the day-to-day. You keep the keys.</h1>");
     expect(page).not.toContain("owner");
     expect(page).not.toContain("Grok");
   });
