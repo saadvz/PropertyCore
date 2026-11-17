@@ -17,16 +17,16 @@ const REVIEW = {
 
 const EXPORT = {
   name: "export_hours",
-  title: "Export a month to the Sheet",
+  title: "Export a month to the spreadsheet",
   description:
-    "A month the host confirmed, as rows for their Google Sheet in their own columns, one log each. Write them with your own Google Sheets connector exactly as given, then call again with stored: true. Refused when the rows changed since the host confirmed: review the month again first.",
+    "A month the host confirmed, as rows for their own spreadsheet in their own columns, one log each. Write them exactly as given with the spreadsheet connector the host already uses with you: Google Sheets, Excel, or another. If none is connected, ask the host where they want the log written. Then call again with stored: true. Refused when the rows changed since the host confirmed: review the month again first.",
   inputSchema: { type: "object", properties: { month: MONTH_ARG, stored: { type: "boolean" } }, required: ["month"], additionalProperties: false },
 };
 
 const SETTINGS = {
   name: "save_hours_settings",
   title: "Hours log settings",
-  description: `The host's own hours log setup, only as the host says: their activity codes (each with its group, activity and the minutes one of the owner's actions under it usually takes; unset minutes are 0), which code each row kind uses, their Sheet's columns in order with their headers, the name on owner rows, and their Sheet's name or link. Each field given replaces the saved one. Row kinds: ${ROW_KINDS.join(", ")}.`,
+  description: `The host's own hours log setup, only as the host says: their activity codes (each with its group, activity and the minutes one of the owner's actions under it usually takes; unset minutes are 0), which code each row kind uses, their spreadsheet's columns in order with their headers, the name on owner rows, and their spreadsheet's name or link, in Google Sheets, Excel, or another. Each field given replaces the saved one. Row kinds: ${ROW_KINDS.join(", ")}.`,
   inputSchema: {
     type: "object",
     properties: {
