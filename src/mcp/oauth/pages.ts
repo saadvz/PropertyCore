@@ -239,6 +239,16 @@ function cleanerConsentPage(p: { requestId: string; matchCode: string; clientNam
   }
   const allow = p.hosted ? `\n          <button type="button" class="pc-primary" id="oauth-allow" data-code="${escape(p.matchCode)}">Allow access</button>` : "";
   const leaving = `Taking you back to ${chatName(who)}…`;
+  // The chat doesn't show a connection code, so a hosted page has nothing to match it with: Allow sends it.
+  // Approving on the Cleaner Core computer still asks the person to check the code there.
+  const match = p.hosted
+    ? ""
+    : `<div class="pc-match">
+            <div class="pc-match-text pc-wide"><span class="pc-match-label">Connection code</span><span>Check it matches the one on your computer.</span></div>
+            <span class="pc-match-short pc-narrow">Connection code — check it matches your computer</span>
+            <span class="match-code">${escape(p.matchCode)}</span>
+          </div>
+          `;
 
   return pcShell(
     `Connect ${who.chat} to ${words.product}`,
@@ -286,12 +296,7 @@ ${list(words.cannot, lock)}
             <div class="pc-mini-rule"></div>
             <div class="pc-mini-never">${svg("0 0 24 24", 18, "#1D5A43", 2, LOCK)}<p class="pc-mini-text"><strong>Never:</strong> ${escape(words.cannotShort)}</p></div>
           </div>
-          <div class="pc-match">
-            <div class="pc-match-text pc-wide"><span class="pc-match-label">Connection code</span><span>Check it matches the one in ${name}.</span></div>
-            <span class="pc-match-short pc-narrow">Connection code — check it matches ${name}</span>
-            <span class="match-code">${escape(p.matchCode)}</span>
-          </div>
-          <div class="pc-actions">${allow}
+          ${match}<div class="pc-actions">${allow}
             <button type="button" class="pc-link" id="oauth-deny">Deny</button>
           </div>
           <div class="pc-status"><span class="pc-dot"></span><span id="oauth-status" data-request="${escape(p.requestId)}">Waiting for your approval…</span></div>

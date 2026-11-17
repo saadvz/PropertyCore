@@ -120,7 +120,7 @@ export async function hostedApp(extra: NodeJS.ProcessEnv = {}, existing?: { root
   const authorize = (clientId: string, challenge: string, resource: string, scope: string, state = "state-1", redirect = REDIRECT) =>
     http(`/authorize?${new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: redirect, code_challenge: challenge, code_challenge_method: "S256", state, scope, resource })}`);
 
-  const pageParts = (html: string) => ({ id: /data-request="([^"]+)"/.exec(html)![1]!, code: /class="match-code">([^<]+)/.exec(html)![1]! });
+  const pageParts = (html: string) => ({ id: /data-request="([^"]+)"/.exec(html)![1]!, code: /id="oauth-allow" data-code="([^"]+)"/.exec(html)![1]! });
 
   /** `inviteCode` is the multi-tenant service's invite field on the Allow page. */
   const approve = (id: string, code: string, headers: Record<string, string> = {}, inviteCode?: string, service?: string) =>
