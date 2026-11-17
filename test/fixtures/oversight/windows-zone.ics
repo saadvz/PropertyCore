@@ -1,0 +1,12 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Example//Scratch//EN
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:windows-zone@example.com
+ORGANIZER;CN=Mike Doyle:mailto:mike@example.com
+DTSTART;TZID=Eastern Standard Time:20261119T130000
+DTEND;TZID=Eastern Standard Time:20261119T170000
+SUMMARY:Walk-through
+END:VEVENT
+END:VCALENDAR
