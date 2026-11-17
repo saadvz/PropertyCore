@@ -27,9 +27,9 @@ import { supplyAskOn } from "../supply-core/store";
 import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
 import { holdsOtherRole, priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
-import { BLOCK_ON_CALENDAR_NEXT, blockCalendarNext, blockCollisionNews, blockOpenNews, BLOCK_HOST_ACCESS, CREW_HOST_ACCESS, crewScheduleQuestion, crewScheduleSentence, crewSpanRefusal, guestWithdrewNews, removeRepairBlockQuestion, repairBlockQuestion, URGENT_AGREED, URGENT_ASK_GUEST, urgentRefusal } from "./texts";
+import { BLOCK_ON_CALENDAR_NEXT, blockCalendarNext, blockCollisionNews, blockOpenNews, BLOCK_HOST_ACCESS, CREW_HOST_ACCESS, crewScheduleQuestion, crewScheduleSentence, crewSpanRefusal, guestWithdrewNews, removeRepairBlockQuestion, repairBlockQuestion, URGENT_AGREED, URGENT_ASK_GUEST, urgentRefusal, urgentStayChangedNews } from "./texts";
 import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, shortDollars, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
-import { latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
+import { insideWindow, latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { doorFor, repairBlockProblem, repairBlockStatus, staysForCrew } from "./repairBlock";
 import { crewScheduleProblem, crewWindows, type CrewSchedule } from "./crewDays";
 import { stayKey, urgentAccessCheck, urgentStay, urgentTimeline, urgentVisitHolds, type GuestAnswer, type UrgentHold, type UrgentRefusal } from "./urgentVisit";
@@ -997,7 +997,7 @@ export class FixerDesk {
   }
 
   /** The times a pro can visit for this job, between the stays, with the cleaning applied. None while the stays are unknown. */
-  async windowsFor(job: Job): Promise<VisitWindow[]> {
+  async windowsFor(job: Job, skipStay?: string): Promise<VisitWindow[]> {
     const file = this.read();
     if (this.staysUnknown()) return [];
     const hub = this.hub();
@@ -1013,7 +1013,8 @@ export class FixerDesk {
       }
     }
     return visitWindows({
-      stays: this.crewStays(file),
+      // An urgent visit's own guest stay, when asked to leave it out: what's left says whether the time is otherwise open.
+      stays: this.crewStays(file).filter((stay) => !skipStay || stayKey(stay) !== skipStay),
       timeZone,
       ...(property.checkoutTime ? { checkoutTime: property.checkoutTime } : {}),
       ...(property.checkInTime ? { checkInTime: property.checkInTime } : {}),
@@ -1297,14 +1298,18 @@ export class FixerDesk {
     }
     const windows = await this.windowsFor({ ...job, ...(order ? { cleaningOrder: order } : {}) });
     const overlaps = overlapsStay(span, this.crewStays(file), this.occupyInput(file));
-    const holds = bookingHolds({ span, windows, overlaps, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}), ...(estimateCents !== undefined ? { estimateCents } : {}) });
+    let holds = bookingHolds({ span, windows, overlaps, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}), ...(estimateCents !== undefined ? { estimateCents } : {}) });
+    // An urgent visit is outside the windows because of the stay it's during. It's held for being outside only when
+    // the time would be outside with that stay left out too (past the days looked at, or in a turnover clean).
+    const stay = overlaps && job.urgency === "now" ? this.stayKeyOf(file, span) : undefined;
+    if (stay && holds.includes("outside-window") && insideWindow(span, await this.windowsFor({ ...job, ...(order ? { cleaningOrder: order } : {}) }, stay))) holds = holds.filter((hold) => hold !== "outside-window");
     return { holds, windows };
   }
 
   /** The question for a booking, with the holds the host's yes would accept. */
   private questionFor(job: Job, proName: string, b: { from: string; until: string; estimateCents?: number }, access: "code" | "host", holds: readonly BookingHold[], urgent = false): string {
-    // An urgent visit the guest agreed to is during a stay by design: its window and overlap holds become one sentence.
-    const shown = urgent ? holds.filter((hold) => hold !== "outside-window" && hold !== "overlaps-stay") : holds;
+    // An urgent visit the guest agreed to is during a stay by design: its overlap hold becomes one sentence.
+    const shown = urgent ? holds.filter((hold) => hold !== "overlaps-stay") : holds;
     return bookingQuestion({ proName, from: b.from, until: b.until, timeZone: this.timeZone(), ...(b.estimateCents !== undefined ? { estimateCents: b.estimateCents } : {}), access, holds: shown, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}), ...(urgent ? { extra: URGENT_AGREED } : job.crew ? { extra: crewScheduleSentence(job.crew) } : {}) });
   }
 
@@ -1878,10 +1883,10 @@ export class FixerDesk {
    * The code for an urgent visit during a stay (#243): the usual checks, then only inside the visit itself (no
    * early lead, the guest is inside), only while the guest's last answer is a yes that holds the whole visit.
    */
-  private urgentAccess(file: FixerFile, job: Job, booking: Booking, overlaps: boolean): ReturnType<typeof accessCheck> {
+  private urgentAccess(file: FixerFile, job: Job, booking: Booking, overlaps: boolean, turnover: { checkoutDay: boolean; cleared: boolean }): ReturnType<typeof accessCheck> {
     const now = this.deps.now();
     const pro = { reach: this.reachOfId(file, job, booking.proId) };
-    const base = accessCheck({ job, pro, now, checkoutDay: false, cleared: true, overlapsStay: overlaps, staysUnread: this.staysUnknown() });
+    const base = accessCheck({ job, pro, now, ...turnover, overlapsStay: overlaps, staysUnread: this.staysUnknown() });
     if (!base.ok && base.reason !== "before-visit") return base;
     // Once the guest said no after the host's yes, the code stays off for this visit, whatever they say later.
     if (job.guest?.answers.some((answer) => answer.answer === "no" && booking.hostYes && answer.at >= booking.hostYes.at)) return { ok: false, reason: "guest-not-agreed" };
@@ -2097,12 +2102,13 @@ export class FixerDesk {
   private async accessFor(file: FixerFile, job: Job): Promise<ReturnType<typeof accessCheck>> {
     const booking = job.booking;
     const ymd = booking ? localYmd(new Date(booking.from), this.timeZone()) : this.today();
-    const checkoutDay = (this.hub().stays() ?? []).some((stay) => stay.checkout === ymd);
+    // An urgent visit's own stay checking out that morning is the guest who agreed to it, not a turnover to wait on.
+    const checkoutDay = (this.hub().stays() ?? []).some((stay) => stay.checkout === ymd && stayKey(stay) !== booking?.urgentStay);
     let cleared = file.clearedYmd === ymd;
     if (checkoutDay && !cleared && this.deps.cleanings) cleared = (await this.deps.cleanings(ymd))?.cleared === true;
     // A calendar block can be a real booking labelled "Not available": the code never goes inside one.
     const overlaps = booking ? this.staysOver(file, booking, job).length > 0 || this.inCalendarBlock(file, { from: booking.from, until: new Date(this.endOf(booking)).toISOString() }) : false;
-    if (booking?.urgentStay) return this.urgentAccess(file, job, booking, overlaps);
+    if (booking?.urgentStay) return this.urgentAccess(file, job, booking, overlaps, { checkoutDay, cleared });
     return accessCheck({ job, pro: booking ? { reach: this.reachOfId(file, job, booking.proId) } : undefined, now: this.deps.now(), checkoutDay, cleared, overlapsStay: overlaps, staysUnread: this.staysUnknown() });
   }
 
@@ -2129,7 +2135,20 @@ export class FixerDesk {
         const text = stayOverBookingNews({ proName: this.bookedName(file, job), from: booking.from, timeZone: this.timeZone() });
         notes.push(this.news(job, "stay-over-booking", text, `fixer:${job.id}:${visitTag(booking)}:stay-over-booking:${key}`));
       }
+      this.urgentStayChanged(file, job, booking, notes);
     }
+  }
+
+  /** An urgent visit whose guest stay changed or left the calendar: the code is off for it, and the host hears why once, urgently. */
+  private urgentStayChanged(file: FixerFile, job: Job, booking: Booking, notes: HostNote[]): void {
+    const key = booking.urgentStay;
+    if (!key || this.staysUnknown() || this.endOf(booking) <= this.deps.now().getTime()) return;
+    if (this.crewStays(file).some((stay) => stay.kind === "stay" && stayKey(stay) === key)) return;
+    const noted = `changed:${key}`;
+    if (booking.stayNoted?.includes(noted)) return;
+    (booking.stayNoted ??= []).push(noted);
+    const text = urgentStayChangedNews({ proName: this.bookedName(file, job), from: booking.from, timeZone: this.timeZone() });
+    notes.push(this.fileNews(file, { kind: "urgent-stay-changed", jobId: job.id, text, urgent: true }, `fixer:${job.id}:${visitTag(booking)}:urgent-stay-changed`));
   }
 
   /** Asks the hub for the code, for the pro's phone and this window. A refusal gives the host one note for the job, and nothing else. */
