@@ -162,3 +162,33 @@ Global constraints for Tasks 4-7, from the spec's "Wiring" section:
 **Interfaces:**
 - `store.ts`: `export interface SavedBlock extends RepairBlock { savedAt: string; told?: string[] }`; `FixerFile.repairBlocks?: SavedBlock[]`; `export const MAX_REPAIR_BLOCKS = 10`.
 - `desk.ts`: `saveRepairBlock(input: { firstDay?: string; lastDay?: string; jobIds?: string[]; confirmation?: string }): Promise<FixerReply>`; `removeRepairBlock(input: { blockId?: string; confirmation?: string }): Promise<FixerReply>`; private `crewStays(file: FixerFile): Stay[]` = `staysForCrew(hub.stays() ?? [], file.repairBlocks ?? [])`, used by `windowsFor`, `holdsFor`, `staysOver`, `extendVisit`'s overlap check.
+- Tools `save_repair_block { firstDay: Ymd, lastDay: Ymd, jobIds?: Id[] (max 10), confirmation? }`, `remove_repair_block { blockId: Id, confirmation? }`. Both take the host's yes even before Activate (use `confirm`, not `approved`), refused while repairs are off.
+
+- [ ] **Step 1: Failing tests:** two calls save a block (`blockId` starts `blk_`, `onCalendar: false`, `openNights` the 5 nights, `next` contains "booking calendar"); refused for bad days, 93 days, an unknown jobId, and an 11th block; a job's booked time inside a saved block that is on the calendar has no `heldFor`, and the same time with no saved block holds `overlaps-stay`; `check_fixes` gives `repair-block-open` news once, and a guest stay inside the block gives one `urgent` `repair-block-collision` news; `get_fixer_state` lists `repairBlocks` with status and `doorNow`; `remove_repair_block` in two calls removes it.
+- [ ] **Step 2: Run** `npx vitest run test/fixerBiggerRepairs.test.ts` → FAIL.
+- [ ] **Step 3: Implement** as the spec's Wiring section says; news keys `open:<openNights joined>` and `stay:<stayKey>` in `told`, only for blocks whose `lastDay` is today or later.
+- [ ] **Step 4: Run** `npx vitest run test/fixerBiggerRepairs.test.ts test/fixerTools.test.ts test/fixerTemplate.test.ts test/fixerBooking.test.ts test/fixerVisit.test.ts` → PASS.
+- [ ] **Step 5: Commit.**
+
+### Task 5: Urgent visits in booking and code access
+
+**Interfaces:**
+- `store.ts`: `Job.guest?: { asked: string[]; answers: GuestAnswer[] }`; `Booking.urgentStay?: string`.
+- `gate.ts`: `AccessRefusal` gains `"guest-not-agreed"`.
+- `desk.ts`: `recordGuestAnswer(input: { jobId?: string; answer?: "asked" | "yes" | "no"; from?: string; until?: string; via?: GuestAnswer["via"] }): Promise<FixerReply>`; `urgentTimeline(input: { jobId?: string }): Promise<FixerReply>`.
+- Tools `record_guest_answer { jobId, answer: enum, from?: Instant, until?: Instant, via: enum }`, `urgent_timeline { jobId }`.
+
+- [ ] **Step 1: Failing tests** (job `urgency: "now"`, a guest stay over Tuesday): `record_contact` booked in the stay has no `question`, `next` names `record_guest_answer`; `record_guest_answer` yes for a window holding the visit gives the host question ending in the booking question with "It's during the guest's stay, and the guest agreed to this time."; `approve_booking` two calls saves `urgentStay`; the same with urgency `soon` is still refused; a 5-hour visit and one past checkout are refused with their reasons; `revealCode` 10 minutes before the start → `before-visit`, at the start → opened, after a guest "no" → `guest-not-agreed` and one urgent host news; after `extend_visit` past the guest's window, the code is refused after the agreed end; `check_fixes` `held` doesn't list the urgent visit; `urgent_timeline` lists reported → guest-agreed → host-yes → code-shown with no code or phone in its text.
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** the Task 4 command → PASS. **Step 5: Commit.**
+
+### Task 6: Crew schedules in booking
+
+**Interfaces:** `store.ts`: `Job.crew?: CrewSchedule`. `desk.ts`: `saveCrewSchedule(input: Partial<CrewSchedule> & { jobId?: string; confirmation?: string }): Promise<FixerReply>`. Tool `save_crew_schedule { jobId, firstDay, lastDay, workdays: enum[] (1-7), start, end, skipDays?: Ymd[] (max 31), confirmation? }`.
+
+- [ ] **Step 1: Failing tests:** two calls save it and answer `windows` (count and first) and `conflicts`; refused with a live booking; a booked time that isn't the schedule's span is refused naming the span; the right span gives the host question ending "you'll let them in?"; `approve_booking` with `access: "code"` on a crew job is refused; a guest stay on a workday refuses the booking as an overlap.
+- [ ] **Step 2-5:** as Task 5.
+
+### Task 7: Gates doc and whole suite
+
+- [ ] Add an "Urgent visit during a stay" row and a "Repair blocks" row to `docs/fixer-core-safety-gates.md`, each naming tests from Tasks 3-5 by their exact names.
+- [ ] `npx tsc --noEmit` → no errors; `npm test` → all pass but the 4 `test/cleanerCoreWiring.test.ts` failures already on `main`.
