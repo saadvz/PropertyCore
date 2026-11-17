@@ -11,14 +11,15 @@ reaches the host waits on #250.
 
 When a local manager runs the house, the owner's oversight is texts and calls.
 The tester's manager once said he'd stop by for a walk-through, never came,
-and nothing on record showed it either way. When the manager says "I'll stop
-by", the owner wants that treated as an expected visit, and to be told the
-same day if nobody came.
+and nothing on record showed it either way. When anyone says "I'll stop by"
+(a property manager, a cleaner, a handyman, a friend picking up a key), the
+owner wants that treated as an expected visit, and to be told the same day if
+nobody came. Nothing in the flow is specific to managers: `who` is just a name.
 
 ## Goals
 
-- The host's agent saves an expected visit from the manager's text (the host
-  forwards or pastes it) or from a calendar invite the manager sent.
+- The host's agent saves an expected visit from what the host says (or a text
+  they forward or paste) or from a calendar invite the visitor sent.
 - From a text, the agent reads back who, the day and the time window before
   saving. From an invite, the date and times are read in code, never guessed.
 - For one day at a property, the check compares the day's expected visits with
