@@ -92,6 +92,10 @@ export const PLAYBOOK_CLIENT_CAP = 1000;
 
 const PUBLIC_DIR = new URL("./public/", import.meta.url);
 const JS = "text/javascript; charset=utf-8";
+/** The connect page's typeface, served from here so the page's CSP can stay 'self'. */
+const CONNECT_FONT_PATH = "/fonts/plus-jakarta-sans-latin.woff2";
+/** The OAuth approval page's own files. */
+const CONNECT_PAGE_FILES = ["/oauth.js", "/connect.css", CONNECT_FONT_PATH];
 const STATIC: Record<string, { file: string; type: string }> = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/visitor": { file: "visitor.html", type: "text/html; charset=utf-8" },
@@ -105,6 +109,8 @@ const STATIC: Record<string, { file: string; type: string }> = {
   "/connect": { file: "connect.html", type: "text/html; charset=utf-8" },
   "/connect.js": { file: "connect.js", type: JS },
   "/oauth.js": { file: "oauth.js", type: JS },
+  "/connect.css": { file: "connect.css", type: "text/css; charset=utf-8" },
+  [CONNECT_FONT_PATH]: { file: "fonts/plus-jakarta-sans-latin.woff2", type: "font/woff2" },
   "/install": { file: "install.html", type: "text/html; charset=utf-8" },
   "/install.js": { file: "install.js", type: JS },
   "/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" },
@@ -217,7 +223,7 @@ function publicRouteAllowed(method: string, path: string, oauth: boolean, hosted
   if (/^\/portable\/(?:artifacts|uploads)\/art_[A-Za-z0-9_-]{20,80}$/.test(path)) {
     return (method === "GET" && path.startsWith("/portable/artifacts/")) || (method === "POST" && path.startsWith("/portable/uploads/"));
   }
-  if (oauth && (isOAuthPublicPath(path, OAUTH_RESOURCE_PATHS) || (method === "GET" && path === "/oauth.js"))) return true;
+  if (oauth && (isOAuthPublicPath(path, OAUTH_RESOURCE_PATHS) || (method === "GET" && CONNECT_PAGE_FILES.includes(path)))) return true;
   if (method === "POST" && (path === SENDBLUE_WEBHOOK_PATH || path === TWILIO_WEBHOOK_PATH || path === CLEANER_TWILIO_PATH || path === CLEANER_TWILIO_STATUS_PATH || path === CLEANER_TWILIO_GROUP_PATH || path === VOICE_PATH || path === VOICE_TRANSCRIPT_PATH || path === PHOTON_WEBHOOK_PATH || path === LOCAL_WEBHOOK_PATH)) return true;
   if (method === "GET" && isPublicCompliancePath(path)) return true;
   if (method === "GET" && (/^\/verify\/[A-Za-z0-9_-]+$/.test(path) || path === "/verify.js" || path === "/styles.css")) return true;
@@ -652,7 +658,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
   const cleanerDeps = { env: () => installation.env(), root: installation.root, now: clock };
 
   server = createServer(async (req, res) => {
-    const send = (status: number, type: string, body: string, extra: Record<string, string | string[]> = {}) => {
+    const send = (status: number, type: string, body: string | Buffer, extra: Record<string, string | string[]> = {}) => {
       res.writeHead(status, { "Content-Type": type, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...extra });
       res.end(body);
     };
@@ -1084,7 +1090,9 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
       const asset = req.method === "GET" ? STATIC[url.pathname] : undefined;
       if (!asset) return send(404, "text/plain", "Not found");
       const pageHeaders: Record<string, string> = url.pathname === "/install" ? { "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY" } : {};
-      return send(200, asset.type, readFileSync(new URL(asset.file, PUBLIC_DIR), "utf8"), pageHeaders);
+      const file = new URL(asset.file, PUBLIC_DIR);
+      if (asset.type.startsWith("font/")) return send(200, asset.type, readFileSync(file), { "Cache-Control": "public, max-age=86400" });
+      return send(200, asset.type, readFileSync(file, "utf8"), pageHeaders);
     } catch {
       return send(400, "application/json", JSON.stringify({ error: { message: "That request couldn't be read." } }));
     }

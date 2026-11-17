@@ -132,7 +132,8 @@ describe("Cleaner Core for ChatGPT", () => {
     expect(CHATGPT_DESK_WORDING.pinFailed).toBe("The door code didn't reach the cleaner. Tell ChatGPT the guests have left and I'll resend it.");
     expect(redirectHostsFromEnv({ CLEANER_CORE_ASSISTANT: "chatgpt" })).toEqual([...DEFAULT_REDIRECT_HOSTS, "chatgpt.com"]);
     const page = consentPage({ requestId: "r", matchCode: "123456", clientName: "ChatGPT", redirectHost: "chatgpt.com", hosted: true, firstClaim: true, label: "Cleaner Core", assistant: "chatgpt" });
-    expect(page).toContain("<h1>Connect ChatGPT to Cleaner Core</h1>");
+    expect(page).toContain("<title>Connect ChatGPT to Cleaner Core</title>");
+    expect(page).toContain("<h1>Let ChatGPT run the day-to-day. You keep the keys.</h1>");
     expect(page).not.toContain("owner");
     expect(page).not.toMatch(/Grok|Claude/);
   });

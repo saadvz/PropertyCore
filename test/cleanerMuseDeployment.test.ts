@@ -143,7 +143,8 @@ describe("Cleaner Core for Muse", () => {
     expect(cleanerOptOutHold(ADDRESS, "Muse")).toContain("then tell Muse to restart it.");
     expect(MUSE_DESK_WORDING.pinFailed).toBe("The door code didn't reach the cleaner. Tell Muse the guests have left and I'll resend it.");
     const page = consentPage({ requestId: "r", matchCode: "123456", clientName: "Muse", redirectHost: "agent.meta.ai", hosted: true, firstClaim: true, label: "Cleaner Core", assistant: "muse" });
-    expect(page).toContain("<h1>Connect Muse to Cleaner Core</h1>");
+    expect(page).toContain("<title>Connect Muse to Cleaner Core</title>");
+    expect(page).toContain("<h1>Let Muse run the day-to-day. You keep the keys.</h1>");
     expect(page).not.toMatch(/Grok|Claude|ChatGPT/);
   });
 

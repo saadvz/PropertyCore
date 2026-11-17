@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { NumberPool } from "../src/cleaner-core/hosted/numberPool";
 import { TenantRegistry } from "../src/cleaner-core/hosted/registry";
 import { phoneCodesFor, setPhoneCodes, type CodeChecked, type CodeSent, type PhoneCodes } from "../src/hosted/phoneCodes";
-import { RESEND_MS, SENDS_PER_PHONE_HOUR, SENDS_PER_REQUEST, SENDS_PER_SERVICE_HOUR, SIGNUP_WORDS, signUpEmail, signUpPhone, SignUpDesk, WRONG_CODES_BEFORE_LOCK, type OpenAccount } from "../src/hosted/signUp";
+import { RESEND_MS, SENDS_PER_PHONE_HOUR, SENDS_PER_REQUEST, SENDS_PER_SERVICE_HOUR, SIGNUP_FIELDS, SIGNUP_WORDS, signUpEmail, signUpPhone, SignUpDesk, WRONG_CODES_BEFORE_LOCK, type OpenAccount } from "../src/hosted/signUp";
 import { CLEANER_SCOPE, OPERATOR_SCOPE } from "../src/mcp/oauth/provider";
 import { hashSecret, OAuthGrantStore } from "../src/mcp/oauth/store";
 import { BASE, CLEANER_RESOURCE, closeHostedApps, hostedApp, pkce, REDIRECT } from "./cleanerOauthHarness";
@@ -101,9 +101,9 @@ describe("the connect page with sign-up", () => {
   it("offers Sign in, Create account and the invite code, with the terms link", async () => {
     const { page } = await signUpApp();
     const { html } = await page();
-    expect(html).toContain('value="sign-in" checked');
-    expect(html).toContain('value="sign-up"');
-    expect(html).toContain('value="invite"');
+    expect(html).toContain('data-oauth-mode="sign-in" aria-pressed="true"');
+    expect(html).toContain('data-oauth-mode="sign-up" aria-pressed="false"');
+    expect(html).toContain('data-oauth-mode="invite" aria-pressed="false"');
     expect(html).toContain('id="oauth-phone"');
     expect(html).toContain('href="https://example.com/property-core/terms"');
     expect(html).toContain('id="oauth-invite"');
@@ -287,6 +287,22 @@ describe("Create account", () => {
     expect(await message(await post(id, "approve", { matchCode: code, signUp: { ...base, terms: false } }))).toBe(SIGNUP_WORDS["no-terms"]);
     expect(await message(await post(id, "approve", { matchCode: code, signUp: { ...base, terms: "yes" } }))).toBe(SIGNUP_WORDS["no-terms"]);
     expect(codes.checks).toEqual([]);
+  });
+
+  it("names the field each refusal is about, so the page shows it under that field", async () => {
+    const { page, sendCode, post } = await signUpApp();
+    const { id, code } = await page();
+    const said = async (res: { json: () => Promise<unknown> }) => ((await res.json()) as { error?: { message?: string; field?: string } }).error;
+    expect(await said(await sendCode(id, code, "555-0161"))).toEqual({ message: SIGNUP_WORDS["bad-phone"], field: "phone" });
+    expect(await said(await post(id, "approve", { matchCode: code, signIn: { phone: HOST, code: GOOD_CODE } }))).toEqual({ message: SIGNUP_WORDS["not-sent"], field: "code" });
+    await sendCode(id, code, HOST);
+    const base = { phone: HOST, code: GOOD_CODE, email: "lane@example.com", terms: true };
+    expect(await said(await post(id, "approve", { matchCode: code, signUp: { ...base, email: "not an email" } }))).toEqual({ message: SIGNUP_WORDS["bad-email"], field: "email" });
+    expect(await said(await post(id, "approve", { matchCode: code, signUp: { ...base, terms: false } }))).toEqual({ message: SIGNUP_WORDS["no-terms"], field: "terms" });
+    expect(await said(await post(id, "approve", { matchCode: code, signIn: { phone: HOST, code: "000000" } }))).toEqual({ message: SIGNUP_WORDS["wrong-code"], field: "code" });
+    // A refusal about no one field has no field.
+    expect(SIGNUP_FIELDS["no-line"]).toBeUndefined();
+    expect(SIGNUP_FIELDS.off).toBeUndefined();
   });
 
   it("refuses a phone that already has an account", async () => {
