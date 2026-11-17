@@ -75,6 +75,11 @@ describe("reading a calendar invite", () => {
     if (read.ok) expect(read.visit.note).toBeUndefined();
   });
 
+  it("reads an invite sent with CRLF line endings and folded lines", () => {
+    const crlf = invite("timed-tzid").replace(/\r?\n/g, "\r\n").replace("SUMMARY:Walk-through", "SUMMARY:Walk-\r\n through");
+    expect(visitFromInvite(crlf, NY)).toEqual({ ok: true, visit: { who: "Mike Doyle", date: "2026-11-19", from: "13:00", to: "17:00", note: "Walk-through" } });
+  });
+
   it("reads the day in the property's zone", () => {
     expect(visitFromInvite(invite("timed-utc"), "America/Los_Angeles")).toMatchObject({ ok: true, visit: { date: "2026-11-19", from: "10:00", to: "14:00" } });
   });
