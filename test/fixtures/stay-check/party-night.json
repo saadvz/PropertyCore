@@ -1,0 +1,6 @@
+[
+  { "id": "ev-1", "at": "2026-11-20T23:40:00.000Z", "source": "camera", "device": "Driveway", "label": "vehicle", "counts": { "vehicles": 2 } },
+  { "id": "ev-2", "at": "2026-11-21T00:05:00.000Z", "source": "camera", "device": "Front door", "label": "human", "counts": { "people": 4 } },
+  { "id": "ev-3", "at": "2026-11-21T02:14:00.000Z", "source": "camera", "device": "Front door", "label": "human", "counts": { "people": 8 }, "snapshot": { "device": "Front door", "at": 1795227240000 }, "clip": { "device": "Front door", "at": 1795227240000, "durationMs": 20000 } },
+  { "id": "ev-4", "at": "2026-11-21T03:02:00.000Z", "source": "camera", "device": "Back deck", "label": "other_motion", "counts": { "animals": 1 }, "snapshot": { "device": "Back deck", "at": 1795230120000 } }
+]
