@@ -20,11 +20,11 @@ export interface HoursSettings {
   codes?: ActivityCode[];
   /** The host's code for a row kind, over the placeholder mapping. */
   kindCodes?: Partial<Record<RowKind, string>>;
-  /** The host's columns, in their Sheet's order. Unset is the issue's twelve. */
+  /** The host's columns, in their spreadsheet's order. Unset is the issue's twelve. */
   columns?: Column[];
   /** The name on the owner's rows. Unset is the name the group calls the host. */
   ownerName?: string;
-  /** The host's Sheet, by name or link, for the agent to write to. */
+  /** The host's spreadsheet, by name or link, in whatever product they use, for the agent to write to. */
   sheet?: string;
 }
 
@@ -34,7 +34,7 @@ export interface MonthMark {
   fingerprint: string;
   rulesVersion: number;
   rows: number;
-  /** When the agent said it wrote the month to the host's Sheet. */
+  /** When the agent said it wrote the month to the host's spreadsheet. */
   exportedAt?: string;
   /** The month's owner facts as they were confirmed, so a replaced record never drops the host's approval. */
   ownerFacts?: RowFact[];
@@ -106,6 +106,6 @@ export function checkSettings(settings: HoursSettings): string | undefined {
     }
   }
   if (settings.ownerName !== undefined && !text(settings.ownerName)) return `Give the owner's name in 1 to ${MAX_TEXT} characters.`;
-  if (settings.sheet !== undefined && (typeof settings.sheet !== "string" || !settings.sheet.trim() || settings.sheet.length > 300)) return "Give the Sheet's name or link in 1 to 300 characters.";
+  if (settings.sheet !== undefined && (typeof settings.sheet !== "string" || !settings.sheet.trim() || settings.sheet.length > 300)) return "Give the spreadsheet's name or link in 1 to 300 characters.";
   return undefined;
 }
