@@ -1,8 +1,9 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { assistantForRedirect } from "../src/cleaner-core/assistant";
 import { TenantRegistry, type Tenant } from "../src/cleaner-core/hosted/registry";
 import { checkClientMetadata, parseMetadataDocument, redirectHostsFromEnv, redirectPolicyFor } from "../src/mcp/oauth/clients";
-import { consentPage, INVITE_REFUSALS } from "../src/mcp/oauth/pages";
+import { consentPage, INVITE_REFUSALS, problemPage } from "../src/mcp/oauth/pages";
 import { CLEANER_SCOPE, OPERATOR_SCOPE } from "../src/mcp/oauth/provider";
 import { hashSecret, OAuthGrantStore } from "../src/mcp/oauth/store";
 import { BASE, CLEANER_RESOURCE, closeHostedApps, hostedApp, pkce } from "./cleanerOauthHarness";
@@ -58,7 +59,7 @@ describe("the invite code on the Allow page", () => {
     for (const [invite, reason] of [["AAAA-AAAA-AAAA", "invalid"], [used, "used"], [expired, "expired"], [court.inviteCode, "disabled"]] as const) {
       const res = await app.approve(id, code, {}, invite);
       expect(res.status).toBe(403);
-      expect(((await res.json()) as { error: { message: string } }).error.message).toBe(INVITE_REFUSALS[reason]);
+      expect(((await res.json()) as { error: { message: string; field?: string } }).error).toEqual({ message: INVITE_REFUSALS[reason], field: "invite" });
     }
     // No invite at all is refused too.
     expect((await app.approve(id, code)).status).toBe(403);
@@ -139,6 +140,36 @@ describe("the invite code on the Allow page", () => {
     expect(html).toContain("Connect your Grok Bot to Property Core");
     expect(html).toContain("is asking to run cleanings, supplies, or tours at your properties.");
     expect(html).toContain('id="oauth-invite"');
+  });
+
+  it("draws the Property Core page from its own stylesheet and font, with nothing inline", async () => {
+    const { app } = await multiApp();
+    const clientId = await app.register("Grok");
+    const { page, html } = await pendingRequest(app, clientId, `${BASE}/mcp`, OPERATOR_SCOPE);
+    expect(page.headers["content-security-policy"]).toContain("font-src 'self'");
+    expect(html).toContain('<link rel="stylesheet" href="/connect.css" />');
+    expect(html).toContain("<h1>Let Grok Bot run the day-to-day. You keep the keys.</h1>");
+    expect(html).toContain('class="match-code">');
+    // The card each ending shows waits hidden on the page.
+    for (const id of ["oauth-done-approved", "oauth-done-denied", "oauth-done-expired"]) expect(html).toContain(`id="${id}" hidden`);
+    expect(html).toContain('In Grok Bot, say &quot;Set up Property Core&quot;.');
+    // The CSP allows no inline style or script.
+    expect(html).not.toMatch(/\sstyle=|<style|<script>|\son\w+="/);
+    const css = await app.http("/connect.css");
+    expect(css.status).toBe(200);
+    expect(css.headers["content-type"]).toMatch(/^text\/css/);
+    const font = await app.http("/fonts/plus-jakarta-sans-latin.woff2");
+    expect(font.status).toBe(200);
+    expect(font.headers["content-type"]).toBe("font/woff2");
+    expect(font.bytes().equals(readFileSync("src/web/public/fonts/plus-jakarta-sans-latin.woff2"))).toBe(true);
+  });
+
+  it("shows a problem page in the connect page's style", () => {
+    const html = problemPage("This request is finished", "It was already used or it expired.", "wait");
+    expect(html).toContain('<link rel="stylesheet" href="/connect.css" />');
+    expect(html).toContain('<div class="pc-badge wait">');
+    expect(html).toContain("<h1>This request is finished</h1>");
+    expect(html).not.toContain("<script");
   });
 
   it("counts an expired grant as gone, not live", () => {

@@ -141,13 +141,18 @@ export interface InviteBook {
   accounts?: AccountDoor;
 }
 
-export type AccountAnswer = { ok: true; tenantId: string } | { ok: false; message: string };
+/** The connect page field a refusal is about, so the page can show it under that field. Unset: the page shows it on its own. */
+export type PageField = "phone" | "code" | "email" | "terms" | "invite";
+/** A refusal in the page's own words. */
+export type PageRefusal = { ok: false; message: string; field?: PageField };
+
+export type AccountAnswer = { ok: true; tenantId: string } | PageRefusal;
 
 /** The connect page's Sign in and Create account (saadvz/PropertyCore#162). Each answer is the page's own words. */
 export interface AccountDoor {
   /** The terms page a new account accepts, when sign-up is open. */
   open(): { termsUrl: string } | undefined;
-  sendCode(requestId: string, phone: unknown): Promise<{ ok: true } | { ok: false; message: string }>;
+  sendCode(requestId: string, phone: unknown): Promise<{ ok: true } | PageRefusal>;
   signIn(requestId: string, body: Record<string, unknown>): Promise<AccountAnswer>;
   signUp(requestId: string, body: Record<string, unknown>): Promise<AccountAnswer>;
 }
@@ -317,7 +322,9 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
     if (redirectProblem) {
       this.log(`Refused an authorization request: its redirect ${redirectForLog(params.redirectUri)} isn't allowed any more (was compatibility mode turned off?).`);
       this.log(`  refused redirect: scheme=${redirectProblem.scheme ?? "?"} host=${redirectProblem.host ?? "-"} path=${redirectProblem.path ?? "-"} reason: ${redirectProblem.reason}`);
-      res.status(400).set(PAGE_HEADERS).type("html").send(problemPage("Tour Core can't send you back there", "The app that sent you here asked to return to an address Tour Core doesn't allow. Nothing was approved."));
+      // The multi-tenant service is Property Core; a single install is still Tour Core.
+      const product = this.options.invites ? "Property Core" : "Tour Core";
+      res.status(400).set(PAGE_HEADERS).type("html").send(problemPage(`${product} can't send you back there`, `The app that sent you here asked to return to an address ${product} doesn't allow. Nothing was approved.`));
       return;
     }
     // The SDK requires S256 but accepts any string; a real S256 challenge is 43 base64url characters.
@@ -397,7 +404,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
    * Allow with the invite code from the multi-tenant Cleaner Core's page. The match code is checked
    * first, then the invite is used up and the request remembers its tenant.
    */
-  approveWithInvite(id: string, matchCodeGiven: string, inviteCode: string): { ok: true } | { ok: false; message: string } {
+  approveWithInvite(id: string, matchCodeGiven: string, inviteCode: string): { ok: true } | PageRefusal {
     const invites = this.options.invites;
     const refused = { ok: false as const, message: "That connection can't be approved from here." };
     if (!invites) return refused;
@@ -408,7 +415,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
     const claim = invites.claim(inviteCode);
     if ("refused" in claim) {
       this.log(`Refused a Cleaner Core approval: the invite code was ${claim.refused}.`);
-      return { ok: false, message: invites.refusal(claim.refused) };
+      return { ok: false, message: invites.refusal(claim.refused), field: "invite" };
     }
     if (!this.bind(request, claim.tenantId)) return refused;
     this.log(`A Cleaner Core approval used an invite for ${claim.tenantId}.`);
@@ -434,7 +441,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
   }
 
   /** Texts the landlord a code from the connect page. */
-  async sendPhoneCode(id: string, matchCodeGiven: string, phone: unknown): Promise<{ ok: true } | { ok: false; message: string }> {
+  async sendPhoneCode(id: string, matchCodeGiven: string, phone: unknown): Promise<{ ok: true } | PageRefusal> {
     const found = this.accountRequest(id, matchCodeGiven);
     if (!found) return { ok: false, message: "That connection can't be approved from here." };
     return found.door.sendCode(found.request.id, phone);
@@ -444,7 +451,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
    * Allow after Sign in or Create account. The phone code is checked first; the grant then binds to
    * the account that phone owns, or to the new one.
    */
-  async approveWithAccount(id: string, matchCodeGiven: string, mode: "sign-in" | "sign-up", body: Record<string, unknown>): Promise<{ ok: true } | { ok: false; message: string }> {
+  async approveWithAccount(id: string, matchCodeGiven: string, mode: "sign-in" | "sign-up", body: Record<string, unknown>): Promise<{ ok: true } | PageRefusal> {
     const refused = { ok: false as const, message: "That connection can't be approved from here." };
     const found = this.accountRequest(id, matchCodeGiven);
     if (!found) return refused;

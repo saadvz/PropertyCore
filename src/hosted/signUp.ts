@@ -2,7 +2,7 @@ import type { Tenant, TenantOwner, TenantRegistry } from "../cleaner-core/hosted
 import { RegistryError } from "../cleaner-core/hosted/registry";
 import { isAllowlisted, liveSmsOn } from "../cleaner-core/liveSms";
 import { parsePhone } from "../core/phone";
-import type { AccountAnswer, AccountDoor } from "../mcp/oauth/provider";
+import type { AccountAnswer, AccountDoor, PageField, PageRefusal } from "../mcp/oauth/provider";
 import type { PhoneCodes } from "./phoneCodes";
 
 /**
@@ -52,6 +52,25 @@ export const SIGNUP_WORDS: Record<SignUpRefusal, string> = {
   "no-terms": "Accept the terms to create an account.",
   "no-line": "No text lines are free right now. Try again later, or ask Saad.",
   disabled: "This account is turned off. Ask Saad.",
+};
+
+/** The connect page field each refusal is about. The rest are shown on their own, not under a field. */
+export const SIGNUP_FIELDS: Partial<Record<SignUpRefusal, PageField>> = {
+  "bad-phone": "phone",
+  wait: "phone",
+  "too-many-sends": "phone",
+  busy: "phone",
+  "send-failed": "phone",
+  "not-allowed": "phone",
+  "no-account": "phone",
+  "has-account": "phone",
+  disabled: "phone",
+  "not-sent": "code",
+  "wrong-code": "code",
+  locked: "code",
+  unavailable: "code",
+  "bad-email": "email",
+  "no-terms": "terms",
 };
 
 /** One code text at most this often per phone. */
@@ -309,10 +328,16 @@ export class SignUpDesk {
   }
 }
 
+/** A refusal in the page's words, with the field it's about. */
+function refusalFor(refused: SignUpRefusal): PageRefusal {
+  const field = SIGNUP_FIELDS[refused];
+  return { ok: false, message: SIGNUP_WORDS[refused], ...(field ? { field } : {}) };
+}
+
 /** The connect page's account door: the desk's answers in the page's words. */
 export function accountDoor(desk: SignUpDesk): AccountDoor {
   const said = <T extends { ok: boolean }>(answer: T | { ok: false; refused: SignUpRefusal }) =>
-    answer.ok ? (answer as T) : { ok: false as const, message: SIGNUP_WORDS[(answer as { refused: SignUpRefusal }).refused] };
+    answer.ok ? (answer as T) : refusalFor((answer as { refused: SignUpRefusal }).refused);
   return {
     open: () => {
       const terms = desk.open();
