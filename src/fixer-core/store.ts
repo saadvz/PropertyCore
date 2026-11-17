@@ -122,6 +122,22 @@ export interface Booking {
   stayNoted?: string[];
 }
 
+/**
+ * One of the host's approvals on a job, kept when the live field is replaced (a moved visit drops the
+ * booking, a second raised price replaces the first, a cost saved again replaces the last). The hours log
+ * (#238) reads these so a replaced approval is still the host's. Appended, never edited.
+ */
+export interface HostStep {
+  kind: "approve-repair" | "pick-quote" | "approve-booking" | "approve-price" | "record-cost" | "confirm-repair";
+  /** The same instant the live field holds. */
+  at: string;
+  proId?: string;
+  cents?: number;
+}
+
+/** The most host steps a job keeps; the oldest go first. */
+export const MAX_HOST_STEPS = 40;
+
 export type JobState = "requested" | "shortlisted" | "contacted" | "booked" | "in-progress" | "done" | "cancelled";
 
 export interface Job {
@@ -167,6 +183,8 @@ export interface Job {
   rotationAskedFor?: string[];
   /** Each time the host moved the visit to a new time. */
   reschedules?: { at: string; reason?: string }[];
+  /** Each of the host's approvals, as it happened (#238). */
+  hostSteps?: HostStep[];
   /** Set and saved before the hub is asked for the code, so a restart never texts it twice. */
   codeTextAt?: string;
   /** Set once the code text was sent. */
