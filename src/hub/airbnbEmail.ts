@@ -93,7 +93,7 @@ export function parseAirbnbEmail(email: BookingEmailInput, now: Date): ParseResu
   const raw = text.split("\n");
   const lines = raw.map((line) => line.trim());
   let { checkIn, checkout } = readDays(raw, lines, received);
-  if ((!checkIn || !checkout) && kind === "cancelled") ({ checkIn, checkout } = readRange(text, received));
+  if ((!checkIn || !checkout) && kind === "cancelled") ({ checkIn, checkout } = readDateRange(text, received));
   if ((!checkIn || !checkout) && kind !== "cancelled") return { ok: false, reason: "no-dates" };
   if (checkIn && checkout && checkout.date <= checkIn.date) {
     // A stay over New Year with no year printed: the checkout is in the next year.
@@ -285,7 +285,7 @@ function timesAt(text: string): { time: string; index: number }[] {
 }
 
 /** A cancellation's stay, like "Oct 18 – 22, 2026": the first range that reads as a stay of a year or less. */
-function readRange(text: string, received: Date): { checkIn?: BookingEmailDay; checkout?: BookingEmailDay } {
+export function readDateRange(text: string, received: Date): { checkIn?: BookingEmailDay; checkout?: BookingEmailDay } {
   for (const match of text.matchAll(RANGE_RE)) {
     const endYear = match[6];
     const startMonth = MONTHS.indexOf(match[1]!.slice(0, 3).toLowerCase());
