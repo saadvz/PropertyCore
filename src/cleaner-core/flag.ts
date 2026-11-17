@@ -39,3 +39,8 @@ export function tourCoreTenants(env: NodeJS.ProcessEnv = process.env): boolean {
 export function hoursLogOn(env: NodeJS.ProcessEnv = process.env): boolean {
   return isOn(env.HOURS_LOG);
 }
+
+/** The nightly stay check's house rules (#239) on the multi-tenant service. Off unless STAY_CHECK is exactly "1" or "true". */
+export function stayCheckOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isOn(env.STAY_CHECK);
+}
