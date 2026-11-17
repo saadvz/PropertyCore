@@ -112,11 +112,21 @@ export interface TimelineInput {
   photos?: { at: string; from: "cleaner" | "pro" }[];
 }
 
+const NUMBER_WORD = "(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|a|an|couple|few)";
+const MONEY_WORD = "(?:dollars?|bucks?|grand|cents?|usd)";
+/** Amounts, most specific first: spelled out, digits with a money word after or before, or a currency mark on either side. */
+const AMOUNTS: readonly RegExp[] = [
+  new RegExp(`\\b${NUMBER_WORD}(?:(?:[\\s-]+|\\s+and\\s+)${NUMBER_WORD})*\\s+${MONEY_WORD}\\b`, "gi"),
+  new RegExp(`\\d[\\d,.]*\\s*k?\\s*${MONEY_WORD}\\b`, "gi"),
+  /\b(?:usd|us\$)\s*\d[\d,.]*k?/gi,
+  /[$€£]\s?\d[\d,.]*k?/g,
+  /\d[\d,.]*\s?[$€£]/g,
+];
+
 /** Free text with no code, phone number or amount in it. */
 export function timelineText(text: string): string {
-  return joinSplitDigits(text)
-    .replace(/\d{4,}/g, "[number removed]")
-    .replace(/\$\s?\d[\d,.]*/g, "[amount removed]");
+  const joined = joinSplitDigits(text);
+  return AMOUNTS.reduce((out, pattern) => out.replace(pattern, "[amount removed]"), joined).replace(/\d{4,}/g, "[number removed]");
 }
 
 function spanText(span: Span, timeZone: string): string {
