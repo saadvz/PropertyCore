@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { OWNER_KINDS, routeFact } from "../src/hours-log/ownerRules";
 import { DEFAULT_SOURCES, factsFrom, ownerLockEntries, readRecords, type RowFact, type RowSource } from "../src/hours-log/sources";
-import { emptyFolder, engine, fixer, live, octoberFolder, type Fixture } from "./hoursFixture";
+import { buildMonth } from "../src/hours-log/month";
+import { emptyFolder, engine, fixer, live, octoberFolder, supply, type Fixture } from "./hoursFixture";
 
 /** #238: one fact per thing someone did, from the records Property Core already keeps. */
 
@@ -190,5 +191,107 @@ describe("a confirmed month keeps the host's approvals (review of #238)", () => 
     // Kept and still in the record, it's one row, not two.
     open.write("fixer.json", fixer);
     expect(byKind(factsFrom(readRecords(open.root), DEFAULT_SOURCES, kept), "approve-booking")).toHaveLength(1);
+  });
+});
+
+describe("a replaced approval is still the host's (#238 follow-up)", () => {
+  const sink = fixer.jobs[0]!;
+  const steps = [
+    { kind: "approve-repair", at: sink.hostGo!.at },
+    { kind: "pick-quote", at: sink.quotePick!.at, proId: "pro_drip" },
+    { kind: "approve-booking", at: sink.booking.hostYes!.at, proId: "pro_drip" },
+    { kind: "approve-price", at: sink.booking.revisedQuote!.hostYes!.at, proId: "pro_drip", cents: 18000 },
+  ];
+
+  it("unchanged fingerprint: the October records build the same month as before the records were kept", () => {
+    open = octoberFolder();
+    expect(buildMonth(readRecords(open.root), "2026-10", {}).fingerprint).toBe("9a5c8afbed7a805ed31f49edc1b5095cd57e19f7002bd0b58905fc05b500129e");
+  });
+
+  it("a step whose live field is still there adds nothing", () => {
+    open = octoberFolder();
+    const before = factsFrom(readRecords(open.root));
+    open.write("fixer.json", { ...fixer, jobs: [{ ...sink, hostSteps: steps }, fixer.jobs[1]] });
+    expect(factsFrom(readRecords(open.root))).toEqual(before);
+    expect(buildMonth(readRecords(open.root), "2026-10", {}).fingerprint).toBe("9a5c8afbed7a805ed31f49edc1b5095cd57e19f7002bd0b58905fc05b500129e");
+  });
+
+  it("a booking yes, a raised-price yes and a quote pick lost to a moved visit come back as the same owner rows", () => {
+    open = octoberFolder();
+    const before = factsFrom(readRecords(open.root)).filter((fact) => fact.log === "owner" && fact.reference === "Fixer Core job job_sink");
+    // The visit was moved: the booking went, with both of the host's yeses on it, and the pick was cleared.
+    const { booking: _booking, quotePick: _pick, done: _done, cost: _cost, ...moved } = sink;
+    open.write("fixer.json", { ...fixer, jobs: [{ ...moved, state: "contacted", hostSteps: steps }, fixer.jobs[1]] });
+    const after = factsFrom(readRecords(open.root)).filter((fact) => fact.log === "owner" && fact.reference === "Fixer Core job job_sink");
+    expect(after).toEqual(before);
+    expect(after.map((fact) => fact.task)).toEqual([
+      "Approved the plumbing repair: Kitchen sink leaks",
+      "Picked Drip Plumbing's quote for the plumbing repair: Kitchen sink leaks",
+      "Approved Drip Plumbing's booking for the plumbing repair: Kitchen sink leaks",
+      "Approved the new price of $180.00 for the plumbing repair: Kitchen sink leaks",
+    ]);
+  });
+
+  it("a cost and a done the host saved come back after they were replaced", () => {
+    open = octoberFolder();
+    const gutter = fixer.jobs[1]!;
+    open.write("fixer.json", { ...fixer, jobs: [sink, { ...gutter, cost: { cents: 13000, by: "agent", at: "2026-10-17T12:00:00.000Z" }, hostSteps: [{ kind: "record-cost", at: "2026-10-16T12:00:00.000Z", cents: 12000 }, { kind: "confirm-repair", at: "2026-10-16T13:00:00.000Z" }] }] });
+    const owner = factsFrom(readRecords(open.root)).filter((fact) => fact.log === "owner" && fact.reference === "Fixer Core job job_gutter");
+    expect(owner.map((fact) => [fact.kind, fact.at, fact.task])).toEqual([
+      ["record-cost", "2026-10-16T12:00:00.000Z", "Recorded the cost of $120.00 for the gutters repair: Clean the gutters"],
+      ["confirm-repair", "2026-10-16T13:00:00.000Z", "Confirmed the gutters repair: Clean the gutters is done"],
+    ]);
+  });
+
+  it("a cleaning time cleared by a moved date is still the host's, for the checkout it was given for", () => {
+    open = octoberFolder();
+    open.write("cleaner-job/cleaner-core.json", { ...engine, hostFacts: [], clearedHostFacts: [{ ...engine.hostFacts[0], checkoutDate: "2026-10-03" }] });
+    expect(byKind(factsFrom(readRecords(open.root)), "confirm-times")).toEqual([
+      expect.objectContaining({ log: "owner", at: "2026-10-03T22:00:00.000Z", task: "Gave the cleaner's checkout time for the 2026-10-03 checkout", reference: "Cleaner Core job job_oct4, host time checkout v1" }),
+    ]);
+  });
+
+  const unconfirmed = { id: "ord_lost", at: "2026-10-20T14:00:00.000Z", store: "Example Mart", items: [{ itemId: "itm_towels", product: "preferred", qty: 2, unitCents: 2400 }], totalCents: 4800, chargedCents: 4800, source: "schedule", approvedBy: "landlord", status: "unconfirmed" };
+  const approval = { id: "apv_lost000001", at: "2026-10-20T14:00:00.000Z", store: "Example Mart", items: [{ itemId: "itm_towels", qty: 2 }], totalCents: 4800, orderId: "ord_lost", orderAt: "2026-10-20T14:00:00.000Z" };
+
+  it("an approval whose order is still there adds nothing", () => {
+    open = octoberFolder();
+    open.write("supply.json", { ...supply, orders: [...supply.orders, unconfirmed] });
+    const before = factsFrom(readRecords(open.root));
+    open.write("supply.json", { ...supply, orders: [...supply.orders, unconfirmed], approvals: [approval] });
+    expect(factsFrom(readRecords(open.root))).toEqual(before);
+  });
+
+  it("removed order: an approval whose unconfirmed order was removed gives back that order's owner fact exactly", () => {
+    open = octoberFolder();
+    open.write("supply.json", { ...supply, orders: [...supply.orders, unconfirmed] });
+    const kept = factsFrom(readRecords(open.root)).filter((fact) => fact.log === "owner" && fact.reference === "Supply Core order ord_lost");
+    expect(kept).toHaveLength(1);
+    // Removed as not-placed after the host confirmed the month.
+    open.write("supply.json", { ...supply, approvals: [approval] });
+    const without = factsFrom(readRecords(open.root)).filter((fact) => fact.reference === "Supply Core order ord_lost");
+    expect(without).toEqual(kept);
+    const withKept = factsFrom(readRecords(open.root), DEFAULT_SOURCES, kept).filter((fact) => fact.log === "owner" && fact.at === approval.at);
+    expect(withKept).toEqual(kept);
+  });
+
+  it("an approval that never became an order is an owner row that says it wasn't placed", () => {
+    open = octoberFolder();
+    const { orderId: _o, orderAt: _a, ...closed } = approval;
+    open.write("supply.json", { ...supply, approvals: [closed] });
+    expect(factsFrom(readRecords(open.root)).filter((fact) => fact.reference === "Supply Core approval apv_lost000001")).toEqual([
+      expect.objectContaining({ kind: "approve-order", actor: "host", log: "owner", at: approval.at, task: "Approved a supply order from Example Mart: Paper towels x2, $48.00. It wasn't placed." }),
+    ]);
+  });
+
+  it("an approved cart still open, or expired but not yet swept, gives no row until it closes", () => {
+    open = octoberFolder();
+    const { orderId: _o, orderAt: _a, ...pending } = approval;
+    const cart = { token: "cart_scratch", fingerprint: "f", cart: { store: "Example Mart", items: [{ itemId: "itm_towels", product: "preferred", qty: 2, unitCents: 2400 }], shippingCents: 0, taxCents: 0, totalCents: 4800 }, status: "approved", holds: [], source: "schedule", deadline: "2026-10-25", approvalId: pending.id };
+    // One still in its 30 minutes, and one long expired that no Supply call has swept yet.
+    for (const expiresAt of ["2026-12-01T00:00:00.000Z", "2026-10-20T14:30:00.000Z"]) {
+      open.write("supply.json", { ...supply, carts: [{ ...cart, expiresAt }], approvals: [pending] });
+      expect(factsFrom(readRecords(open.root)).filter((fact) => fact.reference.includes("apv_lost000001"))).toEqual([]);
+    }
   });
 });
