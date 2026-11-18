@@ -14,8 +14,8 @@ works from their agent, and the text line is for the cleaner and the other peopl
 | --- | --- | --- |
 | **Cleaner Core** | Reads the host's booking calendars and texts the cleaner for each turnover. The cleaner gets the door code only after the host says the guests have left. It collects the cleaning photos and can offer the cleaner's pay as a Venmo link. | Live |
 | **Supply Core** | Keeps the property stocked. The host picks each product once. Supply Core says what's due, the agent shops and checks out with its own tools, and Supply Core decides go or hold on every cart, keeps the order log, and enforces the spending caps. It never sees a card number. | Live |
-| **Fixer Core** | Repairs and upkeep: the host's preferred pros asked first, a shortlist, booking, access for the visit, and the cost logged. | Built; off until Saad turns it on |
-| **Hours log** | One row per work session, built from the cleanings, repairs, supply orders and the host's own approvals, in separate logs for the owner, the cleaner, each pro and Property Core's own work. The host confirms each month in chat, and the agent writes it to their Google Sheet. Owner rows are only what the host did. It gives no tax advice. | Built; off until Saad turns it on |
+| **Fixer Core** | Repairs and upkeep: the host's preferred pros asked first, a shortlist, booking, access for the visit, and the cost logged. | Live |
+| **Hours log** | One row per work session, built from the cleanings, repairs, supply orders and the host's own approvals, in separate logs for the owner, the cleaner, each pro and Property Core's own work. The host confirms each month in chat, and the agent writes it to their own spreadsheet: Google Sheets, Excel or another. Owner rows are only what the host did. It gives no tax advice. | Built; off until Saad turns it on |
 
 ## Connect your agent
 
