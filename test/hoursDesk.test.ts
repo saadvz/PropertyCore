@@ -181,3 +181,24 @@ describe("review of #238", () => {
     expect(owner.rows.some((row) => row.some((cell) => cell.startsWith("Approved Drip Plumbing's booking")))).toBe(true);
   });
 });
+
+describe("the log goes to the host's own spreadsheet (#238 follow-up)", () => {
+  it("the tools and every reply write to whatever spreadsheet the host uses, not only Google", async () => {
+    const d = desk();
+    const confirmed = await confirmOctober(d);
+    const exported = await call(d, "export_hours", { month: "2026-10" });
+    const stored = await call(d, "export_hours", { month: "2026-10", stored: true });
+    const early = await call(hoursDeskFor(open!.root, { now: () => NOW }), "export_hours", { month: "2026-09" });
+    const text = [JSON.stringify(HOURS_TOOLS), confirmed.text, exported.text, stored.text, early.text].join(" ");
+    expect(text).not.toMatch(/Google Sheets? connector|Google Sheet\b|the Sheet|their Sheet/);
+    expect(JSON.stringify(HOURS_TOOLS)).toContain("Google Sheets, Excel, or another");
+    expect(exported.structured?.next).toContain("Google Sheets, Excel, or another");
+    expect(exported.structured?.next).toContain("ask the host where they want the log written");
+  });
+
+  it("refuses a bad spreadsheet name in plain words", async () => {
+    const reply = await call(desk(), "save_hours_settings", { sheet: " " });
+    expect(reply.isError).toBe(true);
+    expect(reply.text).toBe("Give the spreadsheet's name or link in 1 to 300 characters.");
+  });
+});

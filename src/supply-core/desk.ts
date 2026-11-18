@@ -10,7 +10,7 @@ import { refuseCards } from "../hub/cards";
 import { cartFingerprint, checkCart, type CartInput, type GateContext, type Hold, type Mode } from "./gate";
 import { deadlineFor, dueOn, nextDates, scheduleProblem, type Schedule } from "./schedule";
 import { planStores, supplySetupAsk, unreadyStores } from "./setupAsk";
-import { monthSpentCents, onItsWay, readSupply, writeSupply, type Cart, type CleanerAsk, type Item, type Order, type Ordering, type PlanStore, type Product, type SupplyFile } from "./store";
+import { MAX_APPROVALS, monthSpentCents, onItsWay, readSupply, writeSupply, type Cart, type CartApproval, type CleanerAsk, type Item, type Order, type Ordering, type PlanStore, type Product, type SupplyFile } from "./store";
 
 /**
  * Supply Core's desk: every tool's behaviour over one property's `supply.json`. One call at a time.
@@ -131,6 +131,14 @@ function productProblem(p: ProductInput | undefined, which: string): string | un
   if (typeof p.url !== "string" || p.url.length > 500 || !/^https:\/\/[^\s/]+\.[^\s]+$/.test(p.url)) return `The ${which} product needs an https link.`;
   if (!isInt(p.priceCents, 1, 500_000)) return `The ${which} product's price has to be from 1 cent to $5,000.`;
   return undefined;
+}
+
+/** Marks the host's approval of a cart with the order the cart became. */
+function linkApproval(file: SupplyFile, cart: Cart, order: Order): void {
+  const approval = cart.approvalId ? file.approvals?.find((entry) => entry.id === cart.approvalId) : undefined;
+  if (!approval) return;
+  approval.orderId = order.id;
+  approval.orderAt = order.at;
 }
 
 /** The order log's entry for a go or approved cart: placed when recorded, unconfirmed when it expired unrecorded. */
@@ -612,7 +620,9 @@ export class SupplyDesk {
       }
       if (cart.status === "go" || cart.status === "approved") {
         // Counted at the checked total until Grok confirms or rules it out.
-        file.orders.push(cartOrder(cart, new Date(new Date(cart.expiresAt).getTime() - CART_MINUTES * 60_000).toISOString(), cart.cart.totalCents, cart.status === "approved" ? "landlord" : "rules", "unconfirmed"));
+        const order = cartOrder(cart, new Date(new Date(cart.expiresAt).getTime() - CART_MINUTES * 60_000).toISOString(), cart.cart.totalCents, cart.status === "approved" ? "landlord" : "rules", "unconfirmed");
+        file.orders.push(order);
+        linkApproval(file, cart, order);
       }
     }
     file.carts = open;
@@ -829,8 +839,12 @@ export class SupplyDesk {
       const question = `Place this order from ${cart.cart.store}: ${names}, ${dollars(cart.cart.totalCents)}? ${cart.holds.map((h) => h.charAt(0).toUpperCase() + h.slice(1)).join(". ")}.`;
       const gate = this.confirm("supply-cart", cart.token, cart.fingerprint, input.confirmation, question);
       if (gate !== "go") return gate;
+      const now = this.deps.now();
       cart.status = "approved";
-      cart.expiresAt = new Date(this.deps.now().getTime() + CART_MINUTES * 60_000).toISOString();
+      cart.expiresAt = new Date(now.getTime() + CART_MINUTES * 60_000).toISOString();
+      const approval: CartApproval = { id: newId("apv_", 10), at: now.toISOString(), store: cart.cart.store, items: cart.cart.items.map((line) => ({ itemId: line.itemId, qty: line.qty })), totalCents: cart.cart.totalCents };
+      file.approvals = [...(file.approvals ?? []), approval].slice(-MAX_APPROVALS);
+      cart.approvalId = approval.id;
       this.write(file);
       return ok({ approved: true, expiresInMinutes: CART_MINUTES, next: "Place the order now, then call record_order with this cartToken." });
     });
@@ -883,6 +897,7 @@ export class SupplyDesk {
         order = cartOrder(cart, this.deps.now().toISOString(), input.chargedCents, approvedBy, "placed");
         file.carts = file.carts.filter((entry) => entry !== cart);
         file.orders.push(order);
+        linkApproval(file, cart, order);
       }
       if (input.orderNumber) order.orderNumber = input.orderNumber;
       if (input.expectedBy) order.expectedBy = input.expectedBy;

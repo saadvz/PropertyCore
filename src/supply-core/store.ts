@@ -58,6 +58,25 @@ export interface Order {
   lateTold?: boolean;
 }
 
+/**
+ * The host's yes to a held cart (#238), kept whether or not the cart became an order, so the hours log
+ * still has it after the cart closed or its unconfirmed order was removed. Never holds the cart token.
+ */
+export interface CartApproval {
+  id: string;
+  /** The host's yes on approve_cart. */
+  at: string;
+  store: string;
+  items: { itemId: string; qty: number }[];
+  totalCents: number;
+  /** The order the cart became, and that order's time, once it did. */
+  orderId?: string;
+  orderAt?: string;
+}
+
+/** The most approvals supply.json keeps; the oldest go first. */
+export const MAX_APPROVALS = 200;
+
 export interface Cart {
   token: string;
   fingerprint: string;
@@ -65,6 +84,8 @@ export interface Cart {
   status: "go" | "held" | "approved" | "recorded";
   holds: string[];
   expiresAt: string;
+  /** The host's approval of this cart, when they gave one. */
+  approvalId?: string;
   source: Order["source"];
   deadline: string;
 }
@@ -125,6 +146,8 @@ export interface SupplyFile {
   orders: Order[];
   carts: Cart[];
   lowReports: LowReport[];
+  /** Each cart the host approved (#238). */
+  approvals?: CartApproval[];
   offAt?: string;
 }
 
