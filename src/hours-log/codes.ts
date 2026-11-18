@@ -21,6 +21,8 @@ export const ROW_KINDS = [
   "place-order",
   "auto-order",
   "owner-on-site",
+  "package-drop",
+  "bring-in",
 ] as const;
 
 export type RowKind = (typeof ROW_KINDS)[number];
@@ -54,6 +56,8 @@ export const DEFAULT_CODES: readonly ActivityCode[] = [
   { code: "PUR-1", group: "Purchasing", activity: "Approve a supply order" },
   { code: "PUR-2", group: "Purchasing", activity: "Place a supply order" },
   { code: "SITE-1", group: "On site", activity: "Owner on site" },
+  { code: "PKG-1", group: "Packages", activity: "Package delivered" },
+  { code: "PKG-2", group: "Packages", activity: "Bring a package inside" },
 ];
 
 export const DEFAULT_KIND_CODES: Readonly<Record<RowKind, string>> = {
@@ -73,4 +77,6 @@ export const DEFAULT_KIND_CODES: Readonly<Record<RowKind, string>> = {
   "place-order": "PUR-2",
   "auto-order": "PUR-2",
   "owner-on-site": "SITE-1",
+  "package-drop": "PKG-1",
+  "bring-in": "PKG-2",
 };

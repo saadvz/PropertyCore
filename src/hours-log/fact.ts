@@ -1,7 +1,7 @@
 import type { RowKind } from "./codes";
 
-/** Who did the work on a row. Only "host" can land in the owner's log. */
-export type Actor = "host" | "cleaner" | "pro" | "system";
+/** Who did the work on a row. Only "host" can land in the owner's log. A helper is a co-host or assistant who brought a package in. */
+export type Actor = "host" | "cleaner" | "pro" | "helper" | "system";
 
 /**
  * How a row's hours are found. measured: from times someone sent (START, DONE, a lock entry). scheduled:
@@ -11,10 +11,10 @@ export type Actor = "host" | "cleaner" | "pro" | "system";
 export type Timing = "measured" | "scheduled" | "rule" | "system";
 
 /**
- * Whose log a row goes in: the owner's, Property Core's own (work the system did), the cleaner's, or one
- * pro's (`pro:<proId>`).
+ * Whose log a row goes in: the owner's, Property Core's own (work the system did), the cleaner's, one
+ * pro's (`pro:<proId>`), or one helper's (`helper:<hash>`, never their phone).
  */
-export type LogKey = "owner" | "property-core" | "cleaner" | `pro:${string}`;
+export type LogKey = "owner" | "property-core" | "cleaner" | `pro:${string}` | `helper:${string}`;
 
 /** One thing someone did, before the month turns it into a row. Always rebuilt from the records; never stored. */
 export interface RowFact {
