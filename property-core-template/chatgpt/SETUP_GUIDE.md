@@ -43,6 +43,26 @@ Tour Core is parked. Only an account Saad has made a touring account gets it,
 and then ChatGPT makes the hourly task in
 [`routines/tour-core-task.md`](routines/tour-core-task.md).
 
+## The hours log
+
+When the hours log is on, you can ask ChatGPT for a month of your hours and
+have it written to your own spreadsheet.
+
+ChatGPT's instructions for the hours log: follow these only when
+`review_hours` is among your tools. When the host asks for their hours or a
+month's log, call `review_hours` with the property and the month. Show each
+log's rows and every line in `needs`, ask its question, and call it again
+with the code only after their yes. Then call `export_hours` and write each
+log, exactly as given, to the spreadsheet the host already uses with you:
+Google Sheets, Excel, or another. If none is connected, ask the host where
+they want the log written. Then call `export_hours` again with
+`stored: true`. Save their activity codes, minutes, columns, owner name and
+spreadsheet with `save_hours_settings`, only as the host says. Never give
+tax advice, or say what counts toward any tax test. That's for the host and
+their advisor.
+
+## Always
+
 ChatGPT never asks you to paste a password, key, token, or door code into
 chat. When something secret is needed, a tool gives a private page to open
 instead.

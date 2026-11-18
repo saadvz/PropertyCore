@@ -9,7 +9,7 @@ import { checkSettings, HoursFileError, readHours, writeHours, type HoursSetting
 
 /**
  * The hours log's desk for one property (#238): the host reviews and confirms each month in chat, and the
- * agent writes the confirmed month to the host's Google Sheet with its own connector. Property Core holds
+ * agent writes the confirmed month to the host's own spreadsheet with its own connector. Property Core holds
  * no Google token, and texts nobody.
  */
 
@@ -28,7 +28,7 @@ const MONTH_HELP = "Give the month as YYYY-MM, like 2026-10.";
 const APPROVAL_STALE = "That code has expired, was used, or the rows changed since. Call review_hours again and show the host the month as it is now.";
 const NOT_CONFIRMED = "The host hasn't confirmed this month yet. Call review_hours, show them the month, and confirm it with their yes first.";
 const CHANGED = "The rows changed since the host confirmed this month, or the owner-row rules did. Call review_hours again and confirm it with the host before exporting.";
-const NOT_EXPORTED = "Call export_hours for this month first, write its logs to the host's Sheet, then call it again with stored: true.";
+const NOT_EXPORTED = "Call export_hours for this month first, write its logs to the host's spreadsheet, then call it again with stored: true.";
 
 const ok = (structured: Record<string, unknown>): HoursReply => ({ text: JSON.stringify(structured), structured, isError: false });
 const fail = (text: string): HoursReply => ({ text, isError: true });
@@ -94,7 +94,7 @@ export class HoursDesk {
       }
       file.months[month] = { confirmedAt: this.deps.now().toISOString(), fingerprint: built.fingerprint, rulesVersion: built.rulesVersion, rows: built.rows.length, ownerFacts: built.ownerFacts };
       writeHours(this.root, file);
-      return ok({ month, confirmed: true, rows: built.rows.length, next: "Confirmed. Call export_hours with this month to write it to the host's Sheet." });
+      return ok({ month, confirmed: true, rows: built.rows.length, next: "Confirmed. Call export_hours with this month to write it to the host's spreadsheet." });
     }
     const totals = built.logs.map((log) => `${log.name} ${log.hours} hours`).join(", ");
     const question = `Confirm the ${monthName(month)} hours log: ${built.rows.length} rows${totals ? ` (${totals})` : ""}${built.needs.length ? `, with ${built.needs.length} thing${built.needs.length === 1 ? "" : "s"} to check first` : ""}?`;
@@ -105,7 +105,7 @@ export class HoursDesk {
     });
   }
 
-  /** A confirmed month's logs as Sheet rows, in the host's columns. With stored: true, records that the agent wrote them. */
+  /** A confirmed month's logs as spreadsheet rows, in the host's columns. With stored: true, records that the agent wrote them. */
   export(month: unknown, stored?: unknown): HoursReply {
     return this.guarded(() => this.exportMonth(month, stored));
   }
@@ -121,7 +121,7 @@ export class HoursDesk {
       if (mark.handedOut?.fingerprint !== built.fingerprint) return fail(NOT_EXPORTED);
       file.months[month] = { ...mark, exportedAt: this.deps.now().toISOString() };
       writeHours(this.root, file);
-      return ok({ month, exported: true, next: "Tell the host the month is in their Sheet." });
+      return ok({ month, exported: true, next: "Tell the host the month is in their spreadsheet." });
     }
     const columns = file.settings.columns ?? DEFAULT_COLUMNS;
     file.months[month] = { ...mark, handedOut: { at: this.deps.now().toISOString(), fingerprint: built.fingerprint } };
@@ -130,11 +130,11 @@ export class HoursDesk {
       month,
       ...(file.settings.sheet ? { sheet: file.settings.sheet } : {}),
       logs: built.logs.map((log) => ({ name: log.name, tab: `${log.name} ${month}`, rows: sheetRows(log.rows, columns) })),
-      next: `Write each log to the host's Google Sheet with your own Google Sheets connector${file.settings.sheet ? `, in ${file.settings.sheet}` : ""}: its rows as given, header first, one tab per log unless the host keeps them elsewhere. If you don't know which Sheet, ask the host and save it with save_hours_settings. Change no cell. Then call export_hours with this month and stored: true.`,
+      next: `Write each log to the host's spreadsheet${file.settings.sheet ? `, ${file.settings.sheet}` : ""}, with the spreadsheet connector they already use with you: Google Sheets, Excel, or another. Its rows as given, header first, one tab per log unless the host keeps them elsewhere. If none is connected, or you don't know which spreadsheet, ask the host where they want the log written, and save it with save_hours_settings. Change no cell. Then call export_hours with this month and stored: true.`,
     });
   }
 
-  /** The host's codes, minutes, columns, owner name and Sheet. Each given field replaces the saved one. */
+  /** The host's codes, minutes, columns, owner name and spreadsheet. Each given field replaces the saved one. */
   saveSettings(input: HoursSettings): HoursReply {
     return this.guarded(() => this.save(input));
   }

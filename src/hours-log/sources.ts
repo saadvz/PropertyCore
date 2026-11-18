@@ -35,6 +35,8 @@ export interface HostTime {
   field: "checkout" | "checkin";
   version: number;
   at?: string;
+  /** The checkout it was given for, on a time a moved date cleared. Else the job's own. */
+  checkoutDate?: string;
 }
 
 /** Everything in a property's folder the log reads. A missing record is empty. */
@@ -110,7 +112,8 @@ export function readRecords(root: string): PropertyRecords {
     ...(cleanerName ? { cleanerName } : {}),
     ...(hostName ? { hostName } : {}),
     cleaningJobs: list<CleaningJob>(slice.jobs),
-    hostTimes: list<HostTime>(slice.hostFacts),
+    // The times a moved date cleared are still the host's: the engine keeps them for this log.
+    hostTimes: [...list<HostTime>(slice.hostFacts), ...list<HostTime>(slice.clearedHostFacts)],
     pay: live.pay && typeof live.pay === "object" ? (live.pay as Record<string, PayRecord>) : {},
     ...(fixer ? { fixer } : {}),
     ...(supply ? { supply } : {}),
@@ -144,7 +147,7 @@ export const cleanerRows: RowSource = (records) => {
   }
   for (const time of records.hostTimes) {
     if (!time.at) continue;
-    const checkout = checkoutOf(records, time.jobId);
+    const checkout = time.checkoutDate ?? checkoutOf(records, time.jobId);
     out.push({
       kind: "confirm-times",
       actor: "host",
@@ -201,6 +204,20 @@ export const fixerRows: RowSource = (records) => {
     for (const moved of job.reschedules ?? []) host("reschedule-repair", moved.at, `Moved the visit for the ${repair}${moved.reason ? `: ${moved.reason}` : ""}`);
     if (job.cost?.by === "host") host("record-cost", job.cost.at, `Recorded the cost of ${dollarsText(job.cost.cents)} for the ${repair}`);
     if (job.done?.by === "host") host("confirm-repair", job.done.at, `Confirmed the ${repair} is done`);
+    // The job's record of each of the host's approvals: the same facts as above, so one whose live field is
+    // still there adds nothing, and one whose field was replaced (a moved visit, a second price) comes back.
+    for (const step of job.hostSteps ?? []) {
+      const pro = step.proId ? proName(step.proId) : "a pro";
+      const cents = dollarsText(step.cents ?? 0);
+      const task =
+        step.kind === "approve-repair" ? `Approved the ${repair}`
+        : step.kind === "pick-quote" ? `Picked ${pro}'s quote for the ${repair}`
+        : step.kind === "approve-booking" ? `Approved ${pro}'s booking for the ${repair}`
+        : step.kind === "approve-price" ? `Approved the new price of ${cents} for the ${repair}`
+        : step.kind === "record-cost" ? `Recorded the cost of ${cents} for the ${repair}`
+        : `Confirmed the ${repair} is done`;
+      host(step.kind, step.at, task);
+    }
     if (job.state === "done" && booking && job.done) {
       const end = booking.extendedUntil ?? booking.until;
       const doneAt = Date.parse(job.done.at);
@@ -229,9 +246,9 @@ export const supplyRows: RowSource = (records) => {
   if (!file) return [];
   const out: RowFact[] = [];
   const itemName = (id: string) => file.items.find((item) => item.id === id)?.name ?? "an item";
+  const linesOf = (items: { itemId: string; qty: number }[]) => items.map((line) => `${itemName(line.itemId)} x${line.qty}`).join(", ");
   for (const order of file.orders) {
-    const lines = order.items.map((line) => `${itemName(line.itemId)} x${line.qty}`).join(", ");
-    const task = `Supply order from ${order.store}${lines ? `: ${lines}` : ""}, ${dollarsText(order.chargedCents)}`;
+    const task = orderTask(order.store, linesOf(order.items), order.chargedCents);
     const reference = `Supply Core order ${order.id}${order.orderNumber ? `, store order ${order.orderNumber}` : ""}`;
     const base = { at: order.at, task, reference, onSite: false };
     if (order.approvedBy === "host-browser") {
@@ -241,8 +258,31 @@ export const supplyRows: RowSource = (records) => {
     if (order.approvedBy === "landlord" || order.approvedBy === "grok-card") out.push({ ...base, kind: "approve-order", actor: "host", log: "owner", participant: "", timing: "rule" });
     out.push({ ...base, kind: "auto-order", actor: "system", log: "property-core", participant: "Property Core", timing: "system" });
   }
+  // The host's yes to a held cart, kept by Supply Core. While its order is there, the order's rows stand. An
+  // unconfirmed order removed as not placed gives back that order's owner fact exactly, so a month confirmed
+  // with it keeps one row. A cart that never became an order is its own row.
+  const orders = new Set(file.orders.map((order) => order.id));
+  // A cart still in the file hasn't closed or become an order yet, even one past its time that no Supply
+  // call has swept: its row waits, so it never reads as not placed and then becomes an order too.
+  const pending = new Set(file.carts.flatMap((cart) => (cart.approvalId ? [cart.approvalId] : [])));
+  for (const approval of file.approvals ?? []) {
+    if (approval.orderId && orders.has(approval.orderId)) continue;
+    if (pending.has(approval.id)) continue;
+    const lines = linesOf(approval.items);
+    const owner = { kind: "approve-order" as const, actor: "host" as const, log: "owner" as const, participant: "", onSite: false, timing: "rule" as const };
+    if (approval.orderId) {
+      out.push({ ...owner, at: approval.orderAt ?? approval.at, task: orderTask(approval.store, lines, approval.totalCents), reference: `Supply Core order ${approval.orderId}` });
+      continue;
+    }
+    out.push({ ...owner, at: approval.at, task: `Approved a supply order from ${approval.store}${lines ? `: ${lines}` : ""}, ${dollarsText(approval.totalCents)}. It wasn't placed.`, reference: `Supply Core approval ${approval.id}` });
+  }
   return out;
 };
+
+/** A supply order's task line, the same for the order and for its kept approval. */
+export function orderTask(store: string, lines: string, cents: number): string {
+  return `Supply order from ${store}${lines ? `: ${lines}` : ""}, ${dollarsText(cents)}`;
+}
 
 /**
  * Package arrivals (#241): each seen delivery is Property Core's row at the drop, and each bring-in is the
