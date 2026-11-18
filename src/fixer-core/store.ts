@@ -4,6 +4,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import type { Schedule } from "../supply-core/schedule";
+import type { CrewSchedule } from "./crewDays";
+import type { RepairBlock } from "./repairBlock";
+import type { GuestAnswer } from "./urgentVisit";
 
 /**
  * Fixer Core's record: one `fixer.json` in the property's folder, beside `supply.json`. It holds the settings, the pros, the
@@ -120,6 +123,8 @@ export interface Booking {
   cleaningOrder?: "before" | "after";
   /** Stays read after the booking that overlap it, as `checkIn|checkout`, each told to the host once. */
   stayNoted?: string[];
+  /** An urgent visit the host approved during this guest stay (`checkIn|checkout`), with the guest's okay (#243). */
+  urgentStay?: string;
 }
 
 export type JobState = "requested" | "shortlisted" | "contacted" | "booked" | "in-progress" | "done" | "cancelled";
@@ -173,10 +178,22 @@ export interface Job {
   codeTextSent?: true;
   /** The one host note about the code for this job. */
   codeNoteAt?: string;
+  /** A crew's workdays and hours on a multi-day job, set before the booking (#243). */
+  crew?: CrewSchedule;
+  /** When the guest was asked about a visit during their stay, and each answer, the last one counting (#243). */
+  guest?: { asked: string[]; answers: GuestAnswer[] };
   createdAt: string;
   cancelledAt?: string;
   cancelReason?: string;
 }
+
+/** A repair block the host saved, with the news already given about it, once each. */
+export interface SavedBlock extends RepairBlock {
+  savedAt: string;
+  told?: string[];
+}
+
+export const MAX_REPAIR_BLOCKS = 10;
 
 export interface FixerSettings {
   checkInBufferMinutes: number;
@@ -204,6 +221,8 @@ export interface FixerFile {
    * raised price waiting for the host. `urgent` ones come first in check_fixes. Never a code.
    */
   news?: FileNews[];
+  /** Days closed for repairs (#243). */
+  repairBlocks?: SavedBlock[];
   offAt?: string;
 }
 
