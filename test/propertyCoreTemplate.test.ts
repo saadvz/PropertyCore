@@ -145,3 +145,27 @@ describe("the Grok Property Core template", () => {
     expect(json(join(TEMPLATE, "template.json")).templateLink).toBe("https://x.ai/bot/rfmREJxrfqNuTiOs2VqYQ");
   });
 });
+
+describe("the hours log in each agent's instructions (#238)", () => {
+  const files = ["bot-profile.md", "muse/skills/property-core/SKILL.md", "claude/plugin/skills/property-core/SKILL.md", "chatgpt/SETUP_GUIDE.md"];
+
+  it("covers the three tools, only when review_hours is listed", () => {
+    for (const path of files) {
+      const text = read(join(TEMPLATE, path)).replace(/\s+/g, " ");
+      for (const tool of ["`review_hours`", "`export_hours`", "`save_hours_settings`"]) expect(text, `${path} ${tool}`).toContain(tool);
+      expect(text, path).toContain("only when `review_hours` is among your tools");
+      expect(text, path).toContain("only after their yes");
+      expect(text, path).toContain("`stored: true`");
+    }
+  });
+
+  it("writes to the host's own spreadsheet, asks where when none is connected, and gives no tax advice", () => {
+    for (const path of files) {
+      const text = read(join(TEMPLATE, path)).replace(/\s+/g, " ");
+      expect(text, path).toContain("Google Sheets, Excel, or another");
+      expect(text, path).toContain("ask the host where they want the log written");
+      expect(text, path).not.toMatch(/Google Sheets? connector/);
+      expect(text, path).toContain("Never give tax advice");
+    }
+  });
+});
