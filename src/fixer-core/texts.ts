@@ -23,6 +23,12 @@ function hourOf(iso: string, timeZone: string): string {
   return minute === 0 ? String(h) : `${h}:${String(minute).padStart(2, "0")}`;
 }
 
+/** The local date of an instant, for comparing two. */
+function localDay(iso: string, timeZone: string): string {
+  const { year, month, day } = zonedParts(new Date(iso), timeZone);
+  return `${year}-${month}-${day}`;
+}
+
 /** `h:mm` on a 12-hour clock: `4:05`. */
 function clock(iso: string, timeZone: string): string {
   const { hour, minute } = zonedParts(new Date(iso), timeZone);
@@ -59,12 +65,16 @@ export function bookingQuestion(f: {
   access: "code" | "host";
   holds?: readonly BookingHold[];
   costLineCents?: number;
+  /** One more sentence after the holds, such as the urgent visit's. */
+  extra?: string;
 }): string {
-  const when = `${formatWeekday(new Date(f.from), f.timeZone)} ${hourOf(f.from, f.timeZone)} to ${hourOf(f.until, f.timeZone)}`;
+  const sameDay = localDay(f.from, f.timeZone) === localDay(f.until, f.timeZone);
+  const end = sameDay ? hourOf(f.until, f.timeZone) : `${formatWeekday(new Date(f.until), f.timeZone)} ${hourOf(f.until, f.timeZone)}`;
+  const when = `${formatWeekday(new Date(f.from), f.timeZone)} ${hourOf(f.from, f.timeZone)} to ${end}`;
   const about = f.estimateCents === undefined ? "" : `, about ${shortDollars(f.estimateCents)}`;
   const tail = f.access === "host" ? "you'll let them in?" : "let them in with the door code?";
   const holds = holdSentences({ holds: f.holds ?? [], ...(f.costLineCents !== undefined ? { costLineCents: f.costLineCents } : {}) });
-  return `${f.proName} can come ${when}${about}. ${holds}Book it and ${tail}`;
+  return `${f.proName} can come ${when}${about}. ${holds}${f.extra ?? ""}Book it and ${tail}`;
 }
 
 /** With no estimate to compare, the "not {$old}" part is left out. */
@@ -273,3 +283,90 @@ export function quotesQuestion(f: { what: string; quotes: { name: string; cents:
   const list = f.quotes.map((q) => `${q.name} ${shortDollars(q.cents)}${q.note ? ` (${q.note})` : ""}`).join(", ");
   return `Quotes for ${f.what}: ${list}. Who should I book, and want a cost line?`;
 }
+
+/** "Mon, Nov 16": a repair block's day, as the host reads it. */
+function dayLabel(ymd: string): string {
+  const [year, month, day] = ymd.split("-").map(Number) as [number, number, number];
+  return new Date(Date.UTC(year, month - 1, day, 12)).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+/** "Mon, Nov 16 to Fri, Nov 20", or one day. */
+export function daysLabel(firstDay: string, lastDay: string): string {
+  return firstDay === lastDay ? dayLabel(firstDay) : `${dayLabel(firstDay)} to ${dayLabel(lastDay)}`;
+}
+
+/** save_repair_block: the host's yes (#243). */
+export function repairBlockQuestion(f: { firstDay: string; lastDay: string }): string {
+  return `Close ${daysLabel(f.firstDay, f.lastDay)} for repairs? Pros can be booked on those days, and no guest should be.`;
+}
+
+/** remove_repair_block: the host's yes. */
+export function removeRepairBlockQuestion(f: { firstDay: string; lastDay: string }): string {
+  return `Stop holding ${daysLabel(f.firstDay, f.lastDay)} for repairs?`;
+}
+
+/** A saved block a booking could still land on: what the agent tells the host now. Fixer Core can't write to the calendar yet. */
+export function blockCalendarNext(f: { openNights: string[] }): string {
+  return `Ask the host to close ${f.openNights.length === 1 ? dayLabel(f.openNights[0]!) : `these ${f.openNights.length} nights (${daysLabel(f.openNights[0]!, f.openNights[f.openNights.length - 1]!)})`} on every booking calendar now. Fixer Core can't write to the booking calendar yet, and a booking can still land there.`;
+}
+
+/** The block is fully closed on the calendar. */
+export const BLOCK_ON_CALENDAR_NEXT = "The booking calendar already shows these days closed. Book pros inside them the normal way.";
+
+/** check_fixes news: nights of a saved block a booking can still land on. */
+export function blockOpenNews(f: { firstDay: string; lastDay: string; openNights: string[] }): string {
+  return `The repair days ${daysLabel(f.firstDay, f.lastDay)} aren't all closed on the booking calendar: ${f.openNights.length} ${f.openNights.length === 1 ? "night is" : "nights are"} still open to guests. Close them on every booking calendar.`;
+}
+
+/** check_fixes news, urgent: a guest stay inside a saved block. */
+export function blockCollisionNews(f: { firstDay: string; lastDay: string; checkIn: string; checkout: string }): string {
+  return `A guest booking (${daysLabel(f.checkIn, f.checkout)}) lands inside the repair days ${daysLabel(f.firstDay, f.lastDay)}. Decide whether to move the repairs or the booking.`;
+}
+
+/** The extra sentence on the booking question for an urgent visit the guest agreed to. */
+export const URGENT_AGREED = "It's during the guest's stay, and the guest agreed to this time. ";
+
+/** record_contact on an urgent job over a stay the guest hasn't agreed to yet. */
+export const URGENT_ASK_GUEST = "That time is during a guest's stay. Ask the guest whether a pro may come then, record it with record_guest_answer (asked, then yes or no), and the host's question follows a yes.";
+
+/** Why an urgent visit can't be booked over a stay, by hold. */
+export function urgentRefusal(hold: string, f: { proName: string }): string {
+  if (hold === "spans-checkout") return `That time runs past the guest's checkout. Ask ${f.proName} for a time that ends by checkout, or one after it.`;
+  if (hold === "too-long") return `An urgent visit during a stay can be at most 4 hours. Ask ${f.proName} to split it into shorter visits.`;
+  if (hold === "guest-declined") return "The guest said no to a visit during their stay. Tell the host, and ask the pro for a time after checkout.";
+  if (hold === "guest-ok-other-stay" || hold === "guest-ok-other-window" || hold === "no-guest-ok") return URGENT_ASK_GUEST;
+  return `That time overlaps a guest stay, so nothing is booked. Ask ${f.proName} for another time.`;
+}
+
+/** Urgent news: the guest said no after an urgent visit was booked. The code is already stopped. */
+export function guestWithdrewNews(f: { proName: string; codeSeen: boolean }): string {
+  const code = f.codeSeen ? `${f.proName} already saw the door code, and it won't show again for this visit.` : "The door code won't go out for it.";
+  return `The guest said no to ${f.proName}'s visit during their stay. ${code} Reschedule or cancel the visit?`;
+}
+
+/** An urgent visit whose guest stay changed or left the calendar: the guest's okay was for that stay, so the code stays off. */
+export function urgentStayChangedNews(f: { proName: string; from: string; timeZone: string }): string {
+  return `The guest stay ${f.proName}'s repair visit ${formatWeekday(new Date(f.from), f.timeZone)} ${hourOf(f.from, f.timeZone)} was approved for has changed or left the calendar. The guest's okay was for that stay, so the door code won't go out for it. Let ${f.proName} in yourself, reschedule, or cancel the visit?`;
+}
+
+/** A visit inside a calendar block: Fixer Core can't tell a repair block from a booking a calendar labels "Not available". */
+export const BLOCK_HOST_ACCESS = "That visit is inside a block on the booking calendar, and a calendar can label a real booking as a block, so the door code never goes out there. The host lets the pro in: book it with access host.";
+
+/** The extra sentence on a crew booking's question. */
+export function crewScheduleSentence(f: { workdays: readonly string[]; start: string; end: string }): string {
+  return `That's the crew's schedule: ${f.workdays.map((d) => d.charAt(0) + d.slice(1).toLowerCase()).join(", ")}, ${f.start} to ${f.end}. `;
+}
+
+/** save_crew_schedule: the host's yes. */
+export function crewScheduleQuestion(f: { firstDay: string; lastDay: string; workdays: readonly string[]; start: string; end: string; windows: number }): string {
+  const days = f.workdays.map((d) => d.charAt(0) + d.slice(1).toLowerCase()).join(", ");
+  return `Save the crew's schedule: ${days}, ${f.start} to ${f.end}, ${daysLabel(f.firstDay, f.lastDay)} (${f.windows} workdays)? You'll let the crew in until crew codes exist.`;
+}
+
+/** A crew job's booking must cover its saved schedule. */
+export function crewSpanRefusal(f: { from: string; until: string }): string {
+  return `A crew job books its saved schedule: from ${f.from} until ${f.until}. Record the booking with those times, or save a new schedule first.`;
+}
+
+/** A crew's door code waits for crew codes (#180). */
+export const CREW_HOST_ACCESS = "A crew's door code waits for crew codes. For now the host lets the crew in: book it with access host.";
