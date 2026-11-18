@@ -1,0 +1,12 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Example//Scratch//EN
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:until-midnight@example.com
+ORGANIZER;CN=Mike Doyle:mailto:mike@example.com
+DTSTART;TZID=America/New_York:20261119T220000
+DTEND;TZID=America/New_York:20261120T000000
+SUMMARY:Late check
+END:VEVENT
+END:VCALENDAR
