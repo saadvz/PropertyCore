@@ -356,3 +356,57 @@ describe("review fixes: urgent visits", () => {
     expect((await w.desk().extendVisit({ jobId: w.job().id, until: "2026-11-17T20:00:00.000Z" })).isError).toBe(true);
   });
 });
+
+describe("minor fixes: urgent visits", () => {
+  const offerAndApprove = async (w: World, span: { from: string; until: string }, agreed: { from: string; until: string }) => {
+    await w.desk().recordContact({ contactToken: await w.contact(), outcome: "booked", ...span, estimateCents: 18000 });
+    const yes = await w.desk().recordGuestAnswer({ jobId: w.job().id, answer: "yes", ...agreed, via: "text" });
+    await twice((input) => w.desk().approveBooking(input), { jobId: w.job().id });
+    return yes;
+  };
+
+  it("waits for the guests_left check when an earlier stay checks out the day of the visit", async () => {
+    const w = await setup({ events: [["2026-11-10", "2026-11-15"], ["2026-11-15", "2026-11-20"]], urgency: "now" });
+    // Sunday 3:30 to 5:30 PM, as the next guests arrive.
+    await offerAndApprove(w, { from: "2026-11-15T20:30:00.000Z", until: "2026-11-15T22:30:00.000Z" }, { from: "2026-11-15T20:00:00.000Z", until: "2026-11-15T23:00:00.000Z" });
+    expect(w.job().booking!.urgentStay).toBe("2026-11-15|2026-11-20");
+    w.setNow("2026-11-15T20:30:00.000Z");
+    expect(await w.desk().revealCode(w.job().id)).toEqual({ ok: false, reason: "guests-not-left" });
+    await w.desk().guestsLeft({ confirmed: true });
+    expect(await w.desk().revealCode(w.job().id)).toMatchObject({ ok: true, code: CODE });
+  });
+
+  it("doesn't wait for guests_left on the urgent stay's own checkout morning, since that guest agreed", async () => {
+    const w = await setup({ events: [["2026-11-15", "2026-11-20"]], urgency: "now" });
+    // Friday 9 to 10:30 AM, before the 11 AM checkout.
+    const span = { from: "2026-11-20T14:00:00.000Z", until: "2026-11-20T15:30:00.000Z" };
+    await offerAndApprove(w, span, span);
+    expect(w.job().booking!.urgentStay).toBe("2026-11-15|2026-11-20");
+    w.setNow("2026-11-20T14:00:00.000Z");
+    expect(await w.desk().revealCode(w.job().id)).toMatchObject({ ok: true, code: CODE });
+  });
+
+  it("tells the host once, urgently, when the stay an urgent visit was approved for changes or leaves the calendar", async () => {
+    const w = await setup({ events: [["2026-11-15", "2026-11-20"]], urgency: "now" });
+    await offerAndApprove(w, TUE, { from: "2026-11-17T14:00:00.000Z", until: "2026-11-17T18:00:00.000Z" });
+    serve([]);
+    const news = (await w.desk().checkFixes({})).structured!.news as { kind: string; text?: string; urgent?: true }[];
+    const gone = news.filter((n) => n.kind === "urgent-stay-changed");
+    expect(gone).toEqual([expect.objectContaining({ urgent: true })]);
+    expect(gone[0]!.text).toContain("Joe's Plumbing");
+    expect(gone[0]!.text).toContain("door code won't go out");
+    const again = (await w.desk().checkFixes({})).structured!.news as { kind: string }[];
+    expect(again.filter((n) => n.kind === "urgent-stay-changed")).toEqual([]);
+    w.setNow("2026-11-17T15:00:00.000Z");
+    expect((await w.desk().revealCode(w.job().id)).ok).toBe(false);
+  });
+
+  it("keeps the outside-window sentence when the visit is outside the open times for another reason than the stay", async () => {
+    const w = await setup({ events: [["2026-11-15", "2026-12-10"]], urgency: "now" });
+    // Wednesday 11-25 10 to 12: inside the stay, and past the 14 days an urgent job looks ahead.
+    await w.desk().recordContact({ contactToken: await w.contact(), outcome: "booked", from: "2026-11-25T15:00:00.000Z", until: "2026-11-25T17:00:00.000Z", estimateCents: 18000 });
+    const yes = await w.desk().recordGuestAnswer({ jobId: w.job().id, answer: "yes", from: "2026-11-25T14:00:00.000Z", until: "2026-11-25T18:00:00.000Z", via: "text" });
+    expect(String(yes.structured!.question)).toContain("outside the open times");
+    expect(String(yes.structured!.question)).toContain("the guest agreed to this time");
+  });
+});
