@@ -64,7 +64,7 @@ export type EmailReply = { ok: true; result: Record<string, unknown> } | { ok: f
 const MAX_BODY = 50_000;
 const REFUSAL_NEXT: Record<ParseRefusal, string> = {
   "not-airbnb": "That email isn't from Airbnb, so nothing changed. Pass only Airbnb's own reservation emails, never a forward.",
-  "not-a-reservation": "That isn't an Airbnb reservation confirmation, change or cancellation, so nothing changed.",
+  "not-a-reservation": "That isn't an Airbnb reservation confirmation, change or cancellation, so nothing changed. If it's a guest's message, pass it to read_guest_message instead, when that tool is listed.",
   "no-code": "I couldn't find the confirmation code in that email, so nothing changed.",
   "no-dates": "I couldn't read the check-in and checkout dates in that email, so nothing changed.",
 };
@@ -352,19 +352,19 @@ function done(result: Record<string, unknown>): EmailReply {
   return { ok: true, result };
 }
 
-function minutesOf(hm: string): number {
+export function minutesOf(hm: string): number {
   const [hour = 0, minute = 0] = hm.split(":").map(Number);
   return hour * 60 + minute;
 }
 
 /** "11:00 AM" as minutes after midnight. */
-function clockMinutes(text: string): number | undefined {
+export function clockMinutes(text: string): number | undefined {
   const match = /^(\d{1,2}):(\d{2})\s*([AP])M$/i.exec(text.trim());
   if (!match) return undefined;
   return ((Number(match[1]) % 12) + (match[3]!.toUpperCase() === "P" ? 12 : 0)) * 60 + Number(match[2]);
 }
 
-function clock(minutes: number): string {
+export function clock(minutes: number): string {
   const hour = Math.floor(minutes / 60);
   return `${hour % 12 || 12}:${String(minutes % 60).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`;
 }
