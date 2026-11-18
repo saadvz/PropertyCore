@@ -1,0 +1,14 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Example//Scratch//EN
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:timed-tzid@example.com
+ORGANIZER;CN=Mike Doyle:mailto:mike@example.com
+DTSTART;TZID=America/Chicago:20261119T120000
+DTEND;TZID=America/Chicago:20261119T160000
+SUMMARY:Walk-through
+DESCRIPTION:Gate is around the side
+LOCATION:12 Scratch Lane
+END:VEVENT
+END:VCALENDAR

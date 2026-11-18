@@ -1,0 +1,12 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Example//Scratch//EN
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:multi-day@example.com
+ORGANIZER;CN=Mike Doyle:mailto:mike@example.com
+DTSTART;TZID=America/New_York:20261119T100000
+DTEND;TZID=America/New_York:20261120T100000
+SUMMARY:Walk-through
+END:VEVENT
+END:VCALENDAR

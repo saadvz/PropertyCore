@@ -1,0 +1,12 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Example//Scratch//EN
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:timed-utc@example.com
+ORGANIZER;CN="Mike Doyle":mailto:mike@example.com
+DTSTART:20261119T180000Z
+DTEND:20261119T220000Z
+SUMMARY:Check the furnace\, and the filter
+END:VEVENT
+END:VCALENDAR
