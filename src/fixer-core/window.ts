@@ -28,7 +28,7 @@ export interface VisitWindow {
   cleaning?: { order?: "before" | "after"; doneKnown: boolean };
 }
 
-type OccupyInput = Pick<WindowInput, "timeZone" | "checkoutTime" | "checkInTime" | "checkInBufferMinutes">;
+export type OccupyInput = Pick<WindowInput, "timeZone" | "checkoutTime" | "checkInTime" | "checkInBufferMinutes">;
 
 interface Occupied {
   start: number;
@@ -46,6 +46,11 @@ function localYmd(date: Date, timeZone: string): string {
 export function latestYmd(job: Pick<Job, "urgency" | "byDate">, todayYmd: string): string {
   if (job.urgency === "by-date" && job.byDate) return job.byDate;
   return addCalendarDays(todayYmd, job.urgency === "flexible" ? 30 : 14);
+}
+
+/** Each stay or block as busy time in epoch ms, unmerged: from check-in minus the buffer until checkout. */
+export function busyTimes(stays: readonly Stay[], input: OccupyInput): { start: number; end: number }[] {
+  return occupiedOf(stays, input).map(({ start, end }) => ({ start, end }));
 }
 
 /** Each stay or block as busy time: from check-in minus the buffer until checkout. */

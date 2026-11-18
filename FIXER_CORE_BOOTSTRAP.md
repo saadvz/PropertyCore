@@ -63,7 +63,7 @@ The Fixer Core Check routine runs this every hour, and you run it whenever the h
 
 When a pro books a time, `record_contact` with `booked` runs Fixer Core's checks and gives the host's question. Say it as given: `{Pro} can come {Weekday} {from} to {until}, about {$est}. Book it and let them in with the door code?`, or `you'll let them in?` when the host lets them in. It adds one plain sentence for each hold: outside the open times between stays, over the job's cost line, or no estimate with a cost line set. Those are the holds sentences in the booking question; the host's yes accepts them.
 
-0. **A time that overlaps a guest stay is never booked.** `record_contact` gives no question then. Tell the host, and ask the pro for another time.
+0. **A time that overlaps a guest stay is never booked**, except an urgent visit the guest agreed to (see Bigger repairs). Otherwise `record_contact` gives no question then. Tell the host, and ask the pro for another time.
 1. Ask the host the question. Do not tell the pro the time is settled.
 2. On the host's yes, call `approve_booking` without `confirmation`, then with the code, passing `proId` to choose another pro's held yes on the job, and `access` (`code` or `host`) and `cleaningOrder` (`before` or `after`) when the visit shares a day with a cleaning. The code is bound to the exact pro, time, estimate and access. If the stays changed or the time has passed, it refuses with a plain reason, and nothing is booked.
 3. Only then confirm the time to the pro.
@@ -82,6 +82,14 @@ When a pro books a time, `record_contact` with `booked` runs Fixer Core's checks
 **Questions after a visit.**
 - `preferredAsk`: `Add {Pro} to your preferred list for {trade}?` On yes, `save_pro` with `jobId`. On no, `skip_question` with `question: "preferred"`.
 - `rotationAsk`: after a pro saw the code and isn't preferred, or a visit was cancelled after the code was opened: `{Pro} knows the door code. Want to change it? Set the new code on the lock, then save it here.` On yes, `change_door_code` gives a one-time link for the host alone. They save the new code through it. Never ask for the code in chat. On no, `skip_question` with `question: "rotate"`.
+
+## Bigger repairs
+
+**Repair blocks.** When the host closes days for repairs (a month-long job, a crew), call `save_repair_block` with `firstDay`, `lastDay` and the jobs it's for, in two calls with the host's yes. Pros can then be booked inside those days, but the door code never goes out inside a block on the booking calendar, since a calendar can label a real booking that way: the host lets pros in there. Fixer Core can't write to the booking calendar yet: when the reply lists `openNights`, tell the host to close them on every booking calendar now, since a booking can still land there. `check_fixes` news says once if nights are still open, and once, urgently, if a guest booking lands inside the block. `get_fixer_state` lists the blocks and `doorNow`. `remove_repair_block` reopens the days, with the host's yes.
+
+**An urgent visit during a stay.** Only a job opened with urgency `now` can have a visit while a guest is staying, and only with the guest's okay to that exact time. When a pro's time is during a stay, `record_contact` gives no question and says to ask the guest. Ask the guest (with the guest message when one is drafted for you), and call `record_guest_answer` with `asked`, then with `yes` and the `from` and `until` they agreed to, or `no`. A yes gives the host's question, which says the guest agreed; then `approve_booking` as usual. A visit is at most 4 hours and ends by checkout: split longer work into separate visits, each with its own okay. The door code shows only inside the visit, from its start, never 30 minutes early. More time with `extend_visit` needs the guest's yes again, and a guest's `no` stops the code at once: tell the pro not to come and ask the host whether to `reschedule_job` or `cancel_job`. `urgent_timeline` gives the record for the booking platform.
+
+**A crew over several days.** Before booking a crew, call `save_crew_schedule` with the days, the workdays, the hours and any days off, in two calls with the host's yes. It answers the span to book: `record_contact` with `booked` from the first workday's start until the last workday's end, nothing shorter. A workday a guest stay touches refuses the booking, as an overlap does. Until crew codes exist, the host lets the crew in: book with access `host`.
 
 ## With Cleaner Core
 
