@@ -21,6 +21,8 @@ import { listedChooseSupplies, listedSupplyFront, SUPPLY_FRONT_NAMES, suppliesLi
 import { HOURS_FRONT_NAMES, hoursCall, listedHoursFront } from "./hours";
 import { listedOversightFront, OVERSIGHT_FRONT_NAMES, oversightCall } from "./oversight";
 import { listedStayCheckFront, STAY_CHECK_FRONT_NAMES, stayCheckCall } from "./stayCheck";
+import { GUEST_FRONT_NAMES, withRoutedProperty, GUEST_MESSAGES_INSTRUCTION, guestCall, guestMessageProperty, listedGuestFront } from "./guestMessages";
+import { guestMessagesOn } from "../cleaner-core/flag";
 import { FIXER_FRONT_NAMES, fixerCall, fixerDesk, fixerPhotos, fixerPreview, listedFixerFront, namesRepairJob, repairsLine } from "./fixer";
 import { taskWarning } from "./touringAlerts";
 import { callWorkerMcp, forwardMcp, type WorkerTarget } from "./touringForward";
@@ -166,7 +168,7 @@ async function propertiesAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tena
   if (message.id === undefined) return r.send(202, JSON_TYPE, "");
   if (message.method === "initialize") {
     const version = negotiatedProtocolVersion(message.params?.protocolVersion);
-    return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "property-core", title: "Property Core", version: "0.1.0" }, instructions: `${PROPERTY_INSTRUCTIONS} ${cleanerInstructions(caller.assistant)}` }));
+    return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "property-core", title: "Property Core", version: "0.1.0" }, instructions: `${PROPERTY_INSTRUCTIONS}${guestMessagesOn(h.baseEnv()) ? ` ${GUEST_MESSAGES_INSTRUCTION}` : ""} ${cleanerInstructions(caller.assistant)}` }));
   }
   if (message.method === "ping") return r.send(200, JSON_TYPE, rpcResult(message.id, {}));
   if (message.method === "tools/list") return r.send(200, JSON_TYPE, rpcResult(message.id, { tools: await propertyToolList(h, r, tenant, caller) }));
@@ -199,6 +201,7 @@ async function propertyToolList(h: HostedCleaner, r: HostedRequest, tenant: Tena
   tools.push(...listedHoursFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   tools.push(...listedStayCheckFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   tools.push(...listedOversightFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
+  tools.push(...listedGuestFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   return tools;
 }
 
@@ -230,6 +233,17 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
     const resolved = resolveProperty(tenant, args);
     if ("refusal" in resolved) return { text: resolved.refusal, isError: true };
     return oversightCall(h, tenant, resolved.property, name, resolved.args);
+  }
+  if (GUEST_FRONT_NAMES.has(name)) {
+    // An Airbnb message that names no property goes to the one whose listing it matches.
+    if (name === "read_guest_message" && !namesProperty(args) && tenant.properties.length > 1) {
+      const routed = guestMessageProperty(h.dataRoot, tenant, args, () => h.now());
+      if ("refusal" in routed) return { text: routed.refusal, isError: true };
+      return withRoutedProperty(guestCall(h, tenant, routed.property, name, (args ?? {}) as Record<string, unknown>), routed.property);
+    }
+    const resolved = resolveProperty(tenant, args);
+    if ("refusal" in resolved) return { text: resolved.refusal, isError: true };
+    return guestCall(h, tenant, resolved.property, name, resolved.args);
   }
   const fixer = FIXER_FRONT_NAMES.has(name);
   const shared = name === "preview_schedule" || name === "get_job_photos";
