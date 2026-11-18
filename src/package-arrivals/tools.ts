@@ -11,7 +11,7 @@ const CHECK = {
   name: "check_packages",
   title: "Package arrivals: what's expected",
   description:
-    "Every Supply Core order expected at the property and where it stands: expected (not due yet), notSeen (expected and nothing confirmed the drop by 9 PM local on its day; tell the host once), waiting (already told), toBringIn (at the door, no one set to bring it in), visits (who's bringing each in and by when), and bringInLate (not marked inside by its deadline; tell the host once). Run it after check_supplies in the Supply Core Check routine, and whenever the host asks about a delivery. Follow its ask and next. It texts nobody.",
+    "Every Supply Core order expected at the property and where it stands: expected (not due yet), notSeen (expected and nothing confirmed the drop by 9 PM local on its day; tell the host once), waiting (already told), toBringIn (at the door, no one set to bring it in), visits (who's bringing each in and by when, with a problem when that person can't any more), bringInLate (not marked inside by its deadline; tell the host once), and defaultPerson (the host's saved default, with a problem when they can't be used). Run it after check_supplies in the Supply Core Check routine, and whenever the host asks about a delivery. Follow its ask and next. It texts nobody.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
 };
 
@@ -35,10 +35,10 @@ const INSIDE = {
   name: "mark_brought_in",
   title: "A package is inside",
   description:
-    "Records that the package is inside, with when, and when the person started if they said, so the hours log has the time it took. Pass only times the host or the person gave. A short note is fine, with no codes or long numbers in it.",
+    "Records that the package is inside, with when, and when the person started if they said, so the hours log has the time it took. Pass only times the host or the person gave. A short note is fine, with no codes or long numbers in it. A package already marked inside is refused unless the host is correcting it: then pass replace: true.",
   inputSchema: {
     type: "object",
-    properties: { orderId: ORDER_ID, at: { ...TIME, description: "When it was inside. Leave out for now." }, startedAt: { ...TIME, description: "When the person started bringing it in." }, note: { type: "string", maxLength: 200 } },
+    properties: { orderId: ORDER_ID, at: { ...TIME, description: "When it was inside. Leave out for now." }, startedAt: { ...TIME, description: "When the person started bringing it in." }, note: { type: "string", maxLength: 200 }, replace: { type: "boolean", description: "True only when the host is correcting a package already marked inside." } },
     required: ["orderId"],
     additionalProperties: false,
   },
@@ -58,7 +58,7 @@ const KEYS: Record<string, readonly string[]> = {
   check_packages: [],
   mark_package_seen: ["orderId", "how", "at"],
   plan_bring_in: ["orderId", "person"],
-  mark_brought_in: ["orderId", "at", "startedAt", "note"],
+  mark_brought_in: ["orderId", "at", "startedAt", "note", "replace"],
   save_package_settings: ["bringInHours", "person"],
 };
 

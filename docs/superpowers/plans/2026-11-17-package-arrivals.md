@@ -83,7 +83,7 @@
   - no `bringInHours` → plan refused with the ask.
   - `check()` after deadline with no bring-in → `bringInLate` once.
   - `markBroughtIn` before seen / without visit → refused; `startedAt` after `at` → refused; future `at` → refused; success closes the visit (not in `visits`).
-  - property folder not under an account → plan refused: "Save the people for this property first."
+  - property folder not under an account → plan refused with a plain line that it has no shared people list.
 - [ ] Run, fail; implement; run, pass; commit.
 
 ### Task 4: Hours log rows

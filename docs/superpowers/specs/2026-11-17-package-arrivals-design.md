@@ -87,11 +87,15 @@ arrived, nothing gets it inside, and nothing records who brought it in.
   drop to when it should be inside. Unset means the desk asks.
 - `settings.person`: the default bring-in person's phone, or unset.
 - `arrivals["supply:<orderId>"]`: `seen` (`at`, `how`), `notSeenTold`,
-  `visit` (`person`, `name`, `role`, `plannedAt`), `broughtIn` (`at`,
-  optional `startedAt`, optional `note`), `lateTold`.
+  `visit` (`person`, `name`, `role`, `plannedAt`, `hours`: the bring-in
+  hours when it was planned, so a later change doesn't move its deadline),
+  `broughtIn` (`at`, optional `startedAt`, optional `note`), `lateTold`.
+- `salt`: random per property, set with the first visit. A helper's hours log
+  key is an HMAC of their phone with it, never a plain hash.
 
 A broken `packages.json` is a plain refusal and is never written over, like
-`hours.json` and `stay-check.json`.
+`hours.json` and `stay-check.json`. A `supply.json` that can't be read is a
+plain refusal too.
 
 ### Expected deliveries
 
@@ -106,6 +110,8 @@ flagged not-seen (its deadline still drives Supply Core's own `late`).
 A delivery expected on a date is not seen when the property's local date is
 after that date, or it is that date and the local time is 21:00 or later
 (my call: late enough for evening carrier drops, early enough to act on).
+Without a saved time zone everything is still listed and only this flag
+waits, with a `timeZone` line asking for the property's address.
 
 ### Tools
 
@@ -114,20 +120,26 @@ All take `property` on the shared service.
 - `check_packages`: what's expected today and later, `notSeen` (flagged once,
   then kept in `waiting` without the flag), `toBringIn` (seen, no visit yet,
   with the default person when one is saved), `visits` (open, with their
-  deadline), and `bringInLate` (flagged once). With no `bringInHours` saved
+  deadline, and a `problem` when the person can't any more, like a STOP
+  since), `bringInLate` (flagged once), and `defaultPerson` (the saved
+  default's name, with a `problem` when they can't be used). With no `bringInHours` saved
   it carries `ask` for it. The Supply Core Check routine calls it after
   `check_supplies`.
 - `mark_package_seen` `{ orderId, how: "tracking" | "host" | "camera", at? }`:
   records the drop. An earlier signal is kept; a camera signal replaces a
   carrier or host one at any time, since it's the one the issue asks for.
-  When a default person is saved, the visit is planned at once.
+  When a default person is saved, the visit is planned at once; when they
+  can't be used, the reply says who and why in `defaultSkipped`. A time
+  before the order was placed, or after the package was marked inside, is
+  refused.
 - `plan_bring_in` `{ orderId, person? }`: the bring-in visit. The person
   must be on this property as cleaner, co-host or assistant in the shared
   people list, opted in, and not stopped. Planning before the drop is
   allowed; the window opens at the drop. The reply carries the deadline and
   `code: "waiting"` with a line for the host.
 - `mark_brought_in` `{ orderId, at?, startedAt?, note? }`: closes the visit.
-  Refused before the delivery is seen or without a visit.
+  Refused before the delivery is seen or without a visit. A second call is
+  refused unless the host is correcting it with `replace: true`.
 - `save_package_settings` `{ bringInHours?, person? (null clears) }`: only as
   the host says.
 

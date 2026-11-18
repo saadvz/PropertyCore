@@ -25,6 +25,8 @@ export interface BringInVisit {
   name?: string;
   role: BringInRole;
   plannedAt: string;
+  /** The host's bring-in hours when it was planned, so a later change doesn't move this deadline. */
+  hours?: number;
 }
 
 export interface Arrival {
@@ -48,6 +50,8 @@ export interface PackagesFile {
   settings: PackageSettings;
   /** By delivery key: `supply:<orderId>` for a Supply Core order. */
   arrivals: Record<string, Arrival>;
+  /** Random per property, set with the first bring-in visit: a helper's hours log key is keyed with it, never a plain hash of their phone. */
+  salt?: string;
 }
 
 /** packages.json is there but isn't a readable record. Nothing is written over it. */
@@ -81,7 +85,11 @@ export function readPackages(root: string): PackagesFile {
   }
   const file = raw as Partial<PackagesFile>;
   const object = (value: unknown) => (value && typeof value === "object" && !Array.isArray(value) ? value : {});
-  return { settings: object(file.settings) as PackageSettings, arrivals: object(file.arrivals) as Record<string, Arrival> };
+  return {
+    settings: object(file.settings) as PackageSettings,
+    arrivals: object(file.arrivals) as Record<string, Arrival>,
+    ...(typeof file.salt === "string" ? { salt: file.salt } : {}),
+  };
 }
 
 export function writePackages(root: string, file: PackagesFile): void {

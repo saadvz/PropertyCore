@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { zonedParts } from "../core/timezone";
 import { accountOf, peopleFor } from "../hub/people";
 import { readHubFile } from "../hub/store";
@@ -23,7 +24,7 @@ export interface PackageDeps {
 
 /** Local time at the property after which a package expected that day and not seen is flagged. */
 export const END_OF_DAY = "21:00";
-/** An order placed longer ago than this is no longer listed. */
+/** A delivery placed or expected longer ago than this is no longer listed, unless its visit is still open. */
 export const ARRIVALS_DAYS = 30;
 export const MAX_BRING_IN_HOURS = 72;
 const SEEN_HOWS: readonly SeenHow[] = ["tracking", "host", "camera"];
@@ -36,8 +37,10 @@ export const CODE_WAITING =
 const BRING_IN_ROLES: readonly BringInRole[] = ["cleaner", "co-host", "assistant"];
 const PHONE = /^\+\d{8,15}$/;
 const MAX_NOTE = 200;
-const NO_PEOPLE = "Save the people for this property first: the bring-in person has to be someone saved on it who said YES.";
-const NO_TIME_ZONE = "The property's time zone isn't saved yet, so I can't tell when its day ends. Save the property's address first.";
+const NO_PEOPLE =
+  "This property has no shared people list, so I can't check who said YES. The bring-in person has to be saved on the property's account first. Until then, the host brings it in or lets someone in their usual way.";
+const NO_TIME_ZONE = "The property's time zone isn't saved yet, so a package not seen by the end of its day can't be flagged. Save the property's address to turn that on.";
+const NO_SUPPLY = "Supply Core's record (supply.json) can't be read, so I can't see the orders. Nothing was changed. Tell the host it needs a look.";
 const UNKNOWN_ORDER = "There's no placed Supply Core order with that id at this property.";
 
 export interface Visit {
@@ -45,7 +48,12 @@ export interface Visit {
   name?: string;
   /** When it should be inside: the drop plus the host's hours. Absent until the drop is seen. */
   by?: string;
+  /** Why the person can't bring it in any more, like a STOP since it was planned. */
+  problem?: string;
 }
+
+/** supply.json is there but can't be read. A refusal, never a crash. */
+class SupplyUnreadable extends Error {}
 
 export interface Delivery {
   orderId: string;
@@ -77,6 +85,7 @@ export class PackageDesk {
       return run();
     } catch (error) {
       if (error instanceof PackagesFileError) return fail(error.message);
+      if (error instanceof SupplyUnreadable) return fail(NO_SUPPLY);
       throw error;
     }
   }
@@ -90,7 +99,19 @@ export class PackageDesk {
   }
 
   protected supply(): SupplyFile {
-    return readSupply(this.root);
+    let file: SupplyFile;
+    try {
+      file = readSupply(this.root);
+    } catch {
+      throw new SupplyUnreadable();
+    }
+    if (!Array.isArray(file.orders) || !Array.isArray(file.items)) throw new SupplyUnreadable();
+    return file;
+  }
+
+  /** A random salt for this property's helper log keys, made once with the first visit. */
+  protected salted(file: PackagesFile): void {
+    file.salt ??= randomBytes(16).toString("hex");
   }
 
   /** Supply Core's orders that are deliveries at all: placed or delivered. */
@@ -144,8 +165,8 @@ export class PackageDesk {
   /** Every expected delivery in its place, with the flags the host hasn't been told yet. */
   check(): PackageReply {
     return this.guarded(() => {
+      // Without a time zone everything is still listed; only the end-of-day flag waits on it.
       const timeZone = this.timeZone();
-      if (!timeZone) return fail(NO_TIME_ZONE);
       const supply = this.supply();
       const file = readPackages(this.root);
       const expected: Delivery[] = [];
@@ -154,6 +175,7 @@ export class PackageDesk {
       const toBringIn: Delivery[] = [];
       const visits: Visit[] = [];
       const bringInLate: Visit[] = [];
+      let blocked = false;
       const now = this.deps.now().getTime();
       let changed = false;
       for (const order of this.orders(supply, file)) {
@@ -169,6 +191,11 @@ export class PackageDesk {
         const delivery = this.delivery(supply, order, arrival);
         if (arrival?.visit) {
           const visit = this.visitOf(order.id, arrival.visit, delivery.seen, file.settings.bringInHours);
+          const picked = this.pick(arrival.visit.person);
+          if ("problem" in picked) {
+            visit.problem = picked.problem;
+            blocked = true;
+          }
           visits.push(visit);
           if (visit.by && Date.parse(visit.by) <= now && !arrival.lateTold) {
             bringInLate.push(visit);
@@ -180,7 +207,7 @@ export class PackageDesk {
           if (!arrival?.visit) toBringIn.push(delivery);
           continue;
         }
-        if (!order.expectedBy || !this.pastEndOfDay(order.expectedBy, timeZone)) {
+        if (!order.expectedBy || !timeZone || !this.pastEndOfDay(order.expectedBy, timeZone)) {
           expected.push(delivery);
         } else if (arrival?.notSeenTold) {
           waiting.push(delivery);
@@ -191,9 +218,18 @@ export class PackageDesk {
         }
       }
       if (changed) writePackages(this.root, file);
+      const fallback = this.defaultPerson(file.settings.person);
       const next: string[] = [];
       if (notSeen.length) next.push("Tell the host once about each package in notSeen: it was expected and nothing confirmed it arrived by the end of the day. Check its tracking.");
-      if (toBringIn.length) next.push("Ask the host who should bring in each package in toBringIn, then call plan_bring_in.");
+      if (toBringIn.length) {
+        next.push(
+          fallback && !fallback.problem
+            ? `Ask the host who should bring in each package in toBringIn, then call plan_bring_in. Leave person out to use their default, ${fallback.name ?? "the saved person"}.`
+            : "Ask the host who should bring in each package in toBringIn, then call plan_bring_in.",
+        );
+      }
+      if (fallback?.problem) next.push(`The host's default bring-in person, ${fallback.name ?? "the saved person"}, can't be used: ${fallback.problem} Ask the host to pick someone else or clear the default.`);
+      if (blocked) next.push("A person in visits can't bring their package in any more (see problem). Ask the host who should do it instead, then call plan_bring_in for someone else.");
       if (bringInLate.length) next.push("Tell the host once about each visit in bringInLate: the package isn't marked inside by its deadline.");
       return ok({
         expected,
@@ -202,7 +238,9 @@ export class PackageDesk {
         toBringIn,
         visits,
         bringInLate,
+        ...(fallback ? { defaultPerson: fallback } : {}),
         ...(file.settings.bringInHours === undefined ? { ask: ASK_HOURS } : {}),
+        ...(timeZone ? {} : { timeZone: NO_TIME_ZONE }),
         ...(next.length ? { next: next.join(" ") } : {}),
       });
     });
@@ -220,30 +258,61 @@ export class PackageDesk {
       const supply = this.supply();
       const order = this.order(supply, input.orderId);
       if (!order) return fail(UNKNOWN_ORDER);
+      if (when.getTime() < Date.parse(order.at)) return fail("That's before the order was placed.");
       const file = readPackages(this.root);
       const key = supplyKey(order.id);
       const arrival: Arrival = { ...file.arrivals[key] };
+      if (arrival.broughtIn && when.getTime() > Date.parse(arrival.broughtIn.at)) return fail("That's after the package was marked inside.");
       const own = arrival.seen;
       const at = when.toISOString();
       if (!own || how === "camera" || (own.how !== "camera" && Date.parse(at) < Date.parse(own.at))) arrival.seen = { at, how };
       // A saved default person is the host's pick: their visit is planned as soon as the drop is seen.
       const person = file.settings.person;
-      if (!arrival.visit && !arrival.broughtIn && person && file.settings.bringInHours !== undefined) {
+      const hours = file.settings.bringInHours;
+      let skipped: { name?: string; problem: string } | undefined;
+      if (!arrival.visit && !arrival.broughtIn && person && hours !== undefined) {
         const picked = this.pick(person);
-        if ("role" in picked) arrival.visit = { person, ...(picked.name ? { name: picked.name } : {}), role: picked.role, plannedAt: now.toISOString() };
+        if ("role" in picked) {
+          arrival.visit = { person, ...(picked.name ? { name: picked.name } : {}), role: picked.role, plannedAt: now.toISOString(), hours };
+          this.salted(file);
+        } else {
+          const name = this.nameOf(person);
+          skipped = { ...(name ? { name } : {}), problem: picked.problem };
+        }
       }
       file.arrivals[key] = arrival;
       writePackages(this.root, file);
       const seen = this.seenOf(order, arrival);
-      const visit = arrival.visit ? { ...this.visitOf(order.id, arrival.visit, seen, file.settings.bringInHours), code: "waiting" } : undefined;
-      return ok({ seen, orderId: order.id, ...(visit ? { visit, next: CODE_WAITING } : {}) });
+      const visit = arrival.visit ? { ...this.visitOf(order.id, arrival.visit, seen, hours), code: "waiting" } : undefined;
+      if (visit) return ok({ seen, orderId: order.id, visit, next: CODE_WAITING });
+      if (skipped) {
+        const next = `The host's default bring-in person, ${skipped.name ?? "the saved person"}, wasn't asked: ${skipped.problem} Ask the host who should bring it in, then call plan_bring_in.`;
+        return ok({ seen, orderId: order.id, defaultSkipped: skipped, next });
+      }
+      return ok({ seen, orderId: order.id });
     });
   }
 
   /** The visit as the host sees it: who, and when it should be inside once the drop is seen. */
   protected visitOf(orderId: string, visit: BringInVisit, seen: Delivery["seen"], hours: number | undefined): Visit {
-    const by = seen && hours !== undefined ? new Date(Date.parse(seen.at) + hours * 3_600_000).toISOString() : undefined;
+    const planned = visit.hours ?? hours;
+    const by = seen && planned !== undefined ? new Date(Date.parse(seen.at) + planned * 3_600_000).toISOString() : undefined;
     return { orderId, ...(visit.name ? { name: visit.name } : {}), ...(by ? { by } : {}) };
+  }
+
+  /** The saved default person as check_packages shows them: their name, and why they can't be used, if so. */
+  protected defaultPerson(phone: string | undefined): { name?: string; problem?: string } | undefined {
+    if (!phone) return undefined;
+    const picked = this.pick(phone);
+    const name = "role" in picked ? picked.name : this.nameOf(phone);
+    return { ...(name ? { name } : {}), ...("problem" in picked ? { problem: picked.problem } : {}) };
+  }
+
+  /** The person's name on the shared people list, whatever their state. */
+  protected nameOf(phone: string): string | undefined {
+    const place = accountOf(this.root);
+    if (!place) return undefined;
+    return peopleFor(place.accountRoot, { now: () => this.deps.now() }).person(phone)?.name;
   }
 
   /** Whether this phone may bring a package in here: saved on the property as cleaner, co-host or assistant, said YES, no STOP. */
@@ -277,9 +346,10 @@ export class PackageDesk {
       const key = supplyKey(order.id);
       const arrival: Arrival = { ...file.arrivals[key] };
       if (arrival.broughtIn) return fail("That package is already marked inside.");
-      arrival.visit = { person: phone as string, ...(picked.name ? { name: picked.name } : {}), role: picked.role, plannedAt: this.deps.now().toISOString() };
+      arrival.visit = { person: phone as string, ...(picked.name ? { name: picked.name } : {}), role: picked.role, plannedAt: this.deps.now().toISOString(), hours: file.settings.bringInHours };
       delete arrival.lateTold;
       file.arrivals[key] = arrival;
+      this.salted(file);
       writePackages(this.root, file);
       const visit = this.visitOf(order.id, arrival.visit, this.seenOf(order, arrival), file.settings.bringInHours);
       return ok({ ...visit, code: "waiting", next: CODE_WAITING });
@@ -287,7 +357,7 @@ export class PackageDesk {
   }
 
   /** The package is inside: closes its visit. Times come from the person, as the host passes them on. */
-  markBroughtIn(input: { orderId?: unknown; at?: unknown; startedAt?: unknown; note?: unknown }): PackageReply {
+  markBroughtIn(input: { orderId?: unknown; at?: unknown; startedAt?: unknown; note?: unknown; replace?: unknown }): PackageReply {
     return this.guarded(() => {
       const supply = this.supply();
       const order = this.order(supply, input.orderId);
@@ -298,6 +368,10 @@ export class PackageDesk {
       const seen = this.seenOf(order, arrival);
       if (!seen) return fail("That package hasn't been seen at the door yet. Call mark_package_seen first.");
       if (!arrival.visit) return fail("No one is set to bring that package in. Call plan_bring_in with the person the host picked first.");
+      if (input.replace !== undefined && typeof input.replace !== "boolean") return fail("Give replace as true or false.");
+      if (arrival.broughtIn && input.replace !== true) {
+        return fail(`That package is already marked inside at ${arrival.broughtIn.at}. If the host is correcting it, call mark_brought_in again with replace: true.`);
+      }
       const now = this.deps.now();
       const end = input.at === undefined ? now : instant(input.at);
       const start = input.startedAt === undefined ? undefined : instant(input.startedAt);
@@ -306,7 +380,9 @@ export class PackageDesk {
       const dropped = Date.parse(seen.at);
       if (end.getTime() < dropped || (start && start.getTime() < dropped)) return fail("That's before the package was seen at the door.");
       if (start && start.getTime() > end.getTime()) return fail("The start has to be before the time it was inside.");
-      if (input.note !== undefined && (typeof input.note !== "string" || !input.note.trim() || input.note.length > MAX_NOTE)) return fail(`Keep the note to ${MAX_NOTE} characters.`);
+      if (input.note !== undefined && typeof input.note !== "string") return fail("Give the note as text.");
+      if (typeof input.note === "string" && !input.note.trim()) return fail("The note is empty. Leave it out, or say what happened.");
+      if (typeof input.note === "string" && input.note.length > MAX_NOTE) return fail(`Keep the note to ${MAX_NOTE} characters.`);
       if (typeof input.note === "string" && /\d{4,}/.test(input.note)) return fail("Leave codes and long numbers out of the note.");
       arrival.broughtIn = { at: end.toISOString(), ...(start ? { startedAt: start.toISOString() } : {}), ...(typeof input.note === "string" ? { note: input.note.trim() } : {}) };
       file.arrivals[key] = arrival;

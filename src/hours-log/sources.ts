@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { dollarsText, type PayRecord } from "../cleaner-core/payments";
@@ -269,7 +269,10 @@ export const packageRows: RowSource = (records) => {
     if (!visit || !inside) continue;
     const cleaner = visit.role === "cleaner";
     const name = visit.name ?? (cleaner ? (records.cleanerName ?? "Cleaner") : "Helper");
-    const helperLog = `helper:${createHash("sha256").update(visit.person).digest("hex").slice(0, 10)}` as const;
+    // Keyed with the property's own salt, so the key can't be worked back to a phone. A file the desk never
+    // salted keys each visit on its own.
+    const salt = records.packages?.salt;
+    const helperLog = `helper:${createHmac("sha256", salt ?? order.id).update(visit.person).digest("hex").slice(0, 10)}` as const;
     out.push({
       kind: "bring-in",
       actor: cleaner ? "cleaner" : "helper",

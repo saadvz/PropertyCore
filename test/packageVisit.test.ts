@@ -45,7 +45,7 @@ describe("plan_bring_in", () => {
     expect(before).toMatchObject({ orderId: "ord_a", name: "Ana", code: "waiting" });
     expect(before.by).toBeUndefined();
     expect(before.next).toBe(CODE_WAITING);
-    expect(readPackages(root).arrivals[supplyKey("ord_a")]!.visit).toEqual({ person: ANA, name: "Ana", role: "cleaner", plannedAt: at("10:00").toISOString() });
+    expect(readPackages(root).arrivals[supplyKey("ord_a")]!.visit).toEqual({ person: ANA, name: "Ana", role: "cleaner", plannedAt: at("10:00").toISOString(), hours: 4 });
     desk.markSeen({ orderId: "ord_a", how: "host", at: at("09:30").toISOString() });
     const out = s(desk.check());
     expect(out.toBringIn).toEqual([]);
@@ -102,7 +102,7 @@ describe("plan_bring_in", () => {
 
   it("refuses when the property has no shared people list", () => {
     const { desk } = setup({ hours: 4, underAccount: false });
-    expect(desk.planBringIn({ orderId: "ord_a", person: ANA }).text).toMatch(/Save the people for this property first/);
+    expect(desk.planBringIn({ orderId: "ord_a", person: ANA }).text).toMatch(/no shared people list/i);
   });
 
   it("flags a visit past its deadline once", () => {

@@ -80,10 +80,12 @@ describe("check_packages", () => {
     expect(s(desk.check()).ask).toBeUndefined();
   });
 
-  it("refuses when the property's time zone isn't saved", () => {
+  it("still answers when the property's time zone isn't saved, and says the end-of-day flag waits on it", () => {
     const { root } = propertyFolder({ timeZone: null });
     writeOrders(root, []);
-    expect(packageDeskFor(root, { now: () => at("10:00") }).check().isError).toBe(true);
+    const reply = packageDeskFor(root, { now: () => at("10:00") }).check();
+    expect(reply.isError).toBe(false);
+    expect(s(reply).timeZone).toMatch(/time zone/);
   });
 });
 
