@@ -17,7 +17,8 @@ import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink,
 import { joinSplitDigits } from "../hub/digits";
 import { sameHash, uploadHash } from "../hub/uploadCode";
 import { isDeparture, openCleanerCore, redactDigitRuns, SAFETY, storedConsent, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type TextKind } from "./core";
-import { cleanerMultiTenant, groupChatEnabled } from "./flag";
+import { cleanerMultiTenant, groupChatEnabled, guestMessagesOn } from "./flag";
+import { LATE_CHECKOUT_ACTION, setLateCheckout } from "./lateCheckout";
 import { GROUP_RECIPIENT, draftStatus, earlierThan, replyStateAt, type ReplyState, type StoredDraft } from "./replies";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
@@ -2481,6 +2482,42 @@ export class LiveDesk {
         live: jobs.map((job) => `The cleaning for checkout on ${job.checkoutDate} is ${LIVE_WORDS[job.status] ?? job.status}.`),
         inProgress: jobs.some((job) => job.status === "cleared" || job.status === "in_progress"),
       };
+    });
+  }
+
+  /** Guest messages (#242) are on for this deployment: set_late_checkout is listed and answered. */
+  guestMessagesOn(): boolean {
+    return guestMessagesOn(this.env());
+  }
+
+  /**
+   * A guest's late checkout, on the host's yes (#242): previews the change with a code, then moves the
+   * stay's checkout through the engine's existing rules. See src/cleaner-core/lateCheckout.ts.
+   */
+  setLateCheckout(input: { checkout?: string; time?: string; confirmation?: string }, pinKey?: Buffer): Promise<ToolReply> {
+    return this.serial(async () => {
+      if (!this.guestMessagesOn()) return this.fail("Late checkout isn't available yet.");
+      this.resume();
+      this.openSeal(pinKey);
+      if (this.file.choice !== "cleaners") return this.fail(PICK_FIRST);
+      const answer = await setLateCheckout(
+        {
+          root: this.root,
+          now: () => this.now(),
+          engine: () => (this.file.checked ? this.engine : undefined),
+          timeZone: () => this.place.timeZone,
+          usualCheckout: () => this.place.checkoutTime,
+          usualCheckIn: () => this.place.checkInTime,
+          propertyLabel: () => this.place.nickname ?? this.place.address,
+          cleanerName: () => this.file.cleanerName ?? "Your cleaner",
+          issueApproval: (target, fingerprint, next) => this.approvals.issue(LATE_CHECKOUT_ACTION, target, fingerprint, next),
+          redeem: (code, target, fingerprint) => this.redeemed(this.approvals, code, LATE_CHECKOUT_ACTION, target, fingerprint),
+        },
+        input,
+      );
+      this.syncHold();
+      this.persist();
+      return answer.ok ? this.reply(answer.result) : this.fail(answer.error);
     });
   }
 
