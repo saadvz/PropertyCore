@@ -571,6 +571,8 @@ export interface CleanerCore {
   /** The same notes with the id each one is kept under, so a caller can tell which it has already shown. */
   hostNoteEntries(): { id: string; body: string }[];
   keepHostNote(id: string, body: string): void;
+  /** The cleaner's codes a connected lock should hold now. Never a code. */
+  wantedCodes(): { jobId: string; person: string; window: { from: string; until: string } }[];
   /** The new-booking question that offers the usual times, when usualTimesName is set and the stay's check-in is known. */
   newBookingAsk(jobId: string): string | undefined;
   holdNotice(): string | undefined;
@@ -672,6 +674,8 @@ interface Announced {
 
 /** A job in one of these keeps the number on cleaning. */
 const LIVE_STATUSES = new Set<JobStatus>(["offered", "confirmed", "awaiting_departure", "cleared", "in_progress"]);
+/** The cleanings whose cleaner holds a code on a connected lock: from their YES until DONE. */
+const CODE_STATUSES = new Set<JobStatus>(["confirmed", "awaiting_departure", "cleared", "in_progress"]);
 /** What a stand-down calls off. A cleared or started cleaning is never called off: the stand-down waits for it. */
 const STAND_DOWN_STATUSES = new Set<JobStatus>(["offered", "confirmed", "awaiting_departure"]);
 
@@ -734,6 +738,8 @@ interface Clearance {
   checkoutDate: string;
   minutes: number;
   hostVersion: number;
+  /** When the host cleared the guests. A connected lock's code starts then when that's before checkout. */
+  at?: string;
 }
 
 interface HostFact {
@@ -2278,6 +2284,36 @@ class Engine implements CleanerCore {
   }
 
   /**
+   * The cleaning's door window: checkout to the end of the next check-in day. Once the host cleared
+   * the guests, it starts at that moment when that's earlier than checkout (the cleaner may come early).
+   */
+  private codeWindow(job: Job): { from: string; until: string } | undefined {
+    const checkout = this.latestFact(job.id, "checkout");
+    if (!checkout) return undefined;
+    const window = cleaningWindow({ checkoutDate: job.checkoutDate, checkoutTime: hm(checkout.minutes), nextCheckInDate: job.nextCheckInDate, timeZone: this.options.property.timeZone });
+    const cleared = [...this.clearances].reverse().find((item) => item.jobId === job.id && item.minutes === checkout.minutes);
+    if (cleared?.at && Date.parse(cleared.at) < Date.parse(window.from)) return { from: new Date(Date.parse(cleared.at)).toISOString(), until: window.until };
+    return window;
+  }
+
+  /**
+   * The codes Cleaner Core wants on a connected lock now: the cleaner's own, for each cleaning they
+   * said YES to that isn't called off, declined, finished, or held, while they're approved and opted in.
+   * Everything else is revoked by the hub's sync. Never a code: only who, which job and when.
+   */
+  wantedCodes(): { jobId: string; person: string; window: { from: string; until: string } }[] {
+    const person = this.cleanerPhone;
+    if (!person || !this.options.cleaner.approved || this.cleanerConsent !== "in" || this.optedOut || this.problemHold) return [];
+    const wanted: { jobId: string; person: string; window: { from: string; until: string } }[] = [];
+    for (const job of this.jobsState) {
+      if (!CODE_STATUSES.has(this.derive(job))) continue;
+      const window = this.codeWindow(job);
+      if (window) wanted.push({ jobId: job.id, person, window });
+    }
+    return wanted;
+  }
+
+  /**
    * Asks for door access for the cleaner during this cleaning's window. A refusal sends nothing, is
    * not retried here, and gives the host one note per job and reason.
    */
@@ -2285,7 +2321,8 @@ class Engine implements CleanerCore {
     const checkout = this.latestFact(job.id, "checkout");
     // deliverPin reaches here only with a checkout fact (pinKey needs one), so this guard never drops a release silently.
     if (!this.access || !this.cleanerPhone || !checkout) return undefined;
-    const window = cleaningWindow({ checkoutDate: job.checkoutDate, checkoutTime: hm(checkout.minutes), nextCheckInDate: job.nextCheckInDate, timeZone: this.options.property.timeZone });
+    const window = this.codeWindow(job);
+    if (!window) return undefined;
     const grant = await this.access.request({ person: this.cleanerPhone, window, purpose: "cleaning", jobId: job.id });
     // A connected lock's notes (a backup code, the saved code instead) go to the host once each. They never hold a code.
     for (const note of grant.notes ?? []) this.keepHostNote(`host:${note.id}`, note.text);
@@ -3817,7 +3854,7 @@ class Engine implements CleanerCore {
   private recordClearance(job: Job): void {
     const checkout = this.latestFact(job.id, "checkout");
     if (!checkout || this.cleared(job, checkout)) return;
-    this.clearances.push({ jobId: job.id, checkoutDate: job.checkoutDate, minutes: checkout.minutes, hostVersion: checkout.version });
+    this.clearances.push({ jobId: job.id, checkoutDate: job.checkoutDate, minutes: checkout.minutes, hostVersion: checkout.version, at: this.now().toISOString() });
   }
 
   private dropClearance(jobId: string): void {

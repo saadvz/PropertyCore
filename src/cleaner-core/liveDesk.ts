@@ -32,6 +32,7 @@ import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jo
 import { isInjuryReport } from "./injury";
 import { GroupNotConfirmed } from "./groupThread";
 import { cleanerPinStatusUrl, deleteLiveGroup, landlordConfirmed, liveSmsOn, mayText, sendLiveGroup, sendLiveSms, verifiedLandlordPhone } from "./liveSms";
+import { takeLockSyncAsks } from "./stayCodeHook";
 import { DOOR_CODE_SHAPE_REFUSED, LOCK_LOCATION_REFUSED, PIN_KEY_MISSING, serverPinKey, UPLOAD_LINK_OFF, type AccessRefusal, type DoorAccess } from "../hub/doorAccess";
 import { DOOR_LOCK_FAILED, DOOR_WINDOW_OVER, type AccessRefusedLines, type DoorAccessPort } from "./doorPort";
 import { accountOf, peopleFor, resetPeople, streetOf, type MoveSource, type People, type PersonChange, type Role } from "../hub/people";
@@ -223,6 +224,8 @@ const RESET_TARGET = "property";
 const RESET_GROUP_KEPT = "I couldn't remove the group text on Twilio, so nothing was reset. Try again in a few minutes.";
 const RESET_NOT_DONE = "I couldn't reset Cleaner Core just now, so nothing else was changed. Try again in a few minutes.";
 const RESET_UNFINISHED = "I couldn't finish resetting Cleaner Core. Try reset_property again.";
+/** A lock sync with nothing changed runs again after this long, to retry a door that didn't answer. */
+const LOCK_RESYNC_MS = 10 * 60_000;
 const ROUTINE_SECRETS = ["CLEANER_CORE_ROUTINE_URL", "CLEANER_CORE_ROUTINE_KEY"] as const;
 const APPROVAL_STALE = "That approval has expired or doesn't match. Ask the host again.";
 /** Messages kept for Grok, newest last. */
@@ -666,6 +669,10 @@ export class LiveDesk {
   /** The door-code key from the call that made the calendar upload link, so the upload can check the link. */
   private calendarUploadKey: Buffer | undefined;
   private pin: string | undefined;
+  /** The last lock sync: what the engine wanted, and when. Only in memory. */
+  private lockSync: { signature: string; at: number } | undefined;
+  /** The job ids of the cleaner's codes at the last lock sync. */
+  private lockJobs: string[] = [];
   /** Why the hub refused door access during this call, for mark_guests_left's reply. */
   private accessRefusal: AccessRefusal | undefined;
   private engine: CleanerCore | undefined;
@@ -1592,7 +1599,7 @@ export class LiveDesk {
     const now = (): Promise<T> => {
       try {
         this.beginStep();
-        return this.thenApplyAccount(work());
+        return this.thenSyncLocks(this.thenApplyAccount(work()));
       } catch (err) {
         return Promise.reject(err);
       }
@@ -1615,6 +1622,49 @@ export class LiveDesk {
    * After a step that opened a new engine, the account's opt-in and STOP are applied to it before the
    * step ends, so a property that was closed when the person said YES or STOP elsewhere still follows.
    */
+  /** After each step, on connected locks, the lock holds exactly the cleaner's codes the engine wants. */
+  private thenSyncLocks<T>(run: Promise<T>): Promise<T> {
+    return run.then(async (value) => {
+      await this.syncLocks();
+      return value;
+    });
+  }
+
+  /**
+   * Issues, moves and revokes the cleaner's codes to match the engine. Skipped when nothing changed
+   * since the last sync less than ten minutes ago, unless a booking email or late checkout asked for
+   * one. A failure leaves the codes for the next step; the release still checks the lock itself.
+   */
+  private async syncLocks(): Promise<void> {
+    const engine = this.engine;
+    if (!engine) return;
+    let door: DoorAccess;
+    try {
+      door = this.door();
+      if (!door.connected()) return;
+    } catch {
+      return;
+    }
+    const label = this.file.cleanerName?.trim();
+    const wanted = engine.wantedCodes().map((item) => ({ ...item, ...(label ? { label } : {}) }));
+    const signature = JSON.stringify(wanted);
+    const asked = takeLockSyncAsks(wanted.map((item) => item.jobId).concat(this.lockJobs));
+    const fresh = this.lockSync && this.lockSync.signature === signature && this.now().getTime() - this.lockSync.at < LOCK_RESYNC_MS;
+    if (fresh && !asked) return;
+    try {
+      const notes = await door.syncGrants("cleaning", wanted);
+      this.lockSync = { signature, at: this.now().getTime() };
+      this.lockJobs = wanted.map((item) => item.jobId);
+      if (notes.length > 0) {
+        const before = new Set(this.visibleNotes(engine).map((note) => note.id));
+        for (const note of notes) engine.keepHostNote(`host:${note.id}`, note.text);
+        this.queueNewAlerts(before);
+      }
+    } catch {
+      this.lockSync = undefined;
+    }
+  }
+
   private thenApplyAccount<T>(run: Promise<T>): Promise<T> {
     if (!this.people) return run;
     return run.then(async (value) => {

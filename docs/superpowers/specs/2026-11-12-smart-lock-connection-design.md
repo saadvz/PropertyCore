@@ -64,7 +64,7 @@ target. Nothing in this design is specific to them.
   package with it, on the same adapter and grants.
 - Using sensor readings (quiet hours, freezing). Projects 4 and 5.
 - Cameras, booking details and the hours log (projects 3 and 4).
-- Any lock not reached through Seam, and Durin hardware. The lock adapter (below) is where those plug
+- Any lock not reached through Seam, and Property Core's own hardware. The lock adapter (below) is where those plug
   in later.
 - A host app or web dashboard. The host works from their agent, as today.
 

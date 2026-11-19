@@ -1,4 +1,3 @@
-import { isOn } from "../cleaner-core/flag";
 import type { LockAdapter } from "./adapter";
 
 /**
@@ -19,5 +18,6 @@ export function lockAdapter(): LockAdapter | undefined {
 
 /** Connected locks on the service. Off unless SMART_LOCKS is exactly "1" or "true". */
 export function smartLocksOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isOn(env.SMART_LOCKS);
+  const raw = env.SMART_LOCKS?.trim().toLowerCase();
+  return raw === "1" || raw === "true";
 }

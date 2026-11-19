@@ -8,7 +8,7 @@ import { openPin, sealPin, serverPinKey, type PinSeal } from "./pinSeal";
 /** A flow reads a request's door-code key, and the server's, through here: never the seal itself. */
 export { pinKeyFromHeader, serverPinKey } from "./pinSeal";
 import { HUB_DOOR_CODE_PREFIX } from "./paths";
-import { DOOR_GRANTS_FILE, GrantBook, type GrantFlow, type GrantNote, type GrantStatus, type WantedCode } from "../locks/grants";
+import { DOOR_GRANTS_FILE, GrantBook, type GrantFlow, type GrantNote, type GrantStatus, type WantedCode } from "./grants";
 import { lockAdapter, smartLocksOn } from "../locks/registry";
 import { allDoorsConnected, asLockDevice, doorDevices, readDoorLocks, writeDoorLocks, type DoorLocksFile } from "../locks/settings";
 import type { HubCaller } from "./store";
@@ -91,6 +91,16 @@ export interface AccessProvider {
 export const ownCode: AccessProvider = {
   grant: (request, saved) => ({ ok: true, kind: "code", code: saved.code, ...(saved.lockLocation ? { lockLocation: saved.lockLocation } : {}), until: request.window.until }),
 };
+
+/**
+ * Where each property's account saves its server key when it has none yet, by property folder. The
+ * shared service registers it as it builds a tenant's context; grants are sealed with that key.
+ */
+const secretSavers = new Map<string, (values: { CLEANER_CORE_PIN_KEY: string }) => void>();
+
+export function registerSecretSaver(root: string, save: (values: { CLEANER_CORE_PIN_KEY: string }) => void): void {
+  secretSavers.set(root, save);
+}
 
 export type DoorUpload = { status: 200 | 400 | 404; body: { ok: boolean; error?: string } };
 
@@ -180,7 +190,7 @@ export class DoorAccess {
       this.book = new GrantBook(this.root, {
         now: this.now,
         adapter: () => lockAdapter(),
-        key: () => serverPinKey(this.env(), this.saveSecrets),
+        key: () => serverPinKey(this.env(), this.saveSecrets ?? secretSavers.get(this.root)),
         doors: () => doorDevices(this.locks()).map(asLockDevice),
         sleep: (ms) => (this.sleep ?? ((wait: number) => new Promise<void>((resolve) => setTimeout(resolve, wait))))(ms),
       });

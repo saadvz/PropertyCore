@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { hubFor, resetHubs } from "../src/hub/hub";
 import { FakeLockAdapter } from "../src/locks/fake";
-import { DOOR_GRANTS_FILE, KEEP_AFTER_MS } from "../src/locks/grants";
+import { DOOR_GRANTS_FILE, KEEP_AFTER_MS } from "../src/hub/grants";
 import { setLockAdapter } from "../src/locks/registry";
 import { emptyLocks, storedDevice } from "../src/locks/settings";
 

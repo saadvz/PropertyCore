@@ -1,11 +1,11 @@
 import { randomInt } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { holdsCodeToken } from "../hub/digits";
-import { openPin, sealPin, type PinSeal } from "../hub/pinSeal";
+import { holdsCodeToken } from "./digits";
+import { openPin, sealPin, type PinSeal } from "./pinSeal";
 import { writeFileAtomic } from "../storage/atomicWrite";
-import { CodeValueRefused, type CodeStatus, type CodeWindow, type LockAdapter, type LockDevice } from "./adapter";
-import { makeSameCode, removeAll, type DeviceCode } from "./sameCode";
+import { CodeValueRefused, type CodeStatus, type CodeWindow, type LockAdapter, type LockDevice } from "../locks/adapter";
+import { makeSameCode, removeAll, type DeviceCode } from "../locks/sameCode";
 
 /**
  * One property's per-visit codes, in door-grants.json next to door-access.json. One entry per code:

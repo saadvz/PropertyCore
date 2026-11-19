@@ -1,4 +1,5 @@
 import type { DoorAccess } from "../../hub/doorAccess";
+import { registerSecretSaver } from "../../hub/doorAccess";
 import { hubFor, type Hub } from "../../hub/hub";
 import { hubCalendarCode } from "../../hub/paths";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -117,7 +118,7 @@ export function touringAccountContext(h: HostedCleaner, tenant: Tenant): TenantC
 
 function accountContext(h: HostedCleaner, tenant: Tenant, root: string, propertyId: string | undefined): TenantContext {
   const id = tenant.id;
-  return {
+  const context: TenantContext = {
     root,
     env: () => {
       const current = h.registry.get(id);
@@ -153,6 +154,9 @@ function accountContext(h: HostedCleaner, tenant: Tenant, root: string, property
     },
     deleteSecrets: (names) => h.secrets.delete(id, names),
   };
+  // A connected lock's per-visit codes are sealed with the account's own server key, made here if missing.
+  if (propertyId) registerSecretSaver(root, (values) => context.saveSecrets(values));
+  return context;
 }
 
 /** The chat a private upload page speaks as when its link doesn't say: the primary when it uses pages, else the first connection that does. */
