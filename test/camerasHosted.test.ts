@@ -61,7 +61,9 @@ async function connect(m: MultiTenantApp, token: string, propertyId: string) {
   const link = new URL(String(reply.structured?.link));
   const page = await m.app.http(link.pathname);
   expect(page.status).toBe(200);
-  expect(await page.text()).toContain("never sees your password");
+  const consent = await page.text();
+  expect(consent).toContain("never sees your password");
+  expect(consent).toContain("Google's Gemini AI model");
   const agreed = await m.app.http(link.pathname, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "agree=yes" });
   expect(agreed.status).toBe(302);
   const ring = new URL(String(agreed.headers.location));

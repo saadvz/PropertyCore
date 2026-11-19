@@ -75,6 +75,15 @@ describe("the camera desk's night", () => {
     expect(result).toMatchObject({ status: "flags", flags: [{ kind: "people", peak: 8, allowed: 6, device: "Front door" }] });
   });
 
+  it("reads only the service's own counter when a second counter also counted the night", () => {
+    const { root, log } = property();
+    log.append(motion("e1", "2026-11-22T02:00:00.000Z"));
+    log.append(count("e1", "2026-11-22T02:00:00.000Z", 8));
+    log.append({ type: "camera-count", id: "count:e1:detector-v1", at: "2026-11-22T02:00:00.000Z", event: "e1", counter: "detector-v1", people: 2, vehicles: 0, animals: 0 });
+    const own = new CameraDesk(root, { log, now: () => new Date("2026-11-22T05:00:00.000Z"), label: "Lake House", counter: "fake-v1" });
+    expect(own.runNight("2026-11-21")).toMatchObject({ status: "flags", flags: [{ peak: 8 }] });
+  });
+
   it("knows which events fall in a stay", () => {
     const { desk } = property();
     expect(desk.inStay("2026-11-22T02:00:00.000Z")).toBe(true);

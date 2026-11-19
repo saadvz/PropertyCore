@@ -98,3 +98,17 @@ describe("overlapping passes", () => {
     expect(provider.calls.filter((call) => call.call === "snapshot")).toHaveLength(3);
   });
 });
+
+describe("two counters on the same events", () => {
+  it("each counter counts each event once, so the counting test can compare them", async () => {
+    const provider = fakeCameraProvider();
+    const log = memoryLog();
+    log.append(line("e1", "2026-11-20T03:00:00.000Z", "human"));
+    const make = (name: string, people: number) => new CameraCounting({ provider, account: { tokens }, counter: fakeCounter(() => ({ people, vehicles: 0, animals: 0 }), name), log, inStay: () => true, nightOf: (at) => at.slice(0, 10) });
+    expect(await make("gemini-4-neon-low-v1", 3).run()).toMatchObject({ counted: 1 });
+    expect(await make("detector-v1", 2).run()).toMatchObject({ counted: 1 });
+    expect(await make("detector-v1", 2).run()).toMatchObject({ counted: 0 });
+    expect(latestCounts(log.read(), "gemini-4-neon-low-v1").get("e1")).toMatchObject({ people: 3 });
+    expect(latestCounts(log.read(), "detector-v1").get("e1")).toMatchObject({ people: 2 });
+  });
+});

@@ -494,10 +494,18 @@ and fake counter; nothing has talked to Ring.
 - **Notes:** an offline note goes through Cleaner Core's host note when
   cleaning runs at the property; otherwise it waits for `list_cameras`. No new
   alerts-routine event type was added.
-- **Counting on the service waits on a model client.** The counter takes its
-  model call as a function. Adding the Anthropic SDK was blocked in this
-  session, so `counterFor` returns nothing live and counting is off until a
-  model client is added and named on the consent page.
+- **Counting model: Gemini 4 Neon at low thinking** (Saad, 19 Nov, after
+  web research: it led Roboflow's counting benchmark among Gemini models at
+  92.3%, at $3/$15 per million tokens; open-weight VLMs were far behind).
+  `src/cameras/gemini.ts` calls Google's Interactions API over plain HTTP with
+  `store: false` and a JSON schema; `CAMERA_COUNTER_GEMINI_KEY` turns it on,
+  `CAMERA_COUNTER_MODEL` and `CAMERA_COUNTER_THINKING` change it. The REST
+  reply's shape isn't in Google's docs, so the first live call should confirm
+  `outputText`; until then an unread reply leaves the event uncounted. The
+  consent page names Google's Gemini. Each counter counts every event once on
+  its own, and the night's check reads only the service's counter, so a second
+  counter (an RF-DETR or D-FINE detector, once `onnxruntime-node` is allowed)
+  can run beside it for the counting week. `--counter` picks one for the sheet.
 - **Pets:** `GuestCount.pets` and `EmailStay.pets` from "N pets / dogs /
   cats"; a stay booked with a pet leaves the pets rule unchecked. Camera events
   with no count yet are listed in `unchecked`, never guessed.

@@ -80,3 +80,12 @@ describe("the command line", () => {
     expect(said.join("\n")).toMatch(/1 events scored/);
   });
 });
+
+describe("choosing a counter for the sheet", () => {
+  it("exports one counter's counts when asked, else the newest line per event", () => {
+    const lines = [motion("e1", "2026-11-21T02:14:00.000Z"), count("e1", 3), { ...(count("e1", 5) as object), id: "count:e1:detector-v1", counter: "detector-v1" } as unknown as StoredLine];
+    expect(exportRows(lines, { timeZone: TZ, from: "2026-11-20", to: "2026-11-27" })[0]!.ours.people).toBe(5);
+    expect(exportRows(lines, { timeZone: TZ, from: "2026-11-20", to: "2026-11-27", counter: "vision-v1" })[0]!.ours.people).toBe(3);
+    expect(exportRows(lines, { timeZone: TZ, from: "2026-11-20", to: "2026-11-27", counter: "nobody-v1" })).toEqual([]);
+  });
+});

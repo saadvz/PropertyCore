@@ -7,6 +7,7 @@ import { CameraLinks, cameraTokenKey, readCameras, sealedTokenStore, writeCamera
 import { CameraProviderError, type AccountRef, type CameraProvider } from "../cameras/adapter";
 import { CameraCounting } from "../cameras/count";
 import type { Counter } from "../cameras/counter";
+import { counterFromEnv } from "../cameras/gemini";
 import { CameraDesk } from "../cameras/desk";
 import { ringProvider } from "../cameras/ring";
 import { sharedCameraLog } from "../cameras/sharedLog";
@@ -50,7 +51,8 @@ function providerFor(h: HostedCleaner): CameraProvider | undefined {
   return clientId && clientSecret && webhookKey ? ringProvider({ clientId, clientSecret, webhookKey, now: () => h.now() }) : undefined;
 }
 
-const counterFor = (): Counter | undefined => testCounter;
+/** Live, Gemini 4 Neon when CAMERA_COUNTER_GEMINI_KEY is set (Saad, 19 Nov); without it, counting stays off. */
+const counterFor = (h: HostedCleaner): Counter | undefined => testCounter ?? counterFromEnv(h.baseEnv());
 const linksFor = (h: HostedCleaner) => (links ??= new CameraLinks(() => h.now()));
 const anyFlowOn = (property: Property) => property.flows.cleaning.on || property.flows.supplies.on || property.flows.fixer.on;
 
@@ -69,7 +71,8 @@ function deskFor(h: HostedCleaner, tenant: Tenant, property: Property): CameraDe
   const root = propertyFolder(h.dataRoot, tenant.id, property);
   const provider = providerFor(h);
   const ref = account(h, tenant.id);
-  return new CameraDesk(root, { log: sharedCameraLog(root, () => h.now()), ...(provider ? { provider } : {}), ...(ref ? { account: ref } : {}), now: () => h.now(), label: property.label });
+  const counter = counterFor(h);
+  return new CameraDesk(root, { log: sharedCameraLog(root, () => h.now()), ...(provider ? { provider } : {}), ...(ref ? { account: ref } : {}), now: () => h.now(), label: property.label, ...(counter ? { counter: counter.name } : {}) });
 }
 
 /** The camera tools as tools/list shows them: while the flag is on and any property runs a flow. */
@@ -162,11 +165,11 @@ const html = (title: string, body: string) =>
 const PAGE_HEADERS = { "Cache-Control": "no-store", "X-Frame-Options": "DENY", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https:" };
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
-const CONSENT = (label: string) => `<h1>Connect Ring to Property Core</h1>
+const CONSENT = (label: string, counter: string) => `<h1>Connect Ring to Property Core</h1>
 <p>For <strong>${escapeHtml(label)}</strong>, Property Core will read:</p>
 <ul>
 <li>motion, doorbell and online/offline events from the outdoor cameras you pick next;</li>
-<li>a still image from each motion event during a guest's stay, which is counted (people, vehicles, animals) by an AI counting model and then thrown away;</li>
+<li>a still image from each motion event during a guest's stay, which is sent to ${counter} to count people, vehicles and animals, and then thrown away (Google is asked not to store it);</li>
 <li>a video clip only when you ask to keep one as evidence.</li>
 </ul>
 <p>No one is identified. Indoor cameras are never used. You sign in on Ring's own page; Property Core never sees your password. You can disconnect at any time.</p>
@@ -198,7 +201,7 @@ export async function handleCameraRoutes(h: HostedCleaner, r: HostedRequest): Pr
     const link = /^[A-Za-z0-9_-]{32,100}$/.test(state) ? linksFor(h).peek(state) : undefined;
     const place = link && placeOf(h, link.tenantId, link.propertyId);
     if (!link || !place || !redirectUri) return (r.send(404, "text/html; charset=utf-8", html("Link expired", "<p>This link has expired or was already used. Ask your assistant for a new one.</p>"), PAGE_HEADERS), true);
-    if (r.method === "GET") return (r.send(200, "text/html; charset=utf-8", html("Connect Ring", CONSENT(place.property.label)), PAGE_HEADERS), true);
+    if (r.method === "GET") return (r.send(200, "text/html; charset=utf-8", html("Connect Ring", CONSENT(place.property.label, "Google's Gemini AI model")), PAGE_HEADERS), true);
     if (r.method !== "POST") return (r.send(405, "text/plain", "Method not allowed"), true);
     const form = new URLSearchParams(((await r.readCapped(1024)) ?? Buffer.alloc(0)).toString("utf8"));
     if (form.get("agree") !== "yes") return (r.send(400, "text/html; charset=utf-8", html("Connect Ring", "<p>Nothing was connected.</p>"), PAGE_HEADERS), true);
@@ -249,10 +252,11 @@ async function afterStored(h: HostedCleaner, stored: { tenantId: string; propert
 
 function countingFor(h: HostedCleaner, tenant: Tenant, property: Property): CameraCounting | undefined {
   const provider = providerFor(h);
-  const counter = counterFor();
+  const counter = counterFor(h);
   const ref = account(h, tenant.id);
   if (!provider || !counter || !ref?.tokens.get()) return undefined;
-  const key = `${tenant.id}/${property.id}`;
+  // Keyed by the counter too, so changing the model starts a fresh pass rather than reusing the old one.
+  const key = `${tenant.id}/${property.id}/${counter.name}`;
   let counting = countings.get(key);
   if (!counting) {
     const desk = deskFor(h, tenant, property);

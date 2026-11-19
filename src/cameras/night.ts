@@ -11,10 +11,11 @@ import { isCameraEvent, latestCounts, type StoredLine } from "./lines";
 export const CLIP_BEFORE_MS = 30_000;
 export const CLIP_AFTER_MS = 60_000;
 
-export function stayEventsFrom(lines: readonly StoredLine[], window: { from: string; to: string }): StayEvent[] {
+/** With `counter`, only that counter's counts are read: the service's own, not a second one running for the counting test. */
+export function stayEventsFrom(lines: readonly StoredLine[], window: { from: string; to: string }, counter?: string): StayEvent[] {
   const from = Date.parse(window.from);
   const to = Date.parse(window.to);
-  const counts = latestCounts(lines);
+  const counts = latestCounts(lines, counter);
   return lines
     .filter(isCameraEvent)
     .filter((line) => countable(line))

@@ -46,7 +46,8 @@ export class CameraCounting {
 
   /** Events that still want a count: countable, in a stay, not yet counted, not out of tries. */
   pending(lines: StoredLine[] = this.deps.log.read()): CameraEventLine[] {
-    const counted = new Set(lines.filter(isCountLine).map((line) => line.event));
+    // Counted by this counter: a second counter (for the counting test) counts the same events on its own.
+    const counted = new Set(lines.filter(isCountLine).filter((line) => line.counter === this.deps.counter.name).map((line) => line.event));
     return lines.filter(isCameraEvent).filter((line) => countable(line) && !counted.has(line.id) && (this.tries.get(line.id) ?? 0) < TRIES && this.deps.inStay(line.at));
   }
 
@@ -64,7 +65,7 @@ export class CameraCounting {
     const cap = this.deps.cap ?? NIGHT_CAP;
     const used = new Map<string, number>();
     const eventNight = new Map(lines.filter(isCameraEvent).map((line) => [line.id, this.deps.nightOf(line.at)]));
-    for (const line of lines.filter(isCountLine)) {
+    for (const line of lines.filter(isCountLine).filter((count) => count.counter === this.deps.counter.name)) {
       const night = eventNight.get(line.event);
       if (night) used.set(night, (used.get(night) ?? 0) + 1);
     }

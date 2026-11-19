@@ -52,8 +52,8 @@ export function isNight(localDate: string, localTime: string): boolean {
 const pad = (n: number) => String(n).padStart(2, "0");
 
 /** Every counted motion event between two local dates (the end date is not included), oldest first. */
-export function exportRows(lines: readonly StoredLine[], opts: { timeZone: string; from: string; to: string }): SheetRow[] {
-  const counts = latestCounts(lines);
+export function exportRows(lines: readonly StoredLine[], opts: { timeZone: string; from: string; to: string; counter?: string }): SheetRow[] {
+  const counts = latestCounts(lines, opts.counter);
   const rows: SheetRow[] = [];
   for (const line of lines.filter(isCameraEvent)) {
     const count = counts.get(line.id);

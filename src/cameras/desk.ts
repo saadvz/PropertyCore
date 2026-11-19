@@ -34,6 +34,8 @@ export interface CameraDeskDeps {
   now: () => Date;
   /** The property's name, for notes and alerts. */
   label: string;
+  /** The service's own counter: the night's check and the timeline read only its counts. Unset, the newest count per event. */
+  counter?: string;
 }
 
 const ok = (structured: Record<string, unknown>): CameraReply => ({ text: JSON.stringify(structured), structured, isError: false });
@@ -66,7 +68,7 @@ export class CameraDesk {
   /** One night of a stay against the property's camera events. Sends nothing. */
   runNight(date: string): NightResult {
     const window = this.stays.nightWindow(date);
-    const events = window ? stayEventsFrom(this.deps.log.read(), window) : [];
+    const events = window ? stayEventsFrom(this.deps.log.read(), window, this.deps.counter) : [];
     return this.stays.runNight(date, events, this.deps.label);
   }
 
@@ -158,7 +160,7 @@ export class CameraDesk {
     const checkInTime = (email?.checkIn === stay.checkIn ? email.checkInTime : undefined) ?? hub.property.checkInTime ?? "16:00";
     const checkoutTime = (email?.checkout === stay.checkout ? email.checkoutTime : undefined) ?? hub.property.checkoutTime ?? "11:00";
     const window = { from: zonedInstant(stay.checkIn, checkInTime, timeZone), to: zonedInstant(stay.checkout, checkoutTime, timeZone) };
-    const entries = stayTimeline(this.deps.log.read(), window, timeZone);
+    const entries = stayTimeline(this.deps.log.read(), window, timeZone, this.deps.counter);
     return ok({ checkIn: stay.checkIn, checkout: stay.checkout, window, entries, text: timelineText(this.deps.label, entries, timeZone), next: "Any camera entry's clip can be kept as evidence with pin_clip. Nothing else is copied." });
   }
 

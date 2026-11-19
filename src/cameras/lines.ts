@@ -137,9 +137,12 @@ export const isCameraEvent = (line: StoredLine): line is StoredLine & CameraEven
 export const isCountLine = (line: StoredLine): line is StoredLine & CameraCountLine => line.type === "camera-count";
 export const isPinLine = (line: StoredLine): line is StoredLine & CameraPinLine => line.type === "camera-pin";
 
-/** Each event's count from the count line written last for it: a recount with a newer counter wins. */
-export function latestCounts(lines: readonly StoredLine[]): Map<string, CameraCountLine> {
+/**
+ * Each event's count from the count line written last for it: a recount with a newer counter wins. With `counter`,
+ * only that counter's lines, so the counting test can score two counters on the same events.
+ */
+export function latestCounts(lines: readonly StoredLine[], counter?: string): Map<string, CameraCountLine> {
   const counts = new Map<string, CameraCountLine>();
-  for (const line of lines) if (isCountLine(line)) counts.set(line.event, line);
+  for (const line of lines) if (isCountLine(line) && (counter === undefined || line.counter === counter)) counts.set(line.event, line);
   return counts;
 }

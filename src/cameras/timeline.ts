@@ -20,10 +20,10 @@ export interface TimelineEntry {
   codeName?: string;
 }
 
-export function stayTimeline(lines: readonly StoredLine[], window: { from: string; to: string }, _timeZone: string): TimelineEntry[] {
+export function stayTimeline(lines: readonly StoredLine[], window: { from: string; to: string }, _timeZone: string, counter?: string): TimelineEntry[] {
   const from = Date.parse(window.from);
   const to = Date.parse(window.to);
-  const counts = latestCounts(lines);
+  const counts = latestCounts(lines, counter);
   const entries: TimelineEntry[] = [];
   for (const line of lines) {
     const at = Date.parse(line.at);

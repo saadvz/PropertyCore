@@ -5,7 +5,7 @@ import { exportRows, formatReport, fromCsv, scoreRows, toCsv } from "./countTest
 import type { StoredLine } from "./lines";
 
 /**
- * `npm run cameras:count-test -- export --root <property folder> --from YYYY-MM-DD --to YYYY-MM-DD --out sheet.csv`
+ * `npm run cameras:count-test -- export --root <property folder> --from YYYY-MM-DD --to YYYY-MM-DD --out sheet.csv [--counter gemini-4-neon-low-v1]`
  * `npm run cameras:count-test -- score --file sheet.csv`
  *
  * Run on the server against one test property's folder. It only reads the shared event log
@@ -48,7 +48,7 @@ export async function runCountTest(args: string[], say: (text: string) => void =
     const to = flag(args, "to");
     const out = flag(args, "out");
     if (!root || !from || !to || !out || !DATE.test(from) || !DATE.test(to)) {
-      say("Usage: export --root <property folder> --from YYYY-MM-DD --to YYYY-MM-DD --out sheet.csv (the end date isn't included)");
+      say("Usage: export --root <property folder> --from YYYY-MM-DD --to YYYY-MM-DD --out sheet.csv [--counter <name>] (the end date isn't included; without --counter, the newest count per event)");
       return 2;
     }
     const timeZone = readHubFile(root)?.property.timeZone;
@@ -56,7 +56,8 @@ export async function runCountTest(args: string[], say: (text: string) => void =
       say("The property has no time zone, so its events can't be put in local time.");
       return 1;
     }
-    const rows = exportRows(readLogLines(root), { timeZone, from, to });
+    const counter = flag(args, "counter");
+    const rows = exportRows(readLogLines(root), { timeZone, from, to, ...(counter ? { counter } : {}) });
     writeFileSync(out, toCsv(rows), { mode: 0o600 });
     say(`Wrote ${rows.length} counted events to ${out}. The host fills in host_people, host_vehicles and host_animals for each, from their own camera app, then run score.`);
     return 0;
