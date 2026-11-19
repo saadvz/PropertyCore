@@ -218,8 +218,10 @@ export class PackageDesk {
         }
       }
       if (changed) writePackages(this.root, file);
+      const cameraSightings = this.openSightings(file);
       const fallback = this.defaultPerson(file.settings.person);
       const next: string[] = [];
+      if (cameraSightings.length) next.push("A package was seen on camera at each time in cameraSightings, and it isn't clear which delivery it was. Ask the host, then call mark_package_seen with how camera and that time.");
       if (notSeen.length) next.push("Tell the host once about each package in notSeen: it was expected and nothing confirmed it arrived by the end of the day. Check its tracking.");
       if (toBringIn.length) {
         next.push(
@@ -238,11 +240,49 @@ export class PackageDesk {
         toBringIn,
         visits,
         bringInLate,
+        ...(cameraSightings.length ? { cameraSightings } : {}),
         ...(fallback ? { defaultPerson: fallback } : {}),
         ...(file.settings.bringInHours === undefined ? { ask: ASK_HOURS } : {}),
         ...(timeZone ? {} : { timeZone: NO_TIME_ZONE }),
         ...(next.length ? { next: next.join(" ") } : {}),
       });
+    });
+  }
+
+  /** Camera sightings kept for the host, from the last 3 days, that no delivery was since marked seen at. */
+  protected openSightings(file: PackagesFile): string[] {
+    const since = this.deps.now().getTime() - 3 * 86_400_000;
+    const claimed = new Set(Object.values(file.arrivals).flatMap((arrival) => (arrival.seen?.how === "camera" ? [Date.parse(arrival.seen.at)] : [])));
+    return (file.cameraSightings ?? []).filter((at) => Date.parse(at) >= since && !claimed.has(Date.parse(at)));
+  }
+
+  /**
+   * A package drop the property's camera saw (#239). With exactly one delivery expected that day and not yet seen,
+   * it is marked seen on camera. Otherwise the sighting is kept, and check_packages asks the host which it was.
+   */
+  cameraSighting(input: { at: string }): PackageReply {
+    return this.guarded(() => {
+      const when = Date.parse(input.at);
+      if (!Number.isFinite(when)) return fail("Give the sighting's time as an ISO time.");
+      const at = new Date(when).toISOString();
+      const timeZone = this.timeZone();
+      const supply = this.supply();
+      const file = readPackages(this.root);
+      let candidates: Order[] = [];
+      if (timeZone) {
+        const { year, month, day } = zonedParts(new Date(when), timeZone);
+        const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        candidates = this.orders(supply, file).filter((order) => {
+          const arrival = file.arrivals[supplyKey(order.id)];
+          return order.expectedBy === date && !arrival?.broughtIn && !this.seenOf(order, arrival) && when >= Date.parse(order.at);
+        });
+      }
+      if (candidates.length === 1) {
+        const reply = this.markSeen({ orderId: candidates[0]!.id, how: "camera", at });
+        return reply.isError ? reply : ok({ ...reply.structured, matched: candidates[0]!.id });
+      }
+      if (!(file.cameraSightings ?? []).includes(at)) writePackages(this.root, { ...file, cameraSightings: [...(file.cameraSightings ?? []), at].slice(-50) });
+      return ok({ matched: null, kept: at, next: candidates.length ? "More than one delivery was expected that day; check_packages lists the sighting for the host." : "No delivery was expected that day; check_packages lists the sighting for the host." });
     });
   }
 
