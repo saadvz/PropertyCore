@@ -225,6 +225,24 @@ export class GrantBook {
     return undefined;
   }
 
+  /**
+   * A webhook said this code failed on its device: pulls a backup code for that grant and door now,
+   * kept for the release. True when one is ready (already, or just pulled).
+   */
+  backupNow(codeId: string): Promise<boolean> {
+    return this.serial(async () => {
+      const adapter = this.deps.adapter();
+      const key = this.deps.key();
+      const grant = this.file.grants.find((item) => !item.revokedAt && item.devices.some((device) => device.codeId === codeId));
+      const device = grant?.devices.find((item) => item.codeId === codeId);
+      if (!adapter || !key || !grant || !device) return false;
+      device.status = "failed";
+      const got = await this.backupFor(adapter, grant, device.deviceId, key);
+      this.write();
+      return got !== undefined;
+    });
+  }
+
   /** Which grant a code id on the lock belongs to, for an event. Never the code. */
   grantOf(codeId: string): { grantId: string; flow: GrantFlow; jobId: string; backup: boolean } | undefined {
     for (const grant of this.file.grants) {

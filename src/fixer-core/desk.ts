@@ -2156,6 +2156,23 @@ export class FixerDesk {
     return { id, text: item.text };
   }
 
+  /**
+   * A note for the host from the property's connected lock (a code that didn't program, a low
+   * battery), on a property where Cleaner Core is off: kept in check_fixes' news and told like any
+   * Fixer note, once per id. Never holds a code.
+   */
+  noteForHost(id: string, text: string, jobId?: string): Promise<boolean> {
+    return this.serial(async () => {
+      const file = this.read();
+      const told = (file.news ?? []).some((item) => item.kind === "lock" && item.text === text) || file.jobs.some((job) => job.news.some((item) => item.kind === "lock" && item.text === text));
+      if (told) return true;
+      const job = jobId ? file.jobs.find((item) => item.id === jobId) : undefined;
+      const note = job ? this.news(job, "lock", text, `fixer:${job.id}:${id}`) : this.fileNews(file, { kind: "lock", text, ...(jobId ? { jobId } : {}) } as Omit<FileNews, "at" | "toldAt">, `fixer:${id}`);
+      this.write(file);
+      return this.tell([note]);
+    });
+  }
+
   /** Sends the host notes. A note that fails to go is still in check_fixes' news. */
   private async tell(notes: readonly HostNote[]): Promise<boolean> {
     // Without Cleaner Core here, nothing takes the note: it waits in check_fixes' news, and the routine is woken.

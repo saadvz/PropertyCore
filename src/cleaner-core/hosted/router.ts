@@ -1,5 +1,6 @@
 import type { DoorAccess } from "../../hub/doorAccess";
 import { registerSecretSaver } from "../../hub/doorAccess";
+import { handleLockWebhook, LOCK_WEBHOOK_PATH } from "../../hosted/locks";
 import { hubFor, type Hub } from "../../hub/hub";
 import { hubCalendarCode } from "../../hub/paths";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -199,6 +200,12 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
 
   if (path === MCP_PATH || path === CLEANER_MCP_PATH) {
     await handleTenantMcp(h, r, path);
+    return true;
+  }
+
+  if (path === LOCK_WEBHOOK_PATH) {
+    if (method !== "POST") return notFound();
+    await handleLockWebhook(h, r);
     return true;
   }
 
