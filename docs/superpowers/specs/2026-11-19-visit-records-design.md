@@ -1,6 +1,8 @@
 # Visit records: arrival, departure and time on site
 
-Date: 2026-11-19. Status: proposed, for Saad's review. Nothing is built yet.
+Date: 2026-11-19. Status: approved by Saad on 19 Nov with every recommendation
+below, and built on `claude/visit-records-237`. "As built" at the end lists
+where the build differs from the first draft.
 Issue: saadvz/PropertyCore#237, project 2 of the verification roadmap (#236).
 Target: the first January 2027 turnover.
 
@@ -404,7 +406,9 @@ All on fake lock events, 555 numbers and made-up codes:
 - Scratch: a `cleaner:smoke` journey that feeds a fake unlock and lock around a
   DONE, with evidence under the verify-cleanercore skill.
 
-## Open choices for Saad
+## Decisions (19 Nov)
+
+Saad took the recommendation on all six:
 
 1. **Lock event vs `EntryEvent`.** Proposed: a new `LockEvent` at the boundary
    (unlock and lock, side, the lock's code name), and `EntryEvent` stays as
@@ -429,3 +433,47 @@ All on fake lock events, 555 numbers and made-up codes:
 - Wording beyond the examples, in the repo's plain style.
 - File split inside `src/visits/`.
 - The hash for `personKey`, reusing package arrivals' helper if it fits.
+
+## As built
+
+Where the build differs from the draft above, and why:
+
+- **Strays aren't a visit flag.** An unlock with a named code outside every
+  window of that person's belongs to no visit, so `buildVisits` returns them
+  as `strays`, beside `visits`. The cleaner's go to the host as one note per
+  day; a pro's are one Fixer Core news line per pro per day.
+- **A cleaner's arrival counts from the start of the checkout day.** The host
+  can clear the guests early, and the code goes then; an unlock with the
+  cleaner's own code any time that day is their arrival. An unnamed or shared
+  code still counts only from an hour before the window.
+- **With a lock but no unlock, the cleaner's own text is the arrival.** So a
+  cleaner who is there and texting (a door left open, a key) never gets the
+  late text. Only a visit with no unlock and no text is late.
+- **A connected lock** is the latest `lock-connection` event before the
+  window's end, else any lock event in the 7 days before it.
+- **Window lines come from one place in each engine.** Cleaner Core compares
+  each cleaning's window with the last one written whenever it saves, so a
+  booking email, a host time, a late checkout or an arrival time all write a
+  new line without touching each call site. Fixer Core does the same on its
+  clock pass. Neither goes through `StayCodeHook`.
+- **Message ids are hashed.** Cleaner Core's outbox ids can hold a phone
+  number (`opt-in:+1…`), so a message line's id is a hash of the sender's id.
+- **The log reads every month's file.** It is small; the cache rereads only
+  when a file's size changes.
+- **A third tool, `name_lock_code`,** saves whose each lock code is
+  (`visit-codes.json`), after the host says so. It refuses a name that holds
+  digits. It writes no event.
+- **Fixer Core news** is one line when a pro or crew isn't in by the start
+  plus 30 minutes. A pro who never comes is already told by the existing
+  "visit over with no done" note, so there's no second no-show line. A late
+  arrival is recorded, not told (decision 3).
+- **A no-show note** goes only within 12 hours of the window's end, so a
+  restart days later doesn't bring up an old one.
+- **Two new Cleaner Core text kinds:** `late-ask` (to the cleaner,
+  one-to-one) and `visit-note` (to the host, one-to-one). Both are blocked
+  like every other text when the host or cleaner opted out. No visit text
+  says "ready" or "door code", which the engine refuses.
+- **Proof:** `prove-visits.ts` in the verify-cleanercore skill, feature
+  `visit-records`.
+- **Tests:** the due items are tested in `test/visitDerive.test.ts` beside the
+  derivation, and the hours log switch in `test/visitHoursLog.test.ts`.
