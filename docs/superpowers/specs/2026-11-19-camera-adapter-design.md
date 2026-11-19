@@ -462,3 +462,46 @@ Made-up data only: 555 numbers, made-up codes, made-up device ids.
 
 - Wording beyond the examples, in the repo's plain style.
 - File split inside `src/cameras/`.
+
+## As built (19 Nov)
+
+On branch `claude/camera-adapter-239`, merged with `claude/visit-records-237`
+(PR #264) so camera lines go through its `VisitLog`. All on the fake provider
+and fake counter; nothing has talked to Ring.
+
+- **Where:** `src/cameras/` (`adapter`, `ring`, `fake`, `accounts`, `webhook`,
+  `counter`, `count`, `night`, `health`, `timeline`, `desk`, `tools`,
+  `countTest`, `countTestCli`, `sharedLog`, `lines`) and `src/hosted/cameras.ts`.
+- **Tools:** `connect_cameras`, `list_cameras` (devices, picks, online status,
+  and notes to tell the host once), `pick_cameras`, `disconnect_cameras`,
+  `check_night` (the nightly check on demand), `stay_timeline`, `pin_clip`.
+  `mark_flag_false` is with the stay-check tools.
+- **Routes:** `POST /webhooks/ring`, `GET/POST /cameras/connect/<link>` (the
+  consent page, then a redirect to Ring), `GET /cameras/ring/linked` (Ring's
+  return). 404 unless `CAMERAS` is on and Ring's secrets are set.
+- **Secrets:** `CAMERA_TOKEN_KEY` seals tokens (AES-256-GCM) in the account's
+  `secrets.json` under its own slot. `RING_CLIENT_ID`, `RING_CLIENT_SECRET`,
+  `RING_WEBHOOK_SECRET` come from the developer portal.
+- **Sign-in:** built for Ring's partner-started PKCE flow (`state` ties the
+  return to the one-time link). If the private app gets only the Ring-driven
+  mode, `linkUrl` and the return route change; nothing else does.
+- **Webhook routing** is by device id to the property that picked it; the
+  Ring account id isn't stored. A Ring "app removed" webhook is logged; the
+  next call then says Ring needs connecting again.
+- **History fill** (`history` in `ring.ts`) is built but not on the clock yet:
+  Ring's history gives no labels, so filled events would be counted as plain
+  motion. Turn it on once a live test shows how often webhooks are missed.
+- **Notes:** an offline note goes through Cleaner Core's host note when
+  cleaning runs at the property; otherwise it waits for `list_cameras`. No new
+  alerts-routine event type was added.
+- **Counting on the service waits on a model client.** The counter takes its
+  model call as a function. Adding the Anthropic SDK was blocked in this
+  session, so `counterFor` returns nothing live and counting is off until a
+  model client is added and named on the consent page.
+- **Pets:** `GuestCount.pets` and `EmailStay.pets` from "N pets / dogs /
+  cats"; a stay booked with a pet leaves the pets rule unchecked. Camera events
+  with no count yet are listed in `unchecked`, never guessed.
+- **Packages:** `PackageDesk.cameraSighting`; an unmatched sighting is kept
+  in `packages.json` and `check_packages` lists it as `cameraSightings`.
+- **Counting test:** `npm run cameras:count-test -- export|score`, reading the
+  shared log read-only.

@@ -19,7 +19,7 @@ export interface FakeCameraProvider extends CameraProvider {
   failSnapshots: number;
 }
 
-export function fakeCameraProvider(options: { key?: string; now?: () => Date } = {}): FakeCameraProvider {
+export function fakeCameraProvider(options: { key?: string; now?: () => Date; name?: string } = {}): FakeCameraProvider {
   const key = options.key ?? "fake-webhook-key";
   const now = options.now ?? (() => new Date());
   const sign = (body: string) => `sha256=${createHmac("sha256", key).update(body).digest("hex")}`;
@@ -27,7 +27,8 @@ export function fakeCameraProvider(options: { key?: string; now?: () => Date } =
     if (!account.tokens.get()) throw new CameraProviderError("The camera account isn't linked.", "unlinked");
   };
   const fake: FakeCameraProvider = {
-    name: "fake",
+    // The shared log takes only real providers' lines, so a service test names the fake after the one it stands in for.
+    name: options.name ?? "fake",
     cameras: [],
     events: [],
     offline: new Set(),

@@ -71,6 +71,7 @@ interface PendingLink {
   tenantId: string;
   propertyId: string;
   codeVerifier: string;
+  codeChallenge: string;
   expiresAt: number;
 }
 
@@ -88,11 +89,18 @@ export class CameraLinks {
     const state = b64url(randomBytes(32));
     const codeVerifier = b64url(randomBytes(48));
     const codeChallenge = b64url(createHash("sha256").update(codeVerifier).digest());
-    this.pending.set(state, { ...place, codeVerifier, expiresAt: nowMs + LINK_MS });
+    this.pending.set(state, { ...place, codeVerifier, codeChallenge, expiresAt: nowMs + LINK_MS });
     return { state, codeVerifier, codeChallenge };
   }
 
-  finish(state: string): Omit<PendingLink, "expiresAt"> | undefined {
+  /** The link's property and challenge without using it up: the consent page reads it before the host signs in. */
+  peek(state: string): { tenantId: string; propertyId: string; codeChallenge: string } | undefined {
+    const link = this.pending.get(state);
+    if (!link || link.expiresAt <= this.now().getTime()) return undefined;
+    return { tenantId: link.tenantId, propertyId: link.propertyId, codeChallenge: link.codeChallenge };
+  }
+
+  finish(state: string): { tenantId: string; propertyId: string; codeVerifier: string } | undefined {
     const link = this.pending.get(state);
     this.pending.delete(state);
     if (!link || link.expiresAt <= this.now().getTime()) return undefined;
@@ -117,6 +125,8 @@ export interface CamerasFile {
   cameras: PickedCamera[];
   /** Ids of camera notes already given to the host, newest last. */
   told?: string[];
+  /** Notes nothing could deliver yet, for the host's next chat. */
+  waiting?: { id: string; text: string }[];
 }
 
 export const CAMERAS_FILE = "cameras.json";

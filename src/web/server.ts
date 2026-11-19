@@ -34,6 +34,7 @@ import { TenantRegistry, type InviteRefusal } from "../cleaner-core/hosted/regis
 import { migrateRegistry, MigrationError } from "../cleaner-core/hosted/migrate";
 import { migrateHubs } from "../hosted/hubStartup";
 import { drainAllTenants, handleHostedCleaner, tickAllFixers, hostedCleaner, splitTenantPath, type HostedCleaner } from "../cleaner-core/hosted/router";
+import { tickAllCameras } from "../hosted/cameras";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import { TenantSecrets } from "../cleaner-core/hosted/tenantSecrets";
 import { handleAdmin } from "../cleaner-core/hosted/admin";
@@ -217,6 +218,8 @@ function workerRouteAllowed(method: string, path: string, internal: boolean): bo
 function publicRouteAllowed(method: string, path: string, oauth: boolean, hosted: boolean, uploadPages = false, multiTenant = false): boolean {
   // A multi-tenant Cleaner Core's per-tenant links. The router checks the tenant and the route.
   if (multiTenant && (splitTenantPath(path) || path === "/admin" || path.startsWith("/admin/"))) return true;
+  // The camera connection (#239): Ring's signed webhook, the one-time consent link and Ring's sign-in return. The router answers 404 unless CAMERAS is on.
+  if (multiTenant && (path === "/webhooks/ring" || path === "/cameras/ring/linked" || /^\/cameras\/connect\/[A-Za-z0-9_-]{32,100}$/.test(path))) return true;
   if (path === MCP_PATH || path === MCP_OPS_PATH || path === MCP_QA_PATH || path === CLEANER_MCP_PATH) return true;
   if (method === "GET" && path === HEALTH_PATH) return true;
   if (method === "GET" && path === "/google/oauth/callback") return true;
@@ -1109,7 +1112,11 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
       .then(() => {
         if (!cleanerOn()) return undefined;
         // Fixer Core's clock runs on the same tick, after the alerts: booked visits start, code texts go once.
-        if (multiTenant()) return drainAllTenants(hostedCleanerService).catch(() => undefined).then(() => tickAllFixers(hostedCleanerService));
+        if (multiTenant())
+          return drainAllTenants(hostedCleanerService)
+            .catch(() => undefined)
+            .then(() => tickAllFixers(hostedCleanerService))
+            .then(() => tickAllCameras(hostedCleanerService));
         return drainCleanerAlerts(installation.root, () => installation.env(), clock);
       })
       .catch(() => undefined);

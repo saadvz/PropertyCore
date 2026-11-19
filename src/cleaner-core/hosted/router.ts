@@ -29,6 +29,7 @@ import { isPropertyId, propertyFolder, type Property } from "./properties";
 import { isTenantId, tenantFolder, type Tenant, type TenantRegistry } from "./registry";
 import { screenText } from "../../hosted/crossService";
 import { handleTenantMcp } from "../../hosted/frontMcp";
+import { handleCameraRoutes } from "../../hosted/cameras";
 import { fixerCodeChanged, fixerDesk, fixerPhotoFolders, tickFixer } from "../../hosted/fixer";
 import { FIXER_ALERT_UPLOAD_PREFIX } from "../../fixer-core/desk";
 import { isVisitPath, serveFixerVisit } from "../../hosted/fixerVisit";
@@ -197,6 +198,9 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
     await handleTenantMcp(h, r, path);
     return true;
   }
+
+  // Ring's webhook and the camera sign-in pages (#239), on the service's own paths. 404 unless CAMERAS is on.
+  if (await handleCameraRoutes(h, r)) return true;
 
   if (method === "POST" && path === VOICE_TRANSCRIPT_PATH) {
     const rawBody = await r.readRaw();

@@ -7,8 +7,8 @@ import { readHubFile, type HubFile } from "../hub/store";
 import type { NightResult } from "../stay-check/check";
 import { stayCheckDeskFor, type StayCheckDesk } from "../stay-check/desk";
 import { readStayCheck } from "../stay-check/store";
-import { readCameras, writeCameras, type CamerasFile } from "./accounts";
-import { CameraProviderError, type AccountRef, type CameraProvider } from "./adapter";
+import { readCameras, writeCameras, type CamerasFile, type PickedCamera } from "./accounts";
+import { CameraProviderError, type AccountRef, type CameraDevice, type CameraProvider } from "./adapter";
 import { dueCameraNotes, type CameraNote } from "./health";
 import { isCameraEvent, type EventLog } from "./lines";
 import { CLIP_AFTER_MS, CLIP_BEFORE_MS, stayEventsFrom } from "./night";
@@ -93,6 +93,47 @@ export class CameraDesk {
     const { year, month, day, hour } = zonedParts(new Date(at), timeZone);
     const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     return hour < 12 ? addCalendarDays(date, -1) : date;
+  }
+
+  /**
+   * Saves the host's picks: which of the account's cameras belong to this property. Each must be one the account
+   * has, and the host must have said it's outdoors. The list replaces the last one; an empty list picks none.
+   */
+  pick(input: { cameras?: unknown }, available: readonly CameraDevice[]): CameraReply {
+    if (!Array.isArray(input.cameras)) return fail("Give the cameras as a list of { deviceId, outdoor: true }.");
+    const file = this.cameras();
+    const now = this.deps.now().toISOString();
+    const picked: PickedCamera[] = [];
+    for (const raw of input.cameras as unknown[]) {
+      const entry = raw && typeof raw === "object" ? (raw as { deviceId?: unknown; outdoor?: unknown }) : {};
+      const device = available.find((camera) => camera.id === entry.deviceId);
+      if (!device) return fail("One of those cameras isn't on the host's account. Use the deviceId from the list.");
+      if (entry.outdoor !== true) return fail(`Ask the host whether "${device.name}" is outdoors. Only outdoor cameras can be used; indoor cameras never are.`);
+      if (!picked.some((camera) => camera.deviceId === device.id)) picked.push({ deviceId: device.id, name: device.name, outdoor: true as const, pickedAt: file.cameras.find((camera) => camera.deviceId === device.id)?.pickedAt ?? now });
+    }
+    writeCameras(this.root, { ...file, cameras: picked });
+    return ok({ saved: true, cameras: picked.map(({ deviceId, name }) => ({ deviceId, name })), next: picked.length ? "Saved. Events from these cameras are kept from now on, and the nightly check reads them." : "Saved. No camera is read for this property now." });
+  }
+
+  /** Forgets the property's camera picks. Stored lines stay: the log is append-only. */
+  forget(): void {
+    const file = this.cameras();
+    writeCameras(this.root, { cameras: [], ...(file.told ? { told: file.told } : {}) });
+  }
+
+  /** Notes kept for the host's next chat, when nothing else delivered them. Given once. */
+  queueNotes(notes: readonly CameraNote[]): void {
+    if (!notes.length) return;
+    const file = this.cameras();
+    writeCameras(this.root, { ...file, waiting: [...(file.waiting ?? []), ...notes].slice(-50) });
+  }
+
+  takeWaiting(): CameraNote[] {
+    const file = this.cameras();
+    if (!file.waiting?.length) return [];
+    const { waiting, ...rest } = file;
+    writeCameras(this.root, rest);
+    return waiting;
   }
 
   /** Offline and back-online notes due now, each given once. */
