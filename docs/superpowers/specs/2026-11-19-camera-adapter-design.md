@@ -270,9 +270,10 @@ Nov) and marked *asked*:
   `{ type: "camera-pin", id, at, event?, deviceId, from, until, file }`.
 
 **Which flag writes.** #237 writes its log only while `VISIT_RECORDS` is on.
-Camera lines need to be written whenever `CAMERAS` is on. Proposed: the store
-isn't gated; each writer checks its own flag (camera lines `CAMERAS`, lock
-lines #180's, message and window lines `VISIT_RECORDS`). For Saad.
+Camera lines need to be written whenever `CAMERAS` is on. **Decided (Saad,
+19 Nov):** the store isn't gated; each writer checks its own flag (camera
+lines `CAMERAS`, lock lines #180's, message and window lines
+`VISIT_RECORDS`).
 
 Until #237 is merged, `src/cameras/` writes through a one-method `EventLog`
 interface that `VisitLog` satisfies, so the build isn't blocked on the merge.
@@ -454,9 +455,8 @@ Made-up data only: 555 numbers, made-up codes, made-up device ids.
 3. **Numbers.** 60 counted events a night, 30-minute offline wait, clip
    from 30 seconds before to 60 after.
 4. **Flag name.** Proposed `CAMERAS`.
-5. **Which flag writes the shared log.** Proposed: camera lines are written
-   whenever `CAMERAS` is on, even with `VISIT_RECORDS` off; each writer is
-   gated by its own flag, not the store.
+5. ~~Which flag writes the shared log.~~ Decided 19 Nov: each writer's own
+   flag; camera lines under `CAMERAS`.
 
 ## Left to the builder
 
