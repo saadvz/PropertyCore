@@ -8,7 +8,8 @@ import { codeKey } from "./events";
  * The append-only log behind visit records (#237): `visit-events/<YYYY-MM>.jsonl` in the property's folder, one
  * file per month written. A line is written once and never edited or removed. A line that won't parse is skipped and
  * counted, never repaired. An id already in the log is not written again, so a resent webhook or a replay adds
- * nothing. No line holds a door code, a run of 4 or more digits, or a phone number.
+ * nothing. No line holds a door code, a run of 4 or more digits in a name or body, or a phone number. The store has
+ * no flag: each writer checks its own (VISIT_RECORDS for texts and windows, #180's for locks, CAMERAS for cameras).
  */
 
 export const VISIT_EVENTS_DIR = "visit-events";
@@ -32,6 +33,8 @@ export function redactDigitRuns(text: string): string {
 const isTime = (value: unknown): value is string => typeof value === "string" && value.length <= 40 && Number.isFinite(Date.parse(value));
 const isId = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= MAX_ID;
 const cleanName = (value: string): string => redactDigitRuns(value).trim().slice(0, MAX_NAME);
+/** A provider's opaque device id. It is kept as given (often long digits) because snapshot and clip calls need it. */
+const isDeviceId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_.:-]{1,100}$/.test(value);
 
 /** The event as it may be written: checked, with names and bodies cleaned. Undefined when it can't be written. */
 export function cleanEvent(event: VisitEvent, redact: (text: string) => string = (text) => text): VisitEvent | undefined {
@@ -97,9 +100,8 @@ export function cleanEvent(event: VisitEvent, redact: (text: string) => string =
     }
     case "camera": {
       if (typeof event.device !== "string" || !event.device.trim()) return undefined;
+      if (!["motion", "ding", "online", "offline"].includes(event.kind) || !isDeviceId(event.deviceId) || event.provider !== "ring") return undefined;
       const label = typeof event.label === "string" && event.label.trim() ? cleanName(event.label) : undefined;
-      const count = (n: unknown) => (typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 1000 ? n : undefined);
-      const counts = event.counts && typeof event.counts === "object" ? Object.fromEntries((["people", "vehicles", "animals"] as const).flatMap((key) => { const n = count(event.counts?.[key]); return n === undefined ? [] : [[key, n]]; })) : {};
       const media = (ref: unknown): MediaRef | undefined => {
         if (!ref || typeof ref !== "object") return undefined;
         const r = ref as Partial<MediaRef>;
@@ -113,12 +115,35 @@ export function cleanEvent(event: VisitEvent, redact: (text: string) => string =
         type: "camera",
         id: event.id,
         at: event.at,
+        kind: event.kind,
+        deviceId: event.deviceId,
+        provider: "ring",
         device: cleanName(event.device),
         ...(label ? { label } : {}),
-        ...(Object.keys(counts).length > 0 ? { counts } : {}),
         ...(snapshot ? { snapshot } : {}),
         ...(clip ? { clip } : {}),
       };
+    }
+    case "camera-count": {
+      const count = (n: unknown) => typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 1000;
+      if (!isId(event.event) || typeof event.counter !== "string" || !/^[a-z0-9.-]{1,40}$/.test(event.counter)) return undefined;
+      if (!count(event.people) || !count(event.vehicles) || !count(event.animals)) return undefined;
+      if (event.confidence !== undefined && event.confidence !== "low") return undefined;
+      return { type: "camera-count", id: event.id, at: event.at, event: event.event, counter: event.counter, people: event.people, vehicles: event.vehicles, animals: event.animals, ...(event.confidence ? { confidence: "low" as const } : {}) };
+    }
+    case "camera-pin": {
+      if (!isDeviceId(event.deviceId) || !isTime(event.from) || !isTime(event.until) || Date.parse(event.until) <= Date.parse(event.from)) return undefined;
+      if (event.event !== undefined && !isId(event.event)) return undefined;
+      // A relative path inside the evidence folder: no leading slash, no "..", no backslash.
+      if (typeof event.file !== "string" || !/^[A-Za-z0-9_\-][A-Za-z0-9_.\-/]{0,199}$/.test(event.file) || event.file.split("/").some((part) => part === ".." || part === "")) return undefined;
+      return { type: "camera-pin", id: event.id, at: event.at, ...(event.event ? { event: event.event } : {}), deviceId: event.deviceId, from: event.from, until: event.until, file: event.file };
+    }
+    case "lock-status": {
+      if (!["code-set", "code-failed", "battery", "offline", "online", "pool-low"].includes(event.kind)) return undefined;
+      if (typeof event.device !== "string" || !event.device.trim()) return undefined;
+      if (event.battery !== undefined && !(typeof event.battery === "number" && Number.isFinite(event.battery) && event.battery >= 0 && event.battery <= 100)) return undefined;
+      const codeName = typeof event.codeName === "string" && event.codeName.trim() ? cleanName(event.codeName) : undefined;
+      return { type: "lock-status", id: event.id, at: event.at, kind: event.kind, device: cleanName(event.device), ...(codeName ? { codeName } : {}), ...(event.battery !== undefined ? { battery: event.battery } : {}) };
     }
     case "visit-cancelled":
       return isId(event.visit) ? { type: "visit-cancelled", id: event.id, at: event.at, visit: event.visit } : undefined;

@@ -101,26 +101,90 @@ export interface MediaRef {
   durationMs?: number;
 }
 
+/** What a camera event was. "online" and "offline" are the device's own state, for offline alerts and the timeline. */
+export type CameraKind = "motion" | "ding" | "online" | "offline";
+
 /**
- * One camera event in a shape no camera provider owns. The camera adapter (#239) maps into it. Visit records don't
- * read it yet: a camera departure will later replace a DONE one. The media stays with the provider, by reference.
+ * One camera event in a shape no camera provider owns. The camera adapter (#239) writes it under its own flag
+ * (`CAMERAS`). Visit records don't read it yet: a camera departure will later replace a DONE one. Media stays with
+ * the provider: the adapter fetches it from `deviceId` and `at`, and writes no media reference.
  */
 export interface CameraEvent {
   type: "camera";
   /** The provider's own event id, so a resent event is stored once. */
   id: string;
   at: string;
-  /** The camera's name, like "Front porch". */
+  kind: CameraKind;
+  /** The provider's opaque id for the camera, which snapshot and clip calls need. It survives a rename. */
+  deviceId: string;
+  provider: "ring";
+  /** The host's name for the camera, like "Front porch". */
   device: string;
-  /** The provider's label as given, like "motion", "person" or "vehicle". Kept, read by no rule yet. */
+  /** The provider's label as given, like "person" or "vehicle". Kept, read by no rule yet. */
   label?: string;
-  /** Our own count from the snapshot. */
-  counts?: { people?: number; vehicles?: number; animals?: number };
+  /** Optional, and #239 doesn't write them: a provider's media links expire. */
   snapshot?: MediaRef;
   clip?: MediaRef;
 }
 
-export type VisitEvent = LockEvent | LockConnectionEvent | MessageEvent | WindowEvent | CancelEvent | PageEvent | CameraEvent;
+/**
+ * Our own count for one camera event, written after the event by a counter (a snapshot and a model call), so the
+ * camera line itself is never edited. A newer counter writes a new line; for each event, the last line written wins.
+ */
+export interface CameraCountEvent {
+  type: "camera-count";
+  /** "count:<cameraEventId>:<counter>". */
+  id: string;
+  /** The camera event's time. */
+  at: string;
+  /** The camera event's id. */
+  event: string;
+  /** The counter that made it, like "vision-v1". */
+  counter: string;
+  people: number;
+  vehicles: number;
+  animals: number;
+  confidence?: "low";
+}
+
+/** The host pinned a clip as evidence: the span and where the saved file is, under the property's evidence folder. */
+export interface CameraPinEvent {
+  type: "camera-pin";
+  id: string;
+  at: string;
+  /** The camera event it came from, when there was one. */
+  event?: string;
+  deviceId: string;
+  from: string;
+  until: string;
+  /** A relative path under `evidence/`. */
+  file: string;
+}
+
+export type LockStatusKind = "code-set" | "code-failed" | "battery" | "offline" | "online" | "pool-low";
+
+/** The lock connection (#180) says something about a lock's state: a code set or failed, the battery, online or offline, the backup pool low. */
+export interface LockStatusEvent {
+  type: "lock-status";
+  id: string;
+  at: string;
+  kind: LockStatusKind;
+  /** The lock's name. */
+  device: string;
+  /** The lock's own name for the code, for code-set and code-failed. Never digits. */
+  codeName?: string;
+  /** Percent, when the lock says. */
+  battery?: number;
+}
+
+export type VisitEvent = LockEvent | LockConnectionEvent | LockStatusEvent | MessageEvent | WindowEvent | CancelEvent | PageEvent | CameraEvent | CameraCountEvent | CameraPinEvent;
+
+/** Each camera event's count: the last count line written for it. */
+export function cameraCounts(events: readonly VisitEvent[]): Map<string, CameraCountEvent> {
+  const out = new Map<string, CameraCountEvent>();
+  for (const event of events) if (event.type === "camera-count") out.set(event.event, event);
+  return out;
+}
 
 /** A line as stored: the event and when it was written. */
 export type StoredEvent = VisitEvent & { loggedAt: string };
