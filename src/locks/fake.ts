@@ -138,7 +138,7 @@ export class FakeLockAdapter implements LockAdapter {
     return { codeId: code.codeId, status: code.status };
   }
 
-  async backupCode(input: { deviceId: string; name: string; window: CodeWindow }): Promise<{ codeId: string; code: string } | undefined> {
+  async backupCode(input: { deviceId: string; codeId?: string; name: string; window: CodeWindow }): Promise<{ codeId: string; code: string } | undefined> {
     this.calls.push({ op: "backupCode", deviceId: input.deviceId });
     this.maybeThrow(input.deviceId, "backupCode");
     const tune = this.tune(input.deviceId);

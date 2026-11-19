@@ -99,8 +99,11 @@ export interface LockAdapter {
   removeCode(input: { deviceId: string; codeId: string }): Promise<void>;
   /** Where the code is now. */
   codeStatus(input: { deviceId: string; codeId: string }): Promise<CodeOnDevice>;
-  /** A backup code for a device whose code failed. Undefined when the pool is empty or the lock has none. */
-  backupCode(input: { deviceId: string; name: string; window: CodeWindow }): Promise<{ codeId: string; code: string } | undefined>;
+  /**
+   * A backup code for a device whose code failed: `codeId` is the failed code's id on the device, when
+   * it was made. Undefined when the pool is empty or the lock has none.
+   */
+  backupCode(input: { deviceId: string; codeId?: string; name: string; window: CodeWindow }): Promise<{ codeId: string; code: string } | undefined>;
   /** Verifies and parses a webhook. Undefined when the signature, its age or its body is wrong: nothing is read then. */
   parseWebhook(input: { headers: Record<string, string | string[] | undefined>; body: string }): LockWebhookEvent | undefined;
 }

@@ -324,7 +324,8 @@ export class GrantBook {
     if (kept) return this.open(kept.seal, key);
     let pulled: { codeId: string; code: string } | undefined;
     try {
-      pulled = await adapter.backupCode({ deviceId, name: grant.codeName, window: grant.window });
+      const failed = grant.devices.find((device) => device.deviceId === deviceId)?.codeId;
+      pulled = await adapter.backupCode({ deviceId, ...(failed ? { codeId: failed } : {}), name: grant.codeName, window: grant.window });
     } catch {
       return undefined;
     }

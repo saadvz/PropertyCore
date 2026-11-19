@@ -43,6 +43,8 @@ import { accountDoor, SignUpDesk } from "../hosted/signUp";
 import { openAccount, pointVoiceOnce } from "../cleaner-core/hosted/lines";
 import { retryVoiceDeletes, VOICE_PATH, VOICE_TRANSCRIPT_PATH } from "../hosted/voice";
 import { LOCK_WEBHOOK_PATH, tickAllLocks } from "../hosted/locks";
+import { lockAdapter, setLockAdapter, smartLocksOn } from "../locks/registry";
+import { seamFromEnv } from "../locks/seam";
 import { handleCleanerUploadPage, isFormPost } from "../cleaner-core/uploadPage";
 import { ALERT_UPLOAD_MAX_BYTES, alertUploadCode, calendarUploadCode, doorCodeUploadCode, uploadPageOf, CLEANER_MCP_PATH, CLEANER_TWILIO_GROUP_PATH, CLEANER_TWILIO_PATH, CLEANER_TWILIO_STATUS_PATH, handleCleanerAlertUpload, handleCleanerCalendarUpload, handleCleanerDoorCodeUpload, handleCleanerGroupWebhook, handleCleanerMcpHttp, handleCleanerTwilioStatus, handleCleanerTwilioWebhook, textAddressedTo } from "../cleaner-core/http";
 import { drainCleanerAlerts } from "../cleaner-core/liveDesk";
@@ -495,6 +497,13 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     now: clock,
     log,
   });
+  // Connected locks (#180): the lock partner's adapter, only with SMART_LOCKS on and its API key in the
+  // environment. An adapter already set (a test's fake) stays. The key is never logged.
+  if (cleanerMultiTenant(installation.env()) && smartLocksOn(installation.env()) && !lockAdapter()) {
+    const partner = seamFromEnv(installation.env());
+    if (partner) setLockAdapter(partner);
+    else log("SMART_LOCKS is on, but no lock partner key is set: properties keep their saved door codes.");
+  }
   // Lines pointed before voice get their voice webhook once, so a pro's call reaches the service.
   if (cleanerMultiTenant(installation.env())) {
     void pointVoiceOnce(hostedCleanerService).catch(() => log("Couldn't point the lines' voice webhooks this time."));
