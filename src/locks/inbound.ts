@@ -1,6 +1,7 @@
 import type { DoorAccess, GrantNote } from "../hub/doorAccess";
+import { visitLogFor } from "../visits/store";
 import type { LockAdapter, LockWebhookEvent } from "./adapter";
-import { appendLockLine, lockLine, readLockLines, type GrantRef } from "./eventLog";
+import { lockLines, recordLockEvent } from "./eventLog";
 import type { DoorLocksFile } from "./settings";
 
 /**
@@ -25,6 +26,13 @@ function once(file: DoorLocksFile, key: string): boolean {
   return true;
 }
 
+/** Which Property Core code an event names, never the code. */
+export interface GrantRef {
+  flow: "cleaning" | "repair" | "standing";
+  jobId: string;
+  backup?: boolean;
+}
+
 export interface InboundResult {
   stored: boolean;
   notes: GrantNote[];
@@ -41,9 +49,10 @@ export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, eve
   const device = event.deviceId ? file.devices.find((item) => item.id === event.deviceId) : undefined;
   const ref = event.codeId ? door.grants().grantOf(event.codeId) : undefined;
   const grant: GrantRef | undefined = ref ? { flow: ref.flow, jobId: ref.jobId, ...(ref.backup ? { backup: true } : {}) } : undefined;
-  const stored = appendLockLine(door.root, lockLine(event, { ...(device ? { deviceName: device.name } : {}), ...(grant ? { grant } : {}), loggedAt: now.toISOString() }));
+  const recorded = recordLockEvent(door.root, event, { ...(device ? { deviceName: device.name } : {}), ...(ref ? { codeName: ref.codeName } : {}), now: () => now });
   // A resent event changes nothing twice.
-  if (!stored) return { stored, notes: [] };
+  if (recorded === "duplicate") return { stored: false, notes: [] };
+  const stored = recorded === "new";
   const notes: GrantNote[] = [];
   const door_ = device?.name ?? "a door";
   switch (event.kind) {
@@ -102,9 +111,12 @@ export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, eve
       // hour before (the guest's code isn't Property Core's) is told to the host right away.
       if (!grant || grant.flow !== "cleaning" || file.release.cleaners !== "automatic") break;
       const since = new Date(Date.parse(event.at) - 60 * 60_000);
-      const earlier = readLockLines(door.root, since, new Date(event.at)).filter((line) => line.type === "lock" && line.action === "unlock" && line.id !== event.id);
-      if (earlier.some((line) => line.type === "lock" && line.grant?.flow === "cleaning" && line.grant.jobId === grant.jobId)) break;
-      const last = earlier.filter((line) => line.type === "lock" && !line.grant).at(-1);
+      const earlier = lockLines(door.root, since, new Date(event.at)).filter((line) => line.action === "unlock" && line.id !== event.id);
+      const mine = ref!.codeName.toLowerCase();
+      if (earlier.some((line) => line.codeName?.toLowerCase() === mine)) break;
+      // Any unlock with a code Property Core didn't make (the guest's, the host's own on the lock) counts.
+      const ours = new Set(Object.keys(visitLogFor(door.root).codeNames()).map((name) => name.toLowerCase()));
+      const last = earlier.filter((line) => !line.codeName || !ours.has(line.codeName.toLowerCase())).at(-1);
       if (!last) break;
       const at = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone: timeZone ?? "UTC" }).format(new Date(last.at));
       const person = door.grants().labelOf("cleaning", grant.jobId) ?? "the cleaner";

@@ -11,6 +11,7 @@ import type { LockWebhookEvent } from "../src/locks/adapter";
 import { VISIT_EVENTS_DIR } from "../src/locks/eventLog";
 import { FakeLockAdapter } from "../src/locks/fake";
 import { setLockAdapter } from "../src/locks/registry";
+import { visitLogFor } from "../src/visits/store";
 import { LOCK_TOOL_NAMES } from "../src/locks/tools";
 import { emptyLocks, storedDevice } from "../src/locks/settings";
 import { closeHostedApps } from "./cleanerOauthHarness";
@@ -89,7 +90,7 @@ describe("the lock webhook", () => {
     const { send, a, b } = await world();
     expect((await send(unlock("evt-1", "dev-a"))).status).toBe(200);
     expect((await send(unlock("evt-1", "dev-a"))).status).toBe(200);
-    expect(lines(a.root)).toEqual([expect.objectContaining({ type: "lock", id: "evt-1", action: "unlock", device: "Front door", deviceId: "dev-a", side: "outside" })]);
+    expect(lines(a.root)).toEqual([expect.objectContaining({ type: "lock", id: "evt-1", action: "unlock", device: "Front door", side: "outside" })]);
     expect(lines(b.root)).toEqual([]);
   });
 
@@ -118,10 +119,13 @@ describe("the lock webhook", () => {
     const { send, a, fake, m } = await world();
     const ctx = propertyContext(m.hosted(), a.tenant, a.property);
     const door = hubFor(ctx.root, { now: () => clock }).doorAccess(ctx.env);
-    await door.syncGrants("repair", [{ jobId: "fix-1", person: "+15555550142", window: WINDOW }]);
+    await door.syncGrants("repair", [{ jobId: "fix-1", person: "+15555550142", window: WINDOW, who: { role: "pro", proId: "pro_joe" } }]);
     const codeId = fake.liveCodes("dev-a")[0]!.codeId;
-    await send(unlock("evt-5", "dev-a", { codeId }));
-    expect(lines(a.root)[0]).toMatchObject({ grant: { flow: "repair", jobId: "fix-1" } });
+    const codeName = door.grants().grantOf(codeId)!.codeName;
+    await send(unlock("evt-5", "dev-a", { codeId, codeName: "whatever the partner calls it" }));
+    // The line carries Property Core's name for the code, which visit-codes.json maps to the pro.
+    expect(lines(a.root)[0]).toMatchObject({ type: "lock", codeName });
+    expect(visitLogFor(ctx.root).codeNames()[codeName]).toEqual({ role: "pro", proId: "pro_joe" });
   });
 
   it("a code that failed pulls a backup code now and tells the host once", async () => {
@@ -150,6 +154,12 @@ describe("the lock webhook", () => {
     await tickAllLocks(m.hosted());
     await tickAllLocks(m.hosted());
     await send({ id: "evt-10", kind: "online", partnerType: "device.connected", at: clock.toISOString(), deviceId: "dev-a" });
+    expect(lines(a.root).filter((line) => line.type === "lock-status").map((line) => [line.kind, line.battery])).toEqual([
+      ["battery", 10],
+      ["battery", 8],
+      ["offline", undefined],
+      ["online", undefined],
+    ]);
     expect(lockNews(a.root)).toEqual([
       "The Front door's battery is low. Change it soon, so no code stops working.",
       "The Front door has been offline for 30 minutes, so codes can't change on it. Check its power and Wi-Fi.",
@@ -160,6 +170,7 @@ describe("the lock webhook", () => {
   it("tells the host to sign in again, with a fresh link, when the lock account is disconnected", async () => {
     const { send, a } = await world();
     await send({ id: "evt-11", kind: "account-disconnected", partnerType: "connected_account.disconnected", at: NOW.toISOString(), accountId: `acct-${a.tenant.id}`, customerKey: a.tenant.id });
+    expect(lines(a.root)).toEqual([expect.objectContaining({ type: "lock-connection", id: "evt-11", connected: false })]);
     expect(lockNews(a.root)).toEqual([expect.stringMatching(/^Your lock account was disconnected, so I can't make or change codes\. Sign in again here: https:\/\/connect\.example\.com\/locks\/link-\d+$/)]);
   });
 

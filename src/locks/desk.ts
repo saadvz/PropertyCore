@@ -4,6 +4,7 @@ import { hubFor } from "../hub/hub";
 import type { DoorAccess, GrantNote } from "../hub/doorAccess";
 import { sameHash } from "../hub/uploadCode";
 import { ConfirmationBook } from "../operator/confirmations";
+import { recordLockConnection } from "./eventLog";
 import { lockAdapter, smartLocksOn } from "./registry";
 import { allDoorsConnected, readDoorLocks, storedDevice, type DoorLocksFile, type ReleaseMode, type StandingPerson, type StandingRole } from "./settings";
 
@@ -149,6 +150,7 @@ export class LockDesk {
       for (const flow of ["cleaning", "repair", "standing"] as const) await door.syncGrants(flow, []);
       const { activeAt: _off, ...rest } = file;
       door.saveLocks({ ...rest, release: { ...file.release, cleaners: "ask" } });
+      if (file.activeAt) recordLockConnection(this.root, false, () => this.deps.now());
       return ok({ connected: false, next: "This property uses the saved door code again." });
     }
     const doors = Array.isArray(input.doors) ? input.doors.filter((id): id is string => typeof id === "string") : [];
@@ -185,8 +187,11 @@ export class LockDesk {
       door.saveLocks(file);
       return ok({ connected: false, next: "The locks are saved, but they switch on only once the alerts routine works, so a lock problem reaches the host in chat. Set up the alerts routine, then call save_locks again." });
     }
+    const switchedOn = !file.activeAt;
     file.activeAt ??= this.deps.now().toISOString();
     door.saveLocks(file);
+    // Visit records count a lock as connected from the latest connection line.
+    if (switchedOn) recordLockConnection(this.root, true, () => this.deps.now());
     return ok({ connected: true, next: "Connected. From the next booked visit, each cleaner and pro gets their own code. Ask the host how codes should go out, and call lock_settings." });
   }
 
@@ -294,7 +299,7 @@ export class LockDesk {
     const door = this.door();
     const wanted = this.standing(door.locks())
       .filter((person) => person.yesAt && !person.stoppedAt)
-      .map((person) => ({ jobId: person.id, person: person.phone, label: person.name, window: { from: person.yesAt!, until: new Date(Date.parse(person.yesAt!) + STANDING_YEARS * 365 * 24 * 3600_000).toISOString() } }));
+      .map((person) => ({ jobId: person.id, person: person.phone, label: person.name, who: person.role === "owner" ? ({ role: "host" } as const) : ({ role: "shared" } as const), window: { from: person.yesAt!, until: new Date(Date.parse(person.yesAt!) + STANDING_YEARS * 365 * 24 * 3600_000).toISOString() } }));
     return door.syncGrants("standing", wanted);
   }
 

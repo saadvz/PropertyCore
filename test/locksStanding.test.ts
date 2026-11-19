@@ -6,12 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ownerLockEntries, readRecords } from "../src/hours-log/sources";
 import { hubFor, resetHubs } from "../src/hub/hub";
 import { LockDesk, STANDING_LINK_HOURS, STANDING_PAGE_PREFIX, type LockDeskDeps, type LockReply } from "../src/locks/desk";
-import { appendLockLine } from "../src/locks/eventLog";
 import { FakeLockAdapter } from "../src/locks/fake";
 import { setLockAdapter } from "../src/locks/registry";
 import { emptyLocks, storedDevice } from "../src/locks/settings";
 import { handleLockTool, LOCK_TOOLS } from "../src/locks/tools";
-import { entryEventsFrom } from "../src/oversight/events";
+import { entryEventsFrom } from "../src/visits/events";
+import { visitLogFor } from "../src/visits/store";
 
 /**
  * Lock setup and standing codes (#180) on the fake lock adapter: the host's yes for each change, all
@@ -104,6 +104,8 @@ describe("setting up connected locks", () => {
     expect(good.door.connected()).toBe(false);
     expect((await approved((confirmation) => good.desk.saveLocks({ doors: ["dev-front", "dev-side"], sensors: ["dev-noise"], ...(confirmation ? { confirmation } : {}) }))).structured?.connected).toBe(true);
     expect(good.door.connected()).toBe(true);
+    expect(visitLogFor(good.root).read()).toEqual([expect.objectContaining({ type: "lock-connection", connected: true })]);
+    expect(visitLogFor(mixed.root).read()).toEqual([]);
   });
 
   it("refuses a device that's on another property, or a sensor as a door", async () => {
@@ -127,6 +129,7 @@ describe("setting up connected locks", () => {
     await door.syncGrants("cleaning", [{ jobId: "job-1", person: "+15555550131", window: { from: "2026-12-01T16:00:00.000Z", until: "2026-12-02T05:00:00.000Z" } }]);
     await approved((confirmation) => desk.saveLocks({ off: true, ...(confirmation ? { confirmation } : {}) }));
     expect(door.connected()).toBe(false);
+    expect(visitLogFor(door.root).read().filter((event) => event.type === "lock-connection")).toEqual([expect.objectContaining({ connected: false })]);
     expect(fake.liveCodes("dev-front")).toEqual([]);
   });
 
@@ -246,10 +249,11 @@ describe("standing codes", () => {
     const w = world();
     await named(w, HOST, "owner");
     await w.desk.standingText(HOST, "YES");
-    const codeId = w.fake.liveCodes("dev-front")[0]!.codeId;
-    const ref = w.door.grants().grantOf(codeId)!;
-    appendLockLine(w.root, { type: "lock", id: "evt-in", at: "2026-12-03T15:00:00.000Z", loggedAt: NOW.toISOString(), device: "Front door", deviceId: "dev-front", action: "unlock", side: "outside", grant: { flow: ref.flow, jobId: ref.jobId }, partnerType: "lock.unlocked" });
-    appendLockLine(w.root, { type: "lock", id: "evt-out", at: "2026-12-03T17:30:00.000Z", loggedAt: NOW.toISOString(), device: "Front door", deviceId: "dev-front", action: "lock", side: "outside", partnerType: "lock.locked" });
+    const codeName = w.door.grants().grantOf(w.fake.liveCodes("dev-front")[0]!.codeId)!.codeName;
+    expect(visitLogFor(w.root).codeNames()[codeName]).toEqual({ role: "host" });
+    const log = visitLogFor(w.root, () => NOW);
+    log.append({ type: "lock", id: "evt-in", at: "2026-12-03T15:00:00.000Z", device: "Front door", action: "unlock", side: "outside", codeName });
+    log.append({ type: "lock", id: "evt-out", at: "2026-12-03T17:30:00.000Z", device: "Front door", action: "lock", side: "outside" });
     expect(ownerLockEntries(readRecords(w.root))).toEqual([
       { kind: "owner-on-site", actor: "host", log: "owner", participant: "", at: "2026-12-03T15:00:00.000Z", until: "2026-12-03T17:30:00.000Z", task: "On site (Front door)", reference: "Lock event evt-in", onSite: true, timing: "measured" },
     ]);
@@ -259,10 +263,10 @@ describe("standing codes", () => {
     const w = world();
     await named(w);
     await w.desk.standingText(COHOST, "YES");
-    const ref = w.door.grants().grantOf(w.fake.liveCodes("dev-front")[0]!.codeId)!;
-    const line = { type: "lock" as const, id: "evt-c", at: "2026-12-03T15:00:00.000Z", loggedAt: NOW.toISOString(), device: "Front door", deviceId: "dev-front", action: "unlock" as const, grant: { flow: ref.flow, jobId: ref.jobId }, partnerType: "lock.unlocked" };
-    appendLockLine(w.root, line);
+    const codeName = w.door.grants().grantOf(w.fake.liveCodes("dev-front")[0]!.codeId)!.codeName;
+    expect(visitLogFor(w.root).codeNames()[codeName]).toEqual({ role: "shared" });
+    visitLogFor(w.root, () => NOW).append({ type: "lock", id: "evt-c", at: "2026-12-03T15:00:00.000Z", device: "Front door", action: "unlock", codeName });
     expect(ownerLockEntries(readRecords(w.root))).toEqual([]);
-    expect(entryEventsFrom([line], () => "Pat Lee")).toEqual([{ id: "evt-c", at: "2026-12-03T15:00:00.000Z", device: "Front door", person: "Pat Lee" }]);
+    expect(entryEventsFrom(visitLogFor(w.root).read(), visitLogFor(w.root).codeNames())).toEqual([{ id: "evt-c", at: "2026-12-03T15:00:00.000Z", device: "Front door" }]);
   });
 });

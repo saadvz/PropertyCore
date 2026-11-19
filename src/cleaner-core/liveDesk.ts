@@ -17,7 +17,8 @@ import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink,
 import { joinSplitDigits } from "../hub/digits";
 import { sameHash, uploadHash } from "../hub/uploadCode";
 import { isDeparture, openCleanerCore, redactDigitRuns, SAFETY, storedConsent, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type TextKind } from "./core";
-import { cleanerMultiTenant, groupChatEnabled, guestMessagesOn } from "./flag";
+import { cleanerMultiTenant, groupChatEnabled, guestMessagesOn, visitRecordsOn } from "./flag";
+import { visitLogFor } from "../visits/store";
 import { LATE_CHECKOUT_ACTION, setLateCheckout } from "./lateCheckout";
 import { GROUP_RECIPIENT, draftStatus, earlierThan, replyStateAt, type ReplyState, type StoredDraft } from "./replies";
 import { publicBaseUrl } from "../messaging/publicUrl";
@@ -3930,6 +3931,8 @@ export class LiveDesk {
       updateSettleMs: updateSettle ?? UPDATE_SETTLE_MS,
       ...(this.primaryAssistant() !== "grok" ? { helperName: this.hostWords().helper } : {}),
       ...this.preferenceOptions(),
+      // Visit records (#237): only while VISIT_RECORDS is on. Without a connected lock, nothing new is sent.
+      ...(visitRecordsOn(this.env()) ? { visits: { log: visitLogFor(this.root), ...(this.file.cleanerName ? { cleanerName: this.file.cleanerName } : {}) } } : {}),
       ownerPhone: file.host,
       cleaner: { phone: file.cleaner, approved: true },
       access: this.doorPort(),

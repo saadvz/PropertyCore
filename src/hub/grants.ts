@@ -6,6 +6,7 @@ import { openPin, sealPin, type PinSeal } from "./pinSeal";
 import { writeFileAtomic } from "../storage/atomicWrite";
 import { CodeValueRefused, type CodeStatus, type CodeWindow, type LockAdapter, type LockDevice } from "../locks/adapter";
 import { makeSameCode, removeAll, type DeviceCode } from "../locks/sameCode";
+import type { CodePerson } from "../visits/events";
 
 /**
  * One property's per-visit codes, in door-grants.json next to door-access.json. One entry per code:
@@ -32,6 +33,8 @@ export interface WantedCode {
   window: CodeWindow;
   /** How the host's notes name them ("Maria", "the cleaner"). Never a phone. */
   label?: string;
+  /** Whose code it is, for the visit log's code names. Defaults by flow: cleaning is the cleaner's. */
+  who?: CodePerson;
 }
 
 interface StoredBackup {
@@ -85,6 +88,8 @@ export interface GrantDeps {
   /** The doors the cleaner and pros go through. */
   doors(): LockDevice[];
   sleep?(ms: number): Promise<void>;
+  /** Saves whose a code is by the name it carries on the lock (the visit log's `visit-codes.json`). */
+  named?(codeName: string, who: CodePerson): void;
 }
 
 /** What a tool or get_state may see of a grant: never the code. */
@@ -248,13 +253,18 @@ export class GrantBook {
     return [...this.file.grants].reverse().find((grant) => grant.flow === flow && grant.jobId === jobId)?.label;
   }
 
-  /** Which grant a code id on the lock belongs to, for an event. Never the code. */
-  grantOf(codeId: string): { grantId: string; flow: GrantFlow; jobId: string; backup: boolean } | undefined {
+  /** Which grant a code id on the lock belongs to, for an event, with the name it carries. Never the code. */
+  grantOf(codeId: string): { grantId: string; flow: GrantFlow; jobId: string; backup: boolean; codeName: string } | undefined {
     for (const grant of this.file.grants) {
-      if (grant.devices.some((device) => device.codeId === codeId)) return { grantId: grant.id, flow: grant.flow, jobId: grant.jobId, backup: false };
-      if (grant.backups?.some((backup) => backup.codeId === codeId)) return { grantId: grant.id, flow: grant.flow, jobId: grant.jobId, backup: true };
+      if (grant.devices.some((device) => device.codeId === codeId)) return { grantId: grant.id, flow: grant.flow, jobId: grant.jobId, backup: false, codeName: grant.codeName };
+      if (grant.backups?.some((backup) => backup.codeId === codeId)) return { grantId: grant.id, flow: grant.flow, jobId: grant.jobId, backup: true, codeName: grant.codeName };
     }
     return undefined;
+  }
+
+  /** The name this job's code carries on the lock, while its grant is kept. */
+  codeNameOf(flow: GrantFlow, jobId: string): string | undefined {
+    return [...this.file.grants].reverse().find((grant) => grant.flow === flow && grant.jobId === jobId)?.codeName;
   }
 
   /**
@@ -371,6 +381,12 @@ export class GrantBook {
         continue;
       }
       this.file.grants.push(grant);
+      const who: CodePerson | undefined = want.who ?? (flow === "cleaning" ? { role: "cleaner" } : flow === "standing" ? { role: "shared" } : undefined);
+      try {
+        if (who) this.deps.named?.(codeName, who);
+      } catch {
+        // The code works without its name; visit records then count its unlocks as unnamed.
+      }
       return { ok: true, grant };
     }
     return { ok: false, note: failed };

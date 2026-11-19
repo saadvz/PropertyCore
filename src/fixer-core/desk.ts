@@ -32,6 +32,11 @@ import { codeOkNews, codeOkQuestion, codeOkReminder, extendAskNews, extendedNews
 import { insideWindow, latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { doorFor, repairBlockProblem, repairBlockStatus, staysForCrew } from "./repairBlock";
 import { crewScheduleProblem, crewWindows, type CrewSchedule } from "./crewDays";
+import { visitRecordsOn } from "../cleaner-core/flag";
+import { buildVisits } from "../visits/derive";
+import { fixerDue } from "../visits/due";
+import { crewVisit, repairVisit, type WindowEvent } from "../visits/events";
+import { messageEventId, visitLogFor, type VisitLog } from "../visits/store";
 import { stayKey, urgentAccessCheck, urgentStay, urgentTimeline, urgentVisitHolds, type GuestAnswer, type UrgentHold, type UrgentRefusal } from "./urgentVisit";
 import { MAX_HOST_STEPS, MAX_REPAIR_BLOCKS, TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type SavedBlock, type Booking, type HostStep, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
 
@@ -515,7 +520,7 @@ export class FixerDesk {
       const lead = booking.urgentStay ? 0 : 30 * 60_000;
       const from = new Date(Date.parse(booking.from) - lead).toISOString();
       const until = new Date(Date.parse(booking.extendedUntil ?? booking.until)).toISOString();
-      wanted.push({ jobId: job.id, person: phone, window: { from, until }, label: firstName(this.bookedName(file, job)) });
+      wanted.push({ jobId: job.id, person: phone, window: { from, until }, label: firstName(this.bookedName(file, job)), who: { role: "pro", proId: booking.proId } });
     }
     return wanted;
   }
@@ -2387,6 +2392,7 @@ export class FixerDesk {
         const revealed = (job.booking.revealedAt ??= []);
         revealed.push(at);
         markShown(job);
+        this.visitLog()?.append({ type: "visit-page", id: `page:${job.id}:at-door:${at}`, at, visit: repairVisit(job.id), step: "at-door" });
         notes.push(this.news(job, "revealed", revealNews({ proName: this.bookedName(file, job), at, timeZone: this.timeZone() }), `fixer:${job.id}:${visitTag(job.booking)}:revealed:${revealed.length}`));
       }
       this.write(file);
@@ -2528,6 +2534,7 @@ export class FixerDesk {
         if (!file.offAt) await this.codeTextPass(file, job, notes);
         this.delayPass(file, job, notes);
       }
+      if (!file.offAt) this.visitPass(file, notes);
       // A done job's photos go 30 days after done, a cancelled job's 30 days after the cancel.
       prunePhotos(this.root, file.jobs.flatMap((job) => {
         const closedAt = job.done?.at ?? (job.state === "cancelled" ? job.cancelledAt : undefined);
@@ -2536,6 +2543,71 @@ export class FixerDesk {
       if (JSON.stringify(file) !== before) this.write(file);
       await this.tell(notes);
     });
+  }
+
+  /** The property's visit log (#237), only while VISIT_RECORDS is on. */
+  private visitLog(): VisitLog | undefined {
+    const env = this.deps.env?.();
+    return env && visitRecordsOn(env) ? visitLogFor(this.root, () => this.deps.now()) : undefined;
+  }
+
+  /** The last window written per visit, read once from the log. */
+  private visitSigs?: Map<string, string>;
+
+  /**
+   * Visit records' pass (#237): writes each booked visit's window (one per workday for a crew) when it's set or
+   * moved, and a cancel when it's called off; then, with a connected lock, one news line each for a pro or crew not
+   * in by the start plus 30 minutes, and for a pro's code used outside their visit. Pros are never texted about it.
+   * A failure here never stops the clock pass.
+   */
+  private visitPass(file: FixerFile, notes: HostNote[]): void {
+    const log = this.visitLog();
+    if (!log) return;
+    try {
+      if (!this.visitSigs) {
+        this.visitSigs = new Map();
+        for (const event of log.read()) {
+          if (event.type === "visit-window") this.visitSigs.set(event.visit, visitSig(event));
+          else if (event.type === "visit-cancelled") this.visitSigs.set(event.visit, "cancelled");
+        }
+      }
+      const at = this.deps.now().toISOString();
+      const live = new Set<string>();
+      for (const job of file.jobs) {
+        const booking = job.booking;
+        if (!booking?.hostYes || !liveBooking(job)) continue;
+        const who = { role: "pro" as const, name: this.bookedName(file, job), proId: booking.proId };
+        const windows: Omit<WindowEvent, "id" | "at">[] = job.crew
+          ? crewWindows(job.crew, { ...this.occupyInput(file), stays: this.crewStays(file) }).windows.map((w) => ({ type: "visit-window", visit: crewVisit(job.id, w.day), kind: "crew-day", from: w.from, until: w.until, expectedAt: w.from, sameDay: false, who }))
+          : [{ type: "visit-window", visit: repairVisit(job.id), kind: "repair", from: booking.from, until: booking.extendedUntil ?? booking.until, expectedAt: booking.from, sameDay: false, who }];
+        for (const window of windows) {
+          live.add(window.visit);
+          const sig = visitSig(window);
+          if (this.visitSigs.get(window.visit) === sig) continue;
+          if (log.append({ ...window, id: `window:${window.visit}:${at}`, at })) this.visitSigs.set(window.visit, sig);
+        }
+      }
+      // A visit whose job was cancelled or moved off a day is called off in the log.
+      for (const [visit, sig] of this.visitSigs) {
+        if (sig === "cancelled" || live.has(visit) || !(visit.startsWith("repair:") || visit.startsWith("crew:"))) continue;
+        const job = file.jobs.find((entry) => entry.id === visit.split(":")[1]);
+        if (job?.state === "done") continue;
+        if (log.append({ type: "visit-cancelled", id: `cancel:${visit}:${at}`, at, visit })) this.visitSigs.set(visit, "cancelled");
+      }
+      const derived = buildVisits(log.read(), { timeZone: this.timeZone(), codeNames: log.codeNames(), now: this.deps.now() });
+      const proName = (proId: string | undefined) => file.pros.find((pro) => pro.id === proId)?.name ?? "A pro";
+      for (const item of fixerDue(derived, { now: this.deps.now(), timeZone: this.timeZone(), proName })) {
+        const job = item.jobId ? file.jobs.find((entry) => entry.id === item.jobId) : undefined;
+        if (job) {
+          if (job.news.some((news) => news.kind === item.kind)) continue;
+          notes.push(this.news(job, item.kind, item.text, `fixer:${job.id}:${item.kind}`));
+        } else if (!(file.news ?? []).some((news) => news.kind === item.kind)) {
+          notes.push(this.fileNews(file, { kind: item.kind, text: item.text }, `fixer:${item.kind}`));
+        }
+      }
+    } catch {
+      // The log is a record, not a gate.
+    }
   }
 
   /** The host says the guests have left: today counts as cleared for every job's checkout-day check, even one opened later today. */
@@ -2982,6 +3054,8 @@ export class FixerDesk {
       if (input.note !== undefined && !isText(input.note, 300)) return fail("Keep the note under 300 characters.");
       const notes: HostNote[] = [];
       this.finishJob(file, job, "pro-page", input.note ? redactDigits(input.note).trim() : undefined, notes);
+      const doneAt = job.done!.at;
+      this.visitLog()?.append({ type: "visit-page", id: `page:${job.id}:done:${doneAt}`, at: doneAt, visit: repairVisit(job.id), step: "done" });
       if (input.cents !== undefined) this.logCost(file, job, input.cents, "pro", undefined, notes);
       this.write(file);
       this.syncPros(file);
@@ -3042,6 +3116,20 @@ export class FixerDesk {
       }
       // DONE and a price count only from a pro who said YES and has not stopped.
       const agreed = people.optedIn(input.from) && !people.stopped(input.from);
+      if (target) {
+        const log = this.visitLog();
+        log?.append({
+          type: "message",
+          id: messageEventId("in", id),
+          at: this.deps.now().toISOString(),
+          direction: "in",
+          role: "pro",
+          personKey: log.personKey(input.from),
+          visit: repairVisit(target.id),
+          label: isDone(text) && agreed ? "done" : "other",
+          body: text,
+        });
+      }
       if (isDone(text) && started.length > 0 && agreed) {
         const notes: HostNote[] = [];
         this.finishJob(file, target!, "pro-text", undefined, notes);
@@ -3248,4 +3336,9 @@ export function fixerDeskFor(root: string, deps: FixerDeps): FixerDesk {
 /** Forgets every desk, as a restart would. Tests use it. */
 export function resetFixerDesks(): void {
   desks.clear();
+}
+
+/** What a visit window says, so the same window isn't written twice. */
+function visitSig(window: Pick<WindowEvent, "from" | "until" | "expectedAt" | "who">): string {
+  return JSON.stringify([window.from, window.until, window.expectedAt, window.who.name, window.who.proId ?? null]);
 }

@@ -6,8 +6,9 @@ import { FIXER_FILE, readFixer, type FixerFile } from "../fixer-core/store";
 import { readHubFile, type Stay } from "../hub/store";
 import { effectiveSeen, PACKAGES_FILE, readPackages, supplyKey, type PackagesFile } from "../package-arrivals/store";
 import { readSupply, SUPPLY_FILE, type SupplyFile } from "../supply-core/store";
-import { readLockLines } from "../locks/eventLog";
-import { readDoorLocks } from "../locks/settings";
+import { buildVisits, type VisitRecord } from "../visits/derive";
+import { codePerson } from "../visits/events";
+import { VISIT_EVENTS_DIR, VisitLog } from "../visits/store";
 import type { RowFact } from "./fact";
 import { routeFact } from "./ownerRules";
 
@@ -57,6 +58,8 @@ export interface PropertyRecords {
   packages?: PackagesFile;
   /** Unlocks with the host's own standing code (#180), with the next lock from outside when the lock reported one. Never a code. */
   ownerEntries?: { eventId: string; at: string; until?: string; device: string }[];
+  /** Visit records (#237), when the property has a visit log. Absent keeps every row as it was. */
+  visits?: VisitRecord[];
 }
 
 export type RowSource = (records: PropertyRecords) => RowFact[];
@@ -109,6 +112,9 @@ export function readRecords(root: string): PropertyRecords {
   const fixer = existsSync(join(root, FIXER_FILE)) ? safe(() => readFixer(root)) : undefined;
   const supply = existsSync(join(root, SUPPLY_FILE)) ? safe(() => readSupply(root)) : undefined;
   const packages = existsSync(join(root, PACKAGES_FILE)) ? safe(() => readPackages(root)) : undefined;
+  // Measured times only change a row's start and end, never what's flagged, so "now" here doesn't matter.
+  const visitLog = property.timeZone && existsSync(join(root, VISIT_EVENTS_DIR)) ? new VisitLog(root) : undefined;
+  const visits = visitLog ? safe(() => buildVisits(visitLog.read(), { timeZone: property.timeZone!, codeNames: visitLog.codeNames(), now: new Date() }).visits) : undefined;
   return {
     ...(propertyName ? { propertyName } : {}),
     ...(property.timeZone ? { timeZone: property.timeZone } : {}),
@@ -122,6 +128,7 @@ export function readRecords(root: string): PropertyRecords {
     ...(fixer ? { fixer } : {}),
     ...(supply ? { supply } : {}),
     ...(packages ? { packages } : {}),
+    ...(visits ? { visits } : {}),
     ...ownerEntriesOf(root, safe),
   };
 }
@@ -130,21 +137,38 @@ export function readRecords(root: string): PropertyRecords {
 const OWNER_EXIT_WINDOW_MS = 12 * 60 * 60_000;
 
 /**
- * The host's own entries on their standing code: each unlock with an owner's standing code, and the
- * first lock from outside on any door within 12 hours after it. Read from the property's lock events.
+ * The host's own entries on their standing code (#180): each unlock in the visit log whose code is the
+ * host's (`visit-codes.json`), and the first lock from outside on any door within 12 hours after it.
  */
 function ownerEntriesOf(root: string, safe: <T>(read: () => T) => T | undefined): { ownerEntries?: PropertyRecords["ownerEntries"] } {
-  const owners = new Set((safe(() => readDoorLocks(root).standing) ?? []).filter((person) => person.role === "owner").map((person) => person.id));
-  if (owners.size === 0) return {};
-  const lines = safe(() => readLockLines(root, new Date(0))) ?? [];
+  if (!existsSync(join(root, VISIT_EVENTS_DIR))) return {};
+  const log = new VisitLog(root);
+  const names = safe(() => log.codeNames()) ?? {};
+  if (!Object.values(names).some((person) => person.role === "host")) return {};
+  const locks = (safe(() => log.read()) ?? []).flatMap((event) => (event.type === "lock" ? [event] : [])).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   const entries: NonNullable<PropertyRecords["ownerEntries"]> = [];
-  for (const line of lines) {
-    if (line.type !== "lock" || line.action !== "unlock" || line.grant?.flow !== "standing" || !owners.has(line.grant.jobId)) continue;
-    const start = Date.parse(line.at);
-    const exit = lines.find((other) => other.type === "lock" && other.action === "lock" && other.side === "outside" && Date.parse(other.at) > start && Date.parse(other.at) - start <= OWNER_EXIT_WINDOW_MS);
-    entries.push({ eventId: line.id, at: line.at, ...(exit ? { until: exit.at } : {}), device: line.device });
+  for (const event of locks) {
+    if (event.action !== "unlock" || codePerson(names, event.codeName)?.role !== "host") continue;
+    const start = Date.parse(event.at);
+    const exit = locks.find((other) => other.action === "lock" && other.side === "outside" && Date.parse(other.at) > start && Date.parse(other.at) - start <= OWNER_EXIT_WINDOW_MS);
+    entries.push({ eventId: event.id, at: event.at, ...(exit ? { until: exit.at } : {}), device: event.device });
   }
   return entries.length > 0 ? { ownerEntries: entries } : {};
+}
+
+/** A visit's measured span, when visit records (#237) have both an arrival and a departure for it. */
+function measuredVisit(records: PropertyRecords, visitId: string, needsLock: boolean): VisitRecord | undefined {
+  const visit = records.visits?.find((entry) => entry.id === visitId);
+  if (!visit?.arrival || !visit.departure || visit.minutes === undefined) return undefined;
+  if (needsLock && !(visit.lock && (visit.arrival.source === "lock" || visit.arrival.source === "lock-unnamed"))) return undefined;
+  return visit;
+}
+
+/** How a measured visit's times were found, for the row's reference. */
+function measuredHow(visit: VisitRecord): string {
+  const departure = visit.departure!;
+  const check = departure.lockCheck === "matched" ? ", checked against the lock" : "";
+  return `arrival from ${visit.arrival!.source}, departure from ${departure.source}${check}`;
 }
 
 const checkoutOf = (records: PropertyRecords, jobId: string) => records.cleaningJobs.find((job) => job.id === jobId)?.checkoutDate;
@@ -155,6 +179,23 @@ export const cleanerRows: RowSource = (records) => {
   const cleaner = records.cleanerName ?? "Cleaner";
   for (const job of records.cleaningJobs) {
     if (!job.done || job.canceled || job.declined || !job.doneAt) continue;
+    // With a connected lock, the visit record's arrival and departure (#237).
+    const measured = measuredVisit(records, `cleaning:${job.id}`, true);
+    if (measured) {
+      out.push({
+        kind: "cleaning",
+        actor: "cleaner",
+        log: "cleaner",
+        participant: cleaner,
+        at: measured.arrival!.at,
+        until: measured.departure!.at,
+        task: `Turnover cleaning after the ${job.checkoutDate} checkout`,
+        reference: `Cleaner Core job ${job.id}, ${measuredHow(measured)}`,
+        onSite: true,
+        timing: "measured",
+      });
+      continue;
+    }
     const start = job.startedAt ?? job.arrivalAt;
     const needs = job.startedAt ? undefined : start ? "No START text, so the cleaning starts at the arrival time saved for it." : "No START text or arrival time, so the cleaning has no hours.";
     out.push({
@@ -243,6 +284,42 @@ export const fixerRows: RowSource = (records) => {
         : step.kind === "record-cost" ? `Recorded the cost of ${cents} for the ${repair}`
         : `Confirmed the ${repair} is done`;
       host(step.kind, step.at, task);
+    }
+    // A crew's measured days (#237): one row for each workday with an arrival and a departure.
+    const crewDays = job.crew ? (records.visits ?? []).filter((visit) => visit.id.startsWith(`crew:${job.id}:`) && measuredVisit(records, visit.id, false)) : [];
+    if (booking && crewDays.length > 0) {
+      for (const day of crewDays) {
+        out.push({
+          kind: "repair-visit",
+          actor: "pro",
+          log: `pro:${booking.proId}`,
+          participant: proName(booking.proId),
+          at: day.arrival!.at,
+          until: day.departure!.at,
+          task: `${job.trade} crew day: ${job.what}`,
+          reference: `${ref}, ${day.id.split(":")[2]}, ${measuredHow(day)}`,
+          onSite: true,
+          timing: "measured",
+        });
+      }
+      continue;
+    }
+    const measured = job.state === "done" && booking ? measuredVisit(records, `repair:${job.id}`, false) : undefined;
+    if (measured && booking) {
+      const cost = job.cost ? `, cost ${dollarsText(job.cost.cents)} from the ${job.cost.by === "host" ? "host" : job.cost.by === "pro" ? "pro" : "agent"}` : "";
+      out.push({
+        kind: "repair-visit",
+        actor: "pro",
+        log: `pro:${booking.proId}`,
+        participant: proName(booking.proId),
+        at: measured.arrival!.at,
+        until: measured.departure!.at,
+        task: `${job.trade} visit: ${job.what}`,
+        reference: `${ref}${cost}, ${measuredHow(measured)}`,
+        onSite: true,
+        timing: "measured",
+      });
+      continue;
     }
     if (job.state === "done" && booking && job.done) {
       const end = booking.extendedUntil ?? booking.until;

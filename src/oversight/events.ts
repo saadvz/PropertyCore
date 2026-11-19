@@ -14,13 +14,3 @@ export interface EntryEvent {
   /** The provider's word as given, like "keypad", "app" or "key". The check never reads it. */
   method?: string;
 }
-
-/** The stored lock lines #180 writes, as #240's entries: each unlock, named by whose Property Core code opened it. */
-export function entryEventsFrom(lines: readonly { type: string; id: string; at: string; action?: string; device?: string; method?: string; grant?: { flow: string; jobId: string } }[], names: (grant: { flow: string; jobId: string }) => string | undefined = () => undefined): EntryEvent[] {
-  return lines
-    .filter((line) => line.type === "lock" && line.action === "unlock")
-    .map((line) => {
-      const person = line.grant ? names(line.grant) : undefined;
-      return { id: line.id, at: line.at, device: line.device ?? "a door", ...(person ? { person } : {}), ...(line.method ? { method: line.method } : {}) };
-    });
-}

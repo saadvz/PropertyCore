@@ -99,11 +99,8 @@ Safety gates change with slices 2, 3, 6, 7 and 8, in `docs/cleaner-core-safety-g
 
 ## Event store
 
-#237 (`claude/visit-records-237`, design for review) proposes one append-only log per property,
-`visit-events/<YYYY-MM>.jsonl`, with a `LockEvent` type at the boundary that #180's adapter maps into.
-The #180 spec's section 5 named its own `lock-events.jsonl`. One store, not two: slice 5 writes lock
-events through a `LockEventSink`, and the sink's file is #237's store once that design is settled.
-Until then the question is with Saad (see the session report).
+One store, not two: lock events go into #237's visit log (`src/visits/store.ts`), not the
+`lock-events.jsonl` the #180 spec's section 5 named. See the build notes below.
 
 ## Review focus
 
@@ -126,9 +123,13 @@ building, for review:
 - **A code ends at DONE.** The cleaner's code is revoked when the cleaning is done (the user story: "from
   checkout until the clean is done"), and a pro's when the visit is done.
 - **Early start.** When the host clears the guests before checkout, the cleaner's code starts then.
-- **Event store.** Lock events go to `visit-events/<YYYY-MM>.jsonl`, the store #237's design proposes:
-  unlocks and locks as `lock` lines in its `LockEvent` shape plus Property Core's `grant`, everything else
-  as `lock-status` lines. #237's design is still for review, so this waits on Saad (see below).
+- **Event store (settled with #237, 19 Nov).** Lock events go into #237's visit log through
+  `VisitLog.append`: unlocks and locks as `lock` lines, a code set or failed, battery, offline, online
+  and backup pool low as `lock-status` lines, and a lock account or property switching as
+  `lock-connection` lines. They're written under `SMART_LOCKS`, with `VISIT_RECORDS` on or off. Each
+  code the hub issues is named in `visit-codes.json` (cleaner, pro, host for an owner's standing code,
+  shared otherwise), and a lock line carries Property Core's name for the code, so visit records, the
+  hours log and the "someone else came in" check all read whose code it was from there.
 - **Standing people** live in `door-locks.json`, not as a new account role, so no other flow's routing
   changes. The line router takes only a standing person's YES (after their invite); their STOP is noted
   and then routed as usual.
@@ -140,8 +141,6 @@ building, for review:
 
 Still open:
 
-- **#237's store.** Confirm lock events should land in #237's `visit-events/` log in this shape, or say
-  which store to use. Only `src/locks/eventLog.ts` changes either way.
 - **Sensor health** is stored at `save_locks` and from events; no periodic device refresh yet.
 - **Setup order.** `get_state` shows the lock status and offers the lock step as a line, but the step
   isn't in Cleaner Core's numbered setup order.

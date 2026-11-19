@@ -21,6 +21,7 @@ import { listedChooseSupplies, listedSupplyFront, SUPPLY_FRONT_NAMES, suppliesLi
 import { HOURS_FRONT_NAMES, hoursCall, listedHoursFront } from "./hours";
 import { listedOversightFront, OVERSIGHT_FRONT_NAMES, oversightCall } from "./oversight";
 import { listedLockFront, LOCK_FRONT_NAMES, lockCall, lockDesk } from "./locks";
+import { listedVisitsFront, VISITS_FRONT_NAMES, visitsCall } from "./visits";
 import { listedStayCheckFront, STAY_CHECK_FRONT_NAMES, stayCheckCall } from "./stayCheck";
 import { listedPackageFront, PACKAGE_FRONT_NAMES, packageCall } from "./packages";
 import { GUEST_FRONT_NAMES, withRoutedProperty, GUEST_MESSAGES_INSTRUCTION, guestCall, guestMessageProperty, listedGuestFront } from "./guestMessages";
@@ -203,6 +204,7 @@ async function propertyToolList(h: HostedCleaner, r: HostedRequest, tenant: Tena
   tools.push(...listedHoursFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   tools.push(...listedStayCheckFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   tools.push(...listedOversightFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
+  tools.push(...listedVisitsFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   tools.push(...listedPackageFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   tools.push(...listedGuestFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   tools.push(...listedLockFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
@@ -242,6 +244,11 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
     const resolved = resolveProperty(tenant, args);
     if ("refusal" in resolved) return { text: resolved.refusal, isError: true };
     return oversightCall(h, tenant, resolved.property, name, resolved.args);
+  }
+  if (VISITS_FRONT_NAMES.has(name)) {
+    const resolved = resolveProperty(tenant, args);
+    if ("refusal" in resolved) return { text: resolved.refusal, isError: true };
+    return visitsCall(h, tenant, resolved.property, name, resolved.args);
   }
   if (PACKAGE_FRONT_NAMES.has(name)) {
     const resolved = resolveProperty(tenant, args);

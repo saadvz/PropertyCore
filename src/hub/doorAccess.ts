@@ -10,6 +10,7 @@ export { pinKeyFromHeader, serverPinKey } from "./pinSeal";
 import { HUB_DOOR_CODE_PREFIX } from "./paths";
 import { DOOR_GRANTS_FILE, GrantBook, type GrantFlow, type GrantNote, type GrantStatus, type WantedCode } from "./grants";
 import { lockAdapter, smartLocksOn } from "../locks/registry";
+import { visitLogFor } from "../visits/store";
 import { allDoorsConnected, asLockDevice, doorDevices, readDoorLocks, writeDoorLocks, type DoorLocksFile } from "../locks/settings";
 import type { HubCaller } from "./store";
 import { sameHash, UPLOAD_GONE, UPLOAD_MINUTES, uploadHash } from "./uploadCode";
@@ -193,6 +194,7 @@ export class DoorAccess {
         key: () => serverPinKey(this.env(), this.saveSecrets ?? secretSavers.get(this.root)),
         doors: () => doorDevices(this.locks()).map(asLockDevice),
         sleep: (ms) => (this.sleep ?? ((wait: number) => new Promise<void>((resolve) => setTimeout(resolve, wait))))(ms),
+        named: (codeName, who) => void visitLogFor(this.root, this.now).nameCode(codeName, who),
       });
     }
     return this.book;
