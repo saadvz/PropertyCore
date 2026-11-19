@@ -61,6 +61,8 @@ export interface EmailStay {
   guests?: number;
   /** Infants on the booking, when it lists any. Not in `guests`, but a camera sees them. */
   infants?: number;
+  /** Pets on the booking, when it lists any. */
+  pets?: number;
   confirmationCode: string;
 }
 
@@ -171,6 +173,7 @@ export function stayForNight(root: string, date: string): EmailStay | undefined 
       ...(booking.checkoutTime ? { checkoutTime: booking.checkoutTime } : {}),
       ...(booking.guests !== undefined ? { guests: booking.guests } : {}),
       ...(booking.guestBreakdown && booking.guestBreakdown.infants > 0 ? { infants: booking.guestBreakdown.infants } : {}),
+      ...(booking.guestBreakdown?.pets ? { pets: booking.guestBreakdown.pets } : {}),
       confirmationCode: booking.confirmationCode,
     };
   }

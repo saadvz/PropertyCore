@@ -3,7 +3,7 @@ import { addCalendarDays, zonedInstant } from "../hub/calendar";
 import { readHubFile, type HubFile, type Stay as CalendarStay } from "../hub/store";
 import { checkNight, NO_CHECKABLE_RULE, type NightResult } from "./check";
 import type { StayEvent } from "./events";
-import { checkTimeProblem, cleanCheck, isCheckKind, rulesProblem, type CheckKind, type HouseRule } from "./rules";
+import { checkTimeProblem, cleanCheck, isCheckKind, markFalse, needed, rulesProblem, type CheckKind, type HouseRule } from "./rules";
 import { readStayCheck, StayCheckFileError, writeStayCheck, type StayCheckFile } from "./store";
 
 /**
@@ -112,6 +112,18 @@ export class StayCheckDesk {
     });
   }
 
+  /** A flag the host said was wrong: that kind needs one more sighting at this property next time, up to 3. Allowed numbers never change. */
+  markFlagFalse(input: { kind?: unknown }): StayCheckReply {
+    return this.guarded(() => {
+      if (!isCheckKind(input.kind)) return fail("Say which flag was wrong: people, pets, vehicles or quiet.");
+      const kind = input.kind;
+      const file = markFalse(readStayCheck(this.root), kind);
+      writeStayCheck(this.root, file);
+      const sightingsNeeded = needed(file.sightings, kind);
+      return ok({ saved: true, kind, sightingsNeeded, next: `Noted. A ${kind} flag at this property now needs ${sightingsNeeded} sightings in one night. The house rule itself is unchanged.` });
+    });
+  }
+
   /** The calendar stay covering the night of `date` (check-in night yes, checkout night no). Blocks aren't stays. */
   private stayFor(hub: HubFile, date: string): CalendarStay | undefined {
     return (hub.stays ?? []).find((stay) => stay.kind === "stay" && stay.checkIn <= date && date < stay.checkout);
@@ -167,7 +179,9 @@ export class StayCheckDesk {
       rules: file.rules,
       sightings: file.sightings,
       allow: file.allowances.find((entry) => entry.checkIn === stay.checkIn)?.allow ?? [],
-      ...(email && (email.guests !== undefined || email.infants !== undefined) ? { booking: { ...(email.guests !== undefined ? { guests: email.guests } : {}), ...(email.infants ? { infants: email.infants } : {}) } } : {}),
+      ...(email && (email.guests !== undefined || email.infants !== undefined || email.pets !== undefined)
+        ? { booking: { ...(email.guests !== undefined ? { guests: email.guests } : {}), ...(email.infants ? { infants: email.infants } : {}), ...(email.pets ? { pets: email.pets } : {}) } }
+        : {}),
       timeZone,
       window: this.window(hub, stay, email, date, file.checkTime ?? DEFAULT_CHECK_TIME, timeZone),
       events,

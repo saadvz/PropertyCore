@@ -13,7 +13,7 @@ const LANE = "+15555550151";
 const PATH = "/mcp";
 const SLOW = { timeout: 90_000 };
 const NOW = new Date("2026-11-17T15:00:00.000Z");
-const TOOLS = ["get_house_rules", "save_house_rules", "allow_for_stay"];
+const TOOLS = ["get_house_rules", "save_house_rules", "allow_for_stay", "mark_flag_false"];
 const RULES = [{ text: "No more than 6 guests", check: { kind: "people", max: 6 } }, { text: "No smoking" }];
 
 let open: MultiTenantApp | undefined;

@@ -36,6 +36,15 @@ describe("reading an Airbnb reservation email", () => {
     });
   });
 
+  it("reads pets on the booking, and leaves pets out when there are none", () => {
+    const email = sampleEmail("confirmed-stacked");
+    const withPet = { ...email, body: email.body.replace("2 adults, 1 child, 1 infant", "2 adults, 1 child, 1 infant, 1 pet") };
+    expect(parsed(withPet).guests).toEqual({ adults: 2, children: 1, infants: 1, total: 3, pets: 1 });
+    const twoPets = { ...email, body: email.body.replace("2 adults, 1 child, 1 infant", "4 guests, 2 pets") };
+    expect(parsed(twoPets).guests).toEqual({ adults: 4, children: 0, infants: 0, total: 4, pets: 2 });
+    expect(parsed(email).guests).not.toHaveProperty("pets");
+  });
+
   it("reads a change", () => {
     const change = parsed(sampleEmail("changed"));
     expect(change.kind).toBe("changed");

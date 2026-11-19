@@ -67,6 +67,21 @@ describe("checkNight", () => {
     expect(result.unchecked[0]?.why).toBeTypeOf("string");
   });
 
+  it("a stay booked with a pet leaves the pets rule unchecked", () => {
+    const rules = [{ text: "No pets", check: { kind: "pets" as const } }];
+    const result = night(rules, [camera("2026-11-21T02:00:00Z", { animals: 1 })], { booking: { guests: 2, pets: 1 } });
+    expect(result.status).toBe("clean");
+    if (result.status !== "clean") return;
+    expect(result.unchecked).toEqual([{ kind: "pets", why: "The stay was booked with a pet." }]);
+  });
+
+  it("camera events not yet counted are listed, never guessed", () => {
+    const result = night([BOOKED], [camera("2026-11-21T02:00:00Z", { people: 3 }), { ...camera("2026-11-21T02:10:00Z", {}), counts: undefined }], { booking: { guests: 6 } });
+    expect(result.status).toBe("clean");
+    if (result.status !== "clean") return;
+    expect(result.unchecked).toEqual([{ kind: "people", why: "1 camera event wasn't counted." }]);
+  });
+
   it("an animal on a no-pet stay", () => {
     const result = night([PETS], [camera("2026-11-21T02:00:00Z", { animals: 1 })]);
     expect(result.status === "flags" && result.flags[0]).toMatchObject({ kind: "pets", peak: 1 });

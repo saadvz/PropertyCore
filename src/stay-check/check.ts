@@ -12,6 +12,8 @@ export interface NightBooking {
   /** Adults plus children, as booked. */
   guests?: number;
   infants?: number;
+  /** Pets on the booking. A stay booked with one isn't held to the no-pet rule. */
+  pets?: number;
 }
 
 export interface NightInput {
@@ -81,6 +83,7 @@ function read(check: RuleCheck, input: NightInput, events: StayEvent[]): Read {
       return { sighted, allowed, basis };
     }
     case "pets":
+      if (count(input.booking?.pets) > 0) return { unchecked: "The stay was booked with a pet." };
       return { sighted: cameras.map((event) => ({ event, value: count(event.counts?.animals) })).filter((s) => s.value >= 1) };
     case "vehicles":
       return { sighted: cameras.map((event) => ({ event, value: count(event.counts?.vehicles) })).filter((s) => s.value > check.max), allowed: check.max };
@@ -122,6 +125,9 @@ export function checkNight(input: NightInput): NightResult {
       unchecked.push({ kind, why: result.unchecked });
       continue;
     }
+    // A camera event with no count yet is listed, never guessed. The counted ones are still checked.
+    const uncounted = kind === "quiet" ? 0 : events.filter((event) => event.source === "camera" && !event.counts).length;
+    if (uncounted) unchecked.push({ kind, why: `${uncounted} camera event${uncounted === 1 ? " wasn't" : "s weren't"} counted.` });
     if (!result.sighted.length || result.sighted.length < needed(input.sightings, kind)) continue;
     const peak = result.sighted.reduce((best, s) => (s.value > best.value ? s : best));
     const evidence = peak.event.clip ?? peak.event.snapshot;
