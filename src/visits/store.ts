@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CodeNames, CodePerson, StoredEvent, VisitEvent } from "./events";
@@ -12,6 +12,11 @@ import { codeKey } from "./events";
  */
 
 export const VISIT_EVENTS_DIR = "visit-events";
+
+/** A message event's id: a hash of the sender's own id, which can hold a phone number (an outbox id like "opt-in:+1..."). */
+export function messageEventId(direction: "in" | "out", sourceId: string): string {
+  return `${direction}:${createHash("sha256").update(sourceId).digest("hex").slice(0, 24)}`;
+}
 export const VISIT_CODES_FILE = "visit-codes.json";
 const SALT_FILE = "salt";
 const MAX_ID = 200;

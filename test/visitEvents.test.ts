@@ -67,14 +67,14 @@ describe("the visit log", () => {
   it("holds no digit run, no phone and no door code, and a door-code text has no body", () => {
     const { root, log: visits } = log();
     visits.append(
-      { type: "message", id: "m-1", at: "2027-01-04T16:00:00.000Z", direction: "in", role: "cleaner", personKey: visits.personKey("+15555550101"), visit: "cleaning:j1", label: "other", body: "here, code 4 8 2 1 works, call 555-555-0101" },
+      { type: "message", id: "m-1", at: "2027-01-04T16:00:00.000Z", direction: "in", role: "cleaner", personKey: visits.personKey("+15555550101"), visit: "cleaning:j1", label: "other", body: "here, code 6 3 5 9 works, call 555-555-0101" },
     );
-    visits.append({ type: "message", id: "m-2", at: "2027-01-04T16:01:00.000Z", direction: "out", role: "cleaner", visit: "cleaning:j1", label: "door-code", body: "The door code is 4821." });
+    visits.append({ type: "message", id: "m-2", at: "2027-01-04T16:01:00.000Z", direction: "out", role: "cleaner", visit: "cleaning:j1", label: "door-code", body: "The door code is 6359." });
     visits.append({ type: "message", id: "m-3", at: "2027-01-04T16:02:00.000Z", direction: "out", role: "host", label: "visit-note", body: "Code word is TULIP" }, (text) => text.replace(/TULIP/g, "[code]"));
-    visits.append(unlock("lk-1", "2027-01-04T16:03:00.000Z", "Code 4821"));
+    visits.append(unlock("lk-1", "2027-01-04T16:03:00.000Z", "Code 6359"));
     const text = allText(root);
-    expect(text).not.toContain("4821");
-    expect(text).not.toContain("4 8 2 1");
+    expect(text).not.toContain("6359");
+    expect(text).not.toContain("6 3 5 9");
     expect(text).not.toContain("555-555-0101");
     expect(text).not.toContain("+1555");
     expect(text).not.toContain("TULIP");

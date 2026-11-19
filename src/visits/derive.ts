@@ -1,6 +1,6 @@
 import { localDateOf } from "../core/timezone";
 import { zonedInstant } from "../hub/calendar";
-import { codePerson, type CodeNames, type LockEvent, type StoredEvent, type VisitEvent, type VisitKind, type VisitWho, type WindowEvent } from "./events";
+import { codePerson, type CodeNames, type LockEvent, type VisitEvent, type VisitKind, type VisitWho, type WindowEvent } from "./events";
 
 /**
  * Visit records (#237), derived from the raw log by a pure function. Records are never saved: the same lines always
@@ -156,7 +156,7 @@ function median(values: readonly number[]): number {
 }
 
 /** Every visit's record, and every stray entry, from the raw log. Pure. */
-export function buildVisits(events: readonly StoredEvent[] | readonly VisitEvent[], context: DeriveContext): Derived {
+export function buildVisits(events: readonly VisitEvent[], context: DeriveContext): Derived {
   const { timeZone, codeNames } = context;
   const now = context.now.getTime();
   const windows = liveWindows(events).sort((a, b) => ms(a.from) - ms(b.from) || a.visit.localeCompare(b.visit));
@@ -208,7 +208,7 @@ export function buildVisits(events: readonly StoredEvent[] | readonly VisitEvent
           (event.type === "message" && event.direction === "in" && event.visit === window.visit && event.role === window.who.role && event.label !== "done") ||
           (event.type === "visit-page" && event.visit === window.visit && event.step === "at-door"),
       );
-      if (words) arrival = { at: words.at, source: words.type === "visit-page" ? "visit-page" : words.role === "pro" ? "pro-text" : "cleaner-text", eventId: words.id };
+      if (words) arrival = { at: words.at, source: words.type === "visit-page" ? "visit-page" : words.type === "message" && words.role === "pro" ? "pro-text" : "cleaner-text", eventId: words.id };
     }
 
     let departure: Departure | undefined;
