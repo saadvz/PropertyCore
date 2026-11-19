@@ -1,6 +1,7 @@
 # Smart-lock connection
 
-Status: design agreed in chat with Saad on 2026-11-12. Waiting for review of this written spec.
+Status: design agreed in chat with Saad on 2026-11-12. Open questions answered by Saad on 2026-11-19
+(see "Decisions of 2026-11-19" at the end). Ready to build.
 Project 1 of 8 on the Property Core build map (https://claude.ai/artifact/3LNYxEX56qRtv1pdxHJvry).
 Follows `docs/superpowers/specs/2026-11-07-property-hub-door-access-design.md`, which left a slot for
 "a lock partner (#180)".
@@ -47,16 +48,20 @@ target. Nothing in this design is specific to them.
    disconnected, a code that failed to program, and an empty backup pool.
 7. A host with a connected lock can turn on "send the cleaner's code at checkout time" per property.
 8. Standing codes for the host and people the host names (a co-owner, a co-host), so their own
-   entries are recorded too.
+   entries are recorded too. Property Core makes each standing code; the host never makes one.
 9. In the same Seam setup, the host is asked whether they have a thermostat or noise sensor to
    connect, and those devices are stored with their health.
+10. A per-property choice of how codes go out: automatically, or only after the host's yes for each
+    one (section 9). The default is the host's yes.
+11. A pro still inside when their window is about to end gets more time, by the host's yes or
+    automatically, never past the next check-in buffer (section 3).
 
 ## Non-goals
 
 - Matching events to visits, time on site, and no-show or late flags. That's project 2, which reads
   the events this project stores.
-- Guest codes per booking. They go with guest messaging (project 7), since the code has to reach the
-  guest.
+- Guest codes per booking. They are #262, built right after this project's core as one access
+  package with it, on the same adapter and grants.
 - Using sensor readings (quiet hours, freezing). Projects 4 and 5.
 - Cameras, booking details and the hours log (projects 3 and 4).
 - Any lock not reached through Seam, and Durin hardware. The lock adapter (below) is where those plug
@@ -166,6 +171,14 @@ behind the service flag `SMART_LOCKS=1`:
    another connect link. Their devices are stored with their health. Nothing else uses them yet.
 6. If Cleaner Core is on: "Should the cleaner get their code at checkout time without you confirming
    the guests left?" Default no (see section 6).
+7. "Should codes go out on their own, or should I ask you before each one?" Default: ask (section 9).
+   The same step asks how a pro who runs late should get more time: ask the host, or extend
+   automatically (section 3).
+
+**Alerts routine required.** A property switches to connected locks only once the account has a
+working alerts routine that reaches the host's agent chat. Without one, the step says so and the
+property keeps the saved code. The worst case it guards is a code that fails with no backup while the
+host's note waits unread.
 
 After activation, changing the locks takes the host's yes, like every other change.
 
@@ -217,6 +230,23 @@ early ends.
 4. No backup is possible: if the host saved their own code, return it and tell the host; otherwise
    refuse with a new reason (`lock-failed`), and the flow sends the host its one note as it does for
    any refusal today.
+
+**One of several doors falls back (decided 2026-11-19).** Backup codes are per device, so when one
+door falls back the person gets codes named by door ("Front door: …, Side gate: …"), and the host is
+told. The visit doesn't fail, and it doesn't drop to the host's saved code, which would lose the
+record of who came in.
+
+**A pro's window and extensions (decided 2026-11-19).** A pro's code follows Fixer's current access
+window: 30 minutes before the visit to its end. Fifteen minutes before the window ends, if the pro
+hasn't tapped "done" on the visit page, the host's setting decides:
+
+- **Ask (default):** the host is asked whether to give more time.
+- **Automatic:** the window extends by 30 minutes, and the host is told.
+
+Either way, an extension never runs past the next check-in buffer, and each extension is a `move` of
+the code. Most locks can't see someone leave, so departure comes from the pro's "done". When the
+camera connection (#239) is live, a departure seen on camera counts too: no extension is offered once
+the camera shows the pro has left.
 
 A property not on connected locks gets the saved code, exactly as today.
 
@@ -271,6 +301,11 @@ When it's on:
   isn't Property Core's, so any unlock that isn't a Property Core grant or standing code counts.
 - If the lock is offline at checkout time, the release falls back to today's flow: the nudge and the
   host's yes.
+- **Resuming after a pause (decided 2026-11-19).** Resuming never sends a code on its own, since the
+  host likely paused because guests were still there. While the turnover is paused, the host gets a
+  reminder every 30 minutes asking whether the guests have left. On the host's yes, a new code is
+  made and sent. The reminder escalates when the next check-in is at risk (the builder picks the
+  threshold from the cleaning window).
 
 `docs/cleaner-core-safety-gates.md` changes its door-code gate to say this, with tests: off by
 default, only with connected locks, every other check intact, the hold revokes, and the offline
@@ -280,8 +315,20 @@ fallback.
 
 The host can give a named person a standing code on the property's locks: themselves, a co-owner,
 or a co-host. It has no end date, the host can remove it anytime, and its unlocks are stored like
-any other, named to that person. It's sent the same way the host saves a code today (the upload
-link), never in chat. Cleaners and pros never get standing codes: theirs are always per visit.
+any other, named to that person. Cleaners and pros never get standing codes: theirs are always per
+visit.
+
+**Property Core makes the code (decided 2026-11-19).** The host never makes or types a code.
+
+1. The host names the person and their phone in agent chat.
+2. Property Core texts that person once, asking them to reply YES to receive a door code from the
+   host. Nothing else is sent until they do.
+3. After YES, and once the code goes out under the property's setting (section 9), the person gets a
+   text with a link to a personal page, like Fixer's visit page. The code appears on that page only
+   after they open it. The text itself never holds the digits, and neither does the agent chat.
+4. The page link is single-use and expires. A new link needs the host's yes.
+
+This is a new way a code leaves the system, so it gets its own safety gate (below).
 
 ### 8. What the host and agent see
 
@@ -290,6 +337,24 @@ link), never in chat. Cleaners and pros never get standing codes: theirs are alw
 - The agent never sees a code. Tools return codes' status, never digits.
 - Guides: `CLEANER_CORE_BOOTSTRAP.md`, `FIXER_CORE_BOOTSTRAP.md` and the Muse skills add the lock
   step, the checkout-time question, and the alerts.
+
+### 9. How codes go out: automatically, or with the host's yes (decided 2026-11-19)
+
+A per-property setting, only on connected locks: **ask** (the default) or **automatic**. It covers
+each kind of code:
+
+| Code | Ask (default) | Automatic |
+| --- | --- | --- |
+| Cleaner | The host's "guests have left", as today | Sent at checkout time: `codeAtCheckout`, section 6 |
+| Pro | When the pro's window opens, the host gets "OK to send Ana her code for the 2:00 visit?" The pro's tap at the door shows the code only after that yes. | The pro's tap at the door inside the window shows the code, as Fixer does today |
+| Standing code | Naming the person in chat is the host's yes. The link goes after the person's YES. | Same |
+
+The host can set cleaners and pros apart (for example, cleaners on ask, pros automatic). Under ask,
+an unanswered pro release reminds the host when the visit starts, and the pro sees "waiting for the
+host" on the visit page rather than a refusal.
+
+Ask adds one host yes to each Fixer visit on a property with connected locks. A property without a
+connected lock is unchanged.
 
 ## Safety gates to add
 
@@ -305,13 +370,21 @@ tests on the fake adapter:
 - An event never crosses accounts.
 - `codeAtCheckout` is off by default, needs connected locks, keeps every other release check, and
   the hold revokes.
+- Resuming a paused turnover never sends a code without the host's yes.
+- The code-release setting defaults to ask. Under ask, no pro's code is shown before the host's yes.
+- A standing code reaches only the named person, after their YES, on a single-use page. The digits
+  never appear in a text, the agent chat, a tool result or a log.
+- A pro's window extension never runs past the next check-in buffer.
+- When one door falls back, the codes are named by door and the host is told.
+- A property can't switch to connected locks without a working alerts routine.
 
 ## Rollout
 
 1. Build and test on the fake adapter. CI stays green, with no network.
 2. Saad opens a Seam sandbox workspace. The builder runs the manual sandbox check: connect a sandbox
    Yale account, run a turnover and a Fixer visit, force a failed code, read the events.
-3. `SMART_LOCKS=1` on the service only after the gates are green and Saad okays it.
+3. `SMART_LOCKS=1` on the service only after the gates are green and Saad okays it. The paid rollout
+   and pricing wait for the second owner survey round (decided 2026-11-19). The build doesn't.
 4. Cory signs in to his Yale account on the connect page for Adélie. First real turnovers watched
    closely. The Chalet follows once its lock model is known.
 
@@ -325,12 +398,14 @@ tests on the fake adapter:
 
 ## Open, outside this project
 
-- Guest codes and how they reach guests: project 7.
+- Guest codes and how they reach guests: #262.
+- The lock partner's cost: does one Access Grant on two doors count as one provision, and does
+  moving a code's window (including a pro's extension) count as another?
 - Matching events to visits: project 2.
 - Seam's per-lock cost: who pays, Property Core or the host. Cory's stack doc lists $1 per lock per
   month plus credits as of 10 Nov 2026.
 
-## Questions from the builder review (not yet answered)
+## Questions from the builder review (all answered)
 
 A reviewer read this spec as its builder on 2026-11-12. Saad paused project 1 to finish the build map,
 so these wait for him. Most important first.
@@ -350,16 +425,41 @@ so these wait for him. Most important first.
    per-visit codes.** The saved code may use a key the server holds only in
    memory. Codes are issued and opened with no host request present (the cleaner's YES, webhooks, the
    checkout timer, leak checks). May grants always use the account's server key?
-4. **How a standing code reaches its person.** The host enters the digits and passes them on, or
+4. **Answered 2026-11-19: Property Core makes the code and shows it once to the named person, on a
+   single-use page after their YES (section 7).** **How a standing code reaches its person.** The host enters the digits and passes them on, or
    Property Core makes the code and shows it once to the named person (a new way a code leaves the
    system, with its own consent rules)?
-5. **The pro's code window.** Fixer's current access window (30 minutes before the visit to its end or
+5. **Answered 2026-11-19: Fixer's current window, with extensions by the host's yes or automatically,
+   never past the check-in buffer; each extension is a move (section 3).** **The pro's code window.** Fixer's current access window (30 minutes before the visit to its end or
    extension), or up to the check-in buffer? Does extending a visit count as a move?
-6. **One of several locks falls back.** Two codes named by door, one fallback code for the whole visit,
+6. **Answered 2026-11-19: codes named by door, and the host is told (section 3).** **One of several
+   locks falls back.** Two codes named by door, one fallback code for the whole visit,
    or the visit counts as failed?
-7. **Resuming after a pause under `codeAtCheckout`.** Does resuming make a new code and send it
+7. **Answered 2026-11-19: wait for the host's guests-left, with a reminder every 30 minutes while
+   paused (section 6).** **Resuming after a pause under `codeAtCheckout`.** Does resuming make a new code and send it
    automatically, or wait for the host's guests-left? The host likely paused because guests were
    still there.
-8. **Urgent lock alerts without an alerts routine.** On agents or properties with no alerts routine,
+8. **Answered 2026-11-19: a property switches to connected locks only with a working alerts routine
+   (section 2).** **Urgent lock alerts without an alerts routine.** On agents or properties with no alerts routine,
    notes wait until the host opens chat. Should connecting a lock require a working routine, or do
    urgent lock problems need another way to reach the host?
+
+## Decisions of 2026-11-19
+
+Saad answered the remaining questions on 2026-11-19:
+
+1. **We build the lock-partner connector here,** as the Seam implementation behind this project's
+   lock adapter. Nobody waits on the connector another team member planned; because every call goes
+   through the adapter, theirs could take its place later.
+2. **Keep building against the sandbox.** Only the paid rollout and pricing wait for the second owner
+   survey round.
+3. **Guest codes are their own issue (#262),** built right after this project's core as one access
+   package.
+4. **Standing codes are made by Property Core** and shown once to the named person (section 7).
+5. **How codes go out is the host's choice,** automatic or ask, defaulting to ask (section 9).
+6. **A pro's window can extend** by the host's yes or automatically, never past the check-in buffer.
+   Camera departures count once #239 is live (section 3).
+7. **One door falling back gives codes named by door** (section 3).
+8. **No automatic resend after a pause,** with reminders to the host every 30 minutes (section 6).
+9. **A working alerts routine is required** before a property switches to connected locks
+   (section 2).
