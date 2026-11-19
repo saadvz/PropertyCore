@@ -117,8 +117,15 @@ way `src/hosted/oversight.ts` does.
 
 `VISIT_RECORDS=1` (or `true`) on the service, `visitRecordsOn` in
 `src/cleaner-core/flag.ts`, documented in `docs/environment-variables.md`.
-With it off, the sink is the do-nothing one, no line is written, the clock pass
-does nothing new, and the hours log reads exactly what it reads today.
+With it off, Cleaner Core and Fixer Core write no line, the clock pass does
+nothing new, and the hours log reads exactly what it reads today.
+
+**Each writer checks its own flag; the store checks none** (Saad, 19 Nov).
+`VisitLog` has no flag. Message, window, cancel and visit-page lines are
+written under `VISIT_RECORDS`; lock, lock-connection and lock-status lines
+under #180's flag; camera, camera-count and camera-pin lines under #239's
+`CAMERAS`. So the nightly check, offline alerts and checkout-time release can
+read their events with `VISIT_RECORDS` off.
 
 ### Lock events at the boundary
 
@@ -169,7 +176,10 @@ again, so a resent webhook or a replay adds nothing.
 | `visit-cancelled` | Both, on a call-off or cancel | `visit` |
 | `visit-page` | Fixer Core's visit page | `visit`, `step` (`at-door`, `done`) |
 | `lock-connection` | #180's adapter, tests | `connected` (true or false): whether the property's lock is connected from then on |
-| `camera` | #239's camera adapter | `device`, `label` (the provider's word, like `person`), `counts` (`people`, `vehicles`, `animals`), `snapshot` and `clip` as references (`device`, `at` in epoch ms, `durationMs`), the same shape as the stay check's `MediaRef`. No media is copied. Visit records don't read it yet. |
+| `lock-status` | #180's adapter | `kind` (`code-set`, `code-failed`, `battery`, `offline`, `online`, `pool-low`), `device`, `codeName` (never digits), `battery` (percent) |
+| `camera` | #239's camera adapter | `kind` (`motion`, `ding`, `online`, `offline`), `deviceId` (the provider's opaque id, kept as given), `provider` (`ring`), `device` (the host's name for it), `label` (the provider's word, like `person`). `snapshot` and `clip` references are optional and #239 writes none: the provider's links expire, and media is fetched from `deviceId` and `at`. Visit records don't read it yet. |
+| `camera-count` | #239's counter, after the camera line | `event` (the camera event's id), `counter` (like `vision-v1`), `people`, `vehicles`, `animals`, `confidence` (`low` or absent). The camera line is never edited: a newer counter writes a new line, and the last one written for an event wins (`cameraCounts`). |
+| `camera-pin` | #239, when the host pins a clip | `event` (optional), `deviceId`, `from`, `until`, `file` (a relative path under `evidence/`, never with `..`) |
 
 - **What's never stored.** No door code and no digit run of 4 or more in any
   body (`redactDigitRuns` after the engine's own `redact`). A door-code text is

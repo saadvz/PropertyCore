@@ -2,7 +2,7 @@ import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { entryEventsFrom, type VisitEvent } from "../src/visits/events";
+import { cameraCounts, entryEventsFrom, type VisitEvent } from "../src/visits/events";
 import { resetVisitLogCache, VISIT_EVENTS_DIR, VisitLog } from "../src/visits/store";
 
 /** #237: the append-only visit log. Made-up property, 555 numbers and made-up codes only. */
@@ -92,34 +92,57 @@ describe("the visit log", () => {
     expect(a.personKey("+15555550101")).not.toBe(b.personKey("+15555550101"));
   });
 
-  it("keeps a camera event by reference, with its label and counts, for the camera adapter (#239)", () => {
+  it("keeps a camera event for the camera adapter (#239), with the provider's device id as given", () => {
     const { log: visits } = log();
-    expect(
-      visits.append({
-        type: "camera",
-        id: "cam-1",
-        at: "2027-01-04T16:00:00.000Z",
-        device: "Front porch",
-        label: "person",
-        counts: { people: 1, vehicles: -2 },
-        snapshot: { device: "Front porch", at: 1_799_078_400_000 },
-        clip: { device: "Front porch", at: 1_799_078_400_000, durationMs: 12_000 },
-      }),
-    ).toBe(true);
-    expect(visits.append({ type: "camera", id: "cam-1", at: "2027-01-04T16:00:00.000Z", device: "Front porch" })).toBe(false);
+    const camera = { type: "camera" as const, id: "ring-71920", at: "2027-01-04T16:00:00.000Z", kind: "motion" as const, deviceId: "589240117", provider: "ring" as const, device: "Front porch", label: "person" };
+    expect(visits.append(camera)).toBe(true);
+    expect(visits.append(camera)).toBe(false);
+    expect(visits.append({ ...camera, id: "x1", kind: "wave" as "motion" })).toBe(false);
+    expect(visits.append({ ...camera, id: "x2", provider: "nest" as "ring" })).toBe(false);
+    expect(visits.append({ ...camera, id: "x3", deviceId: "../etc" })).toBe(false);
+    expect(visits.append({ type: "camera", id: "ring-71921", at: "2027-01-04T17:00:00.000Z", kind: "offline", deviceId: "589240117", provider: "ring", device: "Front porch" })).toBe(true);
     expect(visits.read()).toEqual([
-      {
-        type: "camera",
-        id: "cam-1",
-        at: "2027-01-04T16:00:00.000Z",
-        device: "Front porch",
-        label: "person",
-        counts: { people: 1 },
-        snapshot: { device: "Front porch", at: 1_799_078_400_000 },
-        clip: { device: "Front porch", at: 1_799_078_400_000, durationMs: 12_000 },
-        loggedAt: "2027-01-04T15:00:00.000Z",
-      },
+      { ...camera, loggedAt: "2027-01-04T15:00:00.000Z" },
+      { type: "camera", id: "ring-71921", at: "2027-01-04T17:00:00.000Z", kind: "offline", deviceId: "589240117", provider: "ring", device: "Front porch", loggedAt: "2027-01-04T15:00:00.000Z" },
     ]);
+  });
+
+  it("keeps counts on their own lines, and the last one written for an event wins", () => {
+    const { log: visits } = log();
+    const count = (counter: string, people: number) => ({ type: "camera-count" as const, id: `count:ring-71920:${counter}`, at: "2027-01-04T16:00:00.000Z", event: "ring-71920", counter, people, vehicles: 0, animals: 0 });
+    expect(visits.append({ ...count("vision-v1", 1), confidence: "low" })).toBe(true);
+    expect(visits.append(count("vision-v2", 2))).toBe(true);
+    expect(visits.append({ ...count("vision-v3", 1), people: -1 })).toBe(false);
+    expect(visits.append({ ...count("Vision V3", 1), id: "count:x" })).toBe(false);
+    expect(cameraCounts(visits.read()).get("ring-71920")).toMatchObject({ counter: "vision-v2", people: 2 });
+  });
+
+  it("keeps a pinned clip's span and its file under evidence, never a path outside it", () => {
+    const { log: visits } = log();
+    const pin = { type: "camera-pin" as const, id: "pin-1", at: "2027-01-04T18:00:00.000Z", event: "ring-71920", deviceId: "589240117", from: "2027-01-04T16:00:00.000Z", until: "2027-01-04T16:01:00.000Z", file: "camera/2027-01-04-front-porch.mp4" };
+    expect(visits.append(pin)).toBe(true);
+    for (const file of ["/etc/passwd", "../outside.mp4", "camera/../../x.mp4", "camera//x.mp4", "a\\b.mp4"]) expect(visits.append({ ...pin, id: `pin-${file}`, file })).toBe(false);
+    expect(visits.append({ ...pin, id: "pin-back", until: "2027-01-04T15:00:00.000Z" })).toBe(false);
+    expect(visits.read()).toEqual([{ ...pin, loggedAt: "2027-01-04T15:00:00.000Z" }]);
+  });
+
+  it("keeps a lock's status for the lock connection (#180), with no code digits", () => {
+    const { log: visits } = log();
+    expect(visits.append({ type: "lock-status", id: "st-1", at: "2027-01-04T16:00:00.000Z", kind: "battery", device: "Front door", battery: 18 })).toBe(true);
+    expect(visits.append({ type: "lock-status", id: "st-2", at: "2027-01-04T16:05:00.000Z", kind: "code-failed", device: "Front door", codeName: "Cleaning 6359" })).toBe(true);
+    expect(visits.append({ type: "lock-status", id: "st-3", at: "2027-01-04T16:06:00.000Z", kind: "jammed" as "battery", device: "Front door" })).toBe(false);
+    expect(visits.append({ type: "lock-status", id: "st-4", at: "2027-01-04T16:07:00.000Z", kind: "battery", device: "Front door", battery: 140 })).toBe(false);
+    expect(visits.read().map((event) => (event.type === "lock-status" ? [event.kind, event.codeName ?? event.battery] : []))).toEqual([
+      ["battery", 18],
+      ["code-failed", "Cleaning [redacted]"],
+    ]);
+  });
+
+  it("is written whatever flag is on: each writer checks its own", () => {
+    // The store has no flag of its own. Cleaner Core and Fixer Core check VISIT_RECORDS before they write; the lock
+    // adapter checks #180's flag, and the camera adapter CAMERAS.
+    const { log: visits } = log();
+    expect(visits.append(unlock("lk-1", "2027-01-04T16:00:00.000Z"))).toBe(true);
   });
 
   it("refuses an event it can't check, and writes nothing", () => {
