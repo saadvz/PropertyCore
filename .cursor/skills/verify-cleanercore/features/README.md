@@ -107,3 +107,4 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [STOP, HELP, and injury under step G](./g-stop-help-injury.md) covers the step F safety replies again. `prove-step-g.sh`.
 - [Group thread for the host and the cleaner](./group-chat.md) covers opt-in, the group door code, the private fallback, STOP, resume, a group time, injury, and a hold. `prove-group-chat.sh`.
 - [Supplies](./supplies.md) covers the DONE supplies question, the cleaner's answer, report_low, a go cart, and a made-up order. `prove-supplies.ts`.
+- [Visit records](./visit-records.md) covers the visit log behind `VISIT_RECORDS`, the late cleaner text, the at-risk host note, a measured visit from fake lock events, and no new text without a lock. `prove-visits.ts`.

@@ -125,6 +125,12 @@ Supply Core is one desk drive: a cleaning property with Supply Core on and one m
 npx tsx .cursor/skills/verify-cleanercore/scripts/prove-supplies.ts .cursor/skills/verify-cleanercore/evidence/supplies/supplies.json
 ```
 
+Visit records (#237) are one drive: the live desk with `VISIT_RECORDS` on and off, then Scratch Lane's same-day turnover through the engine with fake lock events: a late cleaner, a cleaner who came in with their code, and a property with no lock. It exits non-zero unless the late cleaner gets exactly one text and the host one at-risk note, a restart sends nothing new, the measured visit comes from the lock, nothing new goes without a lock, every recipient is a Scratch number, and the door code and phone numbers appear nowhere in the log or evidence; see [features/visit-records.md](features/visit-records.md):
+
+```
+npx tsx .cursor/skills/verify-cleanercore/scripts/prove-visits.ts .cursor/skills/verify-cleanercore/evidence/visits/visits.json
+```
+
 ## Evidence
 
 Write one directory per turnover or safety run:

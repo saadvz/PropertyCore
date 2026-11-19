@@ -51,6 +51,8 @@ const HOST_KIND_RULE = {
   "host-message": "blocked",
   checklist: "blocked",
   "supply-ask": "blocked",
+  "late-ask": "blocked",
+  "visit-note": "blocked",
   intro: "blocked",
 } as const satisfies Record<TextKind, "safety" | "blocked">;
 
@@ -83,6 +85,8 @@ function hostRule(kind: TextKind): "safety" | "blocked" {
     case "host-message":
     case "checklist":
     case "supply-ask":
+    case "late-ask":
+    case "visit-note":
     case "intro":
       return "blocked";
     default: {
