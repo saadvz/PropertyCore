@@ -28,7 +28,7 @@ import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type
 import { holdsOtherRole, priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
 import { BLOCK_ON_CALENDAR_NEXT, blockCalendarNext, blockCollisionNews, blockOpenNews, BLOCK_HOST_ACCESS, CREW_HOST_ACCESS, crewScheduleQuestion, crewScheduleSentence, crewSpanRefusal, guestWithdrewNews, removeRepairBlockQuestion, repairBlockQuestion, URGENT_AGREED, URGENT_ASK_GUEST, urgentRefusal, urgentStayChangedNews } from "./texts";
-import { bookingQuestion, firstName, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, shortDollars, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
+import { codeOkNews, codeOkQuestion, codeOkReminder, extendAskNews, extendedNews, noExtendNews, bookingQuestion, firstName, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, shortDollars, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { insideWindow, latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { doorFor, repairBlockProblem, repairBlockStatus, staysForCrew } from "./repairBlock";
 import { crewScheduleProblem, crewWindows, type CrewSchedule } from "./crewDays";
@@ -74,7 +74,7 @@ export interface FixerDeps {
 }
 
 /** Why the visit page (or the tick) got no code. */
-export type RevealRefusal = AccessRefusal | DoorRefusal | "no-job" | "off" | "damaged";
+export type RevealRefusal = AccessRefusal | DoorRefusal | "no-job" | "off" | "damaged" | "waiting-for-host";
 
 /** The visit page's answer. Never passed to a tool reply, a log line or a file. */
 export type RevealResult = { ok: true; code: string; lockLocation?: string; doors?: { door: string; code: string }[] } | { ok: false; reason: RevealRefusal };
@@ -132,6 +132,7 @@ export const GOOGLE_EVENTS_NEEDED = "Google Calendar is saved for this property:
 const PAST_SPAN = "That time has already started, so it can't be booked. Ask the pro for a time still to come.";
 const FOLLOW_UP_MS = 24 * 60 * 60_000;
 const HOUR_MS = 60 * 60_000;
+const MINUTE_MS = 60_000;
 /** Told notes with no job are kept this long. */
 const NEWS_KEPT_MS = 30 * 24 * HOUR_MS;
 const COST_BYS = ["pro", "agent", "host"] as const;
@@ -407,6 +408,91 @@ export class FixerDesk {
 
   /** The last lock sync: what Fixer wanted, and when. Only in memory. */
   private lockSync: { signature: string; at: number } | undefined;
+
+  /** The property's connected-lock settings, or undefined when it isn't on connected locks. */
+  private lockSettings(): { pros: "ask" | "automatic"; extend: "ask" | "automatic" } | undefined {
+    try {
+      const door = this.door();
+      if (!door.connected()) return undefined;
+      const locks = door.locks();
+      return { pros: locks.release.pros, extend: locks.extend };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** True when this visit's code waits for the host's OK: connected locks, pros' codes on ask, no OK yet. */
+  private codeWaits(job: Job): boolean {
+    return this.lockSettings()?.pros === "ask" && !job.booking?.codeYes;
+  }
+
+  /**
+   * On connected locks, each clock pass: under ask, the host's OK is asked for when the pro's window
+   * opens, and they're reminded once when the visit starts. Fifteen minutes before the pro's code
+   * stops, if they haven't said done, the host is asked for more time or (automatic) the visit gets
+   * 30 more minutes, never into the next check-in or the time kept free before it. Each extension
+   * moves the pro's code by the lock sync. An urgent visit is never extended on its own.
+   */
+  private lockPass(file: FixerFile, job: Job, notes: HostNote[]): void {
+    const settings = this.lockSettings();
+    const booking = job.booking;
+    if (!settings || !booking?.hostYes || booking.access !== "code" || job.crew || job.done) return;
+    const now = this.deps.now().getTime();
+    const zone = this.timeZone();
+    const proName = this.bookedName(file, job);
+    const lead = booking.urgentStay ? 0 : 30 * MINUTE_MS;
+    if (settings.pros === "ask" && !booking.codeYes) {
+      if (now >= Date.parse(booking.from) - lead && !booking.codeAskedAt) {
+        booking.codeAskedAt = new Date(now).toISOString();
+        notes.push(this.news(job, "code-ok", codeOkNews({ proName, from: booking.from, timeZone: zone }), `fixer:${job.id}:${visitTag(booking)}:code-ok`));
+      }
+      if (now >= Date.parse(booking.from) && !booking.codeRemindedAt) {
+        booking.codeRemindedAt = new Date(now).toISOString();
+        notes.push(this.fileNews(file, { kind: "code-ok-reminder", jobId: job.id, text: codeOkReminder({ proName }), urgent: true }, `fixer:${job.id}:${visitTag(booking)}:code-ok-reminder`));
+      }
+    }
+    const end = this.endOf(booking);
+    if (now < end - 15 * MINUTE_MS || now >= end) return;
+    const endIso = new Date(end).toISOString();
+    if (booking.extendNoted?.includes(endIso)) return;
+    (booking.extendNoted ??= []).push(endIso);
+    if (settings.extend === "ask" || booking.urgentStay) {
+      notes.push(this.news(job, "extend-ask", extendAskNews({ proName, until: endIso, timeZone: zone }), `fixer:${job.id}:extend-ask:${endIso}`));
+      return;
+    }
+    const until = new Date(end + 30 * MINUTE_MS).toISOString();
+    const stays = this.crewStays(file).filter((stay) => stayKey(stay) !== booking.urgentStay);
+    if (overlapsStay({ from: booking.from, until }, stays, this.occupyInput(file))) {
+      notes.push(this.news(job, "extend-blocked", noExtendNews({ proName, until: endIso, timeZone: zone }), `fixer:${job.id}:extend-blocked:${endIso}`));
+      return;
+    }
+    // An automatic extension keeps the visit link: the pro is still inside and taps done on it.
+    booking.extendedUntil = until;
+    notes.push(this.news(job, "extended", extendedNews({ proName, until, timeZone: zone }), `fixer:${job.id}:extended:${until}`));
+  }
+
+  /**
+   * The host's OK to give the pro their code for this visit, on connected locks with pros' codes on
+   * ask. Two calls: the question and a code, then the code after the host's yes. The code then shows
+   * at the pro's "I'm at the door", or goes by text on the next clock pass. Never returns a code.
+   */
+  approveCode(input: { jobId?: string; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      const booking = job?.booking;
+      if (!job || !booking?.hostYes || !liveBooking(job)) return fail("Only a booked visit's code can be okayed.");
+      if (!this.codeWaits(job)) return ok({ jobId: job.id, waiting: false, next: "This visit's code doesn't wait for the host's OK." });
+      const proName = this.bookedName(file, job);
+      const gate = this.confirm("fixer-code-ok", job.id, tokenHash(JSON.stringify([booking.fingerprint, "code-ok"])), input.confirmation, codeOkQuestion({ proName, from: booking.from, timeZone: this.timeZone() }));
+      if (gate !== "go") return gate;
+      booking.codeYes = { at: this.deps.now().toISOString() };
+      this.write(file);
+      return ok({ jobId: job.id, okayed: true, next: `${proName} gets their code at the door on the visit page, or by text if they text on the line.` });
+    });
+  }
 
   /**
    * On connected locks, the codes Fixer wants now: the booked pro's own, for each live visit with the
@@ -2287,6 +2373,8 @@ export class FixerDesk {
       if (!file.settings.activatedAt || file.offAt) return { ok: false, reason: "off" };
       const check = await this.accessFor(file, job);
       if (!check.ok) return check;
+      // On connected locks with pros' codes on ask, the page shows "waiting for the host" until their OK.
+      if (this.codeWaits(job)) return { ok: false, reason: "waiting-for-host" };
       const notes: HostNote[] = [];
       const opened = await this.openCode(file, job, check.window, notes);
       if (opened.ok) {
@@ -2358,6 +2446,7 @@ export class FixerDesk {
     }
     const check = await this.accessFor(file, job);
     if (!check.ok) return;
+    if (this.codeWaits(job)) return;
     job.codeTextAt = at;
     this.write(file);
     const opened = await this.openCode(file, job, check.window, notes);
@@ -2430,6 +2519,7 @@ export class FixerDesk {
         const booking = job.booking;
         if (!booking?.hostYes || !liveBooking(job)) continue;
         if (job.state === "booked" && now >= Date.parse(booking.from)) job.state = "in-progress";
+        if (!file.offAt) this.lockPass(file, job, notes);
         if (!file.offAt) await this.codeTextPass(file, job, notes);
         this.delayPass(file, job, notes);
       }

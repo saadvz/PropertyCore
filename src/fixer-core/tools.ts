@@ -250,6 +250,12 @@ export const FIXER_TOOLS: FixerTool[] = [
     input: z.object({ jobId: Id, until: Instant, confirmation: Confirmation }).strict(),
   },
   {
+    name: "approve_code",
+    title: "OK a pro's door code",
+    description: `On a property where each pro's code waits for the host, the host's OK to give the booked pro their code for this visit. The code itself is never returned. ${TWO_CALL}`,
+    input: z.object({ jobId: Id, confirmation: Confirmation }).strict(),
+  },
+  {
     name: "guests_left",
     title: "The guests have left",
     description: "The host says today's guests have left, so a repair visit today can go ahead. Ask the host first, then call with confirmed: true.",
@@ -397,6 +403,8 @@ export async function handleFixerTool(desk: FixerDesk, name: string, args: unkno
       return desk.revokeVisit(input);
     case "extend_visit":
       return desk.extendVisit(input);
+    case "approve_code":
+      return desk.approveCode(input);
     case "guests_left":
       return desk.guestsLeft(input);
     case "record_done":
