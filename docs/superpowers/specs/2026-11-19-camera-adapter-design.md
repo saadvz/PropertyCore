@@ -238,31 +238,44 @@ registration; the interface is the same for both.
 
 ### Camera lines in #237's log
 
-A `camera` line in `visit-events/YYYY-MM.jsonl`, through #237's store:
+Written with `new VisitLog(propertyRoot, now).append(event)` from #237's
+`src/visits/store.ts` (branch `claude/visit-records-237`): monthly
+`visit-events/YYYY-MM.jsonl`, mode 0600, `loggedAt` added, a known id never
+written twice, names and labels through the digit-run redaction. #237's
+`CameraEvent` type is the line; the fields below are asked of #237 (sent 19
+Nov) and marked *asked*:
 
 ```ts
-{ type: "camera", id, at, loggedAt, device, deviceName, kind, label?, provider: "ring" }
+{ type: "camera", id, at, device /* the host's name */, label?,
+  kind /* asked: "motion" | "ding" | "online" | "offline" */,
+  deviceId /* asked: the provider's id */, provider /* asked: "ring" */ }
 ```
 
 - `id` is the provider's id; a resent webhook or a history fill adds
   nothing.
-- `deviceName` is the host's name for the camera, so the timeline reads
-  plainly.
 - No image, no clip, no link (signed links expire and are credentials).
-- A `camera-count` line holds our count for one event:
+  #237's optional `snapshot` and `clip` are never written by the adapter;
+  they follow from `deviceId` and `at`.
+- *Asked:* counts in their own `camera-count` line, not on the camera line,
+  so a recount never edits a stored line:
 
 ```ts
-{ type: "camera-count", id: "count:<eventId>:<counter>", event: eventId, at, loggedAt,
+{ type: "camera-count", id: "count:<eventId>:<counter>", event: eventId, at,
   counter: "vision-v1", people, vehicles, animals, confidence?: "low" }
 ```
 
   A recount with a new counter version is a new line. The newest counter's
   line wins when reading.
+- *Asked:* a `camera-pin` line when the host pins a clip:
+  `{ type: "camera-pin", id, at, event?, deviceId, from, until, file }`.
 
-If #237 hasn't landed when this is built, `src/cameras/` writes through a
-small `EventLog` interface with #237's line rules (append, dedupe by id,
-mode 0600, monthly files), and #237's store takes its place without changes
-here.
+**Which flag writes.** #237 writes its log only while `VISIT_RECORDS` is on.
+Camera lines need to be written whenever `CAMERAS` is on. Proposed: the store
+isn't gated; each writer checks its own flag (camera lines `CAMERAS`, lock
+lines #180's, message and window lines `VISIT_RECORDS`). For Saad.
+
+Until #237 is merged, `src/cameras/` writes through a one-method `EventLog`
+interface that `VisitLog` satisfies, so the build isn't blocked on the merge.
 
 ### Webhook route
 
@@ -441,6 +454,9 @@ Made-up data only: 555 numbers, made-up codes, made-up device ids.
 3. **Numbers.** 60 counted events a night, 30-minute offline wait, clip
    from 30 seconds before to 60 after.
 4. **Flag name.** Proposed `CAMERAS`.
+5. **Which flag writes the shared log.** Proposed: camera lines are written
+   whenever `CAMERAS` is on, even with `VISIT_RECORDS` off; each writer is
+   gated by its own flag, not the store.
 
 ## Left to the builder
 
