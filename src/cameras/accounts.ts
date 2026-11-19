@@ -94,6 +94,8 @@ export interface CamerasFile {
   consentAt?: string;
   connectedAt?: string;
   cameras: PickedCamera[];
+  /** Ids of camera notes already given to the host, newest last. */
+  told?: string[];
 }
 
 export const CAMERAS_FILE = "cameras.json";
