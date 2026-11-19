@@ -84,3 +84,17 @@ describe("the vision counter", () => {
     await expect(bad.count(new Uint8Array([1]), {})).rejects.toThrow();
   });
 });
+
+describe("overlapping passes", () => {
+  it("runs one pass at a time, so overlapping calls never fetch or count an event twice", async () => {
+    const provider = fakeCameraProvider();
+    const log = memoryLog();
+    let calls = 0;
+    const counter = { name: "slow-v1", async count() { calls += 1; await new Promise((resolve) => setTimeout(resolve, 5)); return { people: 1, vehicles: 0, animals: 0 }; } };
+    const counting = new CameraCounting({ provider, account: { tokens }, counter, log, inStay: () => true, nightOf: (at) => at.slice(0, 10) });
+    for (let i = 0; i < 3; i++) log.append(line(`e${i}`, `2026-11-20T03:0${i}:00.000Z`, "human"));
+    await Promise.all([counting.run(), counting.run(), counting.run(), counting.run()]);
+    expect(calls).toBe(3);
+    expect(provider.calls.filter((call) => call.call === "snapshot")).toHaveLength(3);
+  });
+});

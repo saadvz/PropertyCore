@@ -150,3 +150,27 @@ describe("Ring media and status", () => {
     expect(url.toString()).not.toContain("secret-y");
   });
 });
+
+describe("Ring token refresh under load", () => {
+  it("two calls with an expired token share one refresh", async () => {
+    const tokens = store({ access: "old", refresh: "rt-shared", expiresAt: NOW - 1 });
+    let refreshes = 0;
+    const { fetch } = stubFetch((call) => {
+      if (call.url.includes("oauth")) {
+        refreshes += 1;
+        return refreshes === 1 ? json({ access_token: "at-new", refresh_token: "rt-next", expires_in: 14400 }) : json({ error: "invalid_grant" }, 400);
+      }
+      return json({ data: [] });
+    });
+    const ring = make(fetch);
+    await Promise.all([ring.devices({ tokens }), ring.devices({ tokens })]);
+    expect(refreshes).toBe(1);
+  });
+
+  it("never sends the token to a host other than Ring's API, even when a next-page link points elsewhere", async () => {
+    const tokens = store({ access: "at", refresh: "rt", expiresAt: NOW + 3600_000 });
+    const { calls, fetch } = stubFetch(() => json({ data: [{ type: "history-events", id: "h", attributes: { event_type: "motion", start: NOW, end: 0 } }], links: { next: "https://evil.example/steal" } }));
+    await make(fetch).history({ tokens }, "dev-aaa", "2026-11-19T00:00:00Z");
+    expect(calls.every((call) => call.url.startsWith("https://api.amazonvision.com/"))).toBe(true);
+  });
+});

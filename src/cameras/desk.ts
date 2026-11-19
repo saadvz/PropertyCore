@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { zonedParts } from "../core/timezone";
@@ -175,8 +176,8 @@ export class CameraDesk {
     } catch (error) {
       return fail(error instanceof CameraProviderError ? error.message : "The clip couldn't be fetched.");
     }
-    const safe = event.id.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80);
-    const file = `evidence/clip-${safe}.mp4`;
+    // Named from a hash of the event id, so two events never share a file and nothing pinned is written over.
+    const file = `evidence/clip-${createHash("sha256").update(event.id).digest("hex").slice(0, 32)}.mp4`;
     mkdirSync(join(this.root, "evidence"), { recursive: true });
     writeFileSync(join(this.root, file), clip, { mode: 0o600 });
     try {

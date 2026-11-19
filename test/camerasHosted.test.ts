@@ -150,5 +150,11 @@ describe("cameras on the shared service", () => {
     const listed = await m.toolAt(PATH, token, "list_cameras", { property: property.id });
     expect(listed.structured?.notes).toEqual([{ id: "camera-offline:off-1", text: "The Front door camera at 12 Scratch Lane has been offline since 2:10 PM." }]);
     expect((await m.toolAt(PATH, token, "list_cameras", { property: property.id })).structured?.notes).toBeUndefined();
+    const on = provider.webhook({ id: "on-1", at: "2026-11-21T20:30:00.000Z", deviceId: "dev-aaa", kind: "online" });
+    await m.app.http("/webhooks/ring", { method: "POST", headers: on.headers, body: on.body.toString() });
+    clock.now = new Date("2026-11-21T20:31:00.000Z");
+    await tickAllCameras(m.hosted());
+    await tickAllCameras(m.hosted());
+    expect((await m.toolAt(PATH, token, "list_cameras", { property: property.id })).structured?.notes).toEqual([{ id: "camera-online:on-1", text: "The Front door camera at 12 Scratch Lane is back online." }]);
   });
 });

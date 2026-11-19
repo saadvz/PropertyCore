@@ -29,6 +29,13 @@ const MAX_HISTORY_PAGES = 20;
 const KINDS: Record<string, CameraKind> = { motion_detected: "motion", button_press: "ding", device_online: "online", device_offline: "offline" };
 const HISTORY_KINDS: Record<string, CameraKind> = { motion: "motion", ding: "ding" };
 
+/**
+ * Refreshes in flight, by the refresh token they spend. Ring retires a refresh token once it's used, so two calls
+ * holding the same expired token share one refresh instead of the second being refused. Module-wide, since the service
+ * builds a provider per call.
+ */
+const refreshing = new Map<string, Promise<Tokens>>();
+
 type Json = Record<string, unknown>;
 const obj = (value: unknown): Json => (value && typeof value === "object" && !Array.isArray(value) ? (value as Json) : {});
 const str = (value: unknown): string | undefined => (typeof value === "string" && value ? value : undefined);
@@ -65,16 +72,27 @@ export function ringProvider(options: RingOptions): CameraProvider {
     const tokens = account.tokens.get();
     if (!tokens) throw new CameraProviderError("Ring isn't connected for this property.", "unlinked");
     if (tokens.expiresAt - EARLY_MS > now().getTime()) return tokens.access;
-    const next = await tokenCall({ grant_type: "refresh_token", refresh_token: tokens.refresh });
-    account.tokens.save(next);
-    return next.access;
+    let pending = refreshing.get(tokens.refresh);
+    if (!pending) {
+      pending = tokenCall({ grant_type: "refresh_token", refresh_token: tokens.refresh }).then((next) => {
+        account.tokens.save(next);
+        return next;
+      });
+      const spent = tokens.refresh;
+      refreshing.set(spent, pending);
+      void pending.finally(() => refreshing.delete(spent)).catch(() => undefined);
+    }
+    return (await pending).access;
   }
 
   async function call(account: AccountRef, path: string, init: { method?: string; body?: unknown } = {}): Promise<Response> {
+    // The token goes only to Ring's API host: a next-page link from a response is followed only on that host.
+    const url = new URL(path, api);
+    if (url.origin !== new URL(api).origin) throw new CameraProviderError("Ring gave a link to another site, so it wasn't followed.", "failed");
     const token = await access(account);
     let response: Response;
     try {
-      response = await fetch(path.startsWith("http") ? path : `${api}${path}`, {
+      response = await fetch(url.toString(), {
         method: init.method ?? "GET",
         headers: { authorization: `Bearer ${token}`, accept: "application/vnd.api+json, application/json", ...(init.body !== undefined ? { "content-type": "application/json" } : {}) },
         ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
@@ -168,7 +186,9 @@ export function ringProvider(options: RingOptions): CameraProvider {
           if (kind && id) events.push({ id, at: new Date(start).toISOString(), deviceId, kind });
         }
         // Newest first: once a page reaches back past `since`, nothing older is needed.
-        path = older ? undefined : str(obj(body.links).next);
+        const next = str(obj(body.links).next);
+        // A next page on any other host is not followed: the token goes only to Ring's API.
+        path = older || !next || new URL(next, api).origin !== new URL(api).origin ? undefined : next;
       }
       return events;
     },

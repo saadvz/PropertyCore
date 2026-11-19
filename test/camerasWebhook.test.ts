@@ -48,3 +48,13 @@ describe("ingesting a webhook", () => {
     expect(ingestWebhook({ provider, places, logFor, rawBody: delivery.body, headers: delivery.headers })).toEqual({ status: 200, unlinked: "acct-1" });
   });
 });
+
+describe("an unsigned delivery", () => {
+  it("is refused before any property's cameras are read", () => {
+    const { provider, logFor } = setup();
+    let reads = 0;
+    const delivery = provider.webhook(event);
+    expect(ingestWebhook({ provider, places: () => (reads++, places), logFor, rawBody: delivery.body, headers: {} })).toEqual({ status: 401 });
+    expect(reads).toBe(0);
+  });
+});

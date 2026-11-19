@@ -50,7 +50,16 @@ export class CameraCounting {
     return lines.filter(isCameraEvent).filter((line) => countable(line) && !counted.has(line.id) && (this.tries.get(line.id) ?? 0) < TRIES && this.deps.inStay(line.at));
   }
 
-  async run(): Promise<CountingRun> {
+  private chain: Promise<unknown> = Promise.resolve();
+
+  /** One pass at a time: an overlapping call waits for the one before, then reads the log afresh, so no event is fetched or counted twice. */
+  run(): Promise<CountingRun> {
+    const next = this.chain.then(() => this.pass());
+    this.chain = next.catch(() => undefined);
+    return next;
+  }
+
+  private async pass(): Promise<CountingRun> {
     const lines = this.deps.log.read();
     const cap = this.deps.cap ?? NIGHT_CAP;
     const used = new Map<string, number>();

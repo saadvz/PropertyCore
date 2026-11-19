@@ -11,7 +11,8 @@ import type { CameraEventLine, EventLog } from "./lines";
 
 export interface IngestInput {
   provider: CameraProvider;
-  places: readonly CameraPlace[];
+  /** Read only after the signature checks, so an unsigned request costs nothing. */
+  places: readonly CameraPlace[] | (() => readonly CameraPlace[]);
   logFor(tenantId: string, propertyId: string): EventLog;
   rawBody: Buffer;
   headers: Record<string, string | string[] | undefined>;
@@ -26,7 +27,7 @@ export function ingestWebhook(input: IngestInput): IngestResult {
   if (!parsed) return { status: 401 };
   if (parsed.type === "unlinked") return { status: 200, unlinked: parsed.accountId };
   if (parsed.type === "ignored") return { status: 200 };
-  const route = routeDevice(input.places, parsed.event.deviceId);
+  const route = routeDevice(typeof input.places === "function" ? input.places() : input.places, parsed.event.deviceId);
   if (!route) return { status: 200 };
   const line: CameraEventLine = {
     type: "camera",

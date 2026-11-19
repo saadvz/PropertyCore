@@ -185,7 +185,7 @@ export async function handleCameraRoutes(h: HostedCleaner, r: HostedRequest): Pr
   if (path === CAMERA_WEBHOOK_PATH) {
     if (r.method !== "POST") return (r.send(405, "text/plain", "Method not allowed"), true);
     const rawBody = await r.readRaw();
-    const result = ingestWebhook({ provider, places: places(h), logFor: (tenantId, propertyId) => logOf(h, tenantId, propertyId), rawBody, headers: r.req.headers });
+    const result = ingestWebhook({ provider, places: () => places(h), logFor: (tenantId, propertyId) => logOf(h, tenantId, propertyId), rawBody, headers: r.req.headers });
     r.send(result.status, "text/plain", result.status === 200 ? "ok" : "Unauthorized");
     if (result.status === 200 && result.stored) void afterStored(h, result.stored).catch(() => h.log("A camera event was stored but its follow-up didn't run."));
     if (result.status === 200 && result.unlinked) h.log("A Ring account removed Property Core.");
@@ -284,7 +284,8 @@ export async function tickAllCameras(h: HostedCleaner): Promise<void> {
         if (!notes.length) continue;
         const waiting = [];
         for (const note of notes) {
-          const delivered = found.property.flows.cleaning.on ? await cleaningNote(h, found.tenant, found.property, note.id, note.text) : false;
+          // A note already marked told is kept for list_cameras whenever it couldn't be handed over, even on a throw.
+          const delivered = found.property.flows.cleaning.on ? await cleaningNote(h, found.tenant, found.property, note.id, note.text).catch(() => false) : false;
           if (!delivered) waiting.push(note);
         }
         desk.queueNotes(waiting);

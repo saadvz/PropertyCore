@@ -47,3 +47,32 @@ describe("a camera package sighting", () => {
     expect(desk(root).cameraSighting({ at: "2026-11-18T19:10:00.000Z" }).structured).toMatchObject({ matched: null });
   });
 });
+
+describe("repeat sightings of one drop", () => {
+  it("a second and third camera event for the same drop keep nothing and ask the host nothing", () => {
+    const { root } = propertyFolder();
+    writeOrders(root, [order("ord_a", { expectedBy: "2026-11-18" })]);
+    desk(root).cameraSighting({ at: "2026-11-18T19:10:00.000Z" });
+    expect(desk(root).cameraSighting({ at: "2026-11-18T19:10:40.000Z" }).structured).toMatchObject({ matched: "ord_a", repeat: true });
+    expect(readPackages(root).cameraSightings).toBeUndefined();
+    expect(desk(root).check().structured?.cameraSightings).toBeUndefined();
+  });
+
+  it("a camera sighting replaces the carrier's when it's the day's only delivery", () => {
+    const { root } = propertyFolder();
+    writeOrders(root, [order("ord_a", { expectedBy: "2026-11-18", deliveredAt: "2026-11-18T18:00:00.000Z" })]);
+    expect(desk(root).cameraSighting({ at: "2026-11-18T19:10:00.000Z" }).structured).toMatchObject({ matched: "ord_a" });
+    expect(readPackages(root).arrivals[supplyKey("ord_a")]?.seen).toEqual({ at: "2026-11-18T19:10:00.000Z", how: "camera" });
+  });
+});
+
+describe("repeats with two deliveries expected", () => {
+  it("an event within 10 minutes of a camera-seen drop is the same drop, not the other package", () => {
+    const { root } = propertyFolder();
+    writeOrders(root, [order("ord_a", { expectedBy: "2026-11-18" }), order("ord_b", { expectedBy: "2026-11-18" })]);
+    desk(root).markSeen({ orderId: "ord_a", how: "camera", at: "2026-11-18T19:10:00.000Z" });
+    expect(desk(root).cameraSighting({ at: "2026-11-18T19:12:00.000Z" }).structured).toMatchObject({ matched: "ord_a", repeat: true });
+    expect(readPackages(root).arrivals[supplyKey("ord_b")]?.seen).toBeUndefined();
+    expect(desk(root).cameraSighting({ at: "2026-11-18T21:00:00.000Z" }).structured).toMatchObject({ matched: "ord_b" });
+  });
+});
