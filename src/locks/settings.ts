@@ -26,6 +26,23 @@ export interface StoredDevice {
   offlineSince?: string;
 }
 
+export type StandingRole = "owner" | "co-owner" | "co-host";
+
+/** A person with a standing code the host named. Their phone is kept for their texts; never a code. */
+export interface StandingPerson {
+  id: string;
+  name: string;
+  phone: string;
+  role: StandingRole;
+  addedAt: string;
+  invitedAt?: string;
+  yesAt?: string;
+  stoppedAt?: string;
+  removedAt?: string;
+  /** The live page link: the sha256 of its token, never the token or the link. */
+  link?: { hash: string; expiresAt: string; sentAt: string; usedAt?: string };
+}
+
 export interface DoorLocksFile {
   schemaVersion: 1;
   /** The Property Core account the partner's accounts are tagged with. */
@@ -44,6 +61,8 @@ export interface DoorLocksFile {
   extend: ReleaseMode;
   /** Alerts already told, by key, so each goes once. */
   told?: string[];
+  /** Standing codes: the host and the people they named. */
+  standing?: StandingPerson[];
 }
 
 export function emptyLocks(): DoorLocksFile {

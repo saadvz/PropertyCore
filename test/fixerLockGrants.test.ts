@@ -99,7 +99,7 @@ async function setup(options: { smartLocks?: boolean; pros?: ReleaseMode; extend
     expect((await desk().recordContact({ contactToken: token, outcome: "booked", ...TUE, estimateCents: 18000 })).isError).toBe(false);
     expect((await approved((confirmation) => desk().approveBooking({ jobId: job().id, ...(confirmation ? { confirmation } : {}) }))).isError).toBe(false);
   };
-  const news = () => [...(readFixer(root).news ?? []), ...readFixer(root).jobs.flatMap((job) => job.news)].map((item) => item.text);
+  const news = () => [...(readFixer(root).news ?? []), ...readFixer(root).jobs.flatMap((job) => job.news)].map((item) => item.text ?? "");
   return { root, desk, job, book, fake, sent, notes, news, at: (iso: string | number) => (clock = new Date(iso)) };
 }
 

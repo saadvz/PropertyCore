@@ -380,6 +380,11 @@ export class FixerDesk {
     return Boolean(routine?.url && routine.key);
   }
 
+  /** True once a wake-up reached the account's alerts routine: lock problems then reach the host in chat. */
+  alertsWorking(): boolean {
+    return this.routineConnected() && this.alerts.records().some((record) => record.status === "delivered");
+  }
+
   /** Delivers any wake-up that is due, such as one the routine refused before. The clock tick calls it. */
   async drainAlerts(): Promise<void> {
     if (!this.alerts.records().some((record) => record.status === "pending")) return;

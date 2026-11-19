@@ -20,6 +20,7 @@ import { accountState, accountTools, addProperty, flowOff, resolveProperty, with
 import { listedChooseSupplies, listedSupplyFront, SUPPLY_FRONT_NAMES, suppliesLine, supplyCall, supplyDesk } from "./supplies";
 import { HOURS_FRONT_NAMES, hoursCall, listedHoursFront } from "./hours";
 import { listedOversightFront, OVERSIGHT_FRONT_NAMES, oversightCall } from "./oversight";
+import { listedLockFront, LOCK_FRONT_NAMES, lockCall } from "./locks";
 import { listedStayCheckFront, STAY_CHECK_FRONT_NAMES, stayCheckCall } from "./stayCheck";
 import { listedPackageFront, PACKAGE_FRONT_NAMES, packageCall } from "./packages";
 import { GUEST_FRONT_NAMES, withRoutedProperty, GUEST_MESSAGES_INSTRUCTION, guestCall, guestMessageProperty, listedGuestFront } from "./guestMessages";
@@ -204,6 +205,7 @@ async function propertyToolList(h: HostedCleaner, r: HostedRequest, tenant: Tena
   tools.push(...listedOversightFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   tools.push(...listedPackageFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   tools.push(...listedGuestFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
+  tools.push(...listedLockFront(h, tenant).map((tool) => withPropertyArg(tool, required)));
   return tools;
 }
 
@@ -230,6 +232,11 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
     const resolved = resolveProperty(tenant, args);
     if ("refusal" in resolved) return { text: resolved.refusal, isError: true };
     return stayCheckCall(h, tenant, resolved.property, name, resolved.args);
+  }
+  if (LOCK_FRONT_NAMES.has(name)) {
+    const resolved = resolveProperty(tenant, args);
+    if ("refusal" in resolved) return { text: resolved.refusal, isError: true };
+    return lockCall(h, tenant, resolved.property, name, resolved.args);
   }
   if (OVERSIGHT_FRONT_NAMES.has(name)) {
     const resolved = resolveProperty(tenant, args);

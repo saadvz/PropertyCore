@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { propertyContext } from "../src/cleaner-core/hosted/router";
 import { resetFixerDesks } from "../src/fixer-core/desk";
 import { readFixer } from "../src/fixer-core/store";
-import { tickAllLocks } from "../src/hosted/locks";
+import { resetLockDesks, tickAllLocks } from "../src/hosted/locks";
 import { hubFor, resetHubs } from "../src/hub/hub";
 import type { LockWebhookEvent } from "../src/locks/adapter";
 import { VISIT_EVENTS_DIR } from "../src/locks/eventLog";
@@ -31,6 +32,7 @@ afterEach(() => {
   resetFixerDesks();
   resetHubs();
   setLockAdapter(undefined);
+  resetLockDesks();
   clock = new Date(NOW);
 });
 
@@ -194,6 +196,31 @@ describe("the lock webhook", () => {
     await send({ id: "evt-25", kind: "account-disconnected", partnerType: "connected_account.disconnected", at: NOW.toISOString(), accountId: `acct-${a.tenant.id}`, customerKey: a.tenant.id });
     expect(door.locks().release.cleaners).toBe("ask");
     expect(lockNews(a.root)[0]).toBe('Checkout-time codes are off while the lock account is disconnected: the cleaner\'s code waits for your "guests have left" again.');
+  });
+
+  it("serves a standing code's page only on its property's path: no code on GET, the code once on POST", async () => {
+    const { a, b, fake, m } = await world();
+    const ctx = propertyContext(m.hosted(), a.tenant, a.property);
+    const door = hubFor(ctx.root, { now: () => clock }).doorAccess(ctx.env);
+    const token = "q".repeat(40);
+    const hash = createHash("sha256").update(token).digest("hex");
+    const yesAt = NOW.toISOString();
+    door.saveLocks({ ...door.locks(), standing: [{ id: "std_pat", name: "Pat Lee", phone: "+15555550144", role: "co-host", addedAt: yesAt, invitedAt: yesAt, yesAt, link: { hash, expiresAt: new Date(NOW.getTime() + 3600_000).toISOString(), sentAt: yesAt } }] });
+    await door.syncGrants("standing", [{ jobId: "std_pat", person: "+15555550144", window: { from: yesAt, until: "2046-12-01T12:00:00.000Z" } }]);
+    const code = fake.liveCodes("dev-a")[0]!.code;
+    const base = (tenant: { id: string }, property: { id: string }) => `/t/${tenant.id}/p/${property.id}/locks/code/${token}`;
+    const page = await m.app.http(base(a.tenant, a.property), { method: "GET" });
+    const html = await page.text();
+    expect(page.status).toBe(200);
+    expect(html.includes(code)).toBe(false);
+    expect(html).toContain("Pat Lee");
+    expect((await m.app.http(base(b.tenant, b.property), { method: "GET" })).status).toBe(404);
+    expect((await m.app.http(`${base(a.tenant, a.property)}/show`, { method: "POST", headers: { "content-type": "text/plain" }, body: "{}" })).status).toBe(415);
+    const shown = await m.app.http(`${base(a.tenant, a.property)}/show`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    expect(((await shown.json()) as { code?: string }).code).toBe(code);
+    const again = await m.app.http(`${base(a.tenant, a.property)}/show`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    expect(again.status).toBe(404);
+    expect(((await again.json()) as { code?: string }).code).toBeUndefined();
   });
 
   it("is not served with SMART_LOCKS off", async () => {
