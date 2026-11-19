@@ -1,7 +1,6 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { openPin, pinKeyFromHeader, sealPin, type PinSeal } from "../hub/pinSeal";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import type { Tokens, TokenStore } from "./adapter";
 
@@ -22,7 +21,29 @@ const TOKENS = "CAMERA_TOKENS";
 
 /** The service's key for sealing camera tokens: 32 random bytes in base64. Without it, no camera account can be linked. */
 export function cameraTokenKey(env: NodeJS.ProcessEnv): Buffer | undefined {
-  return pinKeyFromHeader(env.CAMERA_TOKEN_KEY);
+  const raw = env.CAMERA_TOKEN_KEY?.trim();
+  if (!raw || !/^[A-Za-z0-9+/]+={0,2}$/.test(raw)) return undefined;
+  const bytes = Buffer.from(raw, "base64");
+  return bytes.length === 32 && bytes.toString("base64") === raw ? bytes : undefined;
+}
+
+interface Seal {
+  iv: string;
+  tag: string;
+  data: string;
+}
+
+function seal(text: string, key: Buffer): Seal {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const data = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
+  return { iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), data: data.toString("base64") };
+}
+
+function open(sealed: Seal, key: Buffer): string {
+  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(sealed.iv, "base64"));
+  decipher.setAuthTag(Buffer.from(sealed.tag, "base64"));
+  return Buffer.concat([decipher.update(Buffer.from(sealed.data, "base64")), decipher.final()]).toString("utf8");
 }
 
 export function sealedTokenStore(slot: SecretSlot, key: Buffer): TokenStore & { clear(): void } {
@@ -31,14 +52,14 @@ export function sealedTokenStore(slot: SecretSlot, key: Buffer): TokenStore & { 
       const raw = slot.get()[TOKENS];
       if (!raw) return undefined;
       try {
-        const tokens = JSON.parse(openPin(JSON.parse(raw) as PinSeal, key)) as Tokens;
+        const tokens = JSON.parse(open(JSON.parse(raw) as Seal, key)) as Tokens;
         return typeof tokens.access === "string" && typeof tokens.refresh === "string" && typeof tokens.expiresAt === "number" ? tokens : undefined;
       } catch {
         return undefined;
       }
     },
     save(tokens) {
-      slot.set({ [TOKENS]: JSON.stringify(sealPin(JSON.stringify(tokens), key)) });
+      slot.set({ [TOKENS]: JSON.stringify(seal(JSON.stringify(tokens), key)) });
     },
     clear() {
       slot.clear([TOKENS]);

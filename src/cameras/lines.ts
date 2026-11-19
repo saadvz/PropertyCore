@@ -80,6 +80,9 @@ const isTime = (value: unknown): value is string => typeof value === "string" &&
 const name = (value: unknown): string | undefined => (typeof value === "string" && value.trim() ? redactDigitRuns(value).trim().slice(0, MAX_NAME) : undefined);
 const whole = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= MAX_COUNT;
 const EVIDENCE_FILE = /^evidence\/[A-Za-z0-9._-]{1,120}$/;
+/** The same checks as the shared visit log's (#237), so a line this accepts is one it accepts. */
+const DEVICE_ID = /^[A-Za-z0-9_.:-]{1,100}$/;
+const COUNTER = /^[a-z0-9.-]{1,40}$/;
 
 /** The line as it may be written: checked, with only its own fields, names cleaned. Undefined when it can't be written. */
 export function cleanCameraLine(line: CameraLine): CameraLine | undefined {
@@ -87,12 +90,12 @@ export function cleanCameraLine(line: CameraLine): CameraLine | undefined {
   switch (line.type) {
     case "camera": {
       const device = name(line.device);
-      if (!device || !isId(line.deviceId) || !isId(line.provider) || !CAMERA_KINDS.includes(line.kind)) return undefined;
+      if (!device || typeof line.deviceId !== "string" || !DEVICE_ID.test(line.deviceId) || !isId(line.provider) || !CAMERA_KINDS.includes(line.kind)) return undefined;
       const label = name(line.label);
       return { type: "camera", id: line.id, at: line.at, device, deviceId: line.deviceId, provider: line.provider, kind: line.kind, ...(label ? { label } : {}) };
     }
     case "camera-count": {
-      if (!isId(line.event) || !isId(line.counter) || !whole(line.people) || !whole(line.vehicles) || !whole(line.animals)) return undefined;
+      if (!isId(line.event) || typeof line.counter !== "string" || !COUNTER.test(line.counter) || !whole(line.people) || !whole(line.vehicles) || !whole(line.animals)) return undefined;
       return {
         type: "camera-count",
         id: line.id,
@@ -106,7 +109,7 @@ export function cleanCameraLine(line: CameraLine): CameraLine | undefined {
       };
     }
     case "camera-pin": {
-      if (!isId(line.deviceId) || !isTime(line.from) || !isTime(line.until) || Date.parse(line.until) <= Date.parse(line.from)) return undefined;
+      if (typeof line.deviceId !== "string" || !DEVICE_ID.test(line.deviceId) || !isTime(line.from) || !isTime(line.until) || Date.parse(line.until) <= Date.parse(line.from)) return undefined;
       if (typeof line.file !== "string" || !EVIDENCE_FILE.test(line.file)) return undefined;
       return { type: "camera-pin", id: line.id, at: line.at, ...(isId(line.event) ? { event: line.event } : {}), deviceId: line.deviceId, from: line.from, until: line.until, file: line.file };
     }
