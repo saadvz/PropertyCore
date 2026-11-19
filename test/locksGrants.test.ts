@@ -158,7 +158,7 @@ describe("issuing ahead", () => {
     const { door, fake } = setup();
     fake.refuseValues("dev-front", 99);
     const notes = await door.syncGrants("cleaning", [want("job-1")]);
-    expect(notes).toEqual([{ id: "lock:issue-failed:cleaning:job-1", text: expect.stringContaining("Maria") }]);
+    expect(notes).toEqual([{ id: "lock:issue-failed:cleaning:job-1", jobId: "job-1", text: expect.stringContaining("Maria") }]);
     fake.refuseValues("dev-front", 0);
     expect(await door.syncGrants("cleaning", [want("job-1")])).toEqual([]);
     expect(fake.liveCodes("dev-front").length).toBe(1);
