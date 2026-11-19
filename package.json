@@ -30,6 +30,7 @@
     "cleaner:doctor": "tsx src/cleaner-core/cli.ts doctor",
     "cleaner:smoke": "tsx src/cleaner-core/cli.ts smoke",
     "cleaner:health": "tsx src/cleaner-core/cli.ts health",
+    "cameras:count-test": "tsx src/cameras/countTestCli.ts",
     "build": "node scripts/build.mjs",
     "start": "node dist/server.js",
     "test": "vitest run",
