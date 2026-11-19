@@ -63,7 +63,8 @@ async function connect(m: MultiTenantApp, token: string, propertyId: string) {
   expect(page.status).toBe(200);
   const consent = await page.text();
   expect(consent).toContain("never sees your password");
-  expect(consent).toContain("Google's Gemini AI model");
+  expect(consent).toContain("open-source detector on Property Core's own server");
+  expect(consent).not.toMatch(/Google|Gemini/);
   const agreed = await m.app.http(link.pathname, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "agree=yes" });
   expect(agreed.status).toBe(302);
   const ring = new URL(String(agreed.headers.location));

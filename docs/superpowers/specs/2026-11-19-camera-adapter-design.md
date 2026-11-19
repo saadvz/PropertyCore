@@ -494,18 +494,29 @@ and fake counter; nothing has talked to Ring.
 - **Notes:** an offline note goes through Cleaner Core's host note when
   cleaning runs at the property; otherwise it waits for `list_cameras`. No new
   alerts-routine event type was added.
-- **Counting model: Gemini 4 Neon at low thinking** (Saad, 19 Nov, after
-  web research: it led Roboflow's counting benchmark among Gemini models at
-  92.3%, at $3/$15 per million tokens; open-weight VLMs were far behind).
-  `src/cameras/gemini.ts` calls Google's Interactions API over plain HTTP with
-  `store: false` and a JSON schema; `CAMERA_COUNTER_GEMINI_KEY` turns it on,
-  `CAMERA_COUNTER_MODEL` and `CAMERA_COUNTER_THINKING` change it. The REST
-  reply's shape isn't in Google's docs, so the first live call should confirm
-  `outputText`; until then an unread reply leaves the event uncounted. The
-  consent page names Google's Gemini. Each counter counts every event once on
-  its own, and the night's check reads only the service's counter, so a second
-  counter (an RF-DETR or D-FINE detector, once `onnxruntime-node` is allowed)
-  can run beside it for the counting week. `--counter` picks one for the sheet.
+- **Counting: an open-source detector on our own server** (Saad, 19 Nov). A
+  Gemini 4 Neon counter was built first, then removed at Saad's ask: no API
+  key, no third party, free. RF-DETR Medium (Apache-2.0, COCO) from
+  `onnx-community/rfdetr_medium-ONNX` at a pinned revision and SHA-256, run with
+  `onnxruntime-node` on the CPU (`src/cameras/detector.ts`); stills decoded
+  with `jpeg-js`. People are COCO's person; vehicles are car, motorcycle, bus
+  and truck; animals are cat and dog only (birds and wildlife would trip a
+  no-pet rule). Same-class boxes overlapping over 0.7 IoU count once. A count
+  with a box within 0.1 of the threshold is marked low-confidence. Cloudflare
+  Workers AI (only DETR-ResNet-50, 2020) and Vercel Functions were looked at
+  and not chosen; the detector sits behind the same `Counter` hook, so it can
+  move to either later.
+- **First run on six public photos** (Wikimedia Commons, 19 Nov), at the 0.35
+  default: two dogs right; a street of 5 cars right with 1 of 2 half-hidden
+  people; 10 of about 12 cars at dusk; 2 soldiers in green night vision right;
+  a near-black silhouette missed. 0.5 under-counted (5 cars at dusk); 0.25
+  saw people who weren't there. About half a second a still on this
+  container's CPU. Too few images to set the threshold: the counting week does.
+- **Consent page** now says stills are counted by an open-source detector on
+  Property Core's own server and never sent to anyone else.
+- Each counter counts every event once on its own, and the night's check reads
+  only the service's counter, so a second counter can run beside it for the
+  counting week. `--counter` picks one for the sheet.
 - **Pets:** `GuestCount.pets` and `EmailStay.pets` from "N pets / dogs /
   cats"; a stay booked with a pet leaves the pets rule unchecked. Camera events
   with no count yet are listed in `unchecked`, never guessed.

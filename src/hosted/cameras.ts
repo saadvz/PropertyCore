@@ -7,7 +7,7 @@ import { CameraLinks, cameraTokenKey, readCameras, sealedTokenStore, writeCamera
 import { CameraProviderError, type AccountRef, type CameraProvider } from "../cameras/adapter";
 import { CameraCounting } from "../cameras/count";
 import type { Counter } from "../cameras/counter";
-import { counterFromEnv } from "../cameras/gemini";
+import { detectorFromEnv } from "../cameras/detector";
 import { CameraDesk } from "../cameras/desk";
 import { ringProvider } from "../cameras/ring";
 import { sharedCameraLog } from "../cameras/sharedLog";
@@ -51,8 +51,21 @@ function providerFor(h: HostedCleaner): CameraProvider | undefined {
   return clientId && clientSecret && webhookKey ? ringProvider({ clientId, clientSecret, webhookKey, now: () => h.now() }) : undefined;
 }
 
-/** Live, Gemini 4 Neon when CAMERA_COUNTER_GEMINI_KEY is set (Saad, 19 Nov); without it, counting stays off. */
-const counterFor = (h: HostedCleaner): Counter | undefined => testCounter ?? counterFromEnv(h.baseEnv());
+/**
+ * Live, the open-source detector on this server when CAMERA_DETECTOR_MODEL names its model file (Saad, 19 Nov);
+ * without it, counting stays off. One counter per model path and threshold, so the model loads once.
+ */
+let liveCounter: { key: string; counter: Counter } | undefined;
+function counterFor(h: HostedCleaner): Counter | undefined {
+  if (testCounter) return testCounter;
+  const env = h.baseEnv();
+  const key = `${env.CAMERA_DETECTOR_MODEL ?? ""}|${env.CAMERA_DETECTOR_THRESHOLD ?? ""}`;
+  if (liveCounter?.key !== key) {
+    const counter = detectorFromEnv(env);
+    liveCounter = counter ? { key, counter } : undefined;
+  }
+  return liveCounter?.counter;
+}
 const linksFor = (h: HostedCleaner) => (links ??= new CameraLinks(() => h.now()));
 const anyFlowOn = (property: Property) => property.flows.cleaning.on || property.flows.supplies.on || property.flows.fixer.on;
 
@@ -169,7 +182,7 @@ const CONSENT = (label: string, counter: string) => `<h1>Connect Ring to Propert
 <p>For <strong>${escapeHtml(label)}</strong>, Property Core will read:</p>
 <ul>
 <li>motion, doorbell and online/offline events from the outdoor cameras you pick next;</li>
-<li>a still image from each motion event during a guest's stay, which is sent to ${counter} to count people, vehicles and animals, and then thrown away (Google is asked not to store it);</li>
+<li>a still image from each motion event during a guest's stay, which is counted (people, vehicles, pets) by ${counter} and then thrown away;</li>
 <li>a video clip only when you ask to keep one as evidence.</li>
 </ul>
 <p>No one is identified. Indoor cameras are never used. You sign in on Ring's own page; Property Core never sees your password. You can disconnect at any time.</p>
@@ -201,7 +214,7 @@ export async function handleCameraRoutes(h: HostedCleaner, r: HostedRequest): Pr
     const link = /^[A-Za-z0-9_-]{32,100}$/.test(state) ? linksFor(h).peek(state) : undefined;
     const place = link && placeOf(h, link.tenantId, link.propertyId);
     if (!link || !place || !redirectUri) return (r.send(404, "text/html; charset=utf-8", html("Link expired", "<p>This link has expired or was already used. Ask your assistant for a new one.</p>"), PAGE_HEADERS), true);
-    if (r.method === "GET") return (r.send(200, "text/html; charset=utf-8", html("Connect Ring", CONSENT(place.property.label, "Google's Gemini AI model")), PAGE_HEADERS), true);
+    if (r.method === "GET") return (r.send(200, "text/html; charset=utf-8", html("Connect Ring", CONSENT(place.property.label, "an open-source detector on Property Core's own server, never sent to anyone else")), PAGE_HEADERS), true);
     if (r.method !== "POST") return (r.send(405, "text/plain", "Method not allowed"), true);
     const form = new URLSearchParams(((await r.readCapped(1024)) ?? Buffer.alloc(0)).toString("utf8"));
     if (form.get("agree") !== "yes") return (r.send(400, "text/html; charset=utf-8", html("Connect Ring", "<p>Nothing was connected.</p>"), PAGE_HEADERS), true);

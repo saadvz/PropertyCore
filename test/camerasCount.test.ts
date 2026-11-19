@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fakeCameraProvider } from "../src/cameras/fake";
 import { CameraCounting, countable } from "../src/cameras/count";
-import { fakeCounter, parseCounts, visionCounter } from "../src/cameras/counter";
+import { fakeCounter } from "../src/cameras/counter";
 import { latestCounts, memoryLog, type CameraEventLine } from "../src/cameras/lines";
 
 const line = (id: string, at: string, label?: string): CameraEventLine => ({ type: "camera", id, at, device: "Front door", deviceId: "dev-aaa", provider: "fake", kind: "motion", ...(label ? { label } : {}) });
@@ -65,26 +65,6 @@ describe("the counting pass", () => {
   });
 });
 
-describe("the vision counter", () => {
-  it("reads whole-number counts and nothing else", () => {
-    expect(parseCounts('{"people": 3, "vehicles": 0, "animals": 1}')).toEqual({ people: 3, vehicles: 0, animals: 1 });
-    expect(parseCounts('```json\n{"people": 2, "vehicles": 1, "animals": 0, "confidence": "low"}\n```')).toEqual({ people: 2, vehicles: 1, animals: 0, confidence: "low" });
-    expect(parseCounts('{"people": 2, "vehicles": 1, "animals": 0, "who": "Maria"}')).toBeUndefined();
-    expect(parseCounts('{"people": -1, "vehicles": 0, "animals": 0}')).toBeUndefined();
-    expect(parseCounts("three people")).toBeUndefined();
-  });
-
-  it("sends the image with a fixed prompt and a hint, and refuses an unreadable reply", async () => {
-    const seen: { prompt: string; bytes: number }[] = [];
-    const counter = visionCounter({ name: "vision-v1", look: async ({ prompt, image }) => { seen.push({ prompt, bytes: image.length }); return '{"people": 1, "vehicles": 0, "animals": 0}'; } });
-    expect(await counter.count(new Uint8Array([1, 2]), { label: "human", local: "9:14 PM" })).toEqual({ people: 1, vehicles: 0, animals: 0 });
-    expect(seen[0]!.prompt).toMatch(/count/i);
-    expect(seen[0]!.prompt).toMatch(/do not (describe|identify)/i);
-    const bad = visionCounter({ name: "vision-v1", look: async () => "I see a family" });
-    await expect(bad.count(new Uint8Array([1]), {})).rejects.toThrow();
-  });
-});
-
 describe("overlapping passes", () => {
   it("runs one pass at a time, so overlapping calls never fetch or count an event twice", async () => {
     const provider = fakeCameraProvider();
@@ -105,10 +85,10 @@ describe("two counters on the same events", () => {
     const log = memoryLog();
     log.append(line("e1", "2026-11-20T03:00:00.000Z", "human"));
     const make = (name: string, people: number) => new CameraCounting({ provider, account: { tokens }, counter: fakeCounter(() => ({ people, vehicles: 0, animals: 0 }), name), log, inStay: () => true, nightOf: (at) => at.slice(0, 10) });
-    expect(await make("gemini-4-neon-low-v1", 3).run()).toMatchObject({ counted: 1 });
+    expect(await make("rfdetr-medium-t50-v1", 3).run()).toMatchObject({ counted: 1 });
     expect(await make("detector-v1", 2).run()).toMatchObject({ counted: 1 });
     expect(await make("detector-v1", 2).run()).toMatchObject({ counted: 0 });
-    expect(latestCounts(log.read(), "gemini-4-neon-low-v1").get("e1")).toMatchObject({ people: 3 });
+    expect(latestCounts(log.read(), "rfdetr-medium-t50-v1").get("e1")).toMatchObject({ people: 3 });
     expect(latestCounts(log.read(), "detector-v1").get("e1")).toMatchObject({ people: 2 });
   });
 });

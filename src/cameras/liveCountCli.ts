@@ -1,24 +1,22 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
-import { counterFromEnv } from "./gemini";
+import { detectorFromEnv } from "./detector";
 
 /**
- * `npm run cameras:live-count -- <image.jpg> [more.jpg ...]`
+ * `CAMERA_DETECTOR_MODEL=<path to model.onnx> npm run cameras:live-count -- <image.jpg> [more.jpg ...]`
  *
- * A manual live check of the counting model (#239), run by hand on the server or in a session that has
- * CAMERA_COUNTER_GEMINI_KEY in its environment. It sends each given JPEG to the counter and prints the counts. Use
- * only images you may send to Google: your own camera's stills or public sample photos, never a guest's. It never
- * prints the key. No test runs it.
+ * A manual check of the counting detector (#239) on real images, run by hand. Everything stays on this machine: the
+ * detector runs locally and no image is sent anywhere. No test runs it.
  */
 
-export async function runLiveCount(paths: string[], env: NodeJS.ProcessEnv = process.env, say: (text: string) => void = (text) => console.log(text), fetch?: typeof globalThis.fetch): Promise<number> {
+export async function runLiveCount(paths: string[], env: NodeJS.ProcessEnv = process.env, say: (text: string) => void = (text) => console.log(text)): Promise<number> {
   if (!paths.length) {
-    say("Usage: cameras:live-count <image.jpg> [more.jpg ...]");
+    say("Usage: CAMERA_DETECTOR_MODEL=<model.onnx> cameras:live-count <image.jpg> [more.jpg ...]");
     return 2;
   }
-  const counter = counterFromEnv(env, fetch);
+  const counter = detectorFromEnv(env);
   if (!counter) {
-    say("CAMERA_COUNTER_GEMINI_KEY isn't set in this environment, so there's no counter to try.");
+    say("CAMERA_DETECTOR_MODEL isn't set. Fetch the model with `npm run cameras:get-detector -- --out <path>` first.");
     return 1;
   }
   say(`Counter: ${counter.name}`);
@@ -31,7 +29,7 @@ export async function runLiveCount(paths: string[], env: NodeJS.ProcessEnv = pro
     }
     const started = Date.now();
     try {
-      const counts = await counter.count(new Uint8Array(readFileSync(path)), { local: "test image" });
+      const counts = await counter.count(new Uint8Array(readFileSync(path)), {});
       say(`${basename(path)}: ${JSON.stringify(counts)} (${Date.now() - started} ms)`);
     } catch (error) {
       say(`${basename(path)}: ${error instanceof Error ? error.message : "failed"} (${Date.now() - started} ms)`);
