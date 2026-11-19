@@ -998,9 +998,24 @@ export class LiveDesk {
     this.startDrain();
   }
 
-  /** True when `text` contains the saved door code, or the server's door-code key. */
+  /** True when `text` contains a guarded door code (saved or per-visit), or the server's door-code key. */
   leaks(text: string): boolean {
-    return Boolean(this.pin && text.includes(this.pin)) || this.isServerKey(text, true);
+    return this.guardCodes().some((code) => text.includes(code)) || this.isServerKey(text, true);
+  }
+
+  /**
+   * Every code the desk's leak checks guard: the open saved code and, with connected locks, each
+   * per-visit code and backup code until a day after its window. Never sent.
+   */
+  private guardCodes(): string[] {
+    const codes = new Set<string>();
+    if (this.pin) codes.add(this.pin);
+    try {
+      for (const code of this.door().codesForChecksAll()) codes.add(code);
+    } catch {
+      // An unreadable grants file guards nothing more; the saved code still is.
+    }
+    return [...codes];
   }
 
   /** True when `text` is (or, with `inside`, holds) the server's door-code key. */
@@ -1038,6 +1053,7 @@ export class LiveDesk {
         return grant;
       },
       codeForChecks: () => this.pin,
+      codesForChecks: () => this.door().codesForChecksAll(),
     };
   }
 
@@ -1088,7 +1104,7 @@ export class LiveDesk {
   }
 
   chatCarriesDoorCode(text: string): boolean {
-    if (this.pin && text.includes(this.pin)) return true;
+    if (this.guardCodes().some((code) => text.includes(code))) return true;
     const trimmed = text.trim();
     if (/^\d{4,8}$/.test(trimmed)) return true;
     return /\bdoor code\b/i.test(text) && /\b\d{4,8}\b/.test(text);
@@ -3999,8 +4015,9 @@ export class LiveDesk {
   }
 
   private hideCode(text: string): string {
-    if (!this.pin || !text.includes(this.pin)) return text;
-    return text.split(this.pin).join("[redacted]");
+    let out = text;
+    for (const code of this.guardCodes().sort((a, b) => b.length - a.length)) if (out.includes(code)) out = out.split(code).join("[redacted]");
+    return out;
   }
 
   private outboxRows(): OutboxRow[] {
@@ -4156,7 +4173,7 @@ export class LiveDesk {
   private persist(): void {
     const json = `${JSON.stringify(this.file)}\n`;
     // The code as its own token. An id that only holds the digits (a SID, a UUID, a booking UID) is fine.
-    if (this.pin && containsCodeToken(json, this.pin)) throw new Error("Could not seal the door code.");
+    if (this.guardCodes().some((code) => containsCodeToken(json, code))) throw new Error("Could not seal the door code.");
     this.writeFile(json);
   }
 

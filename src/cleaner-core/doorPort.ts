@@ -10,6 +10,8 @@ export interface DoorAccessPort {
   request(input: { person: string; window: { from: string; until: string }; purpose: "cleaning"; jobId: string }): Promise<AccessGrant>;
   /** The code for the engine's leak checks only. Never sent. */
   codeForChecks(): string | undefined;
+  /** On connected locks, every live per-visit code and backup code, for the leak checks only. Never sent. */
+  codesForChecks?(): string[];
 }
 
 export type AccessRefusedLines = Partial<Record<AccessRefusal, string>>;

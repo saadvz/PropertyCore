@@ -2838,7 +2838,7 @@ class Engine implements CleanerCore {
     const body = draft.kind === "host-message" ? own : withoutStopAsk(own);
     if (this.groupDuplicate(draft, id, body)) return null;
     // A group text with the code in split digits is held, not sent, and not sent one-to-one either.
-    if (this.pin && draft.kind !== "pin" && joinSplitDigits(body).includes(this.pin)) {
+    if (draft.kind !== "pin" && this.holdsAnyCode(joinSplitDigits(body))) {
       await this.openReview("possible-code-exposure", id, true);
       return null;
     }
@@ -2902,7 +2902,7 @@ class Engine implements CleanerCore {
   private noteUnsentHost(draft: Draft): CleanerText | null {
     if (draft.channel === "group" || !draft.body) return null;
     if (draft.kind === "pin" || draft.kind === "pin-notice" || draft.kind === "pin-failed") return null;
-    if (this.pin && draft.body.includes(this.pin)) return null;
+    if (this.holdsAnyCode(draft.body)) return null;
     const forHost = (this.owner && draft.to === this.owner) || (!this.owner && HOST_DIRECT.has(draft.kind));
     if (!forHost) return null;
     if (this.outboxState.find((item) => item.id === draft.id)?.status !== "sent") this.upsert(draft, "unsent");
@@ -2912,7 +2912,7 @@ class Engine implements CleanerCore {
 
   keepHostNote(id: string, body: string): void {
     if (!id || !body || this.hostNoteState.some((note) => note.id === id)) return;
-    if (this.pin && body.includes(this.pin)) return;
+    if (this.holdsAnyCode(body)) return;
     this.hostNoteState.push({ id, body });
     this.save();
   }
@@ -2920,7 +2920,7 @@ class Engine implements CleanerCore {
   /** Rewrites a kept note in place. Nothing is added when it was never kept. */
   private setHostNote(id: string, body: string): void {
     const note = this.hostNoteState.find((each) => each.id === id);
-    if (!note || note.body === body || (this.pin && body.includes(this.pin))) return;
+    if (!note || note.body === body || this.holdsAnyCode(body)) return;
     note.body = body;
     this.save();
   }
@@ -3000,12 +3000,12 @@ class Engine implements CleanerCore {
       if (!this.pin || !this.options.cleaner.approved || draft.to !== this.cleanerPhone) {
         throw new Error("The door code only goes to the approved cleaner.");
       }
-    } else if (this.pin && draft.body.includes(this.pin)) {
+    } else if (this.holdsAnyCode(draft.body)) {
       throw new Error("The door code leaked into a schedule text.");
-    } else if (this.pin && draft.channel === "group" && joinSplitDigits(draft.body).includes(this.pin)) {
+    } else if (draft.channel === "group" && this.holdsAnyCode(joinSplitDigits(draft.body))) {
       // A group text that holds the code in split digits is held back, not sent, and goes to review.
       return this.openReview("possible-code-exposure", draft.id, true);
-    } else if (draft.kind === "host-message" && this.pin && joinSplitDigits(draft.body).includes(this.pin)) {
+    } else if (draft.kind === "host-message" && this.holdsAnyCode(joinSplitDigits(draft.body))) {
       throw new Error("The door code leaked into a host message.");
     } else if (!this.pin && /\bdoor code\b/i.test(ownWords) && draft.kind !== "opt-in" && draft.kind !== "review") {
       throw new Error("Step C does not send a door code.");
@@ -3880,8 +3880,31 @@ class Engine implements CleanerCore {
   }
 
   private redact(body: string): string {
-    if (!this.pin || !body.includes(this.pin)) return body;
-    return body.split(this.pin).join("[redacted]");
+    let out = body;
+    // Longest first, so a code holding a shorter one is redacted whole.
+    for (const code of this.guardCodes().sort((a, b) => b.length - a.length)) if (out.includes(code)) out = out.split(code).join("[redacted]");
+    return out;
+  }
+
+  /**
+   * Every code the leak checks guard: the engine's own and, on connected locks, each live per-visit
+   * code and backup code the port gives for checks. Never sent.
+   */
+  private guardCodes(): string[] {
+    const codes = new Set<string>();
+    if (this.pin) codes.add(this.pin);
+    let more: string[] = [];
+    try {
+      more = this.access?.codesForChecks?.() ?? [];
+    } catch {
+      more = [];
+    }
+    for (const code of more) if (/^\d{4,8}$/.test(code)) codes.add(code);
+    return [...codes];
+  }
+
+  private holdsAnyCode(text: string): boolean {
+    return this.guardCodes().some((code) => text.includes(code));
   }
 
   private load(): void {
@@ -3992,7 +4015,7 @@ class Engine implements CleanerCore {
     if (existing && existing.schemaVersion !== 1) throw new Error("Cleaner Core store is not version 1.");
     const json = JSON.stringify(mergeTenantSlice(existing, this.tenantId, mine));
     // The code as its own token. An id that only holds the digits (a SID, a UUID, a booking UID) is fine.
-    if (this.pin && containsCodeToken(json, this.pin)) throw new Error("The door code cannot be stored in plaintext.");
+    if (this.guardCodes().some((code) => containsCodeToken(json, code))) throw new Error("The door code cannot be stored in plaintext.");
     writeFileAtomic(this.file, `${json}\n`);
     if (this.sqlite) mirrorStore(this.databasePath(), json);
   }
@@ -4032,7 +4055,7 @@ class Engine implements CleanerCore {
     if (!this.file) throw new Error("Backup needs a data directory.");
     this.save();
     const json = readFileSync(this.file, "utf8");
-    if (this.pin && containsCodeToken(json, this.pin)) throw new Error("The door code cannot be stored in plaintext.");
+    if (this.guardCodes().some((code) => containsCodeToken(json, code))) throw new Error("The door code cannot be stored in plaintext.");
     mirrorStore(this.databasePath(), json);
     snapshotStore(this.databasePath(), dest);
     this.audit("engine", "backup", 1, "backup");
@@ -4231,7 +4254,7 @@ class Engine implements CleanerCore {
       outcome,
       to: redactPhone(to),
     });
-    const secrets = this.pin ? [this.pin] : [];
+    const secrets = this.guardCodes();
     appendFileSync(join(dirname(this.file), "cleaner-core.log"), `${redactLine(line, secrets)}\n`);
   }
 
@@ -4240,7 +4263,7 @@ class Engine implements CleanerCore {
   }
 
   private looksLikeCode(text: string): boolean {
-    if (this.pin && text.includes(this.pin)) return true;
+    if (this.holdsAnyCode(text)) return true;
     return /door code\D*\d{4,8}/i.test(text);
   }
 
