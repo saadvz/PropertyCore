@@ -111,3 +111,38 @@ Until then the question is with Saad (see the session report).
 - A grant's code is never in `door-grants.json` unsealed, in a tool result, or in a log line.
 - `syncGrants` never issues for a person or job the flow didn't name, and revokes everything else.
 - A paused turnover has no live code, and resuming makes a new one without sending it.
+
+## Build notes (2026-11-19)
+
+All ten slices are built on the fake adapter, with the gates in both safety-gate docs. Calls made while
+building, for review:
+
+- **One reconcile, not call sites.** Each flow says which codes it wants (`wantedCodes()`), and its desk
+  syncs the hub after every step and on the clock. Issue, move and revoke follow from that, so a YES, a
+  new cleaner, a cancel, a decline, a hold, a moved window and a restart are all covered by one path.
+  `StayCodeHook` now asks for a sync of that job.
+- **Cleaner Core still needs its saved door code.** The engine's whole flow keys on a saved code, and
+  it's the last fallback, so a Cleaner Core property keeps one. A Fixer-only property doesn't need one.
+- **A code ends at DONE.** The cleaner's code is revoked when the cleaning is done (the user story: "from
+  checkout until the clean is done"), and a pro's when the visit is done.
+- **Early start.** When the host clears the guests before checkout, the cleaner's code starts then.
+- **Event store.** Lock events go to `visit-events/<YYYY-MM>.jsonl`, the store #237's design proposes:
+  unlocks and locks as `lock` lines in its `LockEvent` shape plus Property Core's `grant`, everything else
+  as `lock-status` lines. #237's design is still for review, so this waits on Saad (see below).
+- **Standing people** live in `door-locks.json`, not as a new account role, so no other flow's routing
+  changes. The line router takes only a standing person's YES (after their invite); their STOP is noted
+  and then routed as usual.
+- **Paused reminders** turn urgent within three hours of the next check-in.
+- **An automatic extension keeps the visit link** (the pro is still inside); the Fixer gates say so.
+- **Crews.** A crew's access stays the host's, as today. Codes per crew day are a follow-up.
+- **The partner.** Access codes, with the backup pool on. The event names, the `customer_key` filter on
+  devices, and Access Grants are to confirm in the sandbox run.
+
+Still open:
+
+- **#237's store.** Confirm lock events should land in #237's `visit-events/` log in this shape, or say
+  which store to use. Only `src/locks/eventLog.ts` changes either way.
+- **Sensor health** is stored at `save_locks` and from events; no periodic device refresh yet.
+- **Setup order.** `get_state` shows the lock status and offers the lock step as a line, but the step
+  isn't in Cleaner Core's numbered setup order.
+- **Manual sandbox run** waits until Saad opens a sandbox workspace.

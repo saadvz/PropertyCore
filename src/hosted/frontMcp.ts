@@ -20,7 +20,7 @@ import { accountState, accountTools, addProperty, flowOff, resolveProperty, with
 import { listedChooseSupplies, listedSupplyFront, SUPPLY_FRONT_NAMES, suppliesLine, supplyCall, supplyDesk } from "./supplies";
 import { HOURS_FRONT_NAMES, hoursCall, listedHoursFront } from "./hours";
 import { listedOversightFront, OVERSIGHT_FRONT_NAMES, oversightCall } from "./oversight";
-import { listedLockFront, LOCK_FRONT_NAMES, lockCall } from "./locks";
+import { listedLockFront, LOCK_FRONT_NAMES, lockCall, lockDesk } from "./locks";
 import { listedStayCheckFront, STAY_CHECK_FRONT_NAMES, stayCheckCall } from "./stayCheck";
 import { listedPackageFront, PACKAGE_FRONT_NAMES, packageCall } from "./packages";
 import { GUEST_FRONT_NAMES, withRoutedProperty, GUEST_MESSAGES_INSTRUCTION, guestCall, guestMessageProperty, listedGuestFront } from "./guestMessages";
@@ -372,7 +372,17 @@ function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, call
     const reply = await withDraftPeople(h, tenant, property, desk);
     // Cleaner Core's get_state carries one Supply Core line while Supply Core is on for the property.
     const line = !reply.isError && reply.structured ? suppliesLine(h, tenant, property) : undefined;
-    return withRepairs(property, line && reply.structured ? withField(reply, "supplies", line) : reply);
+    return withLocks(property, withRepairs(property, line && reply.structured ? withField(reply, "supplies", line) : reply));
+  };
+  // With connected locks on the service, Cleaner Core's and Fixer Core's get_state carry the property's lock status, never a code.
+  const withLocks = (property: Property, reply: FrontReply): FrontReply => {
+    if (reply.isError || !reply.structured || listedLockFront(h, tenant).length === 0) return reply;
+    const status = lockDesk(h, tenant, property).status().structured;
+    if (!status) return reply;
+    const summary = status.connected
+      ? { connected: true, devices: status.devices, problems: status.problems }
+      : { connected: false, next: "Ask the host whether they have a smart lock that works with an app. connect_lock connects it, so each cleaner and pro gets their own code." };
+    return withField(reply, "locks", summary);
   };
   // Cleaner Core's and Supply Core's get_state carry one Fixer Core line while Fixer Core is on for the property.
   const withRepairs = (property: Property, reply: FrontReply): FrontReply => {
@@ -380,7 +390,7 @@ function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, call
     return line ? withField(reply, "repairs", line) : reply;
   };
   const supplies = async (property: Property): Promise<FrontReply> => withRepairs(property, supplyReplyFor(caller.assistant, "get_supply_state", await supplyDesk(h, tenant, property).state()));
-  const fixer = async (property: Property): Promise<FrontReply> => fixerDesk(h, tenant, property).state();
+  const fixer = async (property: Property): Promise<FrontReply> => withLocks(property, await fixerDesk(h, tenant, property).state());
   return {
     cleaning,
     supplies,

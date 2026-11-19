@@ -11,6 +11,7 @@ import type { LockWebhookEvent } from "../src/locks/adapter";
 import { VISIT_EVENTS_DIR } from "../src/locks/eventLog";
 import { FakeLockAdapter } from "../src/locks/fake";
 import { setLockAdapter } from "../src/locks/registry";
+import { LOCK_TOOL_NAMES } from "../src/locks/tools";
 import { emptyLocks, storedDevice } from "../src/locks/settings";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
@@ -221,6 +222,26 @@ describe("the lock webhook", () => {
     const again = await m.app.http(`${base(a.tenant, a.property)}/show`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     expect(again.status).toBe(404);
     expect(((await again.json()) as { code?: string }).code).toBeUndefined();
+  });
+
+  it("lists the lock tools and puts the lock status in get_state only with SMART_LOCKS on, never a code", async () => {
+    const { a, m, fake } = await world();
+    const ctx = propertyContext(m.hosted(), a.tenant, a.property);
+    await hubFor(ctx.root, { now: () => clock }).doorAccess(ctx.env).syncGrants("cleaning", [{ jobId: "job-1", person: "+15555550131", window: WINDOW }]);
+    const token = await m.joinAt(a.tenant.id, "grok", "/mcp");
+    const names = await m.toolNames("/mcp", token);
+    for (const name of ["get_locks", "connect_lock", "save_locks", "lock_settings", "add_standing_code"]) expect(names).toContain(name);
+    const state = await m.toolAt("/mcp", token, "get_state", { property: a.property.id });
+    expect(state.structured?.locks).toMatchObject({ connected: true });
+    const locks = await m.toolAt("/mcp", token, "get_locks", { property: a.property.id });
+    expect(locks.isError).toBe(false);
+    expect(locks.raw.includes(fake.liveCodes("dev-a")[0]!.code)).toBe(false);
+    open?.close();
+    open = undefined;
+    closeHostedApps();
+    const off = await world({ FIXER_CORE: "1" });
+    const offToken = await off.m.joinAt(off.a.tenant.id, "grok", "/mcp");
+    expect((await off.m.toolNames("/mcp", offToken)).filter((name) => LOCK_TOOL_NAMES.has(name))).toEqual([]);
   });
 
   it("is not served with SMART_LOCKS off", async () => {
