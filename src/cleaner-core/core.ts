@@ -307,6 +307,13 @@ export interface CleanerCoreOptions {
   access?: DoorAccessPort;
   /** Host lines for a refused door access request, kept once per job. Unset reasons use DOOR_NOT_OPENED. */
   accessRefused?: AccessRefusedLines;
+  /**
+   * The checkout-time release on connected locks: "on" sends the cleaner's code at checkout without
+   * the host's "guests have left"; "offline" (a lock is offline) and "off" keep today's nudge.
+   */
+  codeAtCheckout?: () => "on" | "off" | "offline";
+  /** How the host's lock notes name the cleaner ("Ana"). Never a phone. */
+  cleanerLabel?: string;
   /** Name in the cleaner opt-in text. */
   hostName?: string;
   /** Numbers that share a group thread. They never receive the door code. */
@@ -573,6 +580,12 @@ export interface CleanerCore {
   keepHostNote(id: string, body: string): void;
   /** The cleaner's codes a connected lock should hold now. Never a code. */
   wantedCodes(): { jobId: string; person: string; window: { from: string; until: string } }[];
+  /** On connected locks, marks a new hold: nothing goes again until the host's "guests have left". */
+  lockHeld(): void;
+  /** The checkout-time release, when codeAtCheckout says "on". */
+  checkoutRelease(): Promise<CleanerText[]>;
+  /** Host notes every 30 minutes while a turnover on connected locks is paused. */
+  pausedReminders(): void;
   /** The new-booking question that offers the usual times, when usualTimesName is set and the stay's check-in is known. */
   newBookingAsk(jobId: string): string | undefined;
   holdNotice(): string | undefined;
@@ -706,6 +719,12 @@ interface Job {
   startedAt?: string;
   /** When DONE was taken. */
   doneAt?: string;
+  /** A hold on connected locks: this cleaning's code goes out again only on the host's "guests have left". */
+  autoReleaseOff?: boolean;
+  /** When the code went out at checkout time without the host's "guests have left". */
+  autoReleasedAt?: string;
+  /** Bumped when a hold revoked a code already sent, so the release makes and sends a new one. */
+  releaseRound?: number;
   /**
    * Photos the cleaner sent during the cleaning, counted when they arrive, so a failed download
    * never keeps DONE waiting.
@@ -811,6 +830,8 @@ interface Stored {
   problemHold?: boolean;
   ownerOptedOut?: boolean;
   holdCause?: "cleaner" | "owner" | "injury";
+  /** When the current hold began on connected locks, for the paused reminders. */
+  heldAt?: string;
   pinFailurePending?: boolean;
   pinPhase?: { id: string; phase: "accepted" | "delivered" | "failed" | "undelivered" }[];
   groupPinTerminal?: boolean;
@@ -878,6 +899,8 @@ class Engine implements CleanerCore {
   private hostGroup: "pending" | "in" | "out" = "pending";
   private hostGroupSaved = false;
   private problemHold = false;
+  /** When the current hold began on connected locks. */
+  private heldAt: string | undefined;
   private ownerOptedOut = false;
   private holdCause: "cleaner" | "owner" | "injury" | undefined;
   private pinFailurePending = false;
@@ -1490,6 +1513,7 @@ class Engine implements CleanerCore {
     const held = this.problemHold;
     this.problemHold = false;
     this.holdCause = undefined;
+    this.heldAt = undefined;
     if (!this.groupChat && !held) return null;
     const text = await this.emit({
       id: `resume:${this.options.property.id}`,
@@ -2294,6 +2318,92 @@ class Engine implements CleanerCore {
     const cleared = [...this.clearances].reverse().find((item) => item.jobId === job.id && item.minutes === checkout.minutes);
     if (cleared?.at && Date.parse(cleared.at) < Date.parse(window.from)) return { from: new Date(Date.parse(cleared.at)).toISOString(), until: window.until };
     return window;
+  }
+
+  /**
+   * On connected locks a hold revokes the cleaner's code. Each cleaning not finished then goes out
+   * only on the host's "guests have left", never on its own; a code already sent is gone, so its
+   * clearance is dropped and the release makes and sends a new one. Runs once per hold.
+   */
+  lockHeld(): void {
+    if (!this.problemHold) return;
+    if (this.heldAt) return;
+    this.heldAt = this.now().toISOString();
+    for (const job of this.jobsState) {
+      if (job.done || job.canceled || job.declined) continue;
+      const status = this.derive(job);
+      if (!CODE_STATUSES.has(status)) continue;
+      job.autoReleaseOff = true;
+      if (this.pinDelivered(job)) {
+        job.releaseRound = (job.releaseRound ?? 0) + 1;
+        job.started = false;
+        this.dropClearance(job.id);
+      }
+    }
+    this.save();
+  }
+
+  /**
+   * The checkout-time release (codeAtCheckout), for each cleaning the cleaner said YES to: an hour
+   * before checkout, the host hears when the code goes out; at checkout, the guests count as gone and
+   * the code goes out through the same release as the host's "guests have left", with every other
+   * check (approval, opt-in, stale feed, holds, channel). The host hears it went. With a lock offline,
+   * or after a hold, nothing goes and the host's yes is needed, as today.
+   */
+  async checkoutRelease(): Promise<CleanerText[]> {
+    if (!this.enabled || this.optedOut || this.problemHold || !this.pin || !this.cleanerPhone) return [];
+    if (this.options.codeAtCheckout?.() !== "on") return [];
+    const now = this.now().getTime();
+    const sent: CleanerText[] = [];
+    for (const job of this.ordered()) {
+      if (job.autoReleaseOff || job.canceled || job.declined || job.done || job.started) continue;
+      const status = this.derive(job);
+      if (status !== "confirmed" && status !== "awaiting_departure") continue;
+      const checkout = this.latestFact(job.id, "checkout");
+      if (!checkout || this.stale(job) || !this.confirmSent(job)) continue;
+      const at = Date.parse(zonedInstant(job.checkoutDate, hm(checkout.minutes), this.options.property.timeZone));
+      const time = this.clock(job.checkoutDate, checkout.minutes).time;
+      if (now < at - 60 * 60_000) continue;
+      if (now < at) {
+        this.keepHostNote(`host:code-at-checkout-soon:${job.id}:${checkout.minutes}:${checkout.version}`, `The cleaner's code goes out at ${time}. Any late checkout?`);
+        continue;
+      }
+      this.recordClearance(job);
+      job.autoReleasedAt = this.now().toISOString();
+      const texts = await this.deliverPin(job);
+      sent.push(...texts);
+      if (this.pinDelivered(job)) {
+        const who = this.options.cleanerLabel?.trim() || this.options.cleanerName?.trim() || "the cleaner";
+        this.keepHostNote(`host:code-at-checkout:${job.id}:${checkout.minutes}:${checkout.version}`, `Sent ${who} the code for the ${time} turnover. Say pause if the guests are still there.`);
+      } else {
+        // Nothing went (a refusal, a hold): the release waits for the host again.
+        delete job.autoReleasedAt;
+      }
+    }
+    this.save();
+    return sent;
+  }
+
+  /**
+   * While a turnover is paused on connected locks, a host note every 30 minutes asks whether the
+   * guests have left. It turns urgent when the next check-in is less than three hours away (the time
+   * a turnover needs). Sends no text and no code.
+   */
+  pausedReminders(): void {
+    if (!this.problemHold || !this.heldAt) return;
+    const now = this.now().getTime();
+    const slot = Math.floor((now - Date.parse(this.heldAt)) / (30 * 60_000));
+    if (slot < 1) return;
+    const who = this.options.cleanerLabel?.trim() || this.options.cleanerName?.trim() || "the cleaner";
+    for (const job of this.ordered()) {
+      if (!job.autoReleaseOff || job.done || job.canceled || job.declined) continue;
+      const checkin = job.nextCheckInDate ? this.latestFact(job.id, "checkin") : undefined;
+      const next = checkin && job.nextCheckInDate ? Date.parse(zonedInstant(job.nextCheckInDate, hm(checkin.minutes), this.options.property.timeZone)) : undefined;
+      const atRisk = next !== undefined && next - now < 3 * 60 * 60_000;
+      const base = `The turnover at ${this.options.property.address} is still paused. When the guests have left, resume it and say they've left, and I'll send ${who} a new code.`;
+      const text = atRisk ? `${base} The next guests check in at ${this.clock(job.nextCheckInDate!, checkin!.minutes).time}, so the cleaning is running short on time.` : base;
+      this.keepHostNote(`host:paused:${job.id}:${this.heldAt}:${slot}`, text);
+    }
   }
 
   /**
@@ -3723,7 +3833,7 @@ class Engine implements CleanerCore {
   private pinKey(job: Job): string | undefined {
     const checkout = this.latestFact(job.id, "checkout");
     if (!checkout || !this.cleared(job, checkout)) return undefined;
-    return `pin:${job.id}:${job.checkoutDate}:${checkout.minutes}:${checkout.version}`;
+    return `pin:${job.id}:${job.checkoutDate}:${checkout.minutes}:${checkout.version}${job.releaseRound ? `:r${job.releaseRound}` : ""}`;
   }
 
   /** True when the job's latest clearance matches its current checkout. */
@@ -3955,6 +4065,7 @@ class Engine implements CleanerCore {
       this.hostGroupSaved = true;
     }
     if (record.problemHold === true) this.problemHold = true;
+    if (typeof record.heldAt === "string") this.heldAt = record.heldAt;
     if (record.ownerOptedOut === true) this.ownerOptedOut = true;
     if (record.holdCause === "cleaner" || record.holdCause === "owner" || record.holdCause === "injury") this.holdCause = record.holdCause;
     if (record.pinFailurePending === true) this.pinFailurePending = true;
@@ -4005,6 +4116,7 @@ class Engine implements CleanerCore {
       counters: this.counters,
       ...(this.groupChat ? { hostGroup: this.hostGroup, groupPinTerminal: this.groupPinTerminal, ...(this.lastIntro ? { lastIntro: this.lastIntro } : {}) } : {}),
       ...(this.problemHold ? { problemHold: true } : {}),
+      ...(this.problemHold && this.heldAt ? { heldAt: this.heldAt } : {}),
       ...(this.ownerOptedOut ? { ownerOptedOut: true } : {}),
       ...(this.holdCause ? { holdCause: this.holdCause } : {}),
       ...(this.pinFailurePending ? { pinFailurePending: true } : {}),

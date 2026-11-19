@@ -92,11 +92,11 @@ export async function handleLockWebhook(h: HostedCleaner, r: HostedRequest): Pro
   }
   for (const owner of owners) {
     const ctx = propertyContext(h, owner.tenant, owner.property);
-    const door = hubFor(ctx.root, { now: () => h.now() }).doorAccess(ctx.env);
+    const hub = hubFor(ctx.root, { now: () => h.now() });
+    const door = hub.doorAccess(ctx.env);
     try {
-      const result = await applyLockEvent(door, adapter, event, h.now());
+      const result = await applyLockEvent(door, adapter, event, h.now(), hub.property().timeZone);
       for (const note of result.notes) await tellLockNote(h, owner, note);
-      if (result.unlockedBy) await afterUnlock(h, owner, result.unlockedBy, event);
     } catch {
       h.log(`A lock event for ${owner.tenant.id}/${owner.property.id} couldn't be applied.`);
     }
@@ -104,18 +104,10 @@ export async function handleLockWebhook(h: HostedCleaner, r: HostedRequest): Pro
   r.send(200, "text/plain", "ok");
 }
 
-/** What a Property Core code opening the door sets off. Filled in by the checkout-time release. */
-let unlockHook: (h: HostedCleaner, owner: Owner, grant: { flow: string; jobId: string }, event: LockWebhookEvent) => Promise<void> = async () => undefined;
-
-export function setUnlockHook(hook: typeof unlockHook): void {
-  unlockHook = hook;
-}
-
-async function afterUnlock(h: HostedCleaner, owner: Owner, grant: { flow: string; jobId: string }, event: LockWebhookEvent): Promise<void> {
-  await unlockHook(h, owner, grant, event);
-}
-
-/** The lock clock pass: a lock offline for 30 minutes is told once. Runs with Fixer's clock. */
+/**
+ * The lock clock pass, on Fixer's tick: a lock offline for 30 minutes is told once, and on a property
+ * with Cleaner Core on, the checkout-time release and a paused turnover's reminders.
+ */
 export async function tickAllLocks(h: HostedCleaner): Promise<void> {
   if (!smartLocksOn(h.baseEnv()) || !lockAdapter()) return;
   for (const listed of h.registry.list()) {
@@ -127,6 +119,8 @@ export async function tickAllLocks(h: HostedCleaner): Promise<void> {
         const door = hubFor(ctx.root, { now: () => h.now() }).doorAccess(ctx.env);
         if (!door.locks().activeAt) continue;
         for (const note of lockHealthNotes(door, h.now())) await tellLockNote(h, { tenant, property }, note);
+        // The checkout-time release and a paused turnover's reminders run on this clock.
+        if (property.flows.cleaning.on) await liveDeskFor(ctx.root, ctx.env, () => h.now()).lockClock();
       } catch {
         h.log(`The lock check for ${tenant.id}/${property.id} couldn't run this round.`);
       }

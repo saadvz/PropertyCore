@@ -243,6 +243,11 @@ export class GrantBook {
     });
   }
 
+  /** How notes name the person on this job's code. Never a phone. */
+  labelOf(flow: GrantFlow, jobId: string): string | undefined {
+    return [...this.file.grants].reverse().find((grant) => grant.flow === flow && grant.jobId === jobId)?.label;
+  }
+
   /** Which grant a code id on the lock belongs to, for an event. Never the code. */
   grantOf(codeId: string): { grantId: string; flow: GrantFlow; jobId: string; backup: boolean } | undefined {
     for (const grant of this.file.grants) {

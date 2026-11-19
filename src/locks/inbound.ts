@@ -1,6 +1,6 @@
 import type { DoorAccess, GrantNote } from "../hub/doorAccess";
 import type { LockAdapter, LockWebhookEvent } from "./adapter";
-import { appendLockLine, lockLine, type GrantRef } from "./eventLog";
+import { appendLockLine, lockLine, readLockLines, type GrantRef } from "./eventLog";
 import type { DoorLocksFile } from "./settings";
 
 /**
@@ -36,7 +36,7 @@ export interface InboundResult {
  * Applies one verified event to the property. `adapter` makes a fresh connect link when the lock
  * account was disconnected. Returns the notes for the host, each with a stable id.
  */
-export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, event: LockWebhookEvent, now: Date): Promise<InboundResult> {
+export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, event: LockWebhookEvent, now: Date, timeZone?: string): Promise<InboundResult> {
   const file = door.locks();
   const device = event.deviceId ? file.devices.find((item) => item.id === event.deviceId) : undefined;
   const ref = event.codeId ? door.grants().grantOf(event.codeId) : undefined;
@@ -97,7 +97,25 @@ export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, eve
       }
       break;
     }
+    case "unlock": {
+      // Checkout-time release: when the cleaner's code first opens the door, any other unlock in the
+      // hour before (the guest's code isn't Property Core's) is told to the host right away.
+      if (!grant || grant.flow !== "cleaning" || file.release.cleaners !== "automatic") break;
+      const since = new Date(Date.parse(event.at) - 60 * 60_000);
+      const earlier = readLockLines(door.root, since, new Date(event.at)).filter((line) => line.type === "lock" && line.action === "unlock" && line.id !== event.id);
+      if (earlier.some((line) => line.type === "lock" && line.grant?.flow === "cleaning" && line.grant.jobId === grant.jobId)) break;
+      const last = earlier.filter((line) => line.type === "lock" && !line.grant).at(-1);
+      if (!last) break;
+      const at = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone: timeZone ?? "UTC" }).format(new Date(last.at));
+      const person = door.grants().labelOf("cleaning", grant.jobId) ?? "the cleaner";
+      notes.push({ id: `lock:someone-before:${grant.jobId}`, jobId: grant.jobId, urgent: true, text: `${capital(person)} just arrived. Someone else came in at ${at}.` });
+      break;
+    }
     case "account-disconnected": {
+      if (file.release.cleaners === "automatic") {
+        file.release.cleaners = "ask";
+        notes.push({ id: `lock:auto-off:${event.id}`, text: "Checkout-time codes are off while the lock account is disconnected: the cleaner's code waits for your \"guests have left\" again." });
+      }
       if (once(file, `disconnected:${event.id}`)) {
         let link = "";
         try {
@@ -114,6 +132,10 @@ export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, eve
   }
   door.saveLocks(file);
   return { stored, notes, ...(event.kind === "unlock" && grant ? { unlockedBy: grant } : {}) };
+}
+
+function capital(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /** The clock pass: a lock offline for 30 minutes is told once per time it went offline. */

@@ -160,6 +160,42 @@ describe("the lock webhook", () => {
     expect(lockNews(a.root)).toEqual([expect.stringMatching(/^Your lock account was disconnected, so I can't make or change codes\. Sign in again here: https:\/\/connect\.example\.com\/locks\/link-\d+$/)]);
   });
 
+  it("with checkout-time codes on, tells the host when someone else came in during the hour before the cleaner", async () => {
+    const { send, a, fake, m } = await world();
+    const ctx = propertyContext(m.hosted(), a.tenant, a.property);
+    const hub = hubFor(ctx.root, { now: () => clock });
+    hub.saveProperty({ address: "12 Scratch Lane, Teaneck, NJ 07666", timeZone: "America/New_York" });
+    const door = hub.doorAccess(ctx.env);
+    door.saveLocks({ ...door.locks(), release: { cleaners: "automatic", pros: "ask" } });
+    await door.syncGrants("cleaning", [{ jobId: "job-1", person: "+15555550131", window: WINDOW, label: "Ana" }]);
+    const codeId = fake.liveCodes("dev-a")[0]!.codeId;
+    await send(unlock("evt-20", "dev-a", { at: "2026-12-01T15:40:00.000Z" }));
+    await send(unlock("evt-21", "dev-a", { at: "2026-12-01T16:05:00.000Z", codeId }));
+    await send(unlock("evt-22", "dev-a", { at: "2026-12-01T16:20:00.000Z", codeId }));
+    expect(lockNews(a.root)).toEqual(["Ana just arrived. Someone else came in at 10:40 AM."]);
+  });
+
+  it("says nothing about an earlier unlock when the cleaner's code goes on the host's yes", async () => {
+    const { send, a, fake, m } = await world();
+    const ctx = propertyContext(m.hosted(), a.tenant, a.property);
+    const door = hubFor(ctx.root, { now: () => clock }).doorAccess(ctx.env);
+    await door.syncGrants("cleaning", [{ jobId: "job-1", person: "+15555550131", window: WINDOW, label: "Ana" }]);
+    const codeId = fake.liveCodes("dev-a")[0]!.codeId;
+    await send(unlock("evt-23", "dev-a", { at: "2026-12-01T15:40:00.000Z" }));
+    await send(unlock("evt-24", "dev-a", { at: "2026-12-01T16:05:00.000Z", codeId }));
+    expect(lockNews(a.root)).toEqual([]);
+  });
+
+  it("turns checkout-time codes off when the lock account disconnects, and says so", async () => {
+    const { send, a, m } = await world();
+    const ctx = propertyContext(m.hosted(), a.tenant, a.property);
+    const door = hubFor(ctx.root, { now: () => clock }).doorAccess(ctx.env);
+    door.saveLocks({ ...door.locks(), release: { cleaners: "automatic", pros: "ask" } });
+    await send({ id: "evt-25", kind: "account-disconnected", partnerType: "connected_account.disconnected", at: NOW.toISOString(), accountId: `acct-${a.tenant.id}`, customerKey: a.tenant.id });
+    expect(door.locks().release.cleaners).toBe("ask");
+    expect(lockNews(a.root)[0]).toBe('Checkout-time codes are off while the lock account is disconnected: the cleaner\'s code waits for your "guests have left" again.');
+  });
+
   it("is not served with SMART_LOCKS off", async () => {
     const { send } = await world({ FIXER_CORE: "1" });
     expect((await send(unlock("evt-12", "dev-a"))).status).toBe(404);

@@ -1661,6 +1661,8 @@ export class LiveDesk {
     } catch {
       return;
     }
+    // A hold revokes the code: what went out before it goes again only on the host's "guests have left".
+    if (engine.jobOnHold()) engine.lockHeld();
     const label = this.file.cleanerName?.trim();
     const wanted = engine.wantedCodes().map((item) => ({ ...item, ...(label ? { label } : {}) }));
     const signature = JSON.stringify(wanted);
@@ -1679,6 +1681,41 @@ export class LiveDesk {
     } catch {
       this.lockSync = undefined;
     }
+  }
+
+  /**
+   * The checkout-time release's mode: "on" only on connected locks with cleaners' codes set to go out
+   * automatically and every door online; "offline" when a door is offline; else "off".
+   */
+  private codeAtCheckoutMode(): "on" | "off" | "offline" {
+    try {
+      const door = this.door();
+      if (!door.connected()) return "off";
+      const locks = door.locks();
+      if (locks.release.cleaners !== "automatic") return "off";
+      const doors = locks.devices.filter((device) => locks.doors.includes(device.id));
+      return doors.every((device) => device.online) ? "on" : "offline";
+    } catch {
+      return "off";
+    }
+  }
+
+  /**
+   * The lock clock, on connected locks: the checkout-time release, and the paused turnover's
+   * reminders. Each host note wakes the alerts routine once. Sends the code only by the release.
+   */
+  lockClock(): Promise<void> {
+    return this.serial(async () => {
+      this.resume();
+      const engine = this.engine;
+      if (!engine || !this.file.checked) return;
+      if (!this.door().connected()) return;
+      const before = new Set(this.visibleNotes(engine).map((note) => note.id));
+      await engine.checkoutRelease();
+      engine.pausedReminders();
+      this.syncHold();
+      this.queueNewAlerts(before);
+    });
   }
 
   private thenApplyAccount<T>(run: Promise<T>): Promise<T> {
@@ -1828,6 +1865,7 @@ export class LiveDesk {
     // Airbnb emails whose stay wasn't on the calendar yet get their times now, or a question after 3 hours.
     await retryPendingEmails(this.emailDesk(input.googleEvents));
     await engine.runReminders();
+    await engine.checkoutRelease();
     this.syncHold();
     this.nudgeCheckout(engine);
     const shown = new Set(this.file.alertsShown ?? []);
@@ -3896,6 +3934,8 @@ export class LiveDesk {
       cleaner: { phone: file.cleaner, approved: true },
       access: this.doorPort(),
       accessRefused: this.accessRefusedLines(),
+      codeAtCheckout: () => this.codeAtCheckoutMode(),
+      ...(file.cleanerName?.trim() ? { cleanerLabel: file.cleanerName.trim() } : {}),
       hostName: file.business,
       consented: file.texting === true,
       // Consent is per account: the engine's own YES and STOP decide, and the service's own lines are
