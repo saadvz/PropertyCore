@@ -20,9 +20,13 @@ export function sharedLength(devices: readonly Pick<LockDevice, "codeLengths">[]
   return shared.length > 0 ? Math.max(...shared) : DEFAULT_LENGTH;
 }
 
-/** True for a code anyone would guess: one digit repeated, or a straight run up or down. */
+/**
+ * True for a code anyone would guess (one digit repeated, a straight run up or down), or one that reads
+ * as a year: years sit in every record and log as their own token, where the leak checks would trip.
+ */
 export function guessable(code: string): boolean {
   if (/^(\d)\1+$/.test(code)) return true;
+  if (/^(19|20)\d\d$/.test(code)) return true;
   const digits = [...code].map(Number);
   const steps = new Set(digits.slice(1).map((digit, index) => (digit - digits[index]! + 10) % 10));
   return steps.size === 1 && (steps.has(1) || steps.has(9));

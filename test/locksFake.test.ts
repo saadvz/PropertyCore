@@ -81,6 +81,8 @@ describe("one code on every door", () => {
     expect(guessable("111111")).toBe(true);
     expect(guessable("345678")).toBe(true);
     expect(guessable("876543")).toBe(true);
+    expect(guessable(["2", "0", "2", "6"].join(""))).toBe(true);
+    for (let i = 0; i < 500; i++) expect(freshCode(4, new Set())).not.toMatch(/^(19|20)\d\d$/);
   });
 
   it("picks a length every lock accepts", () => {
