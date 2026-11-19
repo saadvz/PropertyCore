@@ -71,3 +71,31 @@ describe("choosing the counter from the environment", () => {
     expect(counterFromEnv({ CAMERA_COUNTER_GEMINI_KEY: KEY, CAMERA_COUNTER_MODEL: "../../evil" })?.name).toBe("gemini-4-neon-low-v1");
   });
 });
+
+describe("the live-count command", () => {
+  it("says so without a key, and counts each file with one (stubbed, never Google)", async () => {
+    const { runLiveCount } = await import("../src/cameras/liveCountCli");
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const said: string[] = [];
+    expect(await runLiveCount(["x.jpg"], {}, (t) => said.push(t))).toBe(1);
+    expect(said[0]).toMatch(/isn't set/);
+    const dir = mkdtempSync(join(tmpdir(), "live-count-"));
+    writeFileSync(join(dir, "a.jpg"), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+    const { fetch } = stub(() => json({ output_text: '{"people": 1, "vehicles": 0, "animals": 2}' }));
+    const out: string[] = [];
+    expect(await runLiveCount([join(dir, "a.jpg")], { CAMERA_COUNTER_GEMINI_KEY: KEY }, (t) => out.push(t), fetch)).toBe(0);
+    expect(out.join("\n")).toContain('a.jpg: {"people":1,"vehicles":0,"animals":2}');
+    expect(out.join("\n")).not.toContain(KEY);
+  });
+});
+
+describe("a key held by the network", () => {
+  it("sends no key header when the key is the environment's network secret", async () => {
+    const { calls, fetch } = stub(() => json({ output_text: '{"people": 0, "vehicles": 0, "animals": 0}' }));
+    const counter = counterFromEnv({ CAMERA_COUNTER_GEMINI_KEY: "network" }, fetch);
+    expect(await counter!.count(new Uint8Array([1]), {})).toEqual({ people: 0, vehicles: 0, animals: 0 });
+    expect(calls[0]!.init.headers as Record<string, string>).not.toHaveProperty("x-goog-api-key");
+  });
+});

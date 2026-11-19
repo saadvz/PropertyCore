@@ -31,6 +31,7 @@
     "cleaner:smoke": "tsx src/cleaner-core/cli.ts smoke",
     "cleaner:health": "tsx src/cleaner-core/cli.ts health",
     "cameras:count-test": "tsx src/cameras/countTestCli.ts",
+    "cameras:live-count": "tsx src/cameras/liveCountCli.ts",
     "build": "node scripts/build.mjs",
     "start": "node dist/server.js",
     "test": "vitest run",

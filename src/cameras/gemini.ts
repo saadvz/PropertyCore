@@ -18,6 +18,8 @@ export const DEFAULT_COUNTER_THINKING = "low";
 const THINKING_LEVELS = ["low", "medium", "high", "xhigh"];
 const MODEL_NAME = /^gemini-[a-z0-9.-]{1,22}$/; // keeps the counter name within the log's 40 characters
 const TIMEOUT_MS = 30_000;
+/** CAMERA_COUNTER_GEMINI_KEY=network: the key lives in the environment's network secret for Google's host, never in the process. */
+export const NETWORK_KEY = "network";
 
 const COUNT_SCHEMA = {
   type: "object",
@@ -64,7 +66,8 @@ export function geminiLook(options: { apiKey: string; model?: string; thinkingLe
       response = await fetch(ENDPOINT, {
         method: "POST",
         signal: controller.signal,
-        headers: { "content-type": "application/json", "x-goog-api-key": options.apiKey, "Api-Revision": API_REVISION },
+        // "network": the environment's network secret adds the key on its way to Google, so none is sent from here.
+        headers: { "content-type": "application/json", ...(options.apiKey === NETWORK_KEY ? {} : { "x-goog-api-key": options.apiKey }), "Api-Revision": API_REVISION },
         body: JSON.stringify({
           model,
           input: [
