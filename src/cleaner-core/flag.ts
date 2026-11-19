@@ -50,6 +50,11 @@ export function remoteOversightOn(env: NodeJS.ProcessEnv = process.env): boolean
   return isOn(env.REMOTE_OVERSIGHT);
 }
 
+/** Visit records (#237): arrival, departure and time on site. Off unless VISIT_RECORDS is exactly "1" or "true". */
+export function visitRecordsOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isOn(env.VISIT_RECORDS);
+}
+
 /** Package arrivals (#241) on the multi-tenant service. Off unless PACKAGE_ARRIVALS is exactly "1" or "true". */
 export function packageArrivalsOn(env: NodeJS.ProcessEnv = process.env): boolean {
   return isOn(env.PACKAGE_ARRIVALS);

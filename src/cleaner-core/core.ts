@@ -32,6 +32,10 @@ import { codeRoute, GroupNotConfirmed, type GroupSeat } from "./groupThread";
 import { GROK_HELPER } from "./assistant";
 import { codeHandlingText, HEALTH_NOTE, reviewAlert, reviewId, type AuditEvent, type ReviewDetail, type ReviewItem, type ReviewKind } from "./review";
 import { mirrorStore, restoreTenantSlice, snapshotStore } from "./sqliteStore";
+import { buildVisits } from "../visits/derive";
+import { cleaningDue } from "../visits/due";
+import { cleaningVisit, type MessageRole, type WindowEvent } from "../visits/events";
+import { messageEventId, type VisitLog } from "../visits/store";
 import { isOtherScratchTenantPhone, isTenantPhone, SCRATCH_TENANTS } from "./tenants";
 
 export type TextKind =
@@ -65,7 +69,11 @@ export type TextKind =
   /** The host's saved checklist, to the cleaner after the private code. */
   | "checklist"
   /** Supply Core's "anything running low?", right after the door code, when the host chose to ask on arrival. */
-  | "supply-ask";
+  | "supply-ask"
+  /** Visit records (#237): the cleaner hasn't come in by the expected time plus the grace. Once per job, never with the code. */
+  | "late-ask"
+  /** Visit records (#237): a note for the host, one-to-one: the next check-in at risk, a no-show, readiness, a stray entry. */
+  | "visit-note";
 
 export interface CleanerText {
   to: string;
@@ -422,6 +430,11 @@ export interface CleanerCoreOptions {
   /** The cleaner's saved name. The done text uses its first word. A group text names them itself. */
   cleanerName?: string;
   /**
+   * Visit records (#237), set only while VISIT_RECORDS is on: the property's visit log, written at each text in or
+   * out and each window change, and read by the clock pass for the late text and the host's visit notes.
+   */
+  visits?: { log: VisitLog; cleanerName?: string };
+  /**
    * The host's other instructions, added to the end of the door code text, so the cleaner reads them
    * as the cleaning starts. LiveDesk sets it only when instructions are saved, so the Scratch CLI and
    * smoke engines keep their door code copy.
@@ -641,7 +654,7 @@ export const GROUP_ROUTED: ReadonlySet<TextKind> = new Set<TextKind>([
   "host-message",
 ]);
 
-const HOST_DIRECT = new Set<TextKind>(["host-checkout", "host-checkin", "pin-failed", "pin-held", "resume"]);
+const HOST_DIRECT = new Set<TextKind>(["host-checkout", "host-checkin", "pin-failed", "pin-held", "resume", "visit-note"]);
 const GROUP_PREFIX = "Group text: ";
 const MIRROR_PREFIX = "Copy of the group text: ";
 const DEFAULT_TRIGGERS: ReminderTrigger[] = [{ id: "morning-of", kind: "morning-of", localTime: "08:00" }];
@@ -995,8 +1008,10 @@ class Engine implements CleanerCore {
     this.inflight.add(input.id);
     if ((input.media ?? 0) > 0) this.withMedia.add(input.id);
     this.pendingIntros = [];
+    const before = this.options.visits ? new Map(this.jobsState.map((job) => [job.id, { startedAt: job.startedAt, doneAt: job.doneAt }])) : undefined;
     try {
       const { label, ...claimed } = await this.receiveClaimed(input, from);
+      if (before) this.logInbound(input, from, before);
       const intros = this.takeIntros().filter((intro) => !claimed.sent.includes(intro));
       const result = intros.length > 0 ? { ...claimed, sent: [...intros, ...claimed.sent] } : claimed;
       return this.options.grokReadsMessages ? { ...result, outcome: label ?? outcomeOf(result) } : result;
@@ -1204,6 +1219,7 @@ class Engine implements CleanerCore {
         for (const text of await this.deliverPin(job)) sent.push(text);
       }
     }
+    sent.push(...(await this.visitPass()));
     this.save();
     return { sent: [...this.takeIntros(), ...sent], failed };
   }
@@ -3021,6 +3037,7 @@ class Engine implements CleanerCore {
     if (draft.kind === "emergency") this.counters.injury += 1;
     this.transcriptState.push(this.redact(draft.body));
     draft.afterSend?.();
+    this.logOutbound(draft);
     this.logSend(draft.kind, "sent", draft.to);
     this.save();
     return text;
@@ -3837,6 +3854,176 @@ class Engine implements CleanerCore {
     return this.now().getTime() >= Date.parse(zonedInstant(job.checkoutDate, hm(checkout.minutes), this.options.property.timeZone));
   }
 
+  /** The visit log's role for a phone. */
+  private visitRole(phone: string, group?: boolean): MessageRole {
+    if (group) return "group";
+    if (phone === this.cleanerPhone) return "cleaner";
+    if (phone === this.owner) return "host";
+    return "observer";
+  }
+
+  /**
+   * Visit records (#237): one inbound text, labeled "done" when it finished a cleaning, "start" when it started one,
+   * else "other", with the door code and every digit run taken out. A failure to write never stops the engine.
+   */
+  private logInbound(input: InboundText, from: string, before: Map<string, { startedAt?: string; doneAt?: string }>): void {
+    const log = this.options.visits?.log;
+    if (!log) return;
+    try {
+      let label = "other";
+      let job = this.jobsState.find((item) => item.doneAt && item.doneAt !== before.get(item.id)?.doneAt);
+      if (job) label = "done";
+      else {
+        job = this.jobsState.find((item) => item.startedAt && item.startedAt !== before.get(item.id)?.startedAt);
+        if (job) label = "start";
+        else job = this.progressJob();
+      }
+      log.append(
+        {
+          type: "message",
+          id: messageEventId("in", input.id),
+          at: this.now().toISOString(),
+          direction: "in",
+          role: this.visitRole(from),
+          personKey: log.personKey(from),
+          ...(job ? { visit: cleaningVisit(job.id) } : {}),
+          label,
+          body: input.text,
+        },
+        (text) => this.redact(text),
+      );
+    } catch {
+      // The log is a record, not a gate.
+    }
+  }
+
+  /** Visit records (#237): one text that went out. The door code text is logged by what it was, with no body. */
+  private logOutbound(draft: Draft): void {
+    const log = this.options.visits?.log;
+    if (!log) return;
+    try {
+      const to = draft.channel === "group" ? undefined : draft.to;
+      log.append(
+        {
+          type: "message",
+          id: messageEventId("out", draft.id),
+          at: this.now().toISOString(),
+          direction: "out",
+          role: this.visitRole(draft.to, draft.channel === "group"),
+          ...(to ? { personKey: log.personKey(to) } : {}),
+          ...(draft.jobId ? { visit: cleaningVisit(draft.jobId) } : {}),
+          label: draft.kind === "pin" ? "door-code" : draft.kind,
+          ...(draft.kind === "pin" ? {} : { body: draft.body }),
+        },
+        (text) => this.redact(text),
+      );
+    } catch {
+      // The log is a record, not a gate.
+    }
+  }
+
+  /** The last window logged per visit, so a window is written only when it changed. Read once from the log. */
+  private visitWindowSigs?: Map<string, string>;
+
+  /** A cleaning's window: from checkout to the same-day check-in, else to 8 PM. Undefined without a checkout time. */
+  private visitWindowOf(job: Job): Omit<WindowEvent, "id" | "at"> | undefined {
+    const timeZone = this.options.property.timeZone;
+    const checkout = this.latestFact(job.id, "checkout")?.minutes ?? this.defaultCheckout;
+    const from = zonedInstant(job.checkoutDate, hm(checkout), timeZone);
+    const checkIn = job.nextCheckInDate ? zonedInstant(job.nextCheckInDate, hm(this.latestFact(job.id, "checkin")?.minutes ?? this.defaultCheckIn), timeZone) : undefined;
+    let until = job.sameDay && checkIn ? checkIn : zonedInstant(job.checkoutDate, "20:00", timeZone);
+    // A late checkout past 8 PM still gets a window: two hours from checkout.
+    if (Date.parse(until) <= Date.parse(from)) until = new Date(Date.parse(from) + 2 * 3_600_000).toISOString();
+    return {
+      type: "visit-window",
+      visit: cleaningVisit(job.id),
+      kind: "cleaning",
+      from,
+      until,
+      expectedAt: job.arrivalAt ?? from,
+      sameDay: job.sameDay,
+      ...(checkIn ? { checkIn } : {}),
+      who: { role: "cleaner", name: this.options.visits?.cleanerName?.trim() || "The cleaner" },
+    };
+  }
+
+  /**
+   * Visit records (#237): writes each cleaning's window when it's set or moved (a booking email, the host's time, a
+   * late checkout, an arrival time), and a cancel when a cleaning is called off. Never stops the engine.
+   */
+  private syncVisitWindows(): void {
+    const log = this.options.visits?.log;
+    if (!log) return;
+    try {
+      if (!this.visitWindowSigs) {
+        this.visitWindowSigs = new Map();
+        for (const event of log.read()) {
+          if (event.type === "visit-window") this.visitWindowSigs.set(event.visit, windowSig(event));
+          else if (event.type === "visit-cancelled") this.visitWindowSigs.set(event.visit, "cancelled");
+        }
+      }
+      const at = this.now().toISOString();
+      for (const job of this.jobsState) {
+        const visit = cleaningVisit(job.id);
+        const last = this.visitWindowSigs.get(visit);
+        if (job.canceled || job.declined) {
+          if (last !== undefined && last !== "cancelled" && log.append({ type: "visit-cancelled", id: `cancel:${visit}:${at}`, at, visit })) this.visitWindowSigs.set(visit, "cancelled");
+          continue;
+        }
+        const window = this.visitWindowOf(job);
+        if (!window) continue;
+        const sig = windowSig(window);
+        if (last === sig) continue;
+        if (log.append({ ...window, id: `window:${visit}:${at}`, at })) this.visitWindowSigs.set(visit, sig);
+      }
+    } catch {
+      // The log is a record, not a gate.
+    }
+  }
+
+  /**
+   * Visit records' clock pass (#237): with a connected lock, the late text to the cleaner, and the host's notes (the
+   * next check-in at risk, a no-show, arrival-day readiness, a stray entry). Each goes once under its own id, through
+   * the same send path as every other text. Without a lock, nothing is due.
+   */
+  private async visitPass(): Promise<CleanerText[]> {
+    const visits = this.options.visits;
+    if (!visits) return [];
+    let items;
+    try {
+      const timeZone = this.options.property.timeZone;
+      const derived = buildVisits(visits.log.read(), { timeZone, codeNames: visits.log.codeNames(), now: this.now() });
+      items = cleaningDue(derived, {
+        now: this.now(),
+        timeZone,
+        address: this.options.property.address,
+        ...(visits.cleanerName ? { cleanerName: visits.cleanerName } : {}),
+        sent: (id) => this.delivery(id) === "sent",
+      });
+    } catch {
+      return [];
+    }
+    const sent: CleanerText[] = [];
+    for (const item of items) {
+      const status = this.delivery(item.id);
+      if (status === "sent" || status === "canceled") continue;
+      if (item.to === "cleaner") {
+        const job = this.jobsState.find((entry) => entry.id === item.jobId);
+        if (!job || job.done || job.canceled || job.declined || this.inQuietHours()) continue;
+        // Only the opted-in, approved cleaner, one-to-one.
+        const to = this.cleanerRecord()?.phone;
+        if (!to || this.cleanerConsent !== "in" || !this.options.cleaner.approved) continue;
+        const text = await this.emit({ id: item.id, jobId: item.jobId!, to, kind: "late-ask", body: item.body });
+        if (text) sent.push(text);
+      } else {
+        if (!this.owner) continue;
+        const text = await this.emit({ id: item.id, ...(item.jobId ? { jobId: item.jobId } : {}), to: this.owner, kind: "visit-note", body: item.body });
+        if (text) sent.push(text);
+      }
+    }
+    return sent;
+  }
+
   private redact(body: string): string {
     if (!this.pin || !body.includes(this.pin)) return body;
     return body.split(this.pin).join("[redacted]");
@@ -3909,6 +4096,7 @@ class Engine implements CleanerCore {
   }
 
   private save(): void {
+    this.syncVisitWindows();
     if (!this.file) return;
     const mine: Stored = {
       schemaVersion: 1,
@@ -4220,6 +4408,11 @@ function minutesOf(hmText: string): number {
   const match = /^(\d{2}):(\d{2})$/.exec(hmText);
   if (!match) throw new Error("Bad local time");
   return Number(match[1]) * 60 + Number(match[2]);
+}
+
+/** What a window says, so the same window isn't written twice. */
+function windowSig(window: Pick<WindowEvent, "from" | "until" | "expectedAt" | "sameDay" | "checkIn" | "who">): string {
+  return JSON.stringify([window.from, window.until, window.expectedAt, window.sameDay, window.checkIn ?? null, window.who.name]);
 }
 
 function hm(minutes: number): string {
