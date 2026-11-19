@@ -68,6 +68,8 @@ export interface GrantNote {
   id: string;
   text: string;
   urgent?: boolean;
+  /** The flow's job the note is about. */
+  jobId?: string;
 }
 
 /** What the release hands over. `doors` is set when the doors take different codes. */
@@ -312,7 +314,7 @@ export class GrantBook {
 
   private async issue(adapter: LockAdapter, flow: GrantFlow, want: WantedCode): Promise<{ ok: true; grant: StoredGrant } | { ok: false; note: GrantNote }> {
     const who = whoOf(flow, want.label);
-    const failed: GrantNote = { id: `lock:issue-failed:${flow}:${want.jobId}`, text: `I couldn't put ${who}'s code on the lock yet. I'll keep trying, and I'll tell you if it isn't there when they arrive.` };
+    const failed: GrantNote = { id: `lock:issue-failed:${flow}:${want.jobId}`, jobId: want.jobId, text: `I couldn't put ${who}'s code on the lock yet. I'll keep trying, and I'll tell you if it isn't there when they arrive.` };
     const key = this.deps.key();
     const doors = this.deps.doors();
     if (!key || doors.length === 0) return { ok: false, note: failed };

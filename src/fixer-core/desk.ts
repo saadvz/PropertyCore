@@ -16,7 +16,7 @@ import { addCalendarDays } from "../hub/calendar";
 import { joinSplitDigits } from "../hub/digits";
 import type { GoogleEventList } from "../hub/sources";
 import { refuseCards } from "../hub/cards";
-import type { AccessRefusal as DoorRefusal } from "../hub/doorAccess";
+import type { AccessRefusal as DoorRefusal, DoorAccess, WantedCode } from "../hub/doorAccess";
 import { hubFor, propertyDetailsProblem, type Hub } from "../hub/hub";
 import type { Stay } from "../hub/store";
 import type { People } from "../hub/people";
@@ -395,9 +395,74 @@ export class FixerDesk {
 
   /** Runs calls one at a time, so two tools never write the record at once. */
   protected serial<T>(work: () => Promise<T> | T): Promise<T> {
-    const run = this.chain.then(work, work);
+    const step = async () => {
+      const value = await work();
+      await this.syncLocks();
+      return value;
+    };
+    const run = this.chain.then(step, step);
     this.chain = run.catch(() => undefined);
     return run;
+  }
+
+  /** The last lock sync: what Fixer wanted, and when. Only in memory. */
+  private lockSync: { signature: string; at: number } | undefined;
+
+  /**
+   * On connected locks, the codes Fixer wants now: the booked pro's own, for each live visit with the
+   * host's yes and access by code, from Fixer's access window (30 minutes early, none for an urgent
+   * visit) to its end or extension. A crew's access stays the host's. Fixer off: none, so all go.
+   */
+  private wantedCodes(file: FixerFile): WantedCode[] {
+    if (!file.settings.activatedAt || file.offAt) return [];
+    const wanted: WantedCode[] = [];
+    for (const job of file.jobs) {
+      const booking = job.booking;
+      if (!booking || !liveBooking(job) || !booking.hostYes || booking.access !== "code" || job.crew) continue;
+      const phone = this.reachOfId(file, job, booking.proId).phone;
+      if (!phone) continue;
+      const lead = booking.urgentStay ? 0 : 30 * 60_000;
+      const from = new Date(Date.parse(booking.from) - lead).toISOString();
+      const until = new Date(Date.parse(booking.extendedUntil ?? booking.until)).toISOString();
+      wanted.push({ jobId: job.id, person: phone, window: { from, until }, label: firstName(this.bookedName(file, job)) });
+    }
+    return wanted;
+  }
+
+  /**
+   * Issues, moves and revokes the pros' codes to match the record, after each step on connected locks.
+   * Skipped when nothing changed in the last ten minutes. A note (a code that couldn't be made) goes
+   * to the host once per visit. A failure leaves it for the next step.
+   */
+  private async syncLocks(): Promise<void> {
+    let door: DoorAccess;
+    let file: FixerFile;
+    try {
+      door = this.door();
+      if (!door.connected()) return;
+      file = this.read();
+    } catch {
+      return;
+    }
+    const wanted = this.wantedCodes(file);
+    const signature = JSON.stringify(wanted);
+    if (this.lockSync?.signature === signature && this.deps.now().getTime() - this.lockSync.at < 10 * 60_000) return;
+    try {
+      const notes = await door.syncGrants("repair", wanted);
+      this.lockSync = { signature, at: this.deps.now().getTime() };
+      const told: HostNote[] = [];
+      for (const note of notes) {
+        const job = file.jobs.find((item) => item.id === note.jobId);
+        if (!job || job.news.some((item) => item.kind === "lock" && item.text === note.text)) continue;
+        told.push(this.news(job, "lock", note.text, `fixer:${job.id}:${note.id}`));
+      }
+      if (told.length > 0) {
+        this.write(file);
+        await this.tell(told);
+      }
+    } catch {
+      this.lockSync = undefined;
+    }
   }
 
   /** Every call starts here: card-like input is refused before anything is read or saved, and a damaged record is told plainly. */
@@ -2172,7 +2237,9 @@ export class FixerDesk {
   private async openCode(file: FixerFile, job: Job, window: { from: string; until: string }, notes: HostNote[]): Promise<{ ok: true; code: string; lockLocation?: string; doors?: { door: string; code: string }[] } | { ok: false; reason: DoorRefusal }> {
     const phone = this.reachOfId(file, job, job.booking!.proId).phone!;
     const grant = await this.door().request({ person: phone, window, purpose: "repair", jobId: job.id, label: firstName(this.bookedName(file, job)) });
-    for (const note of grant.notes ?? []) notes.push(this.news(job, "lock", note.text, `fixer:${job.id}:${note.id}`));
+    for (const note of grant.notes ?? []) {
+      if (!job.news.some((item) => item.kind === "lock" && item.text === note.text)) notes.push(this.news(job, "lock", note.text, `fixer:${job.id}:${note.id}`));
+    }
     if (grant.ok && /^\d{4,8}$/.test(grant.code) && (grant.doors ?? []).every((door) => /^\d{4,8}$/.test(door.code))) {
       return { ok: true, code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}), ...(grant.doors ? { doors: grant.doors } : {}) };
     }
