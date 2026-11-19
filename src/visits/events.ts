@@ -92,7 +92,35 @@ export interface PageEvent {
   step: "at-door" | "done";
 }
 
-export type VisitEvent = LockEvent | LockConnectionEvent | MessageEvent | WindowEvent | CancelEvent | PageEvent;
+/** A clip or snapshot kept by reference, in the camera's own store. Never copied here. */
+export interface MediaRef {
+  /** The camera's name. */
+  device: string;
+  /** When, in milliseconds since the epoch. */
+  at: number;
+  durationMs?: number;
+}
+
+/**
+ * One camera event in a shape no camera provider owns. The camera adapter (#239) maps into it. Visit records don't
+ * read it yet: a camera departure will later replace a DONE one. The media stays with the provider, by reference.
+ */
+export interface CameraEvent {
+  type: "camera";
+  /** The provider's own event id, so a resent event is stored once. */
+  id: string;
+  at: string;
+  /** The camera's name, like "Front porch". */
+  device: string;
+  /** The provider's label as given, like "motion", "person" or "vehicle". Kept, read by no rule yet. */
+  label?: string;
+  /** Our own count from the snapshot. */
+  counts?: { people?: number; vehicles?: number; animals?: number };
+  snapshot?: MediaRef;
+  clip?: MediaRef;
+}
+
+export type VisitEvent = LockEvent | LockConnectionEvent | MessageEvent | WindowEvent | CancelEvent | PageEvent | CameraEvent;
 
 /** A line as stored: the event and when it was written. */
 export type StoredEvent = VisitEvent & { loggedAt: string };

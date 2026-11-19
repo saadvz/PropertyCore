@@ -92,6 +92,36 @@ describe("the visit log", () => {
     expect(a.personKey("+15555550101")).not.toBe(b.personKey("+15555550101"));
   });
 
+  it("keeps a camera event by reference, with its label and counts, for the camera adapter (#239)", () => {
+    const { log: visits } = log();
+    expect(
+      visits.append({
+        type: "camera",
+        id: "cam-1",
+        at: "2027-01-04T16:00:00.000Z",
+        device: "Front porch",
+        label: "person",
+        counts: { people: 1, vehicles: -2 },
+        snapshot: { device: "Front porch", at: 1_799_078_400_000 },
+        clip: { device: "Front porch", at: 1_799_078_400_000, durationMs: 12_000 },
+      }),
+    ).toBe(true);
+    expect(visits.append({ type: "camera", id: "cam-1", at: "2027-01-04T16:00:00.000Z", device: "Front porch" })).toBe(false);
+    expect(visits.read()).toEqual([
+      {
+        type: "camera",
+        id: "cam-1",
+        at: "2027-01-04T16:00:00.000Z",
+        device: "Front porch",
+        label: "person",
+        counts: { people: 1 },
+        snapshot: { device: "Front porch", at: 1_799_078_400_000 },
+        clip: { device: "Front porch", at: 1_799_078_400_000, durationMs: 12_000 },
+        loggedAt: "2027-01-04T15:00:00.000Z",
+      },
+    ]);
+  });
+
   it("refuses an event it can't check, and writes nothing", () => {
     const { log: visits } = log();
     expect(visits.append({ type: "lock", id: "x", at: "soon", device: "Front door", action: "unlock" })).toBe(false);

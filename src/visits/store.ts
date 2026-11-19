@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CodeNames, CodePerson, StoredEvent, VisitEvent } from "./events";
+import type { CodeNames, CodePerson, MediaRef, StoredEvent, VisitEvent } from "./events";
 import { codeKey } from "./events";
 
 /**
@@ -93,6 +93,31 @@ export function cleanEvent(event: VisitEvent, redact: (text: string) => string =
         sameDay: Boolean(event.sameDay),
         ...(event.checkIn ? { checkIn: event.checkIn } : {}),
         who: { role: who.role, name: cleanName(who.name) || (who.role === "cleaner" ? "The cleaner" : "The pro"), ...(isId(who.proId) ? { proId: who.proId } : {}) },
+      };
+    }
+    case "camera": {
+      if (typeof event.device !== "string" || !event.device.trim()) return undefined;
+      const label = typeof event.label === "string" && event.label.trim() ? cleanName(event.label) : undefined;
+      const count = (n: unknown) => (typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 1000 ? n : undefined);
+      const counts = event.counts && typeof event.counts === "object" ? Object.fromEntries((["people", "vehicles", "animals"] as const).flatMap((key) => { const n = count(event.counts?.[key]); return n === undefined ? [] : [[key, n]]; })) : {};
+      const media = (ref: unknown): MediaRef | undefined => {
+        if (!ref || typeof ref !== "object") return undefined;
+        const r = ref as Partial<MediaRef>;
+        if (typeof r.device !== "string" || !r.device.trim() || typeof r.at !== "number" || !Number.isFinite(r.at)) return undefined;
+        const duration = typeof r.durationMs === "number" && Number.isFinite(r.durationMs) && r.durationMs >= 0 ? r.durationMs : undefined;
+        return { device: cleanName(r.device), at: r.at, ...(duration !== undefined ? { durationMs: duration } : {}) };
+      };
+      const snapshot = media(event.snapshot);
+      const clip = media(event.clip);
+      return {
+        type: "camera",
+        id: event.id,
+        at: event.at,
+        device: cleanName(event.device),
+        ...(label ? { label } : {}),
+        ...(Object.keys(counts).length > 0 ? { counts } : {}),
+        ...(snapshot ? { snapshot } : {}),
+        ...(clip ? { clip } : {}),
       };
     }
     case "visit-cancelled":

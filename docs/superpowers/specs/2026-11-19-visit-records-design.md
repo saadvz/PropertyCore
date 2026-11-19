@@ -168,6 +168,8 @@ again, so a resent webhook or a replay adds nothing.
 | `visit-window` | Cleaner Core when a job's times are set or moved (booking email, host time, late checkout); Fixer Core on booking, reschedule, extend, crew schedule | `visit` (job id, plus the day for a crew), `kind` (`cleaning`, `repair`, `crew-day`), `from`, `until`, `expectedAt`, `sameDay`, `who` |
 | `visit-cancelled` | Both, on a call-off or cancel | `visit` |
 | `visit-page` | Fixer Core's visit page | `visit`, `step` (`at-door`, `done`) |
+| `lock-connection` | #180's adapter, tests | `connected` (true or false): whether the property's lock is connected from then on |
+| `camera` | #239's camera adapter | `device`, `label` (the provider's word, like `person`), `counts` (`people`, `vehicles`, `animals`), `snapshot` and `clip` as references (`device`, `at` in epoch ms, `durationMs`), the same shape as the stay check's `MediaRef`. No media is copied. Visit records don't read it yet. |
 
 - **What's never stored.** No door code and no digit run of 4 or more in any
   body (`redactDigitRuns` after the engine's own `redact`). A door-code text is
@@ -477,3 +479,7 @@ Where the build differs from the draft above, and why:
   `visit-records`.
 - **Tests:** the due items are tested in `test/visitDerive.test.ts` beside the
   derivation, and the hours log switch in `test/visitHoursLog.test.ts`.
+- **One store for #180 and #239 (19 Nov, Saad's okay).** #180's lock
+  adapter writes `lock` and `lock-connection` events here instead of its own
+  `lock-events.jsonl`, through `VisitLog.append`. #239's camera adapter writes
+  `camera` events here too. The details went to the #180 session.
