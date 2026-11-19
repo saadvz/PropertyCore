@@ -6,7 +6,7 @@ import { writeCameras } from "../src/cameras/accounts";
 import { CameraDesk } from "../src/cameras/desk";
 import { fakeCameraProvider } from "../src/cameras/fake";
 import { dueCameraNotes } from "../src/cameras/health";
-import { memoryLog, type CameraLine, type StoredLine } from "../src/cameras/lines";
+import { memoryLog, type CameraEventLine, type CameraLine, type StoredLine } from "../src/cameras/lines";
 import { stayEventsFrom } from "../src/cameras/night";
 import { stayTimeline, timelineText } from "../src/cameras/timeline";
 import { writeStayCheck } from "../src/stay-check/store";
@@ -21,7 +21,7 @@ afterEach(() => {
 const TZ = "America/New_York";
 const CAM = { deviceId: "dev-aaa", name: "Front door", outdoor: true as const, pickedAt: "2026-11-19T12:00:00.000Z" };
 const tokens = { get: () => ({ access: "a", refresh: "r", expiresAt: Number.MAX_SAFE_INTEGER }), save: () => {} };
-const motion = (id: string, at: string, label = "human"): CameraLine => ({ type: "camera", id, at, device: "Front door", deviceId: "dev-aaa", provider: "fake", kind: "motion", label });
+const motion = (id: string, at: string, label = "human"): CameraEventLine => ({ type: "camera", id, at, device: "Front door", deviceId: "dev-aaa", provider: "fake", kind: "motion", label });
 const count = (event: string, at: string, people: number, more: Partial<{ vehicles: number; animals: number }> = {}): CameraLine => ({ type: "camera-count", id: `count:${event}:fake-v1`, at, event, counter: "fake-v1", people, vehicles: more.vehicles ?? 0, animals: more.animals ?? 0 });
 
 function property(now = new Date("2026-11-22T05:00:00.000Z")) {
@@ -39,7 +39,7 @@ function property(now = new Date("2026-11-22T05:00:00.000Z")) {
 
 describe("the night's events from camera lines", () => {
   it("gives the check's shape: counts from the newest count line, media by reference only", () => {
-    const lines = [motion("e1", "2026-11-22T02:00:00.000Z"), count("e1", "2026-11-22T02:00:00.000Z", 3)] as StoredLine[];
+    const lines = [motion("e1", "2026-11-22T02:00:00.000Z"), count("e1", "2026-11-22T02:00:00.000Z", 3)] as unknown as StoredLine[];
     const events = stayEventsFrom(lines, { from: "2026-11-21T20:00:00.000Z", to: "2026-11-22T04:00:00.000Z" });
     expect(events).toEqual([
       {
@@ -61,7 +61,7 @@ describe("the night's events from camera lines", () => {
       { ...motion("d", "2026-11-22T02:00:00.000Z"), kind: "ding" },
       { ...motion("o", "2026-11-22T02:00:00.000Z"), kind: "offline" },
       motion("late", "2026-11-22T09:00:00.000Z"),
-    ] as StoredLine[];
+    ] as unknown as StoredLine[];
     expect(stayEventsFrom(lines, { from: "2026-11-21T20:00:00.000Z", to: "2026-11-22T04:00:00.000Z" })).toEqual([]);
   });
 });
@@ -84,8 +84,8 @@ describe("the camera desk's night", () => {
 });
 
 describe("camera offline notes", () => {
-  const off = (id: string, at: string): StoredLine => ({ ...motion(id, at), kind: "offline", loggedAt: at }) as StoredLine;
-  const on = (id: string, at: string): StoredLine => ({ ...motion(id, at), kind: "online", loggedAt: at }) as StoredLine;
+  const off = (id: string, at: string): StoredLine => ({ ...motion(id, at), kind: "offline", loggedAt: at }) as unknown as StoredLine;
+  const on = (id: string, at: string): StoredLine => ({ ...motion(id, at), kind: "online", loggedAt: at }) as unknown as StoredLine;
 
   it("waits 30 minutes, then one note, then one when it's back", () => {
     const lines = [off("x1", "2026-11-22T19:10:00.000Z")];
@@ -117,7 +117,7 @@ describe("the stay timeline", () => {
       count("e2", "2026-11-21T01:00:00.000Z", 0, { vehicles: 2 }),
       { type: "lock", id: "l1", at: "2026-11-20T20:05:00.000Z", device: "Front door lock", action: "unlock", codeName: "Guest" },
       motion("before", "2026-11-20T10:00:00.000Z"),
-    ] as StoredLine[];
+    ] as unknown as StoredLine[];
     const timeline = stayTimeline(lines, { from: "2026-11-20T20:00:00.000Z", to: "2026-11-23T15:00:00.000Z" }, TZ);
     expect(timeline.map((entry) => entry.id)).toEqual(["l1", "e2"]);
     expect(timeline[1]).toMatchObject({ source: "camera", what: "vehicle", counts: { people: 0, vehicles: 2, animals: 0 } });
