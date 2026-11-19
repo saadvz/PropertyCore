@@ -16,7 +16,7 @@ import { addCalendarDays } from "../hub/calendar";
 import { joinSplitDigits } from "../hub/digits";
 import type { GoogleEventList } from "../hub/sources";
 import { refuseCards } from "../hub/cards";
-import type { AccessRefusal as DoorRefusal } from "../hub/doorAccess";
+import type { AccessRefusal as DoorRefusal, DoorAccess, WantedCode } from "../hub/doorAccess";
 import { hubFor, propertyDetailsProblem, type Hub } from "../hub/hub";
 import type { Stay } from "../hub/store";
 import type { People } from "../hub/people";
@@ -28,7 +28,7 @@ import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type
 import { holdsOtherRole, priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
 import { BLOCK_ON_CALENDAR_NEXT, blockCalendarNext, blockCollisionNews, blockOpenNews, BLOCK_HOST_ACCESS, CREW_HOST_ACCESS, crewScheduleQuestion, crewScheduleSentence, crewSpanRefusal, guestWithdrewNews, removeRepairBlockQuestion, repairBlockQuestion, URGENT_AGREED, URGENT_ASK_GUEST, urgentRefusal, urgentStayChangedNews } from "./texts";
-import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, shortDollars, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
+import { codeOkNews, codeOkQuestion, codeOkReminder, extendAskNews, extendedNews, noExtendNews, bookingQuestion, firstName, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, shortDollars, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { insideWindow, latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { doorFor, repairBlockProblem, repairBlockStatus, staysForCrew } from "./repairBlock";
 import { crewScheduleProblem, crewWindows, type CrewSchedule } from "./crewDays";
@@ -79,10 +79,10 @@ export interface FixerDeps {
 }
 
 /** Why the visit page (or the tick) got no code. */
-export type RevealRefusal = AccessRefusal | DoorRefusal | "no-job" | "off" | "damaged";
+export type RevealRefusal = AccessRefusal | DoorRefusal | "no-job" | "off" | "damaged" | "waiting-for-host";
 
 /** The visit page's answer. Never passed to a tool reply, a log line or a file. */
-export type RevealResult = { ok: true; code: string; lockLocation?: string } | { ok: false; reason: RevealRefusal };
+export type RevealResult = { ok: true; code: string; lockLocation?: string; doors?: { door: string; code: string }[] } | { ok: false; reason: RevealRefusal };
 
 /** The alerts routine's one-time upload link, under the property's path. */
 export const FIXER_ALERT_UPLOAD_PREFIX = "/fixer-core/alert-routine/";
@@ -137,6 +137,7 @@ export const GOOGLE_EVENTS_NEEDED = "Google Calendar is saved for this property:
 const PAST_SPAN = "That time has already started, so it can't be booked. Ask the pro for a time still to come.";
 const FOLLOW_UP_MS = 24 * 60 * 60_000;
 const HOUR_MS = 60 * 60_000;
+const MINUTE_MS = 60_000;
 /** Told notes with no job are kept this long. */
 const NEWS_KEPT_MS = 30 * 24 * HOUR_MS;
 const COST_BYS = ["pro", "agent", "host"] as const;
@@ -384,6 +385,11 @@ export class FixerDesk {
     return Boolean(routine?.url && routine.key);
   }
 
+  /** True once a wake-up reached the account's alerts routine: lock problems then reach the host in chat. */
+  alertsWorking(): boolean {
+    return this.routineConnected() && this.alerts.records().some((record) => record.status === "delivered");
+  }
+
   /** Delivers any wake-up that is due, such as one the routine refused before. The clock tick calls it. */
   async drainAlerts(): Promise<void> {
     if (!this.alerts.records().some((record) => record.status === "pending")) return;
@@ -400,9 +406,159 @@ export class FixerDesk {
 
   /** Runs calls one at a time, so two tools never write the record at once. */
   protected serial<T>(work: () => Promise<T> | T): Promise<T> {
-    const run = this.chain.then(work, work);
+    const step = async () => {
+      const value = await work();
+      await this.syncLocks();
+      return value;
+    };
+    const run = this.chain.then(step, step);
     this.chain = run.catch(() => undefined);
     return run;
+  }
+
+  /** The last lock sync: what Fixer wanted, and when. Only in memory. */
+  private lockSync: { signature: string; at: number } | undefined;
+
+  /** The property's connected-lock settings, or undefined when it isn't on connected locks. */
+  private lockSettings(): { pros: "ask" | "automatic"; extend: "ask" | "automatic" } | undefined {
+    try {
+      const door = this.door();
+      if (!door.connected()) return undefined;
+      const locks = door.locks();
+      return { pros: locks.release.pros, extend: locks.extend };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** True when this visit's code waits for the host's OK: connected locks, pros' codes on ask, no OK yet. */
+  private codeWaits(job: Job): boolean {
+    return this.lockSettings()?.pros === "ask" && !job.booking?.codeYes;
+  }
+
+  /**
+   * On connected locks, each clock pass: under ask, the host's OK is asked for when the pro's window
+   * opens, and they're reminded once when the visit starts. Fifteen minutes before the pro's code
+   * stops, if they haven't said done, the host is asked for more time or (automatic) the visit gets
+   * 30 more minutes, never into the next check-in or the time kept free before it. Each extension
+   * moves the pro's code by the lock sync. An urgent visit is never extended on its own.
+   */
+  private lockPass(file: FixerFile, job: Job, notes: HostNote[]): void {
+    const settings = this.lockSettings();
+    const booking = job.booking;
+    if (!settings || !booking?.hostYes || booking.access !== "code" || job.crew || job.done) return;
+    const now = this.deps.now().getTime();
+    const zone = this.timeZone();
+    const proName = this.bookedName(file, job);
+    const lead = booking.urgentStay ? 0 : 30 * MINUTE_MS;
+    if (settings.pros === "ask" && !booking.codeYes) {
+      if (now >= Date.parse(booking.from) - lead && !booking.codeAskedAt) {
+        booking.codeAskedAt = new Date(now).toISOString();
+        notes.push(this.news(job, "code-ok", codeOkNews({ proName, from: booking.from, timeZone: zone }), `fixer:${job.id}:${visitTag(booking)}:code-ok`));
+      }
+      if (now >= Date.parse(booking.from) && !booking.codeRemindedAt) {
+        booking.codeRemindedAt = new Date(now).toISOString();
+        notes.push(this.fileNews(file, { kind: "code-ok-reminder", jobId: job.id, text: codeOkReminder({ proName }), urgent: true }, `fixer:${job.id}:${visitTag(booking)}:code-ok-reminder`));
+      }
+    }
+    const end = this.endOf(booking);
+    if (now < end - 15 * MINUTE_MS || now >= end) return;
+    const endIso = new Date(end).toISOString();
+    if (booking.extendNoted?.includes(endIso)) return;
+    (booking.extendNoted ??= []).push(endIso);
+    if (settings.extend === "ask" || booking.urgentStay) {
+      notes.push(this.news(job, "extend-ask", extendAskNews({ proName, until: endIso, timeZone: zone }), `fixer:${job.id}:extend-ask:${endIso}`));
+      return;
+    }
+    const until = new Date(end + 30 * MINUTE_MS).toISOString();
+    const stays = this.crewStays(file).filter((stay) => stayKey(stay) !== booking.urgentStay);
+    if (overlapsStay({ from: booking.from, until }, stays, this.occupyInput(file))) {
+      notes.push(this.news(job, "extend-blocked", noExtendNews({ proName, until: endIso, timeZone: zone }), `fixer:${job.id}:extend-blocked:${endIso}`));
+      return;
+    }
+    // An automatic extension keeps the visit link: the pro is still inside and taps done on it.
+    booking.extendedUntil = until;
+    notes.push(this.news(job, "extended", extendedNews({ proName, until, timeZone: zone }), `fixer:${job.id}:extended:${until}`));
+  }
+
+  /**
+   * The host's OK to give the pro their code for this visit, on connected locks with pros' codes on
+   * ask. Two calls: the question and a code, then the code after the host's yes. The code then shows
+   * at the pro's "I'm at the door", or goes by text on the next clock pass. Never returns a code.
+   */
+  approveCode(input: { jobId?: string; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      const booking = job?.booking;
+      if (!job || !booking?.hostYes || !liveBooking(job)) return fail("Only a booked visit's code can be okayed.");
+      if (!this.codeWaits(job)) return ok({ jobId: job.id, waiting: false, next: "This visit's code doesn't wait for the host's OK." });
+      const proName = this.bookedName(file, job);
+      const gate = this.confirm("fixer-code-ok", job.id, tokenHash(JSON.stringify([booking.fingerprint, "code-ok"])), input.confirmation, codeOkQuestion({ proName, from: booking.from, timeZone: this.timeZone() }));
+      if (gate !== "go") return gate;
+      booking.codeYes = { at: this.deps.now().toISOString() };
+      this.write(file);
+      return ok({ jobId: job.id, okayed: true, next: `${proName} gets their code at the door on the visit page, or by text if they text on the line.` });
+    });
+  }
+
+  /**
+   * On connected locks, the codes Fixer wants now: the booked pro's own, for each live visit with the
+   * host's yes and access by code, from Fixer's access window (30 minutes early, none for an urgent
+   * visit) to its end or extension. A crew's access stays the host's. Fixer off: none, so all go.
+   */
+  private wantedCodes(file: FixerFile): WantedCode[] {
+    if (!file.settings.activatedAt || file.offAt) return [];
+    const wanted: WantedCode[] = [];
+    for (const job of file.jobs) {
+      const booking = job.booking;
+      if (!booking || !liveBooking(job) || !booking.hostYes || booking.access !== "code" || job.crew) continue;
+      const phone = this.reachOfId(file, job, booking.proId).phone;
+      if (!phone) continue;
+      const lead = booking.urgentStay ? 0 : 30 * 60_000;
+      const from = new Date(Date.parse(booking.from) - lead).toISOString();
+      const until = new Date(Date.parse(booking.extendedUntil ?? booking.until)).toISOString();
+      wanted.push({ jobId: job.id, person: phone, window: { from, until }, label: firstName(this.bookedName(file, job)), who: { role: "pro", proId: booking.proId } });
+    }
+    return wanted;
+  }
+
+  /**
+   * Issues, moves and revokes the pros' codes to match the record, after each step on connected locks.
+   * Skipped when nothing changed in the last ten minutes. A note (a code that couldn't be made) goes
+   * to the host once per visit. A failure leaves it for the next step.
+   */
+  private async syncLocks(): Promise<void> {
+    let door: DoorAccess;
+    let file: FixerFile;
+    try {
+      door = this.door();
+      if (!door.connected()) return;
+      file = this.read();
+    } catch {
+      return;
+    }
+    const wanted = this.wantedCodes(file);
+    const signature = JSON.stringify(wanted);
+    if (this.lockSync?.signature === signature && this.deps.now().getTime() - this.lockSync.at < 10 * 60_000) return;
+    try {
+      const notes = await door.syncGrants("repair", wanted);
+      this.lockSync = { signature, at: this.deps.now().getTime() };
+      const told: HostNote[] = [];
+      for (const note of notes) {
+        const job = file.jobs.find((item) => item.id === note.jobId);
+        if (!job || job.news.some((item) => item.kind === "lock" && item.text === note.text)) continue;
+        told.push(this.news(job, "lock", note.text, `fixer:${job.id}:${note.id}`));
+      }
+      if (told.length > 0) {
+        this.write(file);
+        await this.tell(told);
+      }
+    } catch {
+      this.lockSync = undefined;
+    }
   }
 
   /** Every call starts here: card-like input is refused before anything is read or saved, and a damaged record is told plainly. */
@@ -2096,6 +2252,23 @@ export class FixerDesk {
     return { id, text: item.text };
   }
 
+  /**
+   * A note for the host from the property's connected lock (a code that didn't program, a low
+   * battery), on a property where Cleaner Core is off: kept in check_fixes' news and told like any
+   * Fixer note, once per id. Never holds a code.
+   */
+  noteForHost(id: string, text: string, jobId?: string): Promise<boolean> {
+    return this.serial(async () => {
+      const file = this.read();
+      const told = (file.news ?? []).some((item) => item.kind === "lock" && item.text === text) || file.jobs.some((job) => job.news.some((item) => item.kind === "lock" && item.text === text));
+      if (told) return true;
+      const job = jobId ? file.jobs.find((item) => item.id === jobId) : undefined;
+      const note = job ? this.news(job, "lock", text, `fixer:${job.id}:${id}`) : this.fileNews(file, { kind: "lock", text, ...(jobId ? { jobId } : {}) } as Omit<FileNews, "at" | "toldAt">, `fixer:${id}`);
+      this.write(file);
+      return this.tell([note]);
+    });
+  }
+
   /** Sends the host notes. A note that fails to go is still in check_fixes' news. */
   private async tell(notes: readonly HostNote[]): Promise<boolean> {
     // Without Cleaner Core here, nothing takes the note: it waits in check_fixes' news, and the routine is woken.
@@ -2169,11 +2342,20 @@ export class FixerDesk {
     notes.push(this.fileNews(file, { kind: "urgent-stay-changed", jobId: job.id, text, urgent: true }, `fixer:${job.id}:${visitTag(booking)}:urgent-stay-changed`));
   }
 
-  /** Asks the hub for the code, for the pro's phone and this window. A refusal gives the host one note for the job, and nothing else. */
-  private openCode(file: FixerFile, job: Job, window: { from: string; until: string }, notes: HostNote[]): { ok: true; code: string; lockLocation?: string } | { ok: false; reason: DoorRefusal } {
+  /**
+   * Asks the hub for the code, for the pro's phone, this job and this window. On connected locks it's
+   * the pro's own code for this visit; the hub's notes (a backup code, the saved code) go to the host.
+   * A refusal gives the host one note for the job, and nothing else.
+   */
+  private async openCode(file: FixerFile, job: Job, window: { from: string; until: string }, notes: HostNote[]): Promise<{ ok: true; code: string; lockLocation?: string; doors?: { door: string; code: string }[] } | { ok: false; reason: DoorRefusal }> {
     const phone = this.reachOfId(file, job, job.booking!.proId).phone!;
-    const grant = this.door().request({ person: phone, window, purpose: "repair" });
-    if (grant.ok && /^\d{4,8}$/.test(grant.code)) return { ok: true, code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}) };
+    const grant = await this.door().request({ person: phone, window, purpose: "repair", jobId: job.id, label: firstName(this.bookedName(file, job)) });
+    for (const note of grant.notes ?? []) {
+      if (!job.news.some((item) => item.kind === "lock" && item.text === note.text)) notes.push(this.news(job, "lock", note.text, `fixer:${job.id}:${note.id}`));
+    }
+    if (grant.ok && /^\d{4,8}$/.test(grant.code) && (grant.doors ?? []).every((door) => /^\d{4,8}$/.test(door.code))) {
+      return { ok: true, code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}), ...(grant.doors ? { doors: grant.doors } : {}) };
+    }
     if (!job.codeNoteAt) {
       job.codeNoteAt = this.deps.now().toISOString();
       notes.push(this.news(job, "code-refused", codeRefusedNote({ proName: this.bookedName(file, job) }), `fixer:${job.id}:${visitTag(job.booking)}:code-refused`));
@@ -2201,8 +2383,10 @@ export class FixerDesk {
       if (!file.settings.activatedAt || file.offAt) return { ok: false, reason: "off" };
       const check = await this.accessFor(file, job);
       if (!check.ok) return check;
+      // On connected locks with pros' codes on ask, the page shows "waiting for the host" until their OK.
+      if (this.codeWaits(job)) return { ok: false, reason: "waiting-for-host" };
       const notes: HostNote[] = [];
-      const opened = this.openCode(file, job, check.window, notes);
+      const opened = await this.openCode(file, job, check.window, notes);
       if (opened.ok) {
         const at = this.deps.now().toISOString();
         const revealed = (job.booking.revealedAt ??= []);
@@ -2273,9 +2457,10 @@ export class FixerDesk {
     }
     const check = await this.accessFor(file, job);
     if (!check.ok) return;
+    if (this.codeWaits(job)) return;
     job.codeTextAt = at;
     this.write(file);
-    const opened = this.openCode(file, job, check.window, notes);
+    const opened = await this.openCode(file, job, check.window, notes);
     if (!opened.ok) return;
     (booking.revealedAt ??= []).push(at);
     markShown(job);
@@ -2283,7 +2468,7 @@ export class FixerDesk {
     const street = streetOf(this.hub().property().address ?? "");
     let sent = false;
     try {
-      sent = (await this.deps.send!(phone, codeText({ proName, street, code: opened.code, ...(opened.lockLocation ? { lockLocation: opened.lockLocation } : {}) }))) === true;
+      sent = (await this.deps.send!(phone, codeText({ proName, street, code: opened.code, ...(opened.lockLocation ? { lockLocation: opened.lockLocation } : {}), ...(opened.doors ? { doors: opened.doors } : {}) }))) === true;
     } catch {
       // Whether it went is unknown, so it is never sent again.
     }
@@ -2345,6 +2530,7 @@ export class FixerDesk {
         const booking = job.booking;
         if (!booking?.hostYes || !liveBooking(job)) continue;
         if (job.state === "booked" && now >= Date.parse(booking.from)) job.state = "in-progress";
+        if (!file.offAt) this.lockPass(file, job, notes);
         if (!file.offAt) await this.codeTextPass(file, job, notes);
         this.delayPass(file, job, notes);
       }

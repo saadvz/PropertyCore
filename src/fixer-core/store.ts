@@ -118,6 +118,13 @@ export interface Booking {
   revealedAt?: string[];
   revisedQuote?: { cents: number; at: string; by?: "pro" | "agent" | "host"; hostYes?: { at: string } };
   extendedUntil?: string;
+  /** On connected locks with pros' codes on ask: the host's OK to give the pro their code. */
+  codeYes?: { at: string };
+  /** When the host was asked for that OK, and reminded at the visit's start. */
+  codeAskedAt?: string;
+  codeRemindedAt?: string;
+  /** The visit ends (ISO) already offered or given more time, on connected locks. */
+  extendNoted?: string[];
   /** What the booking was checked against, so a replay is not a second booking. */
   fingerprint: string;
   cleaningOrder?: "before" | "after";

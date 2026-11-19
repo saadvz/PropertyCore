@@ -157,6 +157,31 @@ export function noPhotosNews(f: { proName: string }): string {
   return `${f.proName}'s job is marked done, but no photos came.`;
 }
 
+/** On connected locks with pros' codes on ask: the host's OK for one visit's code. */
+export function codeOkQuestion(f: { proName: string; from: string; timeZone: string }): string {
+  return `OK to send ${f.proName} their code for the ${clock(f.from, f.timeZone)} visit?`;
+}
+
+export function codeOkNews(f: { proName: string; from: string; timeZone: string }): string {
+  return `${codeOkQuestion(f)} Their code waits for your yes.`;
+}
+
+export function codeOkReminder(f: { proName: string }): string {
+  return `${f.proName}'s visit has started, and their code is still waiting for your OK.`;
+}
+
+export function extendAskNews(f: { proName: string; until: string; timeZone: string }): string {
+  return `${f.proName} hasn't said done, and their code stops at ${clock(f.until, f.timeZone)}. Give them more time?`;
+}
+
+export function extendedNews(f: { proName: string; until: string; timeZone: string }): string {
+  return `${f.proName} hasn't said done, so I gave them 30 more minutes, until ${clock(f.until, f.timeZone)}.`;
+}
+
+export function noExtendNews(f: { proName: string; until: string; timeZone: string }): string {
+  return `${f.proName} hasn't said done, and their code stops at ${clock(f.until, f.timeZone)}. I can't give them more time: the next check-in is too close.`;
+}
+
 export function extendQuestion(f: { proName: string; until: string; timeZone: string }): string {
   return `Give ${f.proName} until ${clock(f.until, f.timeZone)} to finish?`;
 }
@@ -191,9 +216,15 @@ export function rotationQuestion(f: { proName: string }): string {
 }
 
 /** The only text that holds the code. It goes to the pro's own phone. */
-export function codeText(f: { proName: string; street: string; code: string; lockLocation?: string }): string {
+export function codeText(f: { proName: string; street: string; code: string; lockLocation?: string; doors?: { door: string; code: string }[] }): string {
+  if (f.doors && f.doors.length > 1) return `Hi ${firstName(f.proName)}, the door codes for ${f.street} are ${doorList(f.doors)}. Reply DONE with photos when you finish.`;
   const at = f.lockLocation ? `, at ${f.lockLocation}` : "";
   return `Hi ${firstName(f.proName)}, the door code for ${f.street} is ${f.code}${at}. Reply DONE with photos when you finish.`;
+}
+
+/** "Front door: 1, Side gate: 2" when one door fell back to a backup code. */
+export function doorList(doors: readonly { door: string; code: string }[]): string {
+  return doors.map((item) => `${item.door}: ${item.code}`).join(", ");
 }
 
 export function proInvite(f: { proName: string; business: string; street: string }): string {

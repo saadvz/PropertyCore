@@ -1,4 +1,6 @@
 import type { DoorAccess } from "../../hub/doorAccess";
+import { registerSecretSaver } from "../../hub/doorAccess";
+import { handleLockWebhook, isStandingPath, LOCK_WEBHOOK_PATH, serveStandingPage } from "../../hosted/locks";
 import { hubFor, type Hub } from "../../hub/hub";
 import { hubCalendarCode } from "../../hub/paths";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -117,7 +119,7 @@ export function touringAccountContext(h: HostedCleaner, tenant: Tenant): TenantC
 
 function accountContext(h: HostedCleaner, tenant: Tenant, root: string, propertyId: string | undefined): TenantContext {
   const id = tenant.id;
-  return {
+  const context: TenantContext = {
     root,
     env: () => {
       const current = h.registry.get(id);
@@ -153,6 +155,9 @@ function accountContext(h: HostedCleaner, tenant: Tenant, root: string, property
     },
     deleteSecrets: (names) => h.secrets.delete(id, names),
   };
+  // A connected lock's per-visit codes are sealed with the account's own server key, made here if missing.
+  if (propertyId) registerSecretSaver(root, (values) => context.saveSecrets(values));
+  return context;
 }
 
 /** The chat a private upload page speaks as when its link doesn't say: the primary when it uses pages, else the first connection that does. */
@@ -195,6 +200,12 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
 
   if (path === MCP_PATH || path === CLEANER_MCP_PATH) {
     await handleTenantMcp(h, r, path);
+    return true;
+  }
+
+  if (path === LOCK_WEBHOOK_PATH) {
+    if (method !== "POST") return notFound();
+    await handleLockWebhook(h, r);
     return true;
   }
 
@@ -343,6 +354,12 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
   if (isVisitPath(rest)) {
     if (!fixer.on) return false;
     await serveFixerVisit(h, r, tenant, property, rest);
+    return true;
+  }
+  // A standing code's page, for this path's property only. Its path holds the link's token, so it is never logged.
+  if (isStandingPath(rest)) {
+    if (!cleaning.on && !fixer.on) return false;
+    await serveStandingPage(h, r, tenant, property, rest);
     return true;
   }
   const ctx = propertyContext(h, tenant, property);

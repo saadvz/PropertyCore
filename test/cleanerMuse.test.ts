@@ -7,6 +7,7 @@ import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
 import { CHOOSE } from "../src/hosted/supplies";
 import { SUPPLY_TOOL_NAMES } from "../src/supply-core/tools";
 import { FIXER_TOOL_NAMES } from "../src/fixer-core/tools";
+import { LOCK_TOOL_NAMES } from "../src/locks/tools";
 import { filesUnder, REPO_ROOT } from "./files";
 
 /** The Muse template draft: pinned, consistent with the tools and the other templates, and free of secrets. */
@@ -134,7 +135,7 @@ describe("Muse template", () => {
   });
 
   it("names only real Cleaner Core, Supply Core or Fixer Core tools, or the account's own", async () => {
-    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name)), ...SUPPLY_TOOL_NAMES, CHOOSE, ...FIXER_TOOL_NAMES];
+    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name)), ...SUPPLY_TOOL_NAMES, CHOOSE, ...FIXER_TOOL_NAMES, ...LOCK_TOOL_NAMES];
     for (const file of filesUnder(TEMPLATE)) {
       for (const m of read(file).matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) expect(tools, `${file}: ${m[1]}`).toContain(m[1]);
     }

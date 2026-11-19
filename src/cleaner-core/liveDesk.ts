@@ -33,8 +33,9 @@ import { cleanerOptOutHold, hostStartReply, hostStopReply, isPrivateCodeLine, jo
 import { isInjuryReport } from "./injury";
 import { GroupNotConfirmed } from "./groupThread";
 import { cleanerPinStatusUrl, deleteLiveGroup, landlordConfirmed, liveSmsOn, mayText, sendLiveGroup, sendLiveSms, verifiedLandlordPhone } from "./liveSms";
+import { takeLockSyncAsks } from "./stayCodeHook";
 import { DOOR_CODE_SHAPE_REFUSED, LOCK_LOCATION_REFUSED, PIN_KEY_MISSING, serverPinKey, UPLOAD_LINK_OFF, type AccessRefusal, type DoorAccess } from "../hub/doorAccess";
-import { DOOR_WINDOW_OVER, type AccessRefusedLines, type DoorAccessPort } from "./doorPort";
+import { DOOR_LOCK_FAILED, DOOR_WINDOW_OVER, type AccessRefusedLines, type DoorAccessPort } from "./doorPort";
 import { accountOf, peopleFor, resetPeople, streetOf, type MoveSource, type People, type PersonChange, type Role } from "../hub/people";
 import { containsCodeToken, redactPhone } from "./redact";
 import { isScratchTestNumber } from "./scratch";
@@ -224,6 +225,8 @@ const RESET_TARGET = "property";
 const RESET_GROUP_KEPT = "I couldn't remove the group text on Twilio, so nothing was reset. Try again in a few minutes.";
 const RESET_NOT_DONE = "I couldn't reset Cleaner Core just now, so nothing else was changed. Try again in a few minutes.";
 const RESET_UNFINISHED = "I couldn't finish resetting Cleaner Core. Try reset_property again.";
+/** A lock sync with nothing changed runs again after this long, to retry a door that didn't answer. */
+const LOCK_RESYNC_MS = 10 * 60_000;
 const ROUTINE_SECRETS = ["CLEANER_CORE_ROUTINE_URL", "CLEANER_CORE_ROUTINE_KEY"] as const;
 const APPROVAL_STALE = "That approval has expired or doesn't match. Ask the host again.";
 /** Messages kept for Grok, newest last. */
@@ -667,6 +670,10 @@ export class LiveDesk {
   /** The door-code key from the call that made the calendar upload link, so the upload can check the link. */
   private calendarUploadKey: Buffer | undefined;
   private pin: string | undefined;
+  /** The last lock sync: what the engine wanted, and when. Only in memory. */
+  private lockSync: { signature: string; at: number } | undefined;
+  /** The job ids of the cleaner's codes at the last lock sync. */
+  private lockJobs: string[] = [];
   /** Why the hub refused door access during this call, for mark_guests_left's reply. */
   private accessRefusal: AccessRefusal | undefined;
   private engine: CleanerCore | undefined;
@@ -992,9 +999,24 @@ export class LiveDesk {
     this.startDrain();
   }
 
-  /** True when `text` contains the saved door code, or the server's door-code key. */
+  /** True when `text` contains a guarded door code (saved or per-visit), or the server's door-code key. */
   leaks(text: string): boolean {
-    return Boolean(this.pin && text.includes(this.pin)) || this.isServerKey(text, true);
+    return this.guardCodes().some((code) => text.includes(code)) || this.isServerKey(text, true);
+  }
+
+  /**
+   * Every code the desk's leak checks guard: the open saved code and, with connected locks, each
+   * per-visit code and backup code until a day after its window. Never sent.
+   */
+  private guardCodes(): string[] {
+    const codes = new Set<string>();
+    if (this.pin) codes.add(this.pin);
+    try {
+      for (const code of this.door().codesForChecksAll()) codes.add(code);
+    } catch {
+      // An unreadable grants file guards nothing more; the saved code still is.
+    }
+    return [...codes];
   }
 
   /** True when `text` is (or, with `inside`, holds) the server's door-code key. */
@@ -1027,16 +1049,17 @@ export class LiveDesk {
   private doorPort(): DoorAccessPort {
     return {
       request: async (input) => {
-        const grant = this.door().request({ person: input.person, window: input.window, purpose: input.purpose });
+        const grant = await this.door().request({ person: input.person, window: input.window, purpose: input.purpose, jobId: input.jobId, ...(this.file.cleanerName ? { label: this.file.cleanerName } : {}) });
         this.accessRefusal = grant.ok ? undefined : grant.reason;
         return grant;
       },
       codeForChecks: () => this.pin,
+      codesForChecks: () => this.door().codesForChecksAll(),
     };
   }
 
   private accessRefusedLines(): AccessRefusedLines {
-    return { "no-code": "Save the door code first.", "no-key": PIN_KEY_MISSING, sealed: PIN_REENTER, "window-over": DOOR_WINDOW_OVER };
+    return { "no-code": "Save the door code first.", "no-key": PIN_KEY_MISSING, sealed: PIN_REENTER, "window-over": DOOR_WINDOW_OVER, "lock-failed": DOOR_LOCK_FAILED };
   }
 
   /** The property's door access in its hub: the sealed code, the lock location, and the upload link. */
@@ -1082,7 +1105,7 @@ export class LiveDesk {
   }
 
   chatCarriesDoorCode(text: string): boolean {
-    if (this.pin && text.includes(this.pin)) return true;
+    if (this.guardCodes().some((code) => text.includes(code))) return true;
     const trimmed = text.trim();
     if (/^\d{4,8}$/.test(trimmed)) return true;
     return /\bdoor code\b/i.test(text) && /\b\d{4,8}\b/.test(text);
@@ -1593,7 +1616,7 @@ export class LiveDesk {
     const now = (): Promise<T> => {
       try {
         this.beginStep();
-        return this.thenApplyAccount(work());
+        return this.thenSyncLocks(this.thenApplyAccount(work()));
       } catch (err) {
         return Promise.reject(err);
       }
@@ -1616,6 +1639,86 @@ export class LiveDesk {
    * After a step that opened a new engine, the account's opt-in and STOP are applied to it before the
    * step ends, so a property that was closed when the person said YES or STOP elsewhere still follows.
    */
+  /** After each step, on connected locks, the lock holds exactly the cleaner's codes the engine wants. */
+  private thenSyncLocks<T>(run: Promise<T>): Promise<T> {
+    return run.then(async (value) => {
+      await this.syncLocks();
+      return value;
+    });
+  }
+
+  /**
+   * Issues, moves and revokes the cleaner's codes to match the engine. Skipped when nothing changed
+   * since the last sync less than ten minutes ago, unless a booking email or late checkout asked for
+   * one. A failure leaves the codes for the next step; the release still checks the lock itself.
+   */
+  private async syncLocks(): Promise<void> {
+    const engine = this.engine;
+    if (!engine) return;
+    let door: DoorAccess;
+    try {
+      door = this.door();
+      if (!door.connected()) return;
+    } catch {
+      return;
+    }
+    // A hold revokes the code: what went out before it goes again only on the host's "guests have left".
+    if (engine.jobOnHold()) engine.lockHeld();
+    const label = this.file.cleanerName?.trim();
+    const wanted = engine.wantedCodes().map((item) => ({ ...item, ...(label ? { label } : {}) }));
+    const signature = JSON.stringify(wanted);
+    const asked = takeLockSyncAsks(wanted.map((item) => item.jobId).concat(this.lockJobs));
+    const fresh = this.lockSync && this.lockSync.signature === signature && this.now().getTime() - this.lockSync.at < LOCK_RESYNC_MS;
+    if (fresh && !asked) return;
+    try {
+      const notes = await door.syncGrants("cleaning", wanted);
+      this.lockSync = { signature, at: this.now().getTime() };
+      this.lockJobs = wanted.map((item) => item.jobId);
+      if (notes.length > 0) {
+        const before = new Set(this.visibleNotes(engine).map((note) => note.id));
+        for (const note of notes) engine.keepHostNote(`host:${note.id}`, note.text);
+        this.queueNewAlerts(before);
+      }
+    } catch {
+      this.lockSync = undefined;
+    }
+  }
+
+  /**
+   * The checkout-time release's mode: "on" only on connected locks with cleaners' codes set to go out
+   * automatically and every door online; "offline" when a door is offline; else "off".
+   */
+  private codeAtCheckoutMode(): "on" | "off" | "offline" {
+    try {
+      const door = this.door();
+      if (!door.connected()) return "off";
+      const locks = door.locks();
+      if (locks.release.cleaners !== "automatic") return "off";
+      const doors = locks.devices.filter((device) => locks.doors.includes(device.id));
+      return doors.every((device) => device.online) ? "on" : "offline";
+    } catch {
+      return "off";
+    }
+  }
+
+  /**
+   * The lock clock, on connected locks: the checkout-time release, and the paused turnover's
+   * reminders. Each host note wakes the alerts routine once. Sends the code only by the release.
+   */
+  lockClock(): Promise<void> {
+    return this.serial(async () => {
+      this.resume();
+      const engine = this.engine;
+      if (!engine || !this.file.checked) return;
+      if (!this.door().connected()) return;
+      const before = new Set(this.visibleNotes(engine).map((note) => note.id));
+      await engine.checkoutRelease();
+      engine.pausedReminders();
+      this.syncHold();
+      this.queueNewAlerts(before);
+    });
+  }
+
   private thenApplyAccount<T>(run: Promise<T>): Promise<T> {
     if (!this.people) return run;
     return run.then(async (value) => {
@@ -1763,6 +1866,7 @@ export class LiveDesk {
     // Airbnb emails whose stay wasn't on the calendar yet get their times now, or a question after 3 hours.
     await retryPendingEmails(this.emailDesk(input.googleEvents));
     await engine.runReminders();
+    await engine.checkoutRelease();
     this.syncHold();
     this.nudgeCheckout(engine);
     const shown = new Set(this.file.alertsShown ?? []);
@@ -3833,6 +3937,8 @@ export class LiveDesk {
       cleaner: { phone: file.cleaner, approved: true },
       access: this.doorPort(),
       accessRefused: this.accessRefusedLines(),
+      codeAtCheckout: () => this.codeAtCheckoutMode(),
+      ...(file.cleanerName?.trim() ? { cleanerLabel: file.cleanerName.trim() } : {}),
       hostName: file.business,
       consented: file.texting === true,
       // Consent is per account: the engine's own YES and STOP decide, and the service's own lines are
@@ -3952,8 +4058,9 @@ export class LiveDesk {
   }
 
   private hideCode(text: string): string {
-    if (!this.pin || !text.includes(this.pin)) return text;
-    return text.split(this.pin).join("[redacted]");
+    let out = text;
+    for (const code of this.guardCodes().sort((a, b) => b.length - a.length)) if (out.includes(code)) out = out.split(code).join("[redacted]");
+    return out;
   }
 
   private outboxRows(): OutboxRow[] {
@@ -4109,7 +4216,7 @@ export class LiveDesk {
   private persist(): void {
     const json = `${JSON.stringify(this.file)}\n`;
     // The code as its own token. An id that only holds the digits (a SID, a UUID, a booking UID) is fine.
-    if (this.pin && containsCodeToken(json, this.pin)) throw new Error("Could not seal the door code.");
+    if (this.guardCodes().some((code) => containsCodeToken(json, code))) throw new Error("Could not seal the door code.");
     this.writeFile(json);
   }
 

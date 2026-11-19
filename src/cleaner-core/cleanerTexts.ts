@@ -156,13 +156,20 @@ export function usualTimesAsk(name: string, checkInDay: string, checkoutDay: str
   return `New booking at ${name}: check-in ${checkInDay}, checkout ${checkoutDay}. Use the usual ${checkout} checkout and ${checkIn} check-in?`;
 }
 
-export function doorCodeBody(address: string, code: string, lockLocation?: string): string {
+export function doorCodeBody(address: string, code: string, lockLocation?: string, doors?: readonly { door: string; code: string }[]): string {
+  if (doors && doors.length > 1) return `Guests have left ${address}. Door codes: ${doorCodeList(doors)}. These codes are only for you. Reply DONE when the cleaning is finished.`;
   const label = lockLocation ? `Door code for the ${lockLocation}` : "Door code";
   return `Guests have left ${address}. ${label}: ${code}. This code is only for you. Reply DONE when the cleaning is finished.`;
 }
 
+/** Each door's code by name, when one door of several fell back to a backup code: "Front door: 1, Side gate: 2". */
+export function doorCodeList(doors: readonly { door: string; code: string }[]): string {
+  return doors.map((item) => `${item.door}: ${item.code}`).join(", ");
+}
+
 /** The door code as the group reads it: it names the cleaner and does not say the code is private. */
-export function groupDoorCodeBody(address: string, code: string, cleanerName: string, lockLocation?: string): string {
+export function groupDoorCodeBody(address: string, code: string, cleanerName: string, lockLocation?: string, doors?: readonly { door: string; code: string }[]): string {
+  if (doors && doors.length > 1) return `Guests have left ${address}. Door codes: ${doorCodeList(doors)}. ${cleanerName}, reply DONE when the cleaning is finished.`;
   const label = lockLocation ? `Door code for the ${lockLocation}` : "Door code";
   return `Guests have left ${address}. ${label}: ${code}. ${cleanerName}, reply DONE when the cleaning is finished.`;
 }
