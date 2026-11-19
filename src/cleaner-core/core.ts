@@ -2281,13 +2281,18 @@ class Engine implements CleanerCore {
    * Asks for door access for the cleaner during this cleaning's window. A refusal sends nothing, is
    * not retried here, and gives the host one note per job and reason.
    */
-  private async requestAccess(job: Job): Promise<{ code: string; lockLocation?: string } | undefined> {
+  private async requestAccess(job: Job): Promise<{ code: string; lockLocation?: string; doors?: { door: string; code: string }[] } | undefined> {
     const checkout = this.latestFact(job.id, "checkout");
     // deliverPin reaches here only with a checkout fact (pinKey needs one), so this guard never drops a release silently.
     if (!this.access || !this.cleanerPhone || !checkout) return undefined;
     const window = cleaningWindow({ checkoutDate: job.checkoutDate, checkoutTime: hm(checkout.minutes), nextCheckInDate: job.nextCheckInDate, timeZone: this.options.property.timeZone });
     const grant = await this.access.request({ person: this.cleanerPhone, window, purpose: "cleaning", jobId: job.id });
-    if (grant.ok && /^\d{4,8}$/.test(grant.code)) return { code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}) };
+    // A connected lock's notes (a backup code, the saved code instead) go to the host once each. They never hold a code.
+    for (const note of grant.notes ?? []) this.keepHostNote(`host:${note.id}`, note.text);
+    const shaped = (code: string) => /^\d{4,8}$/.test(code);
+    if (grant.ok && shaped(grant.code) && (grant.doors ?? []).every((door) => shaped(door.code))) {
+      return { code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}), ...(grant.doors && grant.doors.length > 1 ? { doors: grant.doors } : {}) };
+    }
     const reason = grant.ok ? "sealed" : grant.reason;
     this.keepHostNote(`host:access-refused:${job.id}:${reason}`, this.options.accessRefused?.[reason] ?? (reason === "window-over" ? DOOR_WINDOW_OVER : DOOR_NOT_OPENED));
     this.save();
@@ -2330,7 +2335,7 @@ class Engine implements CleanerCore {
       this.pin = pin;
       const lockLocation = grant.lockLocation?.trim() || undefined;
       // The host's note rides on the door code, so the cleaner reads it as the cleaning starts.
-      const body = withHostNote(doorCodeBody(this.options.property.address, pin, lockLocation), this.options.cleaningNote);
+      const body = withHostNote(doorCodeBody(this.options.property.address, pin, lockLocation, grant.doors), this.options.cleaningNote);
       const addressed = addressCleaner(this.cleanerRecord(), { kind: "pin", body });
       if (!addressed) return sent;
       let text: CleanerText | null = null;
@@ -2343,7 +2348,7 @@ class Engine implements CleanerCore {
           jobId: job.id,
           to: addressed.to,
           kind: "pin",
-          body: withHostNote(groupDoorCodeBody(this.options.property.address, pin, this.groupChat!.cleanerName, lockLocation), this.options.cleaningNote),
+          body: withHostNote(groupDoorCodeBody(this.options.property.address, pin, this.groupChat!.cleanerName, lockLocation, grant.doors), this.options.cleaningNote),
           channel: "group",
           audience,
         });

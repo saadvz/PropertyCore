@@ -2,7 +2,7 @@ import { formatDay, formatTime } from "../core/timezone";
 import { refuseCards } from "../hub/cards";
 import { CARD_REFUSAL, FIXER_VISIT_PREFIX, type FixerDesk, type RevealRefusal, type VisitView } from "./desk";
 import { letterToken, tokenHash } from "./store";
-import { dollars, VISIT_ENDED, VISIT_NOT_STARTED } from "./texts";
+import { dollars, doorList, VISIT_ENDED, VISIT_NOT_STARTED } from "./texts";
 
 export { FIXER_VISIT_PREFIX };
 
@@ -140,7 +140,7 @@ export async function answerVisit(desk: FixerDesk, req: VisitRequest, view: Visi
     // JSON only: a form on another site can't send it without a preflight, which this page never allows.
     if (!isJson(req.contentType)) return refuse(415, COPY.sendJson);
     const result = await desk.revealCode(view.jobId, hash);
-    if (result.ok) return json(200, { code: result.code, ...(result.lockLocation ? { lockLocation: result.lockLocation } : {}) });
+    if (result.ok) return json(200, { code: result.doors && result.doors.length > 1 ? doorList(result.doors) : result.code, ...(result.lockLocation ? { lockLocation: result.lockLocation } : {}) });
     return result.reason === "no-job" ? refuse(404, VISIT_ENDED) : refuse(409, doorReason(result.reason));
   }
   if (view.phase === "before") return refuse(409, VISIT_NOT_STARTED);

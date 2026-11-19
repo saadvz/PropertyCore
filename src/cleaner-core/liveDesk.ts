@@ -33,7 +33,7 @@ import { isInjuryReport } from "./injury";
 import { GroupNotConfirmed } from "./groupThread";
 import { cleanerPinStatusUrl, deleteLiveGroup, landlordConfirmed, liveSmsOn, mayText, sendLiveGroup, sendLiveSms, verifiedLandlordPhone } from "./liveSms";
 import { DOOR_CODE_SHAPE_REFUSED, LOCK_LOCATION_REFUSED, PIN_KEY_MISSING, serverPinKey, UPLOAD_LINK_OFF, type AccessRefusal, type DoorAccess } from "../hub/doorAccess";
-import { DOOR_WINDOW_OVER, type AccessRefusedLines, type DoorAccessPort } from "./doorPort";
+import { DOOR_LOCK_FAILED, DOOR_WINDOW_OVER, type AccessRefusedLines, type DoorAccessPort } from "./doorPort";
 import { accountOf, peopleFor, resetPeople, streetOf, type MoveSource, type People, type PersonChange, type Role } from "../hub/people";
 import { containsCodeToken, redactPhone } from "./redact";
 import { isScratchTestNumber } from "./scratch";
@@ -1026,7 +1026,7 @@ export class LiveDesk {
   private doorPort(): DoorAccessPort {
     return {
       request: async (input) => {
-        const grant = this.door().request({ person: input.person, window: input.window, purpose: input.purpose });
+        const grant = await this.door().request({ person: input.person, window: input.window, purpose: input.purpose, jobId: input.jobId, ...(this.file.cleanerName ? { label: this.file.cleanerName } : {}) });
         this.accessRefusal = grant.ok ? undefined : grant.reason;
         return grant;
       },
@@ -1035,7 +1035,7 @@ export class LiveDesk {
   }
 
   private accessRefusedLines(): AccessRefusedLines {
-    return { "no-code": "Save the door code first.", "no-key": PIN_KEY_MISSING, sealed: PIN_REENTER, "window-over": DOOR_WINDOW_OVER };
+    return { "no-code": "Save the door code first.", "no-key": PIN_KEY_MISSING, sealed: PIN_REENTER, "window-over": DOOR_WINDOW_OVER, "lock-failed": DOOR_LOCK_FAILED };
   }
 
   /** The property's door access in its hub: the sealed code, the lock location, and the upload link. */

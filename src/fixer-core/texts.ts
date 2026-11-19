@@ -191,9 +191,15 @@ export function rotationQuestion(f: { proName: string }): string {
 }
 
 /** The only text that holds the code. It goes to the pro's own phone. */
-export function codeText(f: { proName: string; street: string; code: string; lockLocation?: string }): string {
+export function codeText(f: { proName: string; street: string; code: string; lockLocation?: string; doors?: { door: string; code: string }[] }): string {
+  if (f.doors && f.doors.length > 1) return `Hi ${firstName(f.proName)}, the door codes for ${f.street} are ${doorList(f.doors)}. Reply DONE with photos when you finish.`;
   const at = f.lockLocation ? `, at ${f.lockLocation}` : "";
   return `Hi ${firstName(f.proName)}, the door code for ${f.street} is ${f.code}${at}. Reply DONE with photos when you finish.`;
+}
+
+/** "Front door: 1, Side gate: 2" when one door fell back to a backup code. */
+export function doorList(doors: readonly { door: string; code: string }[]): string {
+  return doors.map((item) => `${item.door}: ${item.code}`).join(", ");
 }
 
 export function proInvite(f: { proName: string; business: string; street: string }): string {

@@ -28,7 +28,7 @@ import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type
 import { holdsOtherRole, priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
 import { BLOCK_ON_CALENDAR_NEXT, blockCalendarNext, blockCollisionNews, blockOpenNews, BLOCK_HOST_ACCESS, CREW_HOST_ACCESS, crewScheduleQuestion, crewScheduleSentence, crewSpanRefusal, guestWithdrewNews, removeRepairBlockQuestion, repairBlockQuestion, URGENT_AGREED, URGENT_ASK_GUEST, urgentRefusal, urgentStayChangedNews } from "./texts";
-import { bookingQuestion, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, shortDollars, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
+import { bookingQuestion, firstName, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, shortDollars, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { insideWindow, latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { doorFor, repairBlockProblem, repairBlockStatus, staysForCrew } from "./repairBlock";
 import { crewScheduleProblem, crewWindows, type CrewSchedule } from "./crewDays";
@@ -77,7 +77,7 @@ export interface FixerDeps {
 export type RevealRefusal = AccessRefusal | DoorRefusal | "no-job" | "off" | "damaged";
 
 /** The visit page's answer. Never passed to a tool reply, a log line or a file. */
-export type RevealResult = { ok: true; code: string; lockLocation?: string } | { ok: false; reason: RevealRefusal };
+export type RevealResult = { ok: true; code: string; lockLocation?: string; doors?: { door: string; code: string }[] } | { ok: false; reason: RevealRefusal };
 
 /** The alerts routine's one-time upload link, under the property's path. */
 export const FIXER_ALERT_UPLOAD_PREFIX = "/fixer-core/alert-routine/";
@@ -2164,11 +2164,18 @@ export class FixerDesk {
     notes.push(this.fileNews(file, { kind: "urgent-stay-changed", jobId: job.id, text, urgent: true }, `fixer:${job.id}:${visitTag(booking)}:urgent-stay-changed`));
   }
 
-  /** Asks the hub for the code, for the pro's phone and this window. A refusal gives the host one note for the job, and nothing else. */
-  private openCode(file: FixerFile, job: Job, window: { from: string; until: string }, notes: HostNote[]): { ok: true; code: string; lockLocation?: string } | { ok: false; reason: DoorRefusal } {
+  /**
+   * Asks the hub for the code, for the pro's phone, this job and this window. On connected locks it's
+   * the pro's own code for this visit; the hub's notes (a backup code, the saved code) go to the host.
+   * A refusal gives the host one note for the job, and nothing else.
+   */
+  private async openCode(file: FixerFile, job: Job, window: { from: string; until: string }, notes: HostNote[]): Promise<{ ok: true; code: string; lockLocation?: string; doors?: { door: string; code: string }[] } | { ok: false; reason: DoorRefusal }> {
     const phone = this.reachOfId(file, job, job.booking!.proId).phone!;
-    const grant = this.door().request({ person: phone, window, purpose: "repair" });
-    if (grant.ok && /^\d{4,8}$/.test(grant.code)) return { ok: true, code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}) };
+    const grant = await this.door().request({ person: phone, window, purpose: "repair", jobId: job.id, label: firstName(this.bookedName(file, job)) });
+    for (const note of grant.notes ?? []) notes.push(this.news(job, "lock", note.text, `fixer:${job.id}:${note.id}`));
+    if (grant.ok && /^\d{4,8}$/.test(grant.code) && (grant.doors ?? []).every((door) => /^\d{4,8}$/.test(door.code))) {
+      return { ok: true, code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}), ...(grant.doors ? { doors: grant.doors } : {}) };
+    }
     if (!job.codeNoteAt) {
       job.codeNoteAt = this.deps.now().toISOString();
       notes.push(this.news(job, "code-refused", codeRefusedNote({ proName: this.bookedName(file, job) }), `fixer:${job.id}:${visitTag(job.booking)}:code-refused`));
@@ -2197,7 +2204,7 @@ export class FixerDesk {
       const check = await this.accessFor(file, job);
       if (!check.ok) return check;
       const notes: HostNote[] = [];
-      const opened = this.openCode(file, job, check.window, notes);
+      const opened = await this.openCode(file, job, check.window, notes);
       if (opened.ok) {
         const at = this.deps.now().toISOString();
         const revealed = (job.booking.revealedAt ??= []);
@@ -2269,7 +2276,7 @@ export class FixerDesk {
     if (!check.ok) return;
     job.codeTextAt = at;
     this.write(file);
-    const opened = this.openCode(file, job, check.window, notes);
+    const opened = await this.openCode(file, job, check.window, notes);
     if (!opened.ok) return;
     (booking.revealedAt ??= []).push(at);
     markShown(job);
@@ -2277,7 +2284,7 @@ export class FixerDesk {
     const street = streetOf(this.hub().property().address ?? "");
     let sent = false;
     try {
-      sent = (await this.deps.send!(phone, codeText({ proName, street, code: opened.code, ...(opened.lockLocation ? { lockLocation: opened.lockLocation } : {}) }))) === true;
+      sent = (await this.deps.send!(phone, codeText({ proName, street, code: opened.code, ...(opened.lockLocation ? { lockLocation: opened.lockLocation } : {}), ...(opened.doors ? { doors: opened.doors } : {}) }))) === true;
     } catch {
       // Whether it went is unknown, so it is never sent again.
     }

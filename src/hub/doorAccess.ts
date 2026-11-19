@@ -8,6 +8,9 @@ import { openPin, sealPin, serverPinKey, type PinSeal } from "./pinSeal";
 /** A flow reads a request's door-code key, and the server's, through here: never the seal itself. */
 export { pinKeyFromHeader, serverPinKey } from "./pinSeal";
 import { HUB_DOOR_CODE_PREFIX } from "./paths";
+import { DOOR_GRANTS_FILE, GrantBook, type GrantFlow, type GrantNote, type GrantStatus, type WantedCode } from "../locks/grants";
+import { lockAdapter, smartLocksOn } from "../locks/registry";
+import { allDoorsConnected, asLockDevice, doorDevices, readDoorLocks, writeDoorLocks, type DoorLocksFile } from "../locks/settings";
 import type { HubCaller } from "./store";
 import { sameHash, UPLOAD_GONE, UPLOAD_MINUTES, uploadHash } from "./uploadCode";
 
@@ -52,15 +55,27 @@ export interface AccessRequest {
   person: string;
   /** ISO instants. */
   window: { from: string; until: string };
-  /** "repair" is unused until Fixer Core. */
   purpose: "cleaning" | "repair";
   /** The request's own key, else the server's key. */
   key?: Buffer;
+  /** The flow's job. On connected locks the code is that job's own; without one, the saved code answers. */
+  jobId?: string;
+  /** How a note to the host names the person ("Maria"). Never a phone. */
+  label?: string;
 }
 
-export type AccessRefusal = "no-code" | "no-key" | "sealed" | "window-over";
+/** `lock-failed`: on connected locks, the code didn't program, no backup was left, and no code is saved. */
+export type AccessRefusal = "no-code" | "no-key" | "sealed" | "window-over" | "lock-failed";
 
-export type AccessGrant = { ok: true; kind: "code"; code: string; lockLocation?: string; until: string } | { ok: false; reason: AccessRefusal };
+/**
+ * `doors` is set when the doors take different codes (one fell back to a backup code): the text names
+ * each door's code. `notes` are for the host, told once each by the asking flow; they never hold a code.
+ */
+export type AccessGrant =
+  | { ok: true; kind: "code"; code: string; lockLocation?: string; until: string; doors?: { door: string; code: string }[]; notes?: GrantNote[] }
+  | { ok: false; reason: AccessRefusal; notes?: GrantNote[] };
+
+export type { GrantFlow, GrantNote, GrantStatus, WantedCode };
 
 export interface SavedCode {
   code: string;
@@ -108,6 +123,9 @@ export class DoorAccess {
   private provider: AccessProvider = ownCode;
   /** The key of the call that made the pending upload link. Only in memory. */
   private uploadKey: Buffer | undefined;
+  private book: GrantBook | undefined;
+  private saveSecrets: ((values: { CLEANER_CORE_PIN_KEY: string }) => void) | undefined;
+  private sleep: ((ms: number) => Promise<void>) | undefined;
 
   constructor(
     readonly root: string,
@@ -124,6 +142,77 @@ export class DoorAccess {
   /** The request's key, or else the server's own key. Undefined when neither is there. */
   keyFor(key: Buffer | undefined): Buffer | undefined {
     return key ?? serverPinKey(this.env());
+  }
+
+  /** Where the account's server key is saved when it has none yet, so grants can be sealed (made if missing). */
+  useSecretSaver(save: ((values: { CLEANER_CORE_PIN_KEY: string }) => void) | undefined): void {
+    this.saveSecrets = save;
+  }
+
+  /** Tests: how the release waits for a code still programming. */
+  useSleep(sleep: ((ms: number) => Promise<void>) | undefined): void {
+    this.sleep = sleep;
+  }
+
+  /** The property's connected locks and code settings. Holds no code. */
+  locks(): DoorLocksFile {
+    return readDoorLocks(this.root);
+  }
+
+  saveLocks(file: DoorLocksFile): void {
+    writeDoorLocks(this.root, file);
+  }
+
+  /**
+   * True when this property is on connected locks: the service runs SMART_LOCKS with a lock adapter,
+   * the property switched on, and every door the cleaner and pros go through is a connected lock.
+   * Otherwise every request gets the saved code, exactly as before.
+   */
+  connected(): boolean {
+    if (!smartLocksOn(this.env()) || !lockAdapter()) return false;
+    const locks = this.locks();
+    return Boolean(locks.activeAt) && allDoorsConnected(locks);
+  }
+
+  /** The per-visit codes. Grants are always sealed with the account's own server key, made if missing. */
+  grants(): GrantBook {
+    if (!this.book) {
+      this.book = new GrantBook(this.root, {
+        now: this.now,
+        adapter: () => lockAdapter(),
+        key: () => serverPinKey(this.env(), this.saveSecrets),
+        doors: () => doorDevices(this.locks()).map(asLockDevice),
+        sleep: (ms) => (this.sleep ?? ((wait: number) => new Promise<void>((resolve) => setTimeout(resolve, wait))))(ms),
+      });
+    }
+    return this.book;
+  }
+
+  /**
+   * Makes the locks hold exactly the codes this flow wants now. Does nothing off connected locks.
+   * Returns notes for the host; never a code.
+   */
+  async syncGrants(flow: GrantFlow, wanted: readonly WantedCode[]): Promise<GrantNote[]> {
+    if (!this.connected()) return [];
+    return this.grants().sync(flow, wanted);
+  }
+
+  /** Revokes one job's code now. Does nothing off connected locks. */
+  async revokeGrant(flow: GrantFlow, jobId: string): Promise<void> {
+    if (!this.connected()) return;
+    await this.grants().revoke(flow, jobId);
+  }
+
+  /**
+   * Every code that could be in a message about this property, for the leak checks only: the saved
+   * code and, on connected locks, each grant's code and backup codes until a day after its window.
+   */
+  codesForChecksAll(key?: Buffer): string[] {
+    const codes = new Set<string>();
+    const saved = this.codeForChecks(key);
+    if (saved) codes.add(saved);
+    if (existsSync(join(this.root, DOOR_GRANTS_FILE))) for (const code of this.grants().codesForChecks()) codes.add(code);
+    return [...codes];
   }
 
   saved(): boolean {
@@ -169,7 +258,12 @@ export class DoorAccess {
    * is saved, the key opens it (each time, as the release always has), and the window hasn't ended.
    * Who may get in is the asking flow's call, made before it asks.
    */
-  request(request: AccessRequest): AccessGrant {
+  async request(request: AccessRequest): Promise<AccessGrant> {
+    if (request.jobId && this.connected()) return this.requestGrant(request, request.jobId);
+    return this.requestSaved(request);
+  }
+
+  private requestSaved(request: AccessRequest): AccessGrant {
     const seal = this.file.pinSeal;
     if (!seal) return { ok: false, reason: "no-code" };
     const key = this.keyFor(request.key ?? this.openKey);
@@ -184,6 +278,34 @@ export class DoorAccess {
     this.open = code;
     if (this.now().getTime() >= Date.parse(request.window.until)) return { ok: false, reason: "window-over" };
     return this.provider.grant(request, { code, ...(this.file.lockLocation ? { lockLocation: this.file.lockLocation } : {}) });
+  }
+
+  /** On connected locks: this person's own code for this job, with its fallbacks. The saved code is only the last one. */
+  private async requestGrant(request: AccessRequest, jobId: string): Promise<AccessGrant> {
+    if (this.now().getTime() >= Date.parse(request.window.until)) return { ok: false, reason: "window-over" };
+    let saved: string | undefined;
+    if (this.file.pinSeal) {
+      const key = this.keyFor(request.key ?? this.openKey);
+      try {
+        saved = key ? openPin(this.file.pinSeal, key) : undefined;
+      } catch {
+        saved = undefined;
+      }
+      if (saved && CODE_SHAPE.test(saved)) this.open = saved;
+      else saved = undefined;
+    }
+    const released = await this.grants().release({ flow: request.purpose, jobId, person: request.person, window: request.window, ...(request.label ? { label: request.label } : {}) }, saved);
+    if (!released.ok) return { ok: false, reason: released.reason, ...(released.notes.length > 0 ? { notes: released.notes } : {}) };
+    const lockLocation = released.source === "saved" ? this.file.lockLocation : undefined;
+    return {
+      ok: true,
+      kind: "code",
+      code: released.code,
+      ...(lockLocation ? { lockLocation } : {}),
+      until: request.window.until,
+      ...(released.doors ? { doors: released.doors } : {}),
+      ...(released.notes.length > 0 ? { notes: released.notes } : {}),
+    };
   }
 
   /**
