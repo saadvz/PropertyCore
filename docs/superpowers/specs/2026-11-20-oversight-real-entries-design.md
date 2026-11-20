@@ -90,7 +90,7 @@ interface Sighting { at: string; device: string }
 
 ### The check
 
-`checkDay` takes `evidence` in place of `entries`:
+`checkDay` takes the evidence's fields beside the visits:
 `{ entries, lock?, quiet?, sightings? }`. `lock` defaults to true, so the
 existing pure tests on sample entries keep their meaning.
 

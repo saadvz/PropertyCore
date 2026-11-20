@@ -1,6 +1,7 @@
 # Remote oversight: expected visits and the same-day flag
 
-Date: 2026-11-17. Status: proposed in the project thread, for Saad's review.
+Date: 2026-11-17. Status: built in #254. Real entries, quiet locks and camera
+support (20 Nov): `2026-11-20-oversight-real-entries-design.md`.
 Issue: saadvz/PropertyCore#240, a child of #236 (verification roadmap).
 This is the part #240 marks "can start now": expected visits and the same-day
 flag, on fake events. Personal codes, entry events and sensors wait on #180;
