@@ -58,7 +58,15 @@ const ALLOW = {
   },
 };
 
-export const STAY_CHECK_TOOLS: readonly Record<string, unknown>[] = [GET, SAVE, ALLOW];
+const MARK_FALSE = {
+  name: "mark_flag_false",
+  title: "Mark a nightly flag false",
+  description:
+    "Call only after the host says a nightly stay check flag was wrong, like a neighbour's car counted as a guest's. That kind of flag then needs one more sighting in a night at this property, up to 3. It never raises the number of guests or cars allowed; to allow something for one stay, use allow_for_stay instead.",
+  inputSchema: { type: "object", properties: { kind: KINDS }, required: ["kind"], additionalProperties: false },
+};
+
+export const STAY_CHECK_TOOLS: readonly Record<string, unknown>[] = [GET, SAVE, ALLOW, MARK_FALSE];
 export const STAY_CHECK_TOOL_NAMES: ReadonlySet<string> = new Set(STAY_CHECK_TOOLS.map((tool) => tool.name as string));
 
 /** Answers one stay check tool. Undefined when the name isn't one of them. */
@@ -67,5 +75,6 @@ export function handleStayCheckTool(desk: StayCheckDesk, name: string, args: unk
   const input = args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
   if (name === "get_house_rules") return desk.getRules();
   if (name === "save_house_rules") return desk.saveRules({ rules: input.rules, checkTime: input.checkTime });
+  if (name === "mark_flag_false") return desk.markFlagFalse({ kind: input.kind });
   return desk.allowForStay({ checkIn: input.checkIn, allow: input.allow });
 }

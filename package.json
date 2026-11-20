@@ -30,6 +30,9 @@
     "cleaner:doctor": "tsx src/cleaner-core/cli.ts doctor",
     "cleaner:smoke": "tsx src/cleaner-core/cli.ts smoke",
     "cleaner:health": "tsx src/cleaner-core/cli.ts health",
+    "cameras:count-test": "tsx src/cameras/countTestCli.ts",
+    "cameras:live-count": "tsx src/cameras/liveCountCli.ts",
+    "cameras:get-detector": "tsx src/cameras/getDetectorCli.ts",
     "build": "node scripts/build.mjs",
     "start": "node dist/server.js",
     "test": "vitest run",
@@ -44,6 +47,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "express": "^5.3.0",
+    "jpeg-js": "^0.4.4",
+    "onnxruntime-node": "^1.31.1",
     "sendblue": "^3.21.1",
     "spectrum-ts": "^12.10.1",
     "zod": "^4.6.5"

@@ -64,3 +64,8 @@ export function packageArrivalsOn(env: NodeJS.ProcessEnv = process.env): boolean
 export function guestMessagesOn(env: NodeJS.ProcessEnv = process.env): boolean {
   return isOn(env.GUEST_MESSAGES);
 }
+
+/** The camera connection (#239) on the multi-tenant service. Off unless CAMERAS is exactly "1" or "true". */
+export function camerasOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isOn(env.CAMERAS);
+}

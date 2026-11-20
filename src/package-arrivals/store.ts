@@ -52,6 +52,8 @@ export interface PackagesFile {
   arrivals: Record<string, Arrival>;
   /** Random per property, set with the first bring-in visit: a helper's hours log key is keyed with it, never a plain hash of their phone. */
   salt?: string;
+  /** Package drops seen on camera (#239) that matched no single expected delivery, by time, for the agent to ask about. */
+  cameraSightings?: string[];
 }
 
 /** packages.json is there but isn't a readable record. Nothing is written over it. */
@@ -89,6 +91,7 @@ export function readPackages(root: string): PackagesFile {
     settings: object(file.settings) as PackageSettings,
     arrivals: object(file.arrivals) as Record<string, Arrival>,
     ...(typeof file.salt === "string" ? { salt: file.salt } : {}),
+    ...(Array.isArray(file.cameraSightings) ? { cameraSightings: file.cameraSightings.filter((at): at is string => typeof at === "string" && Number.isFinite(Date.parse(at))) } : {}),
   };
 }
 

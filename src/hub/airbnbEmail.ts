@@ -30,6 +30,8 @@ export interface GuestCount {
   infants: number;
   /** Adults plus children, as Airbnb counts guests. Infants are kept on their own. */
   total: number;
+  /** Pets on the booking, only when it lists any. The no-pet rule needs it (#239). */
+  pets?: number;
 }
 
 export interface ParsedBookingEmail {
@@ -342,9 +344,11 @@ function guestsOf(lines: string[]): GuestCount | undefined {
   const adults = count(/(\d+)\s+adults?\b/i);
   const children = count(/(\d+)\s+(?:child|children|kids?)\b/i);
   const infants = count(/(\d+)\s+(?:infants?|babies|baby)\b/i);
-  if (adults || children || infants) return { adults, children, infants, total: adults + children };
+  const pets = count(/(\d+)\s+(?:pets?|dogs?|cats?)\b/i);
+  const withPets = pets > 0 ? { pets } : {};
+  if (adults || children || infants) return { adults, children, infants, total: adults + children, ...withPets };
   const guests = /(\d+)\s+guests?\b/i.exec(block);
   if (!guests) return undefined;
   const total = Number(guests[1]);
-  return { adults: total, children: 0, infants: 0, total };
+  return { adults: total, children: 0, infants: 0, total, ...withPets };
 }

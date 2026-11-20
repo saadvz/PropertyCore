@@ -148,6 +148,23 @@ describe("the stay check desk", () => {
     expect(result.status === "flags" && result.flags[0]).toMatchObject({ kind: "people", allowed: 3, basis: "booking" });
   });
 
+  it("a pet on the booking reaches the check", () => {
+    const { root, desk } = property({ rules: [{ text: "No pets", check: { kind: "pets" } }] });
+    booking(root, { checkIn: "Fri, Nov 20", checkInTime: "3:00 PM", checkout: "Mon, Nov 23", guests: "2 adults, 1 pet" });
+    const dog: StayEvent = { id: "d", at: "2026-11-22T01:00:00Z", source: "camera", device: "Back deck", counts: { animals: 1 } };
+    expect(desk.runNight("2026-11-21", [dog], "Lake House")).toMatchObject({ status: "clean", unchecked: [{ kind: "pets", why: "The stay was booked with a pet." }] });
+  });
+
+  it("a flag the host marks false needs one more sighting, up to 3, and never changes an allowed number", () => {
+    const { root, desk } = property({ rules: [MAX6] });
+    expect(desk.markFlagFalse({ kind: "people" })).toMatchObject({ isError: false, structured: { kind: "people", sightingsNeeded: 2 } });
+    desk.markFlagFalse({ kind: "people" });
+    expect(desk.markFlagFalse({ kind: "people" }).structured).toMatchObject({ sightingsNeeded: 3 });
+    expect(readStayCheck(root).sightings).toEqual({ people: 3 });
+    expect(readStayCheck(root).rules).toEqual([MAX6]);
+    expect(desk.markFlagFalse({ kind: "parties" }).isError).toBe(true);
+  });
+
   it("an allowance for the stay reaches the check", () => {
     const { root, desk } = property({ rules: [{ text: "No pets", check: { kind: "pets" } }] });
     const dog: StayEvent = { id: "d", at: "2026-11-22T01:00:00Z", source: "camera", device: "Back deck", counts: { animals: 1 } };
