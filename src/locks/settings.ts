@@ -55,8 +55,11 @@ export interface DoorLocksFile {
   activeAt?: string;
   /** Why the property can't switch, as last told to the host. */
   blockedBy?: "mixed-doors" | "no-alerts";
-  /** How codes go out. Cleaners on automatic is the checkout-time release. Default ask. */
-  release: { cleaners: ReleaseMode; pros: ReleaseMode };
+  /**
+   * How codes go out. Cleaners on automatic is the checkout-time release. Default ask. `packages` is a
+   * package helper's bring-in code (#241): unset reads as ask, so older files keep their shape.
+   */
+  release: { cleaners: ReleaseMode; pros: ReleaseMode; packages?: ReleaseMode };
   /** How a pro who runs late gets more time. Default ask. */
   extend: ReleaseMode;
   /** Alerts already told, by key, so each goes once. */
@@ -80,9 +83,18 @@ export function readDoorLocks(root: string): DoorLocksFile {
     schemaVersion: 1,
     devices: Array.isArray(raw.devices) ? raw.devices : [],
     doors: Array.isArray(raw.doors) ? raw.doors : [],
-    release: { cleaners: raw.release?.cleaners === "automatic" ? "automatic" : "ask", pros: raw.release?.pros === "automatic" ? "automatic" : "ask" },
+    release: {
+      cleaners: raw.release?.cleaners === "automatic" ? "automatic" : "ask",
+      pros: raw.release?.pros === "automatic" ? "automatic" : "ask",
+      ...(raw.release?.packages === "automatic" || raw.release?.packages === "ask" ? { packages: raw.release.packages } : {}),
+    },
     extend: raw.extend === "automatic" ? "automatic" : "ask",
   };
+}
+
+/** How a package helper's bring-in code goes out (#241): ask unless the host chose automatic. */
+export function packagesRelease(file: Pick<DoorLocksFile, "release">): ReleaseMode {
+  return file.release.packages === "automatic" ? "automatic" : "ask";
 }
 
 export function writeDoorLocks(root: string, file: DoorLocksFile): void {

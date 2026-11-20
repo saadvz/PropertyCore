@@ -27,6 +27,14 @@ export interface BringInVisit {
   plannedAt: string;
   /** The host's bring-in hours when it was planned, so a later change doesn't move this deadline. */
   hours?: number;
+  /** On connected locks (#241): the host's OK to text this person their code, under ask. */
+  codeYesAt?: string;
+  /** The code text was marked to go, before the send; never sent a second time. */
+  codeTextAt?: string;
+  /** The send said it went. */
+  codeTextSent?: boolean;
+  /** Host notes about this visit's code already told, by kind. Never a code. */
+  codeTold?: string[];
 }
 
 export interface Arrival {

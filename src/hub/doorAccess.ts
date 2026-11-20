@@ -56,7 +56,7 @@ export interface AccessRequest {
   person: string;
   /** ISO instants. */
   window: { from: string; until: string };
-  purpose: "cleaning" | "repair" | "standing" | "guest";
+  purpose: "cleaning" | "repair" | "standing" | "guest" | "bring-in";
   /** The request's own key, else the server's key. */
   key?: Buffer;
   /** The flow's job. On connected locks the code is that job's own; without one, the saved code answers. */
