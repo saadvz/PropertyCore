@@ -12,7 +12,7 @@ import { isInjuryReport } from "../cleaner-core/injury";
 import { cleanerPhotoFetch, copyPhotos, downloadPhotos, MAX_JOB_PHOTOS, messagePhotoId, photoCount, photoLinks, prunePhotos, storePhoto, type InboundMedia } from "../cleaner-core/photos";
 import { isPlainLanguageStop, keywordOf } from "../intent";
 import { askNext } from "../hub/ask";
-import { addCalendarDays } from "../hub/calendar";
+import { addCalendarDays, zonedInstant } from "../hub/calendar";
 import { joinSplitDigits } from "../hub/digits";
 import type { GoogleEventList } from "../hub/sources";
 import { refuseCards } from "../hub/cards";
@@ -32,13 +32,16 @@ import { codeOkNews, codeOkQuestion, codeOkReminder, extendAskNews, extendedNews
 import { insideWindow, latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { doorFor, repairBlockProblem, repairBlockStatus, staysForCrew } from "./repairBlock";
 import { crewScheduleProblem, crewWindows, type CrewSchedule } from "./crewDays";
+import { MAX_VENDOR_HOURS, parseVendorTime } from "./vendorTime";
+import { appendServiceNotice, cleanNoticeText, MAX_NOTICE_BODY, noticeDates, noticeHash, readServiceNotices, senderAddress, type ServiceNoticeInput } from "./serviceNotices";
+import { scheduleWords, vendorCalledOffNews, vendorTakenNews, vendorTimeTaken, vendorTooManyQuestion, standingOffQuestion, standingQuestion, vendorConfirmed, vendorConfirmedNews, vendorHeldQuestion, vendorMoved, vendorMovedNews, vendorNoAnswerNews, vendorNoDayNews, vendorProposal, visitWhen, VENDOR_ASKING_HOST } from "./texts";
 import { visitRecordsOn } from "../cleaner-core/flag";
 import { buildVisits } from "../visits/derive";
 import { fixerDue } from "../visits/due";
 import { crewVisit, repairVisit, type WindowEvent } from "../visits/events";
 import { messageEventId, visitLogFor, type VisitLog } from "../visits/store";
 import { stayKey, urgentAccessCheck, urgentStay, urgentTimeline, urgentVisitHolds, type GuestAnswer, type UrgentHold, type UrgentRefusal } from "./urgentVisit";
-import { MAX_HOST_STEPS, MAX_REPAIR_BLOCKS, TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type SavedBlock, type Booking, type HostStep, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
+import { MAX_HOST_STEPS, MAX_REPAIR_BLOCKS, TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type SavedBlock, type Booking, type HostStep, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep, type StandingYes } from "./store";
 
 /**
  * Fixer Core's desk: every tool's behaviour over one property's `fixer.json`. One call at a time.
@@ -168,6 +171,8 @@ export interface SettingsInput {
   upkeepDone?: true;
   /** Setup: the host said Not now to alerts. */
   alertsSkipped?: true;
+  /** The host's agent passes vendors' completed-service emails (#237). */
+  serviceNotices?: boolean;
   confirmation?: string;
 }
 
@@ -195,6 +200,8 @@ export interface UpkeepInput {
   schedule?: Schedule;
   leadDays?: number;
   proId?: string;
+  /** The host's standing yes for a routine vendor (#237), or null to withdraw it. Always two calls. */
+  standing?: { proId?: string; from?: string; until?: string; access?: "code" | "host"; usualCents?: number } | null;
   confirmation?: string;
 }
 
@@ -270,6 +277,14 @@ const ok = (structured: Record<string, unknown>): FixerReply => ({ text: JSON.st
 const fail = (text: string): FixerReply => ({ text, isError: true });
 
 const isInt = (n: unknown, min: number, max: number): n is number => typeof n === "number" && Number.isInteger(n) && n >= min && n <= max;
+
+/** The most times a vendor's own texts move one visit; after that the host decides (#237). */
+const MAX_VENDOR_MOVES = 3;
+
+/** A routine vendor's visit proposed under a standing yes and not yet confirmed by the vendor (#237). */
+function vendorWaiting(job: Job): boolean {
+  return Boolean(job.booking?.vendor && !job.booking.vendor.confirmedAt);
+}
 const isText = (s: unknown, max: number): s is string => typeof s === "string" && s.trim().length > 0 && s.length <= max;
 
 /** An instant's local `YYYY-MM-DD` in a time zone. */
@@ -514,7 +529,7 @@ export class FixerDesk {
     const wanted: WantedCode[] = [];
     for (const job of file.jobs) {
       const booking = job.booking;
-      if (!booking || !liveBooking(job) || !booking.hostYes || booking.access !== "code" || job.crew) continue;
+      if (!booking || !liveBooking(job) || !booking.hostYes || booking.access !== "code" || job.crew || vendorWaiting(job)) continue;
       const phone = this.reachOfId(file, job, booking.proId).phone;
       if (!phone) continue;
       const lead = booking.urgentStay ? 0 : 30 * 60_000;
@@ -738,6 +753,7 @@ export class FixerDesk {
           checkInBufferMinutes: file.settings.checkInBufferMinutes,
           cleaningMinutes: file.settings.cleaningMinutes,
           askCleaner: file.settings.askCleaner,
+          ...(file.settings.serviceNotices ? { serviceNotices: true } : {}),
         },
       });
     });
@@ -750,6 +766,7 @@ export class FixerDesk {
       if (input.checkInBufferMinutes !== undefined && !isInt(input.checkInBufferMinutes, 0, 240)) return fail("The check-in buffer has to be from 0 to 240 minutes.");
       if (input.cleaningMinutes !== undefined && !isInt(input.cleaningMinutes, 30, 480)) return fail("The cleaning length has to be from 30 to 480 minutes.");
       if (input.askCleaner !== undefined && typeof input.askCleaner !== "boolean") return fail("Asking the cleaner is yes or no.");
+      if (input.serviceNotices !== undefined && typeof input.serviceNotices !== "boolean") return fail("Service notices are yes or no.");
       if (input.prosDone && file.pros.some((pro) => pro.status === "draft")) return fail("Confirm or remove the drafted pros first.");
       const gate = this.approved(file, "fixer-settings", "settings", input, "Save these settings?");
       if (gate !== "go") return gate;
@@ -759,6 +776,7 @@ export class FixerDesk {
         s.askCleaner = input.askCleaner;
         file.setup.cleanerAsked = true;
       }
+      if (input.serviceNotices !== undefined) s.serviceNotices = input.serviceNotices;
       if (input.prosDone) file.setup.prosDone = true;
       if (input.upkeepDone) file.setup.upkeepDone = true;
       if (input.alertsSkipped) file.setup.alertsSkipped = true;
@@ -946,7 +964,17 @@ export class FixerDesk {
       const problem = this.upkeepScheduleProblem(input.schedule);
       if (problem) return fail(problem);
       if (input.proId !== undefined && !file.pros.some((pro) => pro.id === input.proId && pro.status === "saved")) return fail("That pro isn't on your saved list.");
-      const gate = this.approved(file, "fixer-upkeep", existing?.id ?? "new", input, `Save upkeep: ${input.what.trim()}?`);
+      let standing: Omit<StandingYes, "yesAt"> | null | undefined;
+      if (input.standing !== undefined) {
+        const checked = this.standingOf(file, input.standing, input.what.trim(), existing);
+        if (typeof checked === "string") return fail(checked);
+        standing = checked;
+      }
+      // A standing yes, or taking one back, is always the host's two-call yes, even before Activate.
+      const gate =
+        standing !== undefined
+          ? this.confirm("fixer-upkeep-standing", existing?.id ?? "new", tokenHash(JSON.stringify({ ...input, confirmation: undefined })), input.confirmation, standing ? standingQuestion({ what: input.what.trim(), proName: this.proNameOf(file, standing.proId), schedule: scheduleWords(input.schedule!), from: standing.from, until: standing.until, access: standing.access, ...(standing.usualCents !== undefined ? { usualCents: standing.usualCents } : {}) }) : standingOffQuestion({ what: input.what.trim(), proName: this.proNameOf(file, existing?.standing?.proId) }))
+          : this.approved(file, "fixer-upkeep", existing?.id ?? "new", input, `Save upkeep: ${input.what.trim()}?`);
       if (gate !== "go") return gate;
       const item: Upkeep = {
         ...(existing ?? {}),
@@ -959,6 +987,13 @@ export class FixerDesk {
       };
       if (input.proId) item.proId = input.proId;
       else delete item.proId;
+      if (standing) {
+        item.standing = { ...standing, yesAt: this.deps.now().toISOString() };
+        item.proId = standing.proId;
+      } else if (standing === null || (item.standing && (item.proId !== item.standing.proId || JSON.stringify(existing?.schedule) !== JSON.stringify(item.schedule)))) {
+        // The standing yes was for this pro on this schedule: a change to either needs a new one.
+        delete item.standing;
+      }
       if (existing) file.upkeep[file.upkeep.indexOf(existing)] = item;
       else file.upkeep.push(item);
       this.write(file);
@@ -978,6 +1013,34 @@ export class FixerDesk {
       this.write(file);
       return ok({ removed: item.what });
     });
+  }
+
+  private proNameOf(file: FixerFile, proId: string | undefined): string {
+    return file.pros.find((pro) => pro.id === proId)?.name ?? "the pro";
+  }
+
+  /**
+   * A standing yes as asked (#237), checked: visit records on, a saved pro with a phone who texts on the line, and
+   * usual hours "HH:MM" to "HH:MM" the same day, at most 4 hours. Null takes one back. A string is the refusal.
+   */
+  private standingOf(file: FixerFile, raw: NonNullable<UpkeepInput["standing"]> | null, what: string, existing: Upkeep | undefined): Omit<StandingYes, "yesAt"> | null | string {
+    if (raw === null) return existing?.standing ? null : "That upkeep item has no standing yes to take back.";
+    const env = this.deps.env?.();
+    if (!env || !visitRecordsOn(env)) return "Routine vendor visits aren't on for this service yet. Save the upkeep without standing, and you'll be asked each time.";
+    if (!what) return "Say what it is.";
+    const pro = file.pros.find((entry) => entry.id === raw.proId && entry.status === "saved");
+    if (!pro) return "Pick a pro from your saved list for the standing yes.";
+    if (!pro.reach.phone || !pro.prefersText) return `${pro.name} doesn't text on the line, so their visits can't be confirmed by text. Save the upkeep without standing, and you'll be asked each time.`;
+    const hm = /^([01]\d|2[0-3]):([0-5]\d)$/;
+    if (typeof raw.from !== "string" || typeof raw.until !== "string" || !hm.test(raw.from) || !hm.test(raw.until)) return "Give the usual hours as HH:MM, like 09:00 and 11:00.";
+    const minutes = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+    const span = minutes(raw.until) - minutes(raw.from);
+    if (span <= 0) return "The usual hours have to end later the same day.";
+    if (span > MAX_VENDOR_HOURS * 60) return `The usual hours can be at most ${MAX_VENDOR_HOURS} hours.`;
+    const access = raw.access ?? "code";
+    if (access !== "code" && access !== "host") return "Access is code or host.";
+    if (raw.usualCents !== undefined && !isInt(raw.usualCents, 100, 500_000)) return "The usual price has to be from $1 to $5,000.";
+    return { proId: pro.id, from: raw.from, until: raw.until, access, ...(raw.usualCents !== undefined ? { usualCents: raw.usualCents } : {}) };
   }
 
   previewSchedule(input: { schedule?: Schedule }): Promise<FixerReply> {
@@ -1850,18 +1913,29 @@ export class FixerDesk {
     const tz = this.timeZone();
     const due: Record<string, unknown>[] = [];
     for (const item of file.upkeep) {
-      const jobs = file.jobs.filter((job) => job.sourceRef === item.id);
-      if (jobs.some(isOpen)) continue;
-      const start = localYmd(new Date(item.lastDoneAt ?? item.savedAt), tz);
-      const nextDate = nextDates(item.schedule, start, start, 1)[0];
-      if (!nextDate) continue;
-      const leadStart = addCalendarDays(nextDate, -item.leadDays);
-      if (today < leadStart) continue;
-      // A job already made for this date (even a cancelled one) means the date was dealt with.
-      if (jobs.some((job) => localYmd(new Date(job.createdAt), tz) >= leadStart)) continue;
-      due.push({ upkeepId: item.id, trade: item.trade, what: item.what, nextDate, ...(item.proId ? { proId: item.proId } : {}) });
+      const next = this.upkeepNext(file, item, tz);
+      if (!next || today < next.leadStart) continue;
+      due.push({ upkeepId: item.id, trade: item.trade, what: item.what, nextDate: next.nextDate, ...(item.proId ? { proId: item.proId } : {}) });
     }
     return due;
+  }
+
+  /**
+   * An upkeep item's next date and the day its lead time opens, or undefined while a job for it is open or one was
+   * already made for this date (even a cancelled one: the date was dealt with).
+   */
+  private upkeepNext(file: FixerFile, item: Upkeep, tz: string): { nextDate: string; leadStart: string } | undefined {
+    const jobs = file.jobs.filter((job) => job.sourceRef === item.id);
+    if (jobs.some(isOpen)) return undefined;
+    const start = localYmd(new Date(item.lastDoneAt ?? item.savedAt), tz);
+    let nextDate = nextDates(item.schedule, start, start, 1)[0];
+    // A date whose job was cancelled was dealt with: the one after it comes due in turn.
+    for (let guard = 0; nextDate && guard < 12; guard++) {
+      const leadStart = addCalendarDays(nextDate, -item.leadDays);
+      if (!jobs.some((job) => localYmd(new Date(job.createdAt), tz) >= leadStart)) return { nextDate, leadStart };
+      nextDate = nextDates(item.schedule, start, addCalendarDays(nextDate, 1), 1)[0];
+    }
+    return undefined;
   }
 
   /** The next saved pro to contact for each job the host said go to, the best ranked one not yet tried. */
@@ -2529,12 +2603,18 @@ export class FixerDesk {
       for (const job of file.jobs) {
         const booking = job.booking;
         if (!booking?.hostYes || !liveBooking(job)) continue;
+        // A routine vendor's visit nobody confirmed never starts: no code, no late news (#237).
+        if (vendorWaiting(job)) {
+          if (!file.offAt) this.vendorWaitPass(file, job, notes);
+          continue;
+        }
         if (job.state === "booked" && now >= Date.parse(booking.from)) job.state = "in-progress";
         if (!file.offAt) this.lockPass(file, job, notes);
         if (!file.offAt) await this.codeTextPass(file, job, notes);
         this.delayPass(file, job, notes);
       }
       if (!file.offAt) this.visitPass(file, notes);
+      if (!file.offAt) await this.vendorPass(file, notes);
       // A done job's photos go 30 days after done, a cancelled job's 30 days after the cancel.
       prunePhotos(this.root, file.jobs.flatMap((job) => {
         const closedAt = job.done?.at ?? (job.state === "cancelled" ? job.cancelledAt : undefined);
@@ -2575,7 +2655,7 @@ export class FixerDesk {
       const live = new Set<string>();
       for (const job of file.jobs) {
         const booking = job.booking;
-        if (!booking?.hostYes || !liveBooking(job)) continue;
+        if (!booking?.hostYes || !liveBooking(job) || vendorWaiting(job)) continue;
         const who = { role: "pro" as const, name: this.bookedName(file, job), proId: booking.proId };
         const windows: Omit<WindowEvent, "id" | "at">[] = job.crew
           ? crewWindows(job.crew, { ...this.occupyInput(file), stays: this.crewStays(file) }).windows.map((w) => ({ type: "visit-window", visit: crewVisit(job.id, w.day), kind: "crew-day", from: w.from, until: w.until, expectedAt: w.from, sameDay: false, who }))
@@ -2608,6 +2688,340 @@ export class FixerDesk {
     } catch {
       // The log is a record, not a gate.
     }
+  }
+
+  /** How many days past the due date a routine vendor's usual hours are looked for (#237). */
+  private static readonly VENDOR_DAYS = 7;
+
+  /**
+   * Routine vendor visits (#237), on the clock pass with visit records on: for each upkeep item with a standing yes
+   * whose lead time has opened, the vendor's usual hours on the first day from the due date that fits between stays
+   * (up to 7 days later) become a booked visit under that yes, and the vendor is texted the proposal once. No code is
+   * made until they confirm. When no day fits, the host hears once and the item is left to today's upkeep flow.
+   */
+  private async vendorPass(file: FixerFile, notes: HostNote[]): Promise<void> {
+    const env = this.deps.env?.();
+    if (!env || !visitRecordsOn(env) || this.staysUnknown()) return;
+    const people = this.deps.people?.();
+    const here = this.deps.propertyId;
+    if (!people || !here) return;
+    const tz = this.timeZone();
+    const today = this.today();
+    const now = this.deps.now();
+    for (const item of file.upkeep) {
+      const standing = item.standing;
+      if (!standing) continue;
+      const next = this.upkeepNext(file, item, tz);
+      if (!next || today < next.leadStart) continue;
+      const pro = file.pros.find((entry) => entry.id === standing.proId && entry.status === "saved");
+      const phone = pro?.reach.phone;
+      if (!pro || !phone || !pro.prefersText) continue;
+      if (!people.optedIn(phone) || people.stopped(phone) || !people.rolesOn(phone, here).includes("pro") || holdsOtherRole(people, phone)) continue;
+      if ((await this.deps.textsAllowed?.()) !== true) continue;
+      const lastDay = addCalendarDays(next.nextDate, FixerDesk.VENDOR_DAYS);
+      const draft: Job = { id: newId("job_", 10), trade: item.trade, what: item.what, source: "upkeep", sourceRef: item.id, photos: [], urgency: "by-date", byDate: lastDay, state: "booked", candidates: [], picked: [], contacts: [], news: [], createdAt: now.toISOString(), standingYes: { upkeepId: item.id, at: standing.yesAt } };
+      let span: { from: string; until: string } | undefined;
+      for (let ymd = next.nextDate; ymd <= lastDay && !span; ymd = addCalendarDays(ymd, 1)) {
+        const candidate = { from: zonedInstant(ymd, standing.from, tz), until: zonedInstant(ymd, standing.until, tz) };
+        if (Date.parse(candidate.from) <= now.getTime()) continue;
+        const { holds } = await this.holdsFor(file, draft, candidate, standing.usualCents);
+        if (holds.every((hold) => hold === "cost" || hold === "no-estimate")) span = candidate;
+      }
+      if (!span) {
+        const kind = `vendor-no-day:${item.id}:${next.nextDate}`;
+        if (!(file.news ?? []).some((entry) => entry.kind === kind)) notes.push(this.fileNews(file, { kind, text: vendorNoDayNews({ what: item.what, proName: pro.name }) }, `fixer:${kind}`));
+        continue;
+      }
+      const at = now.toISOString();
+      draft.hostGo = { at: standing.yesAt };
+      draft.booking = {
+        proId: pro.id,
+        ...span,
+        ...(standing.usualCents !== undefined ? { estimateCents: standing.usualCents } : {}),
+        access: standing.access,
+        hostYes: { at: standing.yesAt },
+        fingerprint: bookingFingerprint({ proId: pro.id, ...span, ...(standing.usualCents !== undefined ? { estimateCents: standing.usualCents } : {}), access: standing.access }),
+        vendor: { upkeepId: item.id, proposedAt: at },
+      };
+      file.jobs.push(draft);
+      // Saved before the send, so a restart never proposes twice.
+      this.write(file);
+      const body = vendorProposal({ proName: pro.name, what: item.what, street: streetOf(this.hub().property().address ?? ""), when: visitWhen(span.from, span.until, tz) });
+      let sent = false;
+      try {
+        sent = (await this.deps.send?.(phone, body)) === true;
+      } catch {
+        // Unknown: never sent again. The no-answer note tells the host.
+      }
+      if (sent) {
+        draft.booking.vendor!.proposalSent = true;
+        this.logVendorText(draft, "out", "window-proposed", body, phone);
+      }
+      this.write(file);
+    }
+  }
+
+  /** The vendor's own routine visit a text is about: proposed and waiting, or confirmed and not over. The earliest first. */
+  private vendorJobOf(file: FixerFile, proId: string): Job | undefined {
+    const env = this.deps.env?.();
+    if (!env || !visitRecordsOn(env)) return undefined;
+    const now = this.deps.now().getTime();
+    return file.jobs
+      .filter((job) => job.booking?.vendor && job.booking.proId === proId && job.booking.hostYes && liveBooking(job) && !job.done && now < this.endOf(job.booking))
+      .sort((a, b) => Date.parse(a.booking!.from) - Date.parse(b.booking!.from))[0];
+  }
+
+  /**
+   * A routine vendor's text about their visit (#237). YES confirms a proposed visit. A time the parser reads moves it
+   * when it fits between stays (at most 3 times by text), and is held for the host when it doesn't. On a proposed
+   * visit, anything else is news on the job. True when it was handled here; false leaves it to the usual pro path
+   * (DONE, a price, news) once the visit is confirmed.
+   */
+  private async vendorReply(file: FixerFile, job: Job, phone: string, text: string, sourceId: string): Promise<boolean> {
+    const booking = job.booking!;
+    const vendor = booking.vendor!;
+    const waiting = !vendor.confirmedAt;
+    const proName = this.bookedName(file, job);
+    const tz = this.timeZone();
+    const notes: HostNote[] = [];
+    const reply = (body: string, label: string) => this.textVendor(file, job, body, label, sourceId);
+    const span = isDone(text) ? undefined : parseVendorTime(text, { anchor: booking.from, timeZone: tz, now: this.deps.now() });
+    const sameTime = span !== undefined && span.from === booking.from && span.until === booking.until;
+    if (isYes(text) || sameTime) {
+      if (!waiting) return sameTime;
+      this.logVendorText(job, "in", "confirm", text, phone, sourceId);
+      this.confirmVendor(booking);
+      const when = visitWhen(booking.from, booking.until, tz);
+      notes.push(this.news(job, "vendor-confirmed", vendorConfirmedNews({ proName, what: job.what, when }), `fixer:${job.id}:vendor-confirmed`));
+      this.write(file);
+      await this.tell(notes);
+      await reply(vendorConfirmed({ when, access: booking.access }), "confirmed");
+      return true;
+    }
+    if (span) {
+      this.logVendorText(job, "in", "move", text, phone, sourceId);
+      const moved = await this.moveVendor(file, job, span, "vendor", notes);
+      this.write(file);
+      await this.tell(notes);
+      const when = visitWhen(booking.from, booking.until, tz);
+      if (moved === "moved") await reply(vendorMoved({ when, access: booking.access }), "move-echo");
+      else if (moved === "held") await reply(VENDOR_ASKING_HOST, "move-held");
+      else if (moved === "taken") await reply(vendorTimeTaken({ street: streetOf(this.hub().property().address ?? "") }), "move-taken");
+      return true;
+    }
+    if (!waiting) return false;
+    // Anything else on a proposed visit (a no, a question) is the host's to read, with digit runs taken out.
+    this.logVendorText(job, "in", "other", text, phone, sourceId);
+    if (!text) return true;
+    notes.push(this.news(job, "pro-text", proTextNews({ proName, text: redactDigits(text).slice(0, 300).trim() }), `fixer:${job.id}:pro-text:${sourceId}`));
+    this.write(file);
+    await this.tell(notes);
+    return true;
+  }
+
+  /** Texts a routine vendor about their visit, on the consent-checked path, and logs it once sent. */
+  private async textVendor(file: FixerFile, job: Job, body: string, label: string, sourceId: string): Promise<void> {
+    const phone = this.reachOfId(file, job, job.booking!.proId).phone;
+    const people = this.deps.people?.();
+    if (!phone || !people?.optedIn(phone) || people.stopped(phone) || (await this.deps.textsAllowed?.()) !== true) return;
+    let sent = false;
+    try {
+      sent = (await this.deps.send?.(phone, body)) === true;
+    } catch {
+      // Unknown: not sent again.
+    }
+    if (sent) this.logVendorText(job, "out", label, body, phone, `${sourceId}:${label}`);
+  }
+
+  /**
+   * The agent enters a routine vendor's new time, from the vendor's own words (#237). A time that fits moves the
+   * visit at once; one outside the open times takes the host's two-call yes; a stay over it is always refused. The
+   * vendor is texted what was set. Never returns a code.
+   */
+  moveVendorVisit(input: { jobId?: string; from?: string; until?: string; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, async () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      const booking = job?.booking;
+      if (!job || !booking?.vendor || !booking.hostYes || !liveBooking(job) || job.done) return fail("That isn't a routine vendor's visit that's still to come. Use reschedule_job for other visits.");
+      const from = Date.parse(input.from ?? "");
+      const until = Date.parse(input.until ?? "");
+      if (!Number.isFinite(from) || !Number.isFinite(until) || until <= from) return fail("Give from and until as ISO times, until after from.");
+      if (until - from > MAX_VENDOR_HOURS * HOUR_MS) return fail(`A routine visit can be at most ${MAX_VENDOR_HOURS} hours.`);
+      if (from <= this.deps.now().getTime()) return fail("That time has already started.");
+      const span = { from: new Date(from).toISOString(), until: new Date(until).toISOString() };
+      const { holds } = await this.holdsFor(file, job, span, booking.estimateCents);
+      if (holds.includes("overlaps-stay")) return fail("That time is over a stay, so it can't be booked. Ask the vendor for another time.");
+      const proName = this.bookedName(file, job);
+      const when = visitWhen(span.from, span.until, this.timeZone());
+      let by: "agent" | "host" = "agent";
+      if (holds.includes("outside-window")) {
+        const gate = this.confirm("fixer-vendor-move", job.id, tokenHash(JSON.stringify([span, booking.fingerprint])), input.confirmation, vendorHeldQuestion({ proName, what: job.what, when }));
+        if (gate !== "go") return gate;
+        by = "host";
+      }
+      const notes: HostNote[] = [];
+      const result = await this.moveVendor(file, job, span, by, notes);
+      this.write(file);
+      // The host's own yes needs no line back to them; the agent's entry does.
+      await this.tell(by === "host" ? [] : notes);
+      if (result !== "held") await this.textVendor(file, job, vendorMoved({ when, access: booking.access }), "move-echo", `move:${job.id}:${span.from}`);
+      return ok({ moved: true, jobId: job.id, from: booking.from, until: booking.until, next: `${proName} was texted the new time.` });
+    });
+  }
+
+  /** The vendor confirmed: from here their code may exist, and the standing yes is the host's OK for it (#237). */
+  private confirmVendor(booking: Booking): void {
+    const at = this.deps.now().toISOString();
+    booking.vendor!.confirmedAt ??= at;
+    if (booking.access === "code") booking.codeYes ??= { at };
+  }
+
+  /**
+   * Moves a routine vendor's visit in place when the new time passes the booking gate (a cost hold aside: the
+   * standing yes covers the usual price), so the lock sync moves their code rather than making a new one. A time
+   * that doesn't fit, or a fourth move by text, is held for the host. A stay over the time is never moved into.
+   */
+  private async moveVendor(file: FixerFile, job: Job, span: { from: string; until: string }, by: "vendor" | "agent" | "host", notes: HostNote[]): Promise<"moved" | "held" | "taken" | "same"> {
+    const booking = job.booking!;
+    const vendor = booking.vendor!;
+    if (span.from === booking.from && span.until === booking.until) {
+      if (!vendor.confirmedAt) this.confirmVendor(booking);
+      return "same";
+    }
+    const { holds } = await this.holdsFor(file, job, span, booking.estimateCents);
+    const fits = holds.every((hold) => hold === "cost" || hold === "no-estimate") && Date.parse(span.from) > this.deps.now().getTime();
+    const vendorMoves = (vendor.moves ?? []).filter((move) => move.by === "vendor").length;
+    const tooMany = by === "vendor" && vendorMoves >= MAX_VENDOR_MOVES;
+    const proName = this.bookedName(file, job);
+    const when = visitWhen(span.from, span.until, this.timeZone());
+    if (by === "vendor" && holds.includes("overlaps-stay")) {
+      // Never bookable, so never the host's question: the vendor is asked for another time, and the host told.
+      notes.push(this.news(job, `vendor-taken:${span.from}`, vendorTakenNews({ proName, when }), `fixer:${job.id}:vendor-taken:${span.from}`));
+      return "taken";
+    }
+    if (by === "vendor" && (!fits || tooMany)) {
+      vendor.held = { ...span, at: this.deps.now().toISOString() };
+      const question = tooMany && fits ? vendorTooManyQuestion({ proName, what: job.what, when, moves: vendorMoves }) : vendorHeldQuestion({ proName, what: job.what, when });
+      notes.push(this.news(job, `vendor-held:${span.from}`, question, `fixer:${job.id}:vendor-held:${span.from}`));
+      return "held";
+    }
+    const at = this.deps.now().toISOString();
+    booking.from = span.from;
+    booking.until = span.until;
+    delete booking.extendedUntil;
+    delete booking.extendNoted;
+    // A visit link is a key for the old time: a move ends it, as a rebook does.
+    delete booking.visitToken;
+    booking.fingerprint = bookingFingerprint({ proId: booking.proId, from: span.from, until: span.until, ...(booking.estimateCents !== undefined ? { estimateCents: booking.estimateCents } : {}), access: booking.access });
+    (vendor.moves ??= []).push({ at, ...span, by });
+    // The host's own yes to a new time is theirs in the hours log, like a reschedule.
+    if (by === "host") (job.reschedules ??= []).push({ at, reason: "the vendor's new time" });
+    delete vendor.held;
+    this.confirmVendor(booking);
+    if (job.state === "in-progress" && Date.parse(span.from) > Date.parse(at)) job.state = "booked";
+    notes.push(this.news(job, `vendor-moved:${span.from}`, vendorMovedNews({ proName, what: job.what, when }), `fixer:${job.id}:vendor-moved:${span.from}`));
+    return "moved";
+  }
+
+  /** One message line in the visit log about a vendor's visit, when visit records are on. */
+  private logVendorText(job: Job, direction: "in" | "out", label: string, body: string, phone: string, sourceId?: string): void {
+    const log = this.visitLog();
+    if (!log) return;
+    const at = this.deps.now().toISOString();
+    try {
+      log.append({ type: "message", id: messageEventId(direction, sourceId ?? `vendor:${job.id}:${label}:${at}`), at, direction, role: "pro", personKey: log.personKey(phone), visit: repairVisit(job.id), label, body });
+    } catch {
+      // The log is a record, not a gate.
+    }
+  }
+
+  /** A proposed visit the vendor hasn't confirmed: one note when 48 hours are left, or at once if fewer were. */
+  private vendorWaitPass(file: FixerFile, job: Job, notes: HostNote[]): void {
+    const booking = job.booking!;
+    const vendor = booking.vendor!;
+    const now = this.deps.now().getTime();
+    if (now >= this.endOf(booking)) {
+      // Never confirmed by its end: called off, so the upkeep's next date can come due.
+      job.state = "cancelled";
+      job.cancelledAt = new Date(now).toISOString();
+      job.cancelReason = "The vendor never confirmed.";
+      notes.push(this.news(job, "vendor-called-off", vendorCalledOffNews({ proName: this.bookedName(file, job), what: job.what, when: visitWhen(booking.from, booking.until, this.timeZone()) }), `fixer:${job.id}:vendor-called-off`));
+      return;
+    }
+    if (vendor.noAnswerAt) return;
+    const from = Date.parse(booking.from);
+    const proposed = Date.parse(vendor.proposedAt);
+    // Ask by 48 hours before, but give the vendor at least a day when the proposal went later than that.
+    const askAt = Math.max(from - 48 * HOUR_MS, Math.min(proposed + 24 * HOUR_MS, from));
+    if (now < askAt) return;
+    vendor.noAnswerAt = new Date(now).toISOString();
+    notes.push(this.news(job, "vendor-no-answer", vendorNoAnswerNews({ proName: this.bookedName(file, job), what: job.what, when: visitWhen(booking.from, booking.until, this.timeZone()) }), `fixer:${job.id}:vendor-no-answer`));
+  }
+
+  /**
+   * A vendor's completed-service email, as the host's agent received it (#237): kept append-only with every code the
+   * property knows and every digit run taken out, matched to the visit by the job given, else by the sender's address
+   * and the service date, and linked in the visit log. Evidence only: it never sets a time. Off until the host turns
+   * service notices on. The reply never repeats the body.
+   */
+  saveServiceNotice(input: { jobId?: string; email?: Partial<ServiceNoticeInput> }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const log = this.visitLog();
+      if (!log || !file.settings.serviceNotices) return fail("Service notices aren't on for this property. The host turns them on with save_fixer_settings.");
+      const email = input.email;
+      if (!email || typeof email.from !== "string" || typeof email.subject !== "string" || typeof email.body !== "string" || !email.body.trim()) return fail("Pass the email as received: from, subject and body.");
+      if (email.body.length > MAX_NOTICE_BODY || email.subject.length > 500 || email.from.length > 300) return fail("That email is too long to keep.");
+      const now = this.deps.now();
+      const receivedAt = email.receivedAt && Number.isFinite(Date.parse(email.receivedAt)) ? new Date(email.receivedAt).toISOString() : now.toISOString();
+      let codes: string[] = [];
+      try {
+        codes = this.door().codesForChecksAll();
+      } catch {
+        // No key: digit runs still go.
+      }
+      const body = cleanNoticeText(email.body, codes);
+      const subject = cleanNoticeText(email.subject, codes);
+      const from = cleanNoticeText(email.from, codes).slice(0, 300);
+      const messageId = typeof email.messageId === "string" && email.messageId.length <= 300 ? cleanNoticeText(email.messageId, codes) : undefined;
+      const hash = noticeHash(body);
+      const kept = readServiceNotices(this.root);
+      const base = { at: now.toISOString(), receivedAt, ...(messageId ? { messageId } : {}), from, subject, bodyHash: hash };
+      if (kept.some((record) => record.outcome !== "duplicate" && ((messageId && record.messageId === messageId) || record.bodyHash === hash))) {
+        appendServiceNotice(this.root, { ...base, outcome: "duplicate" });
+        return ok({ saved: false, duplicate: true });
+      }
+      const tz = this.timeZone();
+      const dates = noticeDates(`${email.subject}\n${email.body}`, receivedAt, tz);
+      const job = this.noticeJob(file, input.jobId, senderAddress(email.from), dates, receivedAt);
+      if (input.jobId && !job) return fail("There's no visit with that job id.");
+      const visitDay = job?.booking ? localYmd(new Date(job.booking.from), tz) : undefined;
+      const serviceDate = dates.find((date) => visitDay && Math.abs(Date.parse(date) - Date.parse(visitDay)) <= 86_400_000) ?? dates[0];
+      appendServiceNotice(this.root, { ...base, body, ...(job ? { jobId: job.id } : {}), ...(serviceDate ? { serviceDate } : {}), outcome: job ? "matched" : "unmatched" });
+      if (job) log.append({ type: "service-notice", id: `notice:${hash}`, at: receivedAt, visit: job.crew ? crewVisit(job.id, visitDay!) : repairVisit(job.id), notice: hash, ...(serviceDate ? { serviceDate } : {}) });
+      return ok({ saved: true, matched: Boolean(job), ...(job ? { jobId: job.id } : {}), ...(serviceDate ? { serviceDate } : {}), ...(job ? {} : { next: "It's kept, but no visit matched it. Pass jobId if you know which visit it was." }) });
+    });
+  }
+
+  /** The visit a notice is about: the job given; else a visit by the pro with the sender's address, on or a day either side of a date it names; else that pro's visit done in the 3 days before it arrived. */
+  private noticeJob(file: FixerFile, jobId: string | undefined, sender: string, dates: readonly string[], receivedAt: string): Job | undefined {
+    if (jobId) return file.jobs.find((job) => job.id === jobId && job.booking);
+    const pros = file.pros.filter((pro) => pro.status === "saved" && pro.reach.email && pro.reach.email.toLowerCase() === sender);
+    if (pros.length === 0) return undefined;
+    const tz = this.timeZone();
+    const visits = file.jobs.filter((job) => job.booking && pros.some((pro) => pro.id === job.booking!.proId) && job.state !== "cancelled");
+    const near = (date: string, job: Job) => Math.abs(Date.parse(date) - Date.parse(localYmd(new Date(job.booking!.from), tz))) <= 86_400_000;
+    const byDate = visits.filter((job) => dates.some((date) => near(date, job)));
+    if (byDate.length > 0) return byDate.sort((a, b) => Date.parse(b.booking!.from) - Date.parse(a.booking!.from))[0];
+    const got = Date.parse(receivedAt);
+    return visits
+      .filter((job) => job.done && Date.parse(job.done.at) <= got && got - Date.parse(job.done.at) <= 3 * 86_400_000)
+      .sort((a, b) => Date.parse(b.done!.at) - Date.parse(a.done!.at))[0];
   }
 
   /** The host says the guests have left: today counts as cleared for every job's checkout-day check, even one opened later today. */
@@ -3103,6 +3517,9 @@ export class FixerDesk {
       if (keyword === "stop" || isPlainLanguageStop(text)) return people.relay(people.stop(input.from));
       if (keyword === "help") return;
       if (keyword === "start") return people.relay(people.start(input.from));
+      // A routine vendor's YES or new time for their own proposed or upcoming visit (#237), from their own opted-in phone.
+      const vendorJob = pro && !this.inactive(file) && people.optedIn(input.from) && !people.stopped(input.from) ? this.vendorJobOf(file, pro.id) : undefined;
+      if (vendorJob && (await this.vendorReply(file, vendorJob, input.from, text, id))) return;
       if (isYes(text)) return people.relay(people.optIn(input.from, here));
       const now = this.deps.now().getTime();
       const mine = pro && !this.inactive(file) ? file.jobs.filter((job) => job.booking?.proId === pro.id && job.booking.hostYes && liveBooking(job)) : [];
