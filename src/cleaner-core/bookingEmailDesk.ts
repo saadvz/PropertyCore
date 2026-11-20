@@ -117,11 +117,14 @@ export async function takeBookingEmail(desk: EmailDesk, input: EmailInput): Prom
 
   // The host's yes to a call-off comes with the same email again, so it isn't a duplicate.
   const confirming = typeof input.confirmation === "string" && input.confirmation.trim() !== "";
-  const last = lastOutcome(records, seen, hash);
+  const lastRecord = latestRecord(records, seen, hash);
+  const last = lastRecord?.outcome;
   const listingYes = input.thisListing === true && last === "mismatch";
   // A booking still waiting on the host is asked again when its email comes back, so a new chat can get the yes.
   const awaitingAgain = last === "awaiting-host";
-  if (!confirming && !listingYes && !awaitingAgain && isDuplicate(records, { ...seen, body }, body)) {
+  // Fields the agent can correct, or a sender the host has since saved (#263), get the email read again.
+  const retriable = platforms && last === "refused" && (lastRecord?.refused === "bad-fields" || lastRecord?.refused === "not-a-saved-sender");
+  if (!confirming && !listingYes && !awaitingAgain && !retriable && isDuplicate(records, { ...seen, body }, body)) {
     keep("duplicate");
     return done({ outcome: "duplicate", next: "I already read that email. Nothing changed." });
   }
@@ -249,11 +252,12 @@ export async function retryPendingEmails(desk: EmailDesk): Promise<void> {
 }
 
 /** Guests and confirmation code for each stay the emails gave them, by "checkIn|checkout". */
-export function emailFacts(root: string): Map<string, { guests?: number; confirmationCode: string }> {
-  const out = new Map<string, { guests?: number; confirmationCode: string }>();
+export function emailFacts(root: string): Map<string, { guests?: number; confirmationCode?: string }> {
+  const out = new Map<string, { guests?: number; confirmationCode?: string }>();
   for (const booking of rebuildBookings(readBookingEmails(root)).values()) {
     if (booking.cancelled) continue;
-    out.set(`${booking.checkIn}|${booking.checkout}`, { confirmationCode: booking.confirmationCode, ...(booking.guests !== undefined ? { guests: booking.guests } : {}) });
+    // An Other booking may have no reference: then there's none to show.
+    out.set(`${booking.checkIn}|${booking.checkout}`, { ...(booking.confirmationCode ? { confirmationCode: booking.confirmationCode } : {}), ...(booking.guests !== undefined ? { guests: booking.guests } : {}) });
   }
   return out;
 }
@@ -286,9 +290,9 @@ function emailKey(record: Pick<BookingEmailRecord, "messageId" | "from" | "subje
   return record.messageId ?? createHash("sha256").update(`${record.from}\n${record.subject}\n${recordBodyHash(record)}`).digest("hex");
 }
 
-/** What came of this email last time: matched by its message id, or by its sender, subject and body. */
-function lastOutcome(records: readonly BookingEmailRecord[], email: Pick<BookingEmailInput, "from" | "subject" | "messageId">, hash: string): BookingEmailOutcome | undefined {
-  return records.filter((record) => sameEmail(record, email, hash) && record.outcome !== "duplicate").at(-1)?.outcome;
+/** The last record of this email that wasn't a duplicate: matched by its message id, or by its sender, subject and body. */
+function latestRecord(records: readonly BookingEmailRecord[], email: Pick<BookingEmailInput, "from" | "subject" | "messageId">, hash: string): BookingEmailRecord | undefined {
+  return records.filter((record) => sameEmail(record, email, hash) && record.outcome !== "duplicate").at(-1);
 }
 
 function listingMatch(desk: EmailDesk, parsed: ParsedBookingEmail, body: string): boolean {
@@ -418,10 +422,13 @@ async function cancellation(
   return done({ outcome: "called-off", texts: off.sent.length > 0 ? texts : [], next: "The cleaning is called off." });
 }
 
-/** The stay's own cleaning, still on: the one checking out on the stay's checkout date after its check-in. */
+/**
+ * The stay's own cleaning: the first one checking out on the stay's checkout date after its check-in,
+ * as before #263. A called-off one counts, so a late cancellation never lands on a new booking's
+ * cleaning for the same nights.
+ */
 function stayJob(engine: CleanerCore, checkIn: string, checkout: string): JobView | undefined {
-  const jobs = engine.jobs().filter((job) => job.checkoutDate === checkout && (job.checkInDate ?? checkIn) === checkIn);
-  return jobs.find((job) => job.status !== "canceled") ?? jobs[0];
+  return engine.jobs().find((job) => job.checkoutDate === checkout && (job.checkInDate ?? checkIn) === checkIn);
 }
 
 /** The texts calling off this cleaning would send, as the host sees them. */

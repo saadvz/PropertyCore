@@ -494,7 +494,7 @@ function chatCarriesDoorCode(name: string, args: object, desk: LiveDesk): boolea
   for (const [key, value] of Object.entries(args)) {
     if (name === "save_door_code" && key === "code") continue;
     // The approval code is Cleaner Core's own, and a wrong one is refused when it is redeemed.
-    if ((name === "send_message" || name === "save_answer" || name === "reset_property" || name === "hold_job" || name === "resume_job") && key === "confirmation") continue;
+    if ((name === "send_message" || name === "save_answer" || name === "reset_property" || name === "hold_job" || name === "resume_job" || name === "read_booking_email" || name === "set_late_checkout") && key === "confirmation") continue;
     if (typeof value === "string" && desk.chatCarriesDoorCode(value)) return true;
   }
   // Calendar names, contact names, and checklist items are shown back, so a door code can't hide in one.

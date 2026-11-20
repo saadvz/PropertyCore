@@ -1366,15 +1366,21 @@ export class LiveDesk {
   private saveSourcesNow(input: SourcesInput, pinKey: Buffer | undefined): ToolReply {
     if (!this.place.address) return this.fail("Save the property first.");
     this.openSeal(pinKey);
-    if (input.bookingEmails !== undefined || input.shareSamples !== undefined) {
+    const { bookingEmails, shareSamples, ...calendarPart } = input;
+    if (bookingEmails !== undefined || shareSamples !== undefined) {
       if (!this.bookingPlatformsOn()) return this.fail("Booking platforms aren't available yet. Airbnb's emails are read as they are.");
-      if (input.bookingEmails !== undefined) {
-        const saved = this.hub.setBookingSources(input.bookingEmails);
-        if (!saved.ok) return this.fail(saved.error);
+      if (bookingEmails !== undefined) {
+        const valid = this.hub.setBookingSources(bookingEmails, true);
+        if (!valid.ok) return this.fail(valid.error);
       }
-      if (input.shareSamples !== undefined) this.hub.setShareSamples(input.shareSamples === true);
-      // Only the platforms: the calendars stay as they are.
-      if (input.calendars === undefined && input.google === undefined && input.uploadLink === undefined && input.done === undefined) return this.setupReply();
+      // The calendar part of the same call goes first: when it's refused, nothing is saved.
+      const calendarsGiven = calendarPart.calendars !== undefined || calendarPart.google !== undefined || calendarPart.uploadLink !== undefined || calendarPart.done !== undefined;
+      const calendarReply = calendarsGiven ? this.saveSourcesNow(calendarPart, pinKey) : undefined;
+      if (calendarReply && !calendarReply.ok) return calendarReply;
+      if (bookingEmails !== undefined) this.hub.setBookingSources(bookingEmails);
+      if (shareSamples !== undefined) this.hub.setShareSamples(shareSamples === true);
+      // An upload link from the calendar part stays in the reply.
+      return calendarReply ?? this.setupReply();
     }
     if (input.uploadLink) return this.issueCalendarUpload(input.uploadLink.name?.trim() || LEGACY_CALENDAR, input.google, pinKey);
     let calendars: StoredCalendar[] = this.hub.stored();

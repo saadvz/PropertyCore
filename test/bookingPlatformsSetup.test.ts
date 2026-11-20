@@ -58,6 +58,18 @@ describe("with BOOKING_PLATFORMS on", () => {
     expect(refused(await live.saveSources({ bookingEmails: [{ platform: "direct", sender: "not an address" }] }, PIN_KEY)).error).toContain("isn't an email address");
   });
 
+  it("saves nothing when the calendar part of the same call is refused", async () => {
+    const { desk: live } = await desk("1");
+    expect(refused(await live.saveSources({ bookingEmails: [{ platform: "vrbo" }], calendars: [] }, PIN_KEY)).error).toBeTruthy();
+    expect(String(ok(await live.getState()).bookingEmails)).not.toContain("sender@messages.homeaway.com");
+  });
+
+  it("passes an all-digit approval code through the tool call", async () => {
+    const { desk: live } = await desk("1");
+    const call = await rpc(live, "tools/call", { name: "read_booking_email", arguments: { email: { from: "x@example.test", subject: "s", body: "b" }, confirmation: "482937" } });
+    expect(String((call.content as { text: string }[])[0]!.text)).not.toContain("door code");
+  });
+
   it("refuses the platforms with the flag off", async () => {
     const { desk: live } = await desk("");
     expect(refused(await live.saveSources({ bookingEmails: [{ platform: "vrbo" }] }, PIN_KEY)).error).toBeTruthy();

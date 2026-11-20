@@ -24,7 +24,8 @@ export const MAX_NIGHTS = 60;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
-const REFERENCE = /^[A-Za-z0-9][A-Za-z0-9-]{0,39}$/;
+/** At least 4 characters, so a reference tells bookings apart and can't match an email by chance. */
+const REFERENCE = /^[A-Za-z0-9][A-Za-z0-9-]{3,39}$/;
 const KINDS = new Set(["confirmed", "changed", "cancelled"]);
 
 /**
@@ -59,7 +60,7 @@ export function checkOtherEmail(
   if (Date.parse(`${checkIn.date}T00:00:00Z`) > twoYears.getTime()) return bad("checkIn", "That check-in is more than 2 years away. Check the dates.");
   let reference = "";
   if (x.reference !== undefined && x.reference !== "") {
-    if (typeof x.reference !== "string" || !REFERENCE.test(x.reference)) return bad("reference", "reference is the confirmation code only: letters, digits and dashes, up to 40.");
+    if (typeof x.reference !== "string" || !REFERENCE.test(x.reference)) return bad("reference", "reference is the confirmation code only: 4 to 40 letters, digits and dashes. Leave it out when the email has none.");
     if (!`${email.subject}\n${email.body}`.toLowerCase().includes(x.reference.toLowerCase())) return bad("reference", "That reference isn't in the email. Pass it exactly as the email shows it.");
     reference = x.reference;
   }

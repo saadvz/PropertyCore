@@ -58,6 +58,14 @@ describe("redactSample", () => {
     expect(out).toContain("Guests: 2 adults");
   });
 
+  it("keeps numeric dates, spaced booking numbers and guest counts", () => {
+    const out = redactSample("Check-in: 18.10.2026\nCheck-out: 22 10 2026\nBooking number: 4417 203 391\nGuest: 1 adult\nGuests: 2 adults");
+    expect(out).toContain("18.10.2026");
+    expect(out).toContain("22 10 2026");
+    expect(out).toContain("4417 203 391");
+    expect(out).toContain("Guest: 1 adult");
+  });
+
   it("keeps a long booking number with no separators", () => {
     expect(redactSample("Booking number: 4417203391")).toContain("4417203391");
   });

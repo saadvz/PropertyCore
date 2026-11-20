@@ -153,6 +153,24 @@ describe("a booking from the host's own site", () => {
     expect(readBookingEmails(root).at(-1)?.body).toBeUndefined();
   });
 
+  it("reads the same email again when the agent corrects fields that were refused", async () => {
+    const { desk } = await opened();
+    ok(await read(desk, DIRECT, { extracted: { ...DIRECT_FIELDS, checkout: { date: "2026-10-17" } } }));
+    expect(ok(await read(desk, DIRECT, { extracted: DIRECT_FIELDS })).outcome).toBe("awaiting-host");
+  });
+
+  it("reads an email again once the host saved its sender", async () => {
+    const { desk, root, clock } = await opened([{ platform: "airbnb" }]);
+    expect(ok(await read(desk, DIRECT, { extracted: DIRECT_FIELDS })).reason).toBe("not-a-saved-sender");
+    hubFor(root, { now: clock.now }).setBookingSources([{ platform: "airbnb" }, { platform: "direct", sender: "bookings@example.test" }]);
+    expect(ok(await read(desk, DIRECT, { extracted: DIRECT_FIELDS })).outcome).toBe("awaiting-host");
+  });
+
+  it("refuses a reference too short to tell bookings apart", async () => {
+    const { desk } = await opened();
+    expect(ok(await read(desk, DIRECT, { extracted: { ...DIRECT_FIELDS, reference: "DB" } }))).toMatchObject({ outcome: "refused", field: "reference" });
+  });
+
   it("never keeps or repeats a door code in the fields", async () => {
     const { desk, root } = await opened();
     const reply = ok(await read(desk, DIRECT, { extracted: { ...DIRECT_FIELDS, listing: `Lockbox ${DOOR_CODE}` } }));

@@ -20,18 +20,27 @@ export interface BookingSample {
 
 const EMAIL = /[^\s@<>()"',;:]+@[^\s@<>()"',;:]+\.[A-Za-z]{2,}/g;
 const HAS_EMAIL = new RegExp(EMAIL.source);
-/** A phone number with separators, like +1 (555) 555-0199 or +44 20 7946 0958. A bare run of digits is a booking number and stays. */
-const PHONE = /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?|\d{2,4}[\s.-])\d{2,4}[\s.-]\d{3,4}\b/g;
+/**
+ * A phone number: one starting with +, like +1 (555) 555-0199 or +44 20 7946 0958, or a US one like
+ * (555) 555-0199 or 555-555-0199. A numeric date (18.10.2026) or a booking number, spaced or not, stays.
+ */
+const PHONE = /\+\d[\d\s().-]{6,}\d|\(\d{3}\)\s?\d{3}[\s.-]\d{4}\b|\b\d{3}[.-]\d{3}[.-]\d{4}\b/g;
 const NAME_LABEL = /^(\s*(?:guest name|guest|name|traveler|traveller|booker|booked by|primary guest|lead guest|contact|reserved by)\s*:)\s*(\S.*)$/i;
 const NAME_LABEL_ALONE = /^\s*(?:guest name|guest|name|traveler|traveller|booker|booked by|primary guest|lead guest|contact|reserved by)\s*:?\s*$/i;
 const NAME_REMOVED = "[name removed]";
+
+/** A labeled name line. "Guest: 1 adult" is a count, not a name, so a value with a digit isn't one. */
+function nameLabel(line: string): RegExpExecArray | undefined {
+  const labeled = NAME_LABEL.exec(line);
+  return labeled && !/\d/.test(labeled[2]!) ? labeled : undefined;
+}
 
 /** The names on labeled lines, for removing them wherever else they appear. */
 function labeledNames(text: string): string[] {
   const names: string[] = [];
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
-    const labeled = NAME_LABEL.exec(lines[i]!);
+    const labeled = nameLabel(lines[i]!);
     if (labeled) names.push(labeled[2]!.trim());
     else if (NAME_LABEL_ALONE.test(lines[i]!)) {
       const next = lines.slice(i + 1).find((line) => line.trim() !== "");
@@ -45,7 +54,7 @@ function labeledNames(text: string): string[] {
 export function redactSample(text: string, names: readonly string[] = labeledNames(text)): string {
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
-    const labeled = NAME_LABEL.exec(lines[i]!);
+    const labeled = nameLabel(lines[i]!);
     if (labeled) lines[i] = `${labeled[1]} ${NAME_REMOVED}`;
     else if (NAME_LABEL_ALONE.test(lines[i]!)) {
       const next = lines.findIndex((line, j) => j > i && line.trim() !== "");

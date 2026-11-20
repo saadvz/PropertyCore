@@ -227,9 +227,11 @@ export class Hub {
   }
 
   /** Saves the host's platforms, with Vrbo's and Booking.com's senders filled in. A sender or name that carries the door code is refused. */
-  setBookingSources(input: readonly Partial<BookingSource>[]): HubSave {
+  setBookingSources(input: readonly Partial<BookingSource>[], check = false): HubSave {
     const checked = normalizeSources(input, (text) => this.carriesCode(text));
     if (!checked.ok) return { ok: false, reason: "code", error: checked.error };
+    // check: only whether it would save.
+    if (check) return { ok: true };
     this.file = { ...this.file, bookingSources: checked.sources };
     this.save();
     return { ok: true };
