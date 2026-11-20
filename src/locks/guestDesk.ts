@@ -174,6 +174,11 @@ export class GuestCodeDesk {
     const gate = this.confirm("guest-codes-mode", mode, input.confirmation, question);
     if (gate !== "go") return gate;
     const file = readGuestCodes(this.root);
+    // Automatic to ask keeps the codes already made: each stay with a code on the lock counts as a yes.
+    if (mode === "ask" && file.mode === "automatic") {
+      const grants = this.door().grants();
+      for (const [code, state] of Object.entries(file.stays)) if (!state.yesAt && grants.live("guest", stayJob(code))) state.yesAt = this.deps.now().toISOString();
+    }
     file.mode = mode;
     file.modeAt = this.deps.now().toISOString();
     writeGuestCodes(this.root, file);
@@ -344,6 +349,8 @@ export class GuestCodeDesk {
       } else if (ready && state.toldWindow && !sameWindow(state.toldWindow, stay.window)) {
         const startMoved = Date.parse(state.toldWindow.from) !== Date.parse(stay.window.from);
         state.toldWindow = { ...stay.window };
+        // The host's link works until the new checkout.
+        if (state.link) state.link = { ...state.link, expiresAt: stay.window.until };
         state.checkIn = stay.checkIn;
         state.checkout = stay.checkout;
         notes.push({

@@ -148,6 +148,18 @@ describe("the host's choice", () => {
     expect(after.map((note) => note.id)).toEqual(["guest:ready:HMSCRATCHAA"]);
   });
 
+  it("automatic to ask keeps the codes already made", async () => {
+    const { root, desk, codes } = world();
+    email(root, booked("HMSCRATCHAA", "2026-12-12", "2026-12-15"));
+    await approved((confirmation) => desk.setMode({ mode: "automatic", ...(confirmation ? { confirmation } : {}) }));
+    await desk.sync();
+    const code = codes()[0]!.code;
+    await approved((confirmation) => desk.setMode({ mode: "ask", ...(confirmation ? { confirmation } : {}) }));
+    const notes = await desk.sync();
+    expect(codes().map((item) => item.code)).toEqual([code]);
+    expect(notes).toEqual([]);
+  });
+
   it("off takes every stay's code off the lock and tells the host which", async () => {
     const { root, desk, codes } = world();
     email(root, booked("HMSCRATCHAA", "2026-12-12", "2026-12-15"));
@@ -208,6 +220,17 @@ describe("the host's page", () => {
     const fresh = tokenIn(link.text);
     expect(await desk.showCode(fresh)).toEqual({ code: codes()[0]!.code });
     expect(link.text).not.toContain(codes()[0]!.code);
+  });
+
+  it("a late checkout keeps the host's link working until the new checkout", async () => {
+    const { root, desk, codes, at } = world();
+    email(root, booked("HMSCRATCHAA", "2026-12-12", "2026-12-15"));
+    await approved((confirmation) => desk.setMode({ mode: "automatic", ...(confirmation ? { confirmation } : {}) }));
+    const token = tokenIn((await desk.sync()).find((note) => note.id.startsWith("guest:ready:"))!.text);
+    appendGuestMessage(root, { id: "lc_scratch", at: NOW.toISOString(), event: "late-checkout", lateCheckout: { checkout: "2026-12-15", time: "13:00" } });
+    await desk.sync();
+    at("2026-12-15T17:00:00.000Z");
+    expect(await desk.showCode(token)).toEqual({ code: codes()[0]!.code });
   });
 
   it("a cancelled stay's link shows nothing", async () => {
