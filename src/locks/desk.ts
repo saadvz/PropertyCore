@@ -147,7 +147,7 @@ export class LockDesk {
       const gate = this.confirm("locks-off", "off", confirmation, "Switch this property back to your saved door code? Every per-visit code here is removed.");
       if (gate !== "go") return gate;
       const file = door.locks();
-      for (const flow of ["cleaning", "repair", "standing"] as const) await door.syncGrants(flow, []);
+      for (const flow of ["cleaning", "repair", "standing", "bring-in"] as const) await door.syncGrants(flow, []);
       const { activeAt: _off, ...rest } = file;
       door.saveLocks({ ...rest, release: { ...file.release, cleaners: "ask" } });
       if (file.activeAt) recordLockConnection(this.root, false, () => this.deps.now());
