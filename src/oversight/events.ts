@@ -1,6 +1,6 @@
 /**
- * A lock entry in a shape no lock partner owns (#240). The lock connection (#180) fills it later; for now the
- * same-day check runs on sample events. It never carries code digits. The check reads only `at` and `person`.
+ * A lock entry in a shape no lock partner owns (#240), mapped from the visit log's unlocks by `entryEventsFrom`.
+ * It never carries code digits. The check reads only `at`, `person` and `party`.
  */
 
 export interface EntryEvent {
@@ -13,4 +13,6 @@ export interface EntryEvent {
   person?: string;
   /** The provider's word as given, like "keypad", "app" or "key". The check never reads it. */
   method?: string;
+  /** The host's own code or a guest's: someone else, never the expected visitor. Set with no `person`. */
+  party?: "host" | "guest";
 }

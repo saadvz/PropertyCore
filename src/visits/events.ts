@@ -228,17 +228,34 @@ export const crewVisit = (jobId: string, day: string): string => `crew:${jobId}:
 /** The job id inside a visit id. */
 export const jobOfVisit = (visit: string): string => visit.split(":")[1] ?? "";
 
+/** Names for entry events: the cleaner, each pro by id, and a code's own person by the lock's name for the code. */
+export interface EntryNames {
+  cleaner?: string;
+  pros?: Record<string, string>;
+  /** A standing code's person, keyed by the code's name as `codeKey` gives it. */
+  codes?: Record<string, string>;
+}
+
 /**
  * Remote oversight's entry events (#240), from the same raw lines: each unlock, with `person` the name of the
- * code's person when it's known. So #240's same-day check and visit records read one source.
+ * code's person when it's known. The host's and a guest's code carry `party` instead: someone else, never the
+ * expected visitor. A code nobody named, or a role this doesn't know, is left unnamed.
  */
-export function entryEventsFrom(events: readonly VisitEvent[], codeNames: CodeNames, names: { cleaner?: string; pros?: Record<string, string> } = {}): EntryEvent[] {
+export function entryEventsFrom(events: readonly VisitEvent[], codeNames: CodeNames, names: EntryNames = {}): EntryEvent[] {
   const out: EntryEvent[] = [];
   for (const event of events) {
     if (event.type !== "lock" || event.action !== "unlock") continue;
     const person = codePerson(codeNames, event.codeName);
-    const name = person?.role === "cleaner" ? (names.cleaner ?? "Cleaner") : person?.role === "pro" ? names.pros?.[person.proId] : undefined;
-    out.push({ id: event.id, at: event.at, device: event.device, ...(name ? { person: name } : {}), ...(event.method ? { method: event.method } : {}) });
+    const name =
+      person?.role === "cleaner"
+        ? (names.cleaner ?? "Cleaner")
+        : person?.role === "pro"
+          ? names.pros?.[person.proId]
+          : person?.role === "shared" && event.codeName
+            ? names.codes?.[codeKey(event.codeName)]
+            : undefined;
+    const party = person?.role === "host" || person?.role === "guest" ? person.role : undefined;
+    out.push({ id: event.id, at: event.at, device: event.device, ...(name ? { person: name } : {}), ...(party ? { party } : {}), ...(event.method ? { method: event.method } : {}) });
   }
   return out.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
