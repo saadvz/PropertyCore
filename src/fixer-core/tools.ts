@@ -76,7 +76,7 @@ export const FIXER_TOOLS: FixerTool[] = [
   {
     name: "save_fixer_settings",
     title: "Save repair settings",
-    description: `Saves any of: checkInBufferMinutes (how long before check-in a pro must be gone), cleaningMinutes (how long a cleaning takes), askCleaner (ask the cleaner "Anything broken?" after each cleaning), prosDone (the pro list is final), upkeepDone (no more upkeep to add), alertsSkipped (the host said Not now to alerts). ${AFTER_ACTIVATE} ${NO_CARDS}`,
+    description: `Saves any of: checkInBufferMinutes (how long before check-in a pro must be gone), cleaningMinutes (how long a cleaning takes), askCleaner (ask the cleaner "Anything broken?" after each cleaning), prosDone (the pro list is final), upkeepDone (no more upkeep to add), alertsSkipped (the host said Not now to alerts), serviceNotices (the host lets you pass vendors' completed-service emails with save_service_notice). ${AFTER_ACTIVATE} ${NO_CARDS}`,
     input: z
       .object({
         checkInBufferMinutes: z.number().int().optional(),
@@ -85,6 +85,7 @@ export const FIXER_TOOLS: FixerTool[] = [
         prosDone: z.literal(true).optional(),
         upkeepDone: z.literal(true).optional(),
         alertsSkipped: z.literal(true).optional(),
+        serviceNotices: z.boolean().optional(),
         confirmation: Confirmation,
       })
       .strict(),
@@ -118,8 +119,23 @@ export const FIXER_TOOLS: FixerTool[] = [
   {
     name: "save_upkeep",
     title: "Save an upkeep item",
-    description: `Saves a regular upkeep item, or changes one with its id: the trade, what it is (under 120 characters), the schedule (every so many days, a day of the month, or another rule; call preview_schedule and read the next 3 dates back first), leadDays (how many days ahead to start, default 14), and an optional proId. ${AFTER_ACTIVATE}`,
-    input: z.object({ id: Id.optional(), trade: Trade, what: z.string().max(200), schedule: Schedule, leadDays: z.number().int().optional(), proId: Id.optional(), confirmation: Confirmation }).strict(),
+    description: `Saves a regular upkeep item, or changes one with its id: the trade, what it is (under 120 characters), the schedule (every so many days, a day of the month, or another rule; call preview_schedule and read the next 3 dates back first), leadDays (how many days ahead to start, default 14), and an optional proId. With standing (a pro who texts on the line, their usual local hours from and until as HH:MM, at most 4 hours, access, and the usual price), the host gives a standing yes: each visit is then proposed to that pro by text and they confirm or move it, with no question to the host each time. standing: null takes it back. A standing yes always takes two calls. ${AFTER_ACTIVATE}`,
+    input: z
+      .object({
+        id: Id.optional(),
+        trade: Trade,
+        what: z.string().max(200),
+        schedule: Schedule,
+        leadDays: z.number().int().optional(),
+        proId: Id.optional(),
+        standing: z
+          .object({ proId: Id, from: z.string().max(5), until: z.string().max(5), access: z.enum(["code", "host"]).optional(), usualCents: Cents.optional() })
+          .strict()
+          .nullable()
+          .optional(),
+        confirmation: Confirmation,
+      })
+      .strict(),
   },
   {
     name: "remove_upkeep",
@@ -248,6 +264,23 @@ export const FIXER_TOOLS: FixerTool[] = [
     title: "More time for a visit",
     description: `More time for a visit, until an ISO time. ${TWO_CALL}`,
     input: z.object({ jobId: Id, until: Instant, confirmation: Confirmation }).strict(),
+  },
+  {
+    name: "move_vendor_visit",
+    title: "Move a routine vendor's visit",
+    description: `A routine vendor (one with a standing yes) asked for a new time in words the line couldn't read, or one waiting for the host: the time they asked for, from and until as ISO times, at most 4 hours. A time that fits between stays moves the visit and texts the vendor. One outside the open times takes the host's yes: ${TWO_CALL} A time over a stay is refused. Never returns a code.`,
+    input: z.object({ jobId: Id, from: Instant, until: Instant, confirmation: Confirmation }).strict(),
+  },
+  {
+    name: "save_service_notice",
+    title: "Keep a vendor's service notice",
+    description: "Only when the host turned serviceNotices on: a vendor's completed-service email you read in the host's mail, passed as received (from, subject, body, messageId, receivedAt), with jobId when you know the visit. It's kept as evidence on the visit, with door codes and long numbers taken out, and never changes the visit's times. Don't pass any other email.",
+    input: z
+      .object({
+        jobId: Id.optional(),
+        email: z.object({ from: z.string().max(300), subject: z.string().max(500), body: z.string().max(20_000), messageId: z.string().max(300).optional(), receivedAt: Instant.optional() }).strict(),
+      })
+      .strict(),
   },
   {
     name: "approve_code",
@@ -403,6 +436,10 @@ export async function handleFixerTool(desk: FixerDesk, name: string, args: unkno
       return desk.revokeVisit(input);
     case "extend_visit":
       return desk.extendVisit(input);
+    case "move_vendor_visit":
+      return desk.moveVendorVisit(input);
+    case "save_service_notice":
+      return desk.saveServiceNotice(input);
     case "approve_code":
       return desk.approveCode(input);
     case "guests_left":

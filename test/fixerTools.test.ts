@@ -58,6 +58,8 @@ const SAMPLES: Record<string, { method: keyof FixerDesk; args: Record<string, un
   revoke_visit: { method: "revokeVisit", args: { jobId: "job_abcdefghij" } },
   extend_visit: { method: "extendVisit", args: { jobId: "job_abcdefghij", until: "2026-11-10T18:00:00.000Z" } },
   approve_code: { method: "approveCode", args: { jobId: "job_abcdefghij" } },
+  move_vendor_visit: { method: "moveVendorVisit", args: { jobId: "job_abcdefghij", ...TUE } },
+  save_service_notice: { method: "saveServiceNotice", args: { jobId: "job_abcdefghij", email: { from: "office@bugbusters.example.com", subject: "Service report", body: "Done." } } },
   guests_left: { method: "guestsLeft", args: { confirmed: true } },
   record_done: { method: "recordDone", args: { jobId: "job_abcdefghij", by: "agent", cents: 18000 } },
   record_cost: { method: "recordCost", args: { jobId: "job_abcdefghij", cents: 18000, by: "pro" } },
@@ -90,7 +92,7 @@ function spyDesk() {
 describe("Fixer Core's tool table", () => {
   it("has the spec's tools and the extras, and leaves the front's and the page's out", () => {
     const spec = ["get_fixer_state", "save_fixer_settings", "save_pro", "remove_pro", "save_upkeep", "remove_upkeep", "activate_fixer", "check_fixes", "open_job", "approve_job", "add_candidates", "pick_pros", "contact_pro", "record_contact", "approve_booking", "visit_link", "revoke_visit", "extend_visit", "record_done", "record_cost", "cancel_job"];
-    const extras = ["guests_left", "skip_question", "change_door_code", "reschedule_job", "save_fixer_property", "save_fixer_sources", "raise_price", "save_repair_alerts", "pick_quote", "save_repair_block", "remove_repair_block", "record_guest_answer", "urgent_timeline", "save_crew_schedule", "approve_code"];
+    const extras = ["guests_left", "skip_question", "change_door_code", "reschedule_job", "save_fixer_property", "save_fixer_sources", "raise_price", "save_repair_alerts", "pick_quote", "save_repair_block", "remove_repair_block", "record_guest_answer", "urgent_timeline", "save_crew_schedule", "approve_code", "move_vendor_visit", "save_service_notice"];
     expect([...FIXER_TOOL_NAMES].sort()).toEqual([...spec, ...extras].sort());
     expect(Object.keys(SAMPLES).sort()).toEqual([...FIXER_TOOL_NAMES].sort());
     // Answered by the front (Cleaner Core's photos, Supply Core's preview), and the page's reveal is never a tool.

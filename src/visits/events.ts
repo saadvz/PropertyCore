@@ -177,7 +177,23 @@ export interface LockStatusEvent {
   battery?: number;
 }
 
-export type VisitEvent = LockEvent | LockConnectionEvent | LockStatusEvent | MessageEvent | WindowEvent | CancelEvent | PageEvent | CameraEvent | CameraCountEvent | CameraPinEvent;
+/**
+ * A vendor's completed-service email was kept for this visit (#237). The email itself is in Fixer Core's
+ * `service-notices.jsonl`; this line links it by hash. Evidence only: no rule reads a time from it.
+ */
+export interface ServiceNoticeEvent {
+  type: "service-notice";
+  id: string;
+  /** When the email arrived. */
+  at: string;
+  visit: string;
+  /** The notice's body hash in `service-notices.jsonl`. */
+  notice: string;
+  /** The service date the notice names, local YYYY-MM-DD. */
+  serviceDate?: string;
+}
+
+export type VisitEvent = LockEvent | LockConnectionEvent | LockStatusEvent | MessageEvent | WindowEvent | CancelEvent | PageEvent | CameraEvent | CameraCountEvent | CameraPinEvent | ServiceNoticeEvent;
 
 /** Each camera event's count: the last count line written for it. */
 export function cameraCounts(events: readonly VisitEvent[]): Map<string, CameraCountEvent> {

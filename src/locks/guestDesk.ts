@@ -200,34 +200,35 @@ export class GuestCodeDesk {
     if (file.mode !== "ask") return fail(file.mode === "automatic" ? "Guest door codes are automatic here: each booking gets one on its own." : "Guest door codes are off here. Ask the host how they should work, then call guest_codes.");
     const found = this.stay(input.stay);
     if (!found) return fail("No upcoming booking with that confirmation code. Call get_guest_codes.");
-    const gate = this.confirm("guest-codes-make", found.stay.confirmationCode, input.confirmation, `Make a door code for ${found.stay.label}, ${this.span(found.stay.window, found.timeZone)}?`);
+    const gate = this.confirm("guest-codes-make", found.stay.key, input.confirmation, `Make a door code for ${found.stay.label}, ${this.span(found.stay.window, found.timeZone)}?`);
     if (gate !== "go") return gate;
     const fresh = readGuestCodes(this.root);
-    (fresh.stays[found.stay.confirmationCode] ??= {}).yesAt = this.deps.now().toISOString();
+    (fresh.stays[found.stay.key] ??= {}).yesAt = this.deps.now().toISOString();
     writeGuestCodes(this.root, fresh);
     await this.resync();
-    return ok({ stay: found.stay.confirmationCode, next: found.stay.due ? `The code for ${found.stay.label} is going on the lock. The host gets a private link to it once it's there.` : `The code for ${found.stay.label} goes on the lock 7 days before check-in, and the host gets a private link then.` });
+    return ok({ stay: found.stay.key, next: found.stay.due ? `The code for ${found.stay.label} is going on the lock. The host gets a private link to it once it's there.` : `The code for ${found.stay.label} goes on the lock 7 days before check-in, and the host gets a private link then.` });
   }
 
   /** guest_code_link: a new single-use page link for one stay, with the host's yes. The old one ends. */
   async newLink(input: { stay?: unknown; confirmation?: unknown }): Promise<LockReply> {
     if (!this.available()) return fail(GUEST_CODES_OFF);
     const found = this.stay(input.stay);
-    if (!found || !this.wantedJobs().has(stayJob(found.stay.confirmationCode)) || !this.door().grants().live("guest", stayJob(found.stay.confirmationCode))) return fail("That booking has no door code on the lock. Call get_guest_codes.");
-    const gate = this.confirm("guest-codes-link", found.stay.confirmationCode, input.confirmation, `Make a new private link to the door code for ${found.stay.label}? The old link stops working.`);
+    if (!found || !this.wantedJobs().has(stayJob(found.stay.key)) || !this.door().grants().live("guest", stayJob(found.stay.key))) return fail("That booking has no door code on the lock. Call get_guest_codes.");
+    const gate = this.confirm("guest-codes-link", found.stay.key, input.confirmation, `Make a new private link to the door code for ${found.stay.label}? The old link stops working.`);
     if (gate !== "go") return gate;
     const made = this.link(found.stay.window.until);
     if (!made) return fail("I can't make a link until the server's public address is saved.");
     const file = readGuestCodes(this.root);
-    (file.stays[found.stay.confirmationCode] ??= {}).link = made.link;
+    (file.stays[found.stay.key] ??= {}).link = made.link;
     writeGuestCodes(this.root, file);
-    return ok({ stay: found.stay.confirmationCode, next: `Give the host this private link to the door code for ${found.stay.label}. It opens once: ${made.url}` });
+    return ok({ stay: found.stay.key, next: `Give the host this private link to the door code for ${found.stay.label}. It opens once: ${made.url}` });
   }
 
   private stay(raw: unknown): { stay: GuestStay; timeZone: string } | undefined {
     const input = this.input();
     if (!input || typeof raw !== "string") return undefined;
-    const stay = guestStays(this.root, input).find((item) => item.confirmationCode === raw.trim().toUpperCase());
+    // Airbnb keys are its code in capitals; another platform's are prefixed, like vrbo:HA-1A2B3C (#263).
+    const stay = guestStays(this.root, input).find((item) => item.key.toUpperCase() === raw.trim().toUpperCase());
     return stay ? { stay, timeZone: input.timeZone } : undefined;
   }
 
@@ -249,11 +250,11 @@ export class GuestCodeDesk {
     const grants = this.door().grants();
     const wanted = this.wantedJobs();
     const stays = guestStays(this.root, input).map((stay) => {
-      const job = stayJob(stay.confirmationCode);
-      const state = file.stays[stay.confirmationCode];
+      const job = stayJob(stay.key);
+      const state = file.stays[stay.key];
       const grant = grants.live("guest", job);
       const status = grant && wanted.has(job) ? this.grantStatus(grant.doors) : !file.mode || file.mode === "off" ? "off" : file.mode === "ask" && !state?.yesAt ? "waiting-for-host" : stay.due ? "making" : "waiting-7-days";
-      return { stay: stay.confirmationCode, dates: stayDates(stay.checkIn, stay.checkout), from: stay.window.from, until: stay.window.until, status, link: this.linkStatus(state?.link) };
+      return { stay: stay.key, dates: stayDates(stay.checkIn, stay.checkout), from: stay.window.from, until: stay.window.until, status, link: this.linkStatus(state?.link) };
     });
     const leases = liveLeases(file, input).map((lease) => {
       const grant = grants.live("guest", leaseJob(lease.id));
@@ -319,11 +320,11 @@ export class GuestCodeDesk {
     const wantedJobs = new Set(wanted.map((item) => item.jobId));
     const stays = guestStays(this.root, input);
     for (const stay of stays) {
-      const job = stayJob(stay.confirmationCode);
-      const state: StayCodeState = (file.stays[stay.confirmationCode] ??= {});
+      const job = stayJob(stay.key);
+      const state: StayCodeState = (file.stays[stay.key] ??= {});
       if (file.mode === "ask" && stay.due && !state.yesAt && !state.askedAt) {
         state.askedAt = input.now.toISOString();
-        notes.push({ id: `guest:ask:${stay.confirmationCode}`, text: `New booking: ${stay.label}. Should I make their door code, ${this.span(stay.window, input.timeZone)}? If the host says yes, call make_guest_code with stay ${stay.confirmationCode}.` });
+        notes.push({ id: `guest:ask:${stay.key}`, text: `New booking: ${stay.label}. Should I make their door code, ${this.span(stay.window, input.timeZone)}? If the host says yes, call make_guest_code with stay ${stay.key}.` });
       }
       if (!wantedJobs.has(job)) continue;
       if (state.removedTold) {
@@ -341,7 +342,7 @@ export class GuestCodeDesk {
         state.checkout = stay.checkout;
         if (made) state.link = made.link;
         notes.push({
-          id: `guest:ready:${stay.confirmationCode}`,
+          id: `guest:ready:${stay.key}`,
           text: made
             ? `The door code for ${stay.label} is on the lock, ${this.span(stay.window, input.timeZone)}. Open this private link once to copy it into your arrival message: ${made.url}`
             : `The door code for ${stay.label} is on the lock, ${this.span(stay.window, input.timeZone)}. Its private link waits until the server's public address is saved.`,
@@ -354,7 +355,7 @@ export class GuestCodeDesk {
         state.checkIn = stay.checkIn;
         state.checkout = stay.checkout;
         notes.push({
-          id: `guest:moved:${stay.confirmationCode}:${stay.window.until}`,
+          id: `guest:moved:${stay.key}:${stay.window.until}`,
           text: startMoved
             ? `Same door code for ${stay.label}, now ${this.span(stay.window, input.timeZone)}. Nothing to send again.`
             : `Same door code for ${stay.label}, now until ${this.when(stay.window.until, input.timeZone)}. Nothing to send again.`,
@@ -362,10 +363,10 @@ export class GuestCodeDesk {
       }
       if (!ready && !state.urgentTold && Date.parse(stay.window.from) - now <= URGENT_BEFORE_MS) {
         state.urgentTold = true;
-        notes.push({ id: `guest:not-set:${stay.confirmationCode}`, urgent: true, text: `The door code for ${stay.label} isn't on the lock yet, and they check in ${this.when(stay.window.from, input.timeZone)}. I'll keep trying; if it isn't there in time, let them in another way.` });
+        notes.push({ id: `guest:not-set:${stay.key}`, urgent: true, text: `The door code for ${stay.label} isn't on the lock yet, and they check in ${this.when(stay.window.from, input.timeZone)}. I'll keep trying; if it isn't there in time, let them in another way.` });
       }
     }
-    const listed = new Set(stays.map((stay) => stay.confirmationCode));
+    const listed = new Set(stays.map((stay) => stay.key));
     for (const [code, state] of Object.entries(file.stays)) {
       const told = state.toldWindow;
       if (told && !state.removedTold && !wantedJobs.has(stayJob(code)) && Date.parse(told.until) > now && !door.grants().live("guest", stayJob(code))) {
@@ -393,7 +394,7 @@ export class GuestCodeDesk {
     const live = (link: GuestLink | undefined) => Boolean(link && !link.usedAt && now < Date.parse(link.expiresAt) && sameHash(hash, link.hash));
     const file = readGuestCodes(this.root);
     const wanted = new Set(wantedGuestCodes(this.root, file, input).map((item) => item.jobId));
-    for (const stay of guestStays(this.root, input)) if (wanted.has(stayJob(stay.confirmationCode)) && live(file.stays[stay.confirmationCode]?.link)) return { kind: "stay", stay };
+    for (const stay of guestStays(this.root, input)) if (wanted.has(stayJob(stay.key)) && live(file.stays[stay.key]?.link)) return { kind: "stay", stay };
     for (const lease of liveLeases(file, input)) if (lease.yesAt && wanted.has(leaseJob(lease.id)) && live(lease.link)) return { kind: "lease", lease };
     return undefined;
   }
@@ -418,9 +419,9 @@ export class GuestCodeDesk {
     const at = input.now.toISOString();
     let request: { person: string; window: CodeWindow; jobId: string; label: string };
     if (found.kind === "stay") {
-      const state = file.stays[found.stay.confirmationCode]!;
+      const state = file.stays[found.stay.key]!;
       state.link = { ...state.link!, usedAt: at };
-      request = { person: `guest:${found.stay.confirmationCode}`, window: found.stay.window, jobId: stayJob(found.stay.confirmationCode), label: found.stay.label };
+      request = { person: `guest:${found.stay.key}`, window: found.stay.window, jobId: stayJob(found.stay.key), label: found.stay.label };
     } else {
       const lease = file.leases.find((item) => item.id === found.lease.id)!;
       lease.link = { ...lease.link!, usedAt: at };

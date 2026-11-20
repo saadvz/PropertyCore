@@ -52,7 +52,7 @@
     "onnxruntime-node": "^1.31.1",
     "sendblue": "^3.21.1",
     "spectrum-ts": "^12.10.1",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
