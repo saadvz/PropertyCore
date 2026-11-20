@@ -32,13 +32,15 @@ import { codeOkNews, codeOkQuestion, codeOkReminder, extendAskNews, extendedNews
 import { insideWindow, latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { doorFor, repairBlockProblem, repairBlockStatus, staysForCrew } from "./repairBlock";
 import { crewScheduleProblem, crewWindows, type CrewSchedule } from "./crewDays";
+import { MAX_VENDOR_HOURS, parseVendorTime } from "./vendorTime";
+import { standingOffQuestion, standingQuestion, vendorConfirmed, vendorConfirmedNews, vendorHeldQuestion, vendorMoved, vendorMovedNews, vendorNoAnswerNews, vendorNoDayNews, vendorProposal, visitWhen, VENDOR_ASKING_HOST } from "./texts";
 import { visitRecordsOn } from "../cleaner-core/flag";
 import { buildVisits } from "../visits/derive";
 import { fixerDue } from "../visits/due";
 import { crewVisit, repairVisit, type WindowEvent } from "../visits/events";
 import { messageEventId, visitLogFor, type VisitLog } from "../visits/store";
 import { stayKey, urgentAccessCheck, urgentStay, urgentTimeline, urgentVisitHolds, type GuestAnswer, type UrgentHold, type UrgentRefusal } from "./urgentVisit";
-import { MAX_HOST_STEPS, MAX_REPAIR_BLOCKS, TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type SavedBlock, type Booking, type HostStep, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep } from "./store";
+import { MAX_HOST_STEPS, MAX_REPAIR_BLOCKS, TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type SavedBlock, type Booking, type HostStep, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep, type StandingYes } from "./store";
 
 /**
  * Fixer Core's desk: every tool's behaviour over one property's `fixer.json`. One call at a time.
@@ -195,6 +197,8 @@ export interface UpkeepInput {
   schedule?: Schedule;
   leadDays?: number;
   proId?: string;
+  /** The host's standing yes for a routine vendor (#237), or null to withdraw it. Always two calls. */
+  standing?: { proId?: string; from?: string; until?: string; access?: "code" | "host"; usualCents?: number } | null;
   confirmation?: string;
 }
 
@@ -946,7 +950,17 @@ export class FixerDesk {
       const problem = this.upkeepScheduleProblem(input.schedule);
       if (problem) return fail(problem);
       if (input.proId !== undefined && !file.pros.some((pro) => pro.id === input.proId && pro.status === "saved")) return fail("That pro isn't on your saved list.");
-      const gate = this.approved(file, "fixer-upkeep", existing?.id ?? "new", input, `Save upkeep: ${input.what.trim()}?`);
+      let standing: Omit<StandingYes, "yesAt"> | null | undefined;
+      if (input.standing !== undefined) {
+        const checked = this.standingOf(file, input.standing, input.what.trim(), existing);
+        if (typeof checked === "string") return fail(checked);
+        standing = checked;
+      }
+      // A standing yes, or taking one back, is always the host's two-call yes, even before Activate.
+      const gate =
+        standing !== undefined
+          ? this.confirm("fixer-upkeep-standing", existing?.id ?? "new", tokenHash(JSON.stringify({ ...input, confirmation: undefined })), input.confirmation, standing ? standingQuestion({ what: input.what.trim(), proName: this.proNameOf(file, standing.proId), from: standing.from, until: standing.until, access: standing.access, ...(standing.usualCents !== undefined ? { usualCents: standing.usualCents } : {}) }) : standingOffQuestion({ what: input.what.trim(), proName: this.proNameOf(file, existing?.standing?.proId) }))
+          : this.approved(file, "fixer-upkeep", existing?.id ?? "new", input, `Save upkeep: ${input.what.trim()}?`);
       if (gate !== "go") return gate;
       const item: Upkeep = {
         ...(existing ?? {}),
@@ -959,6 +973,10 @@ export class FixerDesk {
       };
       if (input.proId) item.proId = input.proId;
       else delete item.proId;
+      if (standing) {
+        item.standing = { ...standing, yesAt: this.deps.now().toISOString() };
+        item.proId = standing.proId;
+      } else if (standing === null || (item.standing && item.proId !== item.standing.proId)) delete item.standing;
       if (existing) file.upkeep[file.upkeep.indexOf(existing)] = item;
       else file.upkeep.push(item);
       this.write(file);
@@ -978,6 +996,34 @@ export class FixerDesk {
       this.write(file);
       return ok({ removed: item.what });
     });
+  }
+
+  private proNameOf(file: FixerFile, proId: string | undefined): string {
+    return file.pros.find((pro) => pro.id === proId)?.name ?? "the pro";
+  }
+
+  /**
+   * A standing yes as asked (#237), checked: visit records on, a saved pro with a phone who texts on the line, and
+   * usual hours "HH:MM" to "HH:MM" the same day, at most 4 hours. Null takes one back. A string is the refusal.
+   */
+  private standingOf(file: FixerFile, raw: NonNullable<UpkeepInput["standing"]> | null, what: string, existing: Upkeep | undefined): Omit<StandingYes, "yesAt"> | null | string {
+    if (raw === null) return existing?.standing ? null : "That upkeep item has no standing yes to take back.";
+    const env = this.deps.env?.();
+    if (!env || !visitRecordsOn(env)) return "Routine vendor visits aren't on for this service yet. Save the upkeep without standing, and you'll be asked each time.";
+    if (!what) return "Say what it is.";
+    const pro = file.pros.find((entry) => entry.id === raw.proId && entry.status === "saved");
+    if (!pro) return "Pick a pro from your saved list for the standing yes.";
+    if (!pro.reach.phone || !pro.prefersText) return `${pro.name} doesn't text on the line, so their visits can't be confirmed by text. Save the upkeep without standing, and you'll be asked each time.`;
+    const hm = /^([01]\d|2[0-3]):([0-5]\d)$/;
+    if (typeof raw.from !== "string" || typeof raw.until !== "string" || !hm.test(raw.from) || !hm.test(raw.until)) return "Give the usual hours as HH:MM, like 09:00 and 11:00.";
+    const minutes = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+    const span = minutes(raw.until) - minutes(raw.from);
+    if (span <= 0) return "The usual hours have to end later the same day.";
+    if (span > MAX_VENDOR_HOURS * 60) return `The usual hours can be at most ${MAX_VENDOR_HOURS} hours.`;
+    const access = raw.access ?? "code";
+    if (access !== "code" && access !== "host") return "Access is code or host.";
+    if (raw.usualCents !== undefined && !isInt(raw.usualCents, 100, 500_000)) return "The usual price has to be from $1 to $5,000.";
+    return { proId: pro.id, from: raw.from, until: raw.until, access, ...(raw.usualCents !== undefined ? { usualCents: raw.usualCents } : {}) };
   }
 
   previewSchedule(input: { schedule?: Schedule }): Promise<FixerReply> {
