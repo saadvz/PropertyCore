@@ -27,7 +27,7 @@ const PLAN = {
   name: "plan_bring_in",
   title: "Who brings a package in",
   description:
-    "The bring-it-in visit for one delivery: the person the host picked, who must be saved for this property as the cleaner, a co-host or an assistant, and have said YES. Leave person out to use the host's saved default. The deadline is the drop plus the host's hours. The bring-in code waits on the lock connection, and Property Core doesn't text the person: tell the host who and by when, and they let the person know.",
+    "The bring-it-in visit for one delivery: the person the host picked, who must be saved for this property as the cleaner, a co-host or an assistant, and have said YES. Leave person out to use the host's saved default. The deadline is the drop plus the host's hours. Follow the reply's next: without connected locks, Property Core doesn't text the person, so tell the host who and by when, and they let the person know; on connected locks, the person gets their own bring-in code (see code).",
   inputSchema: { type: "object", properties: { orderId: ORDER_ID, person: PHONE }, required: ["orderId"], additionalProperties: false },
 };
 
@@ -51,8 +51,18 @@ const SETTINGS = {
   inputSchema: { type: "object", properties: { bringInHours: { type: "integer", minimum: 1, maximum: MAX_BRING_IN_HOURS }, person: { ...PHONE, type: ["string", "null"] } }, additionalProperties: false },
 };
 
+const APPROVE = {
+  name: "approve_bring_in_code",
+  title: "OK the bring-in code",
+  description:
+    "On connected locks with bring-in codes on ask: the host's OK to text the person bringing a package in their own door code, which works only for the bring-in window. Two calls: the first returns a question for the host and a confirmation; call again with that confirmation only after the host says yes. It never returns a code; you never see or pass one.",
+  inputSchema: { type: "object", properties: { orderId: ORDER_ID, confirmation: { type: "string", maxLength: 20 } }, required: ["orderId"], additionalProperties: false },
+};
+
 export const PACKAGE_TOOLS: readonly Record<string, unknown>[] = [CHECK, SEEN, PLAN, INSIDE, SETTINGS];
-export const PACKAGE_TOOL_NAMES: ReadonlySet<string> = new Set(PACKAGE_TOOLS.map((tool) => tool.name as string));
+/** Listed only where connected locks are available on the service (#241). */
+export const BRING_IN_CODE_TOOLS: readonly Record<string, unknown>[] = [APPROVE];
+export const PACKAGE_TOOL_NAMES: ReadonlySet<string> = new Set([...PACKAGE_TOOLS, ...BRING_IN_CODE_TOOLS].map((tool) => tool.name as string));
 
 const KEYS: Record<string, readonly string[]> = {
   check_packages: [],
@@ -60,6 +70,7 @@ const KEYS: Record<string, readonly string[]> = {
   plan_bring_in: ["orderId", "person"],
   mark_brought_in: ["orderId", "at", "startedAt", "note", "replace"],
   save_package_settings: ["bringInHours", "person"],
+  approve_bring_in_code: ["orderId", "confirmation"],
 };
 
 /** Answers one package arrivals tool. Undefined when the name isn't one of them. */
@@ -72,5 +83,6 @@ export function handlePackageTool(desk: PackageDesk, name: string, args: unknown
   if (name === "mark_package_seen") return desk.markSeen(input);
   if (name === "plan_bring_in") return desk.planBringIn(input);
   if (name === "mark_brought_in") return desk.markBroughtIn(input);
+  if (name === "approve_bring_in_code") return desk.approveCode(input);
   return desk.saveSettings(input);
 }
