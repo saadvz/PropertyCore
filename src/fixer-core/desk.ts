@@ -27,11 +27,11 @@ import { supplyAskOn } from "../supply-core/store";
 import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
 import { holdsOtherRole, priceCents } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
-import { BLOCK_ON_CALENDAR_NEXT, blockCalendarNext, blockCollisionNews, blockOpenNews, BLOCK_HOST_ACCESS, CREW_HOST_ACCESS, crewScheduleQuestion, crewScheduleSentence, crewSpanRefusal, guestWithdrewNews, removeRepairBlockQuestion, repairBlockQuestion, URGENT_AGREED, URGENT_ASK_GUEST, urgentRefusal, urgentStayChangedNews } from "./texts";
+import { BLOCK_ON_CALENDAR_NEXT, blockCalendarNext, crewHoursOf, blockCollisionNews, blockOpenNews, BLOCK_HOST_ACCESS, CREW_HOST_ACCESS, crewScheduleQuestion, crewScheduleSentence, crewSpanRefusal, guestWithdrewNews, removeRepairBlockQuestion, repairBlockQuestion, URGENT_AGREED, URGENT_ASK_GUEST, urgentRefusal, urgentStayChangedNews } from "./texts";
 import { codeOkNews, codeOkQuestion, codeOkReminder, extendAskNews, extendedNews, noExtendNews, bookingQuestion, firstName, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, shortDollars, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { insideWindow, latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { doorFor, repairBlockProblem, repairBlockStatus, staysForCrew } from "./repairBlock";
-import { crewScheduleProblem, crewWindows, type CrewSchedule } from "./crewDays";
+import { crewScheduleProblem, crewWindowAt, crewWindows, type CrewSchedule, type CrewWindow } from "./crewDays";
 import { MAX_VENDOR_HOURS, parseVendorTime } from "./vendorTime";
 import { appendServiceNotice, cleanNoticeText, MAX_NOTICE_BODY, noticeDates, noticeHash, readServiceNotices, senderAddress, type ServiceNoticeInput } from "./serviceNotices";
 import { scheduleWords, vendorCalledOffNews, vendorTakenNews, vendorTimeTaken, vendorTooManyQuestion, standingOffQuestion, standingQuestion, vendorConfirmed, vendorConfirmedNews, vendorHeldQuestion, vendorMoved, vendorMovedNews, vendorNoAnswerNews, vendorNoDayNews, vendorProposal, visitWhen, VENDOR_ASKING_HOST } from "./texts";
@@ -461,7 +461,7 @@ export class FixerDesk {
   private lockPass(file: FixerFile, job: Job, notes: HostNote[]): void {
     const settings = this.lockSettings();
     const booking = job.booking;
-    if (!settings || !booking?.hostYes || booking.access !== "code" || job.crew || job.done) return;
+    if (!settings || !booking?.hostYes || booking.access !== "code" || job.done) return;
     const now = this.deps.now().getTime();
     const zone = this.timeZone();
     const proName = this.bookedName(file, job);
@@ -476,6 +476,8 @@ export class FixerDesk {
         notes.push(this.fileNews(file, { kind: "code-ok-reminder", jobId: job.id, text: codeOkReminder({ proName }), urgent: true }, `fixer:${job.id}:${visitTag(booking)}:code-ok-reminder`));
       }
     }
+    // A crew is never extended: its code follows its workday windows (#243).
+    if (job.crew) return;
     const end = this.endOf(booking);
     if (now < end - 15 * MINUTE_MS || now >= end) return;
     const endIso = new Date(end).toISOString();
@@ -522,16 +524,23 @@ export class FixerDesk {
   /**
    * On connected locks, the codes Fixer wants now: the booked pro's own, for each live visit with the
    * host's yes and access by code, from Fixer's access window (30 minutes early, none for an urgent
-   * visit) to its end or extension. A crew's access stays the host's. Fixer off: none, so all go.
+   * visit) to its end or extension. A crew booked with a code gets one, moved from workday to workday. Fixer off:
+   * none, so all go.
    */
   private wantedCodes(file: FixerFile): WantedCode[] {
     if (!file.settings.activatedAt || file.offAt) return [];
     const wanted: WantedCode[] = [];
     for (const job of file.jobs) {
       const booking = job.booking;
-      if (!booking || !liveBooking(job) || !booking.hostYes || booking.access !== "code" || job.crew || vendorWaiting(job)) continue;
+      if (!booking || !liveBooking(job) || !booking.hostYes || booking.access !== "code" || vendorWaiting(job)) continue;
       const phone = this.reachOfId(file, job, booking.proId).phone;
       if (!phone) continue;
+      if (job.crew) {
+        // A crew's one code (#243): the workday window open now, else the next one; moved to the next day after each.
+        const day = this.crewDay(file, job.crew);
+        if (day) wanted.push({ jobId: job.id, person: phone, window: { from: day.from, until: day.until }, label: firstName(this.bookedName(file, job)), who: { role: "pro", proId: booking.proId } });
+        continue;
+      }
       const lead = booking.urgentStay ? 0 : 30 * 60_000;
       const from = new Date(Date.parse(booking.from) - lead).toISOString();
       const until = new Date(Date.parse(booking.extendedUntil ?? booking.until)).toISOString();
@@ -1664,7 +1673,8 @@ export class FixerDesk {
       if (typeof target === "string") return fail(target);
       const name = this.nameOf(file, job, target.proId) ?? "The pro";
       let access = input.access ?? target.access;
-      if (access === "code" && job.crew) return fail(CREW_HOST_ACCESS);
+      // A crew gets a code only on connected locks (#243): one code for the booked pro, live in each workday's window.
+      if (access === "code" && job.crew && !this.lockSettings()) return fail(CREW_HOST_ACCESS);
       if (job.crew) {
         const plan = this.crewPlan(file, job.crew);
         if (!plan.span || plan.span.from !== target.from || plan.span.until !== target.until) return fail(plan.span ? crewSpanRefusal(plan.span) : "No workday of the crew's schedule is left. Save a new schedule first.");
@@ -2085,6 +2095,13 @@ export class FixerDesk {
     });
   }
 
+  /** The crew's workday window open now, or else the next one, around the current stays. No early lead (#243). */
+  private crewDay(file: FixerFile, crew: CrewSchedule): CrewWindow | undefined {
+    const now = this.deps.now();
+    const { windows } = this.crewPlan(file, crew);
+    return crewWindowAt(windows, now, 0) ?? windows.find((w) => Date.parse(w.from) > now.getTime());
+  }
+
   /** A crew schedule's windows against the stays, and the span a booking must cover: first window's start to last window's end. */
   private crewPlan(file: FixerFile, crew: CrewSchedule): ReturnType<typeof crewWindows> & { span?: { from: string; until: string } } {
     const plan = crewWindows(crew, { ...this.occupyInput(file), stays: this.crewStays(file) });
@@ -2366,7 +2383,9 @@ export class FixerDesk {
    */
   private async accessFor(file: FixerFile, job: Job): Promise<ReturnType<typeof accessCheck>> {
     const booking = job.booking;
-    const ymd = booking ? localYmd(new Date(booking.from), this.timeZone()) : this.today();
+    // A crew (#243): only inside a workday's window, and the turnover check is that day's.
+    const crewToday = job.crew && booking?.access === "code" ? crewWindowAt(this.crewPlan(file, job.crew).windows, this.deps.now(), 0) : undefined;
+    const ymd = crewToday ? crewToday.day : booking ? localYmd(new Date(booking.from), this.timeZone()) : this.today();
     // An urgent visit's own stay checking out that morning is the guest who agreed to it, not a turnover to wait on.
     const checkoutDay = (this.hub().stays() ?? []).some((stay) => stay.checkout === ymd && stayKey(stay) !== booking?.urgentStay);
     let cleared = file.clearedYmd === ymd;
@@ -2374,7 +2393,10 @@ export class FixerDesk {
     // A calendar block can be a real booking labelled "Not available": the code never goes inside one.
     const overlaps = booking ? this.staysOver(file, booking, job).length > 0 || this.inCalendarBlock(file, { from: booking.from, until: new Date(this.endOf(booking)).toISOString() }) : false;
     if (booking?.urgentStay) return this.urgentAccess(file, job, booking, overlaps, { checkoutDay, cleared });
-    return accessCheck({ job, pro: booking ? { reach: this.reachOfId(file, job, booking.proId) } : undefined, now: this.deps.now(), checkoutDay, cleared, overlapsStay: overlaps, staysUnread: this.staysUnknown() });
+    const check = accessCheck({ job, pro: booking ? { reach: this.reachOfId(file, job, booking.proId) } : undefined, now: this.deps.now(), checkoutDay, cleared, overlapsStay: overlaps, staysUnread: this.staysUnknown() });
+    if (!job.crew || booking?.access !== "code" || !check.ok) return check;
+    if (!crewToday) return { ok: false, reason: "outside-crew-hours" };
+    return { ok: true, window: { from: crewToday.from, until: crewToday.until } };
   }
 
   /** The saved stays that overlap this visit, with its extension and the check-in buffer. */
@@ -2542,7 +2564,7 @@ export class FixerDesk {
     const street = streetOf(this.hub().property().address ?? "");
     let sent = false;
     try {
-      sent = (await this.deps.send!(phone, codeText({ proName, street, code: opened.code, ...(opened.lockLocation ? { lockLocation: opened.lockLocation } : {}), ...(opened.doors ? { doors: opened.doors } : {}) }))) === true;
+      sent = (await this.deps.send!(phone, codeText({ proName, street, code: opened.code, ...(opened.lockLocation ? { lockLocation: opened.lockLocation } : {}), ...(opened.doors ? { doors: opened.doors } : {}), ...(job.crew ? { crewHours: crewHoursOf(job.crew) } : {}) }))) === true;
     } catch {
       // Whether it went is unknown, so it is never sent again.
     }

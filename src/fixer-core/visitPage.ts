@@ -56,6 +56,8 @@ const COPY = {
   photoUnreadable: "That photo couldn't be read. Try another one.",
   codeSoon: "The door code shows here from 30 minutes before the visit.",
   codeNotYet: "The door code shows from 30 minutes before the visit.",
+  // Crew-day codes (#243): new wording, flagged for the wording pass.
+  crewHours: "The crew's door code works only on the crew's workdays, during its hours. Come back then.",
   codeOver: "The visit's time is up, so the door code no longer shows.",
   hostLetsIn: "The host will let you in.",
   codeRefused: "The door code can't be shown. Ask the host to let you in.",
@@ -97,6 +99,7 @@ export function visitRouteRefusal(sub: string, kind: "busy" | "too-large" | "fai
 function doorReason(reason: RevealRefusal): string {
   if (reason === "waiting-for-host") return COPY.codeWaiting;
   if (reason === "before-visit") return COPY.codeNotYet;
+  if (reason === "outside-crew-hours") return COPY.crewHours;
   if (reason === "after-visit" || reason === "window-over") return COPY.codeOver;
   if (reason === "guests-not-left") return COPY.guestsHere;
   if (reason === "host-access" || reason === "overlaps-stay" || reason === "guest-not-agreed") return COPY.hostLetsIn;
