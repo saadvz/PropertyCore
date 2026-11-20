@@ -409,3 +409,55 @@ describe("move_vendor_visit", () => {
     expect(reply.isError).toBe(true);
   });
 });
+
+describe("two routine pest-control visits, end to end on the fake lock", () => {
+  it("proposes, confirms or moves, issues and ends the code, and measures time on site for each", async () => {
+    const { fixerRows, readRecords } = await import("../src/hours-log/sources");
+    const w = await setup();
+    await w.savePest();
+
+    /** One visit: proposal, the vendor's reply, the code text, an unlock with their code, DONE, a lock from outside. */
+    const visit = async (lead: string, reply: string, expected: { from: string; until: string }, arriveAfter: number, minutesOnSite: number) => {
+      w.at(lead);
+      await w.desk().tick();
+      const job = w.job()!;
+      expect(job.booking!.vendor!.proposedAt).toBe(lead);
+      expect(w.fake.liveCodes("dev-front")).toEqual([]);
+      w.at(Date.parse(lead) + 2 * 60 * MIN);
+      await w.text(reply);
+      expect({ from: w.job()!.booking!.from, until: w.job()!.booking!.until }).toEqual(expected);
+      const [code] = w.fake.liveCodes("dev-front");
+      expect(code!.window).toEqual({ from: new Date(Date.parse(expected.from) - 30 * MIN).toISOString(), until: expected.until });
+      // The code goes by text when the window opens, to the vendor only.
+      w.at(Date.parse(expected.from) - 30 * MIN);
+      await w.desk().tick();
+      const codeTexts = w.sent.filter((s) => s.body.includes(code!.code));
+      expect(codeTexts.map((s) => s.to)).toEqual([BUGS]);
+      const arrive = Date.parse(expected.from) + arriveAfter * MIN;
+      w.log().append({ type: "lock", id: `unlock-${job.id}`, at: new Date(arrive).toISOString(), device: "Front door", action: "unlock", side: "outside", codeName: code!.name, method: "keypad" });
+      w.at(arrive + minutesOnSite * MIN);
+      await w.text("DONE");
+      expect(w.job()!.state).toBe("done");
+      w.log().append({ type: "lock", id: `lock-${job.id}`, at: new Date(arrive + (minutesOnSite + 2) * MIN).toISOString(), device: "Front door", action: "lock", side: "outside" });
+      await w.desk().tick();
+      // The code is gone once the visit is done.
+      expect(w.fake.liveCodes("dev-front")).toEqual([]);
+      const record = w.visits().find((v) => v.id === `repair:${job.id}`)!;
+      expect(record.arrival).toMatchObject({ source: "lock" });
+      expect(record.departure).toMatchObject({ source: "done-pro-text", lockCheck: "matched" });
+      expect(record.minutes).toBe(minutesOnSite + 2);
+      return job.id;
+    };
+
+    const first = await visit(LEAD, "YES", DUE_VISIT, 10, 45);
+    // Done on 10 Jan: the next visit is due 31 Jan, proposed from 24 Jan; the vendor moves it to Monday 1 Feb.
+    const second = await visit("2027-01-24T13:00:00.000Z", "Can we do Monday 1 to 3?", { from: "2027-02-01T18:00:00.000Z", until: "2027-02-01T20:00:00.000Z" }, 5, 50);
+
+    const rows = fixerRows(readRecords(w.root)).filter((row) => row.kind === "repair-visit");
+    for (const id of [first, second]) expect(rows.find((row) => row.reference.includes(id))).toMatchObject({ timing: "measured" });
+    // A visit under a standing yes is not a fresh approval by the host each time.
+    expect(fixerRows(readRecords(w.root)).filter((row) => row.actor === "host" && [first, second].some((id) => row.reference.includes(id)))).toEqual([]);
+    // No text to anyone but the vendor, and none holds the saved code.
+    expect(w.sent.every((s) => s.to === BUGS && !s.body.includes(SAVED))).toBe(true);
+  });
+});
