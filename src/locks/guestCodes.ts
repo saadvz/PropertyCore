@@ -37,6 +37,9 @@ export interface StayCodeState {
   /** Under ask: when the host was asked, and when they said yes. */
   askedAt?: string;
   yesAt?: string;
+  /** The stay's dates when the host was last told, so a removal can name them. */
+  checkIn?: string;
+  checkout?: string;
   /** The window the host was last told about, so a move is told once. */
   toldWindow?: CodeWindow;
   link?: GuestLink;

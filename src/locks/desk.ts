@@ -236,7 +236,7 @@ export class LockDesk {
     const door = this.door();
     if (!door.connected()) return fail("Standing codes need connected locks here first.");
     const name = typeof input.name === "string" ? input.name.trim() : "";
-    const phone = typeof input.phone === "string" ? normalize(input.phone) : undefined;
+    const phone = typeof input.phone === "string" ? normalizePhone(input.phone) : undefined;
     const role: StandingRole | undefined = input.role === "owner" || input.role === "co-owner" || input.role === "co-host" ? input.role : undefined;
     if (!name || name.length > 60 || /\d{4,}/.test(name)) return fail("Give the person's name, with no numbers in it.");
     if (!phone) return fail("Give their mobile number with its country code, like +1 555 555 0142.");
@@ -386,7 +386,8 @@ export class LockDesk {
   }
 }
 
-function normalize(raw: string): string | undefined {
+/** A mobile number as E.164, or undefined. */
+export function normalizePhone(raw: string): string | undefined {
   const digits = raw.replace(/[^\d+]/g, "");
   if (/^\+1\d{10}$/.test(digits)) return digits;
   if (/^1\d{10}$/.test(digits)) return `+${digits}`;
