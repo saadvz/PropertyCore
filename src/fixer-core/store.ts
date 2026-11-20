@@ -55,6 +55,42 @@ export interface Upkeep {
   savedAt: string;
   proId?: string;
   lastDoneAt?: string;
+  /**
+   * The host's standing yes for a routine vendor (#237): each visit is proposed to this pro by text at their usual
+   * local hours, and they confirm or move it, with no host question. Withdrawn by saving the item with none.
+   */
+  standing?: StandingYes;
+}
+
+export interface StandingYes {
+  /** A saved pro with a phone who texts on the line. */
+  proId: string;
+  /** Usual local hours, "HH:MM", the same day, at most 4 hours apart. */
+  from: string;
+  until: string;
+  access: "code" | "host";
+  /** The usual price: a higher one waits for the host. */
+  usualCents?: number;
+  /** The host's two-call yes. */
+  yesAt: string;
+}
+
+/** A routine vendor's visit, proposed by text under a standing yes (#237). */
+export interface VendorVisit {
+  /** The upkeep item. */
+  upkeepId: string;
+  /** Saved before the proposal text is sent, so a restart never sends it twice. */
+  proposedAt: string;
+  /** Set once the proposal text went. */
+  proposalSent?: true;
+  /** The vendor's YES or a new time that fit: their code exists only from here. */
+  confirmedAt?: string;
+  /** Each time the vendor's text (or the agent, with their word) moved the visit. */
+  moves?: { at: string; from: string; until: string; by: "vendor" | "agent" | "host" }[];
+  /** A time from the vendor that didn't fit, waiting for the host. */
+  held?: { from: string; until: string; at: string };
+  /** The one "no answer" note. */
+  noAnswerAt?: string;
 }
 
 /** A photo in the photo store, under the key `fixer:<jobId>`. */
@@ -132,6 +168,8 @@ export interface Booking {
   stayNoted?: string[];
   /** An urgent visit the host approved during this guest stay (`checkIn|checkout`), with the guest's okay (#243). */
   urgentStay?: string;
+  /** A routine vendor's visit under a standing yes (#237). Unconfirmed: no code, no page reveal, no visit window. */
+  vendor?: VendorVisit;
 }
 
 /**
@@ -203,6 +241,8 @@ export interface Job {
   codeTextSent?: true;
   /** The one host note about the code for this job. */
   codeNoteAt?: string;
+  /** Made under an upkeep item's standing yes (#237): the host's go and yes are that one answer, not this job's. */
+  standingYes?: { upkeepId: string; at: string };
   /** A crew's workdays and hours on a multi-day job, set before the booking (#243). */
   crew?: CrewSchedule;
   /** When the guest was asked about a visit during their stay, and each answer, the last one counting (#243). */
@@ -225,6 +265,8 @@ export interface FixerSettings {
   cleaningMinutes: number;
   /** Ask the cleaner "Anything running low or broken?" after each clean. */
   askCleaner: boolean;
+  /** The host lets their agent pass vendors' completed-service emails (#237). Off by default. */
+  serviceNotices?: boolean;
   activatedAt?: string;
 }
 

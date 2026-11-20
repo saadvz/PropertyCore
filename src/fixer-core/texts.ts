@@ -401,3 +401,96 @@ export function crewSpanRefusal(f: { from: string; until: string }): string {
 
 /** A crew's door code waits for crew codes (#180). */
 export const CREW_HOST_ACCESS = "A crew's door code waits for crew codes. For now the host lets the crew in: book it with access host.";
+
+// Routine vendor visits (#237). New vendor-facing and host-facing wording, flagged for a design pass.
+
+/** "9 to 11": local "HH:MM" hours on a 12-hour clock, no am or pm. */
+export function hoursText(from: string, until: string): string {
+  const h = (hm: string) => {
+    const [hour, minute] = hm.split(":").map(Number) as [number, number];
+    const twelve = hour % 12 === 0 ? 12 : hour % 12;
+    return minute === 0 ? String(twelve) : `${twelve}:${String(minute).padStart(2, "0")}`;
+  };
+  return `${h(from)} to ${h(until)}`;
+}
+
+/** "Tue Jan 12, 9 to 11 AM", or "Tue Jan 12, 11 AM to 1 PM". */
+export function visitWhen(from: string, until: string, timeZone: string): string {
+  const day = new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone }).format(new Date(from));
+  const part = (iso: string) => {
+    const { hour, minute } = zonedParts(new Date(iso), timeZone);
+    const twelve = hour % 12 === 0 ? 12 : hour % 12;
+    return { text: minute === 0 ? String(twelve) : `${twelve}:${String(minute).padStart(2, "0")}`, half: hour < 12 ? "AM" : "PM" };
+  };
+  const a = part(from);
+  const b = part(until);
+  return `${day}, ${a.half === b.half ? `${a.text} to ${b.text} ${b.half}` : `${a.text} ${a.half} to ${b.text} ${b.half}`}`;
+}
+
+/** How often, in a few words: "every 21 days", "on day 15 of each month", or the host's own words for a rule. */
+export function scheduleWords(schedule: { kind: string; days?: number; monthlyOn?: number; said?: string }): string {
+  if (schedule.kind === "every" && schedule.days !== undefined) return schedule.days === 1 ? "every day" : `every ${schedule.days} days`;
+  if (schedule.kind === "every" && schedule.monthlyOn !== undefined) return `on day ${schedule.monthlyOn} of each month`;
+  if (schedule.kind === "custom" && schedule.said) return schedule.said;
+  return "on its schedule";
+}
+
+export function standingQuestion(f: { what: string; proName: string; schedule: string; from: string; until: string; access: "code" | "host"; usualCents?: number }): string {
+  const access = f.access === "code" ? "they get their own door code for that visit" : "you let them in";
+  const price = f.usualCents !== undefined ? ` About ${shortDollars(f.usualCents)} each time; more than that waits for you.` : "";
+  return `${f.what} with ${f.proName}, ${f.schedule}, ${hoursText(f.from, f.until)}: when it's due, I'll text ${f.proName} the date, they confirm or move it, and ${access}. You won't be asked each time.${price} Okay?`;
+}
+
+export function standingOffQuestion(f: { what: string; proName: string }): string {
+  return `Stop booking ${f.what} with ${f.proName} on its own? You'll be asked each time again.`;
+}
+
+export function vendorProposal(f: { proName: string; what: string; street: string; when: string }): string {
+  return `Hi ${firstName(f.proName)}, ${f.what.toLowerCase()} at ${f.street} is due. Can you come ${f.when}? Reply YES, or send another day and time.`;
+}
+
+export function vendorConfirmed(f: { when: string; access: "code" | "host" }): string {
+  return `Thanks, see you ${f.when}. ${f.access === "code" ? "Your door code comes by text when the visit starts." : "The host will let you in."}`;
+}
+
+export function vendorMoved(f: { when: string; access: "code" | "host" }): string {
+  return `Moved to ${f.when}. ${f.access === "code" ? "Your door code comes by text when the visit starts." : "The host will let you in."}`;
+}
+
+export const VENDOR_ASKING_HOST = "Thanks, I'll check that time with the host and text you back.";
+
+export function vendorConfirmedNews(f: { proName: string; what: string; when: string }): string {
+  return `${f.proName} confirmed ${f.what.toLowerCase()} for ${f.when}.`;
+}
+
+export function vendorMovedNews(f: { proName: string; what: string; when: string }): string {
+  return `${f.proName} moved ${f.what.toLowerCase()} to ${f.when}.`;
+}
+
+export function vendorHeldQuestion(f: { proName: string; what: string; when: string }): string {
+  return `${f.proName} asked to move ${f.what.toLowerCase()} to ${f.when}, which isn't one of the open times between stays. Move it anyway?`;
+}
+
+export function vendorNoAnswerNews(f: { proName: string; what: string; when: string }): string {
+  return `${f.proName} hasn't answered about ${f.what.toLowerCase()} on ${f.when}. No code goes out until they confirm.`;
+}
+
+export function vendorNoDayNews(f: { what: string; proName: string }): string {
+  return `${f.what} is due, but ${f.proName}'s usual hours don't fit between stays in the next week.`;
+}
+
+export function vendorTimeTaken(f: { street: string }): string {
+  return `Sorry, that time isn't free at ${f.street}. Can you send another day and time?`;
+}
+
+export function vendorTakenNews(f: { proName: string; when: string }): string {
+  return `${f.proName} asked for ${f.when}, but a guest stay or calendar block is on then. I asked them for another time.`;
+}
+
+export function vendorTooManyQuestion(f: { proName: string; what: string; when: string; moves: number }): string {
+  return `${f.proName} asked to move ${f.what.toLowerCase()} again, to ${f.when}, after ${f.moves} moves. Move it?`;
+}
+
+export function vendorCalledOffNews(f: { proName: string; what: string; when: string }): string {
+  return `${f.proName} never confirmed ${f.what.toLowerCase()} for ${f.when}, so it's called off. I'll propose the next date when it comes due.`;
+}

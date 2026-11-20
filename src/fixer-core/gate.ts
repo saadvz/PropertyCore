@@ -89,6 +89,8 @@ export function accessCheck(input: {
   const booking = job.booking;
   if (!booking || !liveBooking(job)) return { ok: false, reason: "not-booked" };
   if (!booking.hostYes) return { ok: false, reason: "no-yes" };
+  // A routine vendor's visit opens only once the vendor confirmed it (#237).
+  if (booking.vendor && !booking.vendor.confirmedAt) return { ok: false, reason: "no-yes" };
   if (booking.access === "host") return { ok: false, reason: "host-access" };
   if (!pro?.reach.phone) return { ok: false, reason: "no-phone" };
   if (input.overlapsStay) return { ok: false, reason: "overlaps-stay" };

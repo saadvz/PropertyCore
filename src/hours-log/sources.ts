@@ -261,11 +261,14 @@ export const fixerRows: RowSource = (records) => {
     const host = (kind: RowFact["kind"], at: string | undefined, task: string) => {
       if (at) out.push({ kind, actor: "host", log: "owner", participant: "", at, task, reference: ref, onSite: false, timing: "rule" });
     };
-    host("approve-repair", job.hostGo?.at, `Approved the ${repair}`);
+    // A routine vendor's visit under a standing yes (#237) carries that one yes as its go and booking yes: the host
+    // didn't approve this visit, so neither is a row of theirs here.
+    const standing = Boolean(job.standingYes);
+    if (!standing) host("approve-repair", job.hostGo?.at, `Approved the ${repair}`);
     if (job.quotePick) host("pick-quote", job.quotePick.at, `Picked ${proName(job.quotePick.proId)}'s quote for the ${repair}`);
     const booking = job.booking;
     if (booking) {
-      host("approve-booking", booking.hostYes?.at, `Approved ${proName(booking.proId)}'s booking for the ${repair}`);
+      if (!standing) host("approve-booking", booking.hostYes?.at, `Approved ${proName(booking.proId)}'s booking for the ${repair}`);
       if (booking.revisedQuote) host("approve-price", booking.revisedQuote.hostYes?.at, `Approved the new price of ${dollarsText(booking.revisedQuote.cents)} for the ${repair}`);
     }
     for (const moved of job.reschedules ?? []) host("reschedule-repair", moved.at, `Moved the visit for the ${repair}${moved.reason ? `: ${moved.reason}` : ""}`);

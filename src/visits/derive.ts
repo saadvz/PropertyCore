@@ -68,6 +68,8 @@ export interface VisitRecord {
   departure?: Departure;
   minutes?: number;
   flags: VisitFlag[];
+  /** Completed-service notices kept for this visit (#237), by hash. Evidence only: they never set a time. */
+  notices?: string[];
   /** When it's late (expected plus the grace), at risk, and checked for readiness. */
   times: { lateAt: string; atRiskAt?: string; readyAt?: string };
   rules: number;
@@ -255,6 +257,7 @@ export function buildVisits(events: readonly VisitEvent[], context: DeriveContex
     }
 
     if (window.kind === "cleaning" && minutes !== undefined && arrival?.source === "lock") measuredCleans.push(minutes);
+    const notices = events.filter((event) => event.type === "service-notice" && event.visit === window.visit).map((event) => (event as { notice: string }).notice);
 
     visits.push({
       id: window.visit,
@@ -266,6 +269,7 @@ export function buildVisits(events: readonly VisitEvent[], context: DeriveContex
       ...(departure ? { departure } : {}),
       ...(minutes !== undefined ? { minutes } : {}),
       flags,
+      ...(notices.length > 0 ? { notices } : {}),
       times: { lateAt: iso(lateAt), ...(atRiskAt !== undefined ? { atRiskAt: iso(atRiskAt) } : {}), ...(readyAt !== undefined ? { readyAt: iso(readyAt) } : {}) },
       rules: RULES,
     });
