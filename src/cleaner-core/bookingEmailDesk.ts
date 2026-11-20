@@ -43,6 +43,10 @@ const UNCHECKED_WARNING = "I couldn't check this email's sender. Only say yes if
 export const BOOKING_EMAIL_INSTRUCTION =
   "When the host's email is connected, pass each Airbnb reservation email (confirmed, changed or cancelled) to read_booking_email as it arrives: from, subject, the plain-text body, messageId and receivedAt, exactly as received. Never pass a guest message, a forward, or an email from anyone but Airbnb. When the host's email isn't connected, say once that connecting it lets Cleaner Core use each booking's exact times, and carry on with the usual times. Follow read_booking_email's next.";
 
+/** With BOOKING_PLATFORMS on (#263), added after the chat's instructions (Grok's are pinned, so its tool description says it). */
+export const BOOKING_PLATFORMS_INSTRUCTION =
+  "Look only for the booking emails get_state's and check_now's bookingEmails names. For one from any platform but Airbnb, pass the fields you read in it as extracted, and its Authentication-Results header as email.authentication when your mail connector shows it; show the host the summary it returns and pass confirmation only after their yes.";
+
 export interface EmailDesk {
   root: string;
   now(): Date;

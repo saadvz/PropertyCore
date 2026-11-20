@@ -235,6 +235,11 @@ export class Hub {
     return { ok: true };
   }
 
+  /** True once the host saved their platforms (#263). */
+  bookingSourcesSaved(): boolean {
+    return this.file.bookingSources !== undefined;
+  }
+
   /** The host said redacted copies of their Vrbo and Booking.com emails may become samples (#263). */
   shareSamples(): boolean {
     return this.file.shareSamples === true;

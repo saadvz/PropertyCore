@@ -50,11 +50,31 @@ export function propertyAsk(saved: { address: boolean; checkoutTime: boolean; ch
   return { step: "property", tool: "save_property", questions };
 }
 
-export function sourcesAsk(property: string): SetupAsk {
+/** Where the host takes bookings (#263), asked with BOOKING_PLATFORMS on until the host saves an answer. */
+export function platformsQuestion(): AskQuestion {
+  return {
+    field: "bookingEmails",
+    ask: "where the host takes bookings for this place",
+    required: true,
+    multiple: true,
+    default: "airbnb",
+    options: [
+      { value: "airbnb", label: "Airbnb" },
+      { value: "vrbo", label: "Vrbo" },
+      { value: "booking", label: "Booking.com" },
+      { value: "direct", label: "Your own booking site" },
+      { value: "other", label: "Other" },
+    ],
+    how: 'For "Your own booking site", ask the address its booking emails come from; for Other, ask the platform\'s name and that sender address, one question each. Vrbo\'s and Booking.com\'s senders are filled in. Save with save_sources bookingEmails: [{ platform, sender?, name? }].',
+  };
+}
+
+export function sourcesAsk(property: string, platforms = false): SetupAsk {
   return {
     step: "sources",
     tool: "save_sources",
     questions: [
+      ...(platforms ? [platformsQuestion()] : []),
       {
         field: "source",
         ask: "where the bookings come from",
@@ -86,11 +106,12 @@ export function sourcesAsk(property: string): SetupAsk {
 }
 
 /** After the first calendar is saved: asks for every other place bookings come from, one at a time. */
-export function moreSourcesAsk(saved: string[], property: string): SetupAsk {
+export function moreSourcesAsk(saved: string[], property: string, platforms = false): SetupAsk {
   return {
     step: "sources",
     tool: "save_sources",
     questions: [
+      ...(platforms ? [platformsQuestion()] : []),
       {
         field: "more",
         ask: `whether ${property}'s bookings come from anywhere besides ${saved.join(", ")}`,
