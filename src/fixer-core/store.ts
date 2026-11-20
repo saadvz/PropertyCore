@@ -241,6 +241,8 @@ export interface Job {
   codeTextSent?: true;
   /** The one host note about the code for this job. */
   codeNoteAt?: string;
+  /** Made under an upkeep item's standing yes (#237): the host's go and yes are that one answer, not this job's. */
+  standingYes?: { upkeepId: string; at: string };
   /** A crew's workdays and hours on a multi-day job, set before the booking (#243). */
   crew?: CrewSchedule;
   /** When the guest was asked about a visit during their stay, and each answer, the last one counting (#243). */

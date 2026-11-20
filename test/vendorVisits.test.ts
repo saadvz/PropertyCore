@@ -110,7 +110,7 @@ async function setup(options: Options = {}) {
   await desk().saveSettings({ upkeepDone: true });
   expect((await desk().activate()).isError).toBe(false);
   if (options.optedIn !== false) people().optIn(BUGS, PROPERTY_ID);
-  const ics = ["BEGIN:VCALENDAR", ...(options.stays ?? []).flatMap(([a, b], i) => ["BEGIN:VEVENT", `UID:s${i}`, `DTSTART;VALUE=DATE:${a}`, `DTEND;VALUE=DATE:${b}`, "SUMMARY:Guest", "END:VEVENT"]), "END:VCALENDAR"].join("\r\n");
+  const ics = ["BEGIN:VCALENDAR", ...(options.stays ?? []).flatMap(([a, b], i) => ["BEGIN:VEVENT", `UID:s${i}`, `DTSTART;VALUE=DATE:${a.replaceAll("-", "")}`, `DTEND;VALUE=DATE:${b.replaceAll("-", "")}`, "SUMMARY:Guest", "END:VEVENT"]), "END:VCALENDAR"].join("\r\n");
   setCalendarFetch(async (url) => ({ status: 200, url, async text() { return ics; } }));
   await desk().checkFixes({});
   const pro = (name: string) => readFixer(root).pros.find((p) => p.name === name)!;
@@ -166,5 +166,97 @@ describe("the standing yes", () => {
     const reply = await approved((confirmation) => w.desk().saveUpkeep({ id, trade: "pest-control", what: "Pest control", schedule: { kind: "every", days: 21 }, leadDays: 7, standing: null, ...(confirmation ? { confirmation } : {}) } as never));
     expect(reply.isError).toBe(false);
     expect(readFixer(w.root).upkeep[0]!.standing).toBeUndefined();
+  });
+});
+
+/** The day the proposal opens: 7 days before the due date, 8 AM local. */
+const LEAD = "2027-01-03T13:00:00.000Z";
+
+describe("proposing a routine visit", () => {
+  it("texts the vendor once when the visit comes due, with no code on the lock and no visit window yet", async () => {
+    const w = await setup();
+    await w.savePest();
+    w.at(Date.parse(LEAD) - DAY);
+    await w.desk().tick();
+    expect(w.toBugs()).toEqual([]);
+    expect(w.job()).toBeUndefined();
+    w.at(LEAD);
+    await w.desk().tick();
+    expect(w.toBugs()).toEqual(["Hi Bug, pest control at 12 Scratch Lane is due. Can you come Sun, Jan 10, 9 to 11 AM? Reply YES, or send another day and time."]);
+    const job = w.job()!;
+    expect(job).toMatchObject({ source: "upkeep", state: "booked", trade: "pest-control" });
+    expect(job.booking).toMatchObject({ ...DUE_VISIT, access: "code", estimateCents: 12000 });
+    expect(job.booking!.vendor!.proposedAt).toBe(LEAD);
+    expect(job.booking!.vendor!.confirmedAt).toBeUndefined();
+    expect(w.fake.liveCodes("dev-front")).toEqual([]);
+    expect(w.log().read().filter((e) => e.type === "visit-window")).toEqual([]);
+    expect(w.log().read().filter((e) => e.type === "message").map((e) => (e as { label: string }).label)).toEqual(["window-proposed"]);
+    expect(w.notes).toEqual([]);
+  });
+
+  it("never sends a second proposal across ticks and a restart", async () => {
+    const w = await setup();
+    await w.savePest();
+    w.at(LEAD);
+    await w.desk().tick();
+    await w.desk().tick();
+    resetFixerDesks();
+    w.at(Date.parse(LEAD) + DAY);
+    await w.desk().tick();
+    expect(w.toBugs().length).toBe(1);
+    expect(readFixer(w.root).jobs.length).toBe(1);
+  });
+
+  it("moves a busy due date to the next day that fits", async () => {
+    const w = await setup({ stays: [["2027-01-09", "2027-01-11"]] });
+    await w.savePest();
+    w.at(LEAD);
+    await w.desk().tick();
+    expect(w.toBugs()[0]).toContain("Tue, Jan 12, 9 to 11 AM");
+  });
+
+  it("asks the host once when no day in the next week fits, and leaves the upkeep to today's flow", async () => {
+    const w = await setup({ stays: [["2027-01-08", "2027-01-20"]] });
+    await w.savePest();
+    w.at(LEAD);
+    await w.desk().tick();
+    await w.desk().tick();
+    expect(w.toBugs()).toEqual([]);
+    expect(w.job()).toBeUndefined();
+    expect(w.news().filter((t) => t.includes("usual hours don't fit"))).toHaveLength(1);
+    const fixes = await w.desk().checkFixes({});
+    expect(JSON.stringify(fixes.structured)).toContain("upkeepDue");
+  });
+
+  it("proposes nothing to a vendor who hasn't said YES to texts, or with visit records off", async () => {
+    const quiet = await setup({ optedIn: false });
+    await quiet.savePest();
+    quiet.at(LEAD);
+    await quiet.desk().tick();
+    expect(quiet.toBugs()).toEqual([]);
+    expect(quiet.job()).toBeUndefined();
+
+    const off = await setup();
+    await off.savePest();
+    delete off.env.VISIT_RECORDS;
+    off.at(LEAD);
+    await off.desk().tick();
+    expect(off.toBugs()).toEqual([]);
+    expect(off.job()).toBeUndefined();
+  });
+
+  it("an unconfirmed visit never starts: no code text, no code on the lock, no late news", async () => {
+    const w = await setup();
+    await w.savePest();
+    w.at(LEAD);
+    await w.desk().tick();
+    for (const t of [Date.parse(DUE_VISIT.from) - 30 * MIN, Date.parse(DUE_VISIT.from) + 45 * MIN, Date.parse(DUE_VISIT.until) + MIN]) {
+      w.at(t);
+      await w.desk().tick();
+    }
+    expect(w.toBugs().length).toBe(1);
+    expect(w.fake.liveCodes("dev-front")).toEqual([]);
+    expect(w.job()!.state).toBe("booked");
+    expect(w.log().read().filter((e) => e.type === "visit-window")).toEqual([]);
   });
 });

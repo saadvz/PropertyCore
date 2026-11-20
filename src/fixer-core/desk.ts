@@ -12,7 +12,7 @@ import { isInjuryReport } from "../cleaner-core/injury";
 import { cleanerPhotoFetch, copyPhotos, downloadPhotos, MAX_JOB_PHOTOS, messagePhotoId, photoCount, photoLinks, prunePhotos, storePhoto, type InboundMedia } from "../cleaner-core/photos";
 import { isPlainLanguageStop, keywordOf } from "../intent";
 import { askNext } from "../hub/ask";
-import { addCalendarDays } from "../hub/calendar";
+import { addCalendarDays, zonedInstant } from "../hub/calendar";
 import { joinSplitDigits } from "../hub/digits";
 import type { GoogleEventList } from "../hub/sources";
 import { refuseCards } from "../hub/cards";
@@ -274,6 +274,11 @@ const ok = (structured: Record<string, unknown>): FixerReply => ({ text: JSON.st
 const fail = (text: string): FixerReply => ({ text, isError: true });
 
 const isInt = (n: unknown, min: number, max: number): n is number => typeof n === "number" && Number.isInteger(n) && n >= min && n <= max;
+
+/** A routine vendor's visit proposed under a standing yes and not yet confirmed by the vendor (#237). */
+function vendorWaiting(job: Job): boolean {
+  return Boolean(job.booking?.vendor && !job.booking.vendor.confirmedAt);
+}
 const isText = (s: unknown, max: number): s is string => typeof s === "string" && s.trim().length > 0 && s.length <= max;
 
 /** An instant's local `YYYY-MM-DD` in a time zone. */
@@ -518,7 +523,7 @@ export class FixerDesk {
     const wanted: WantedCode[] = [];
     for (const job of file.jobs) {
       const booking = job.booking;
-      if (!booking || !liveBooking(job) || !booking.hostYes || booking.access !== "code" || job.crew) continue;
+      if (!booking || !liveBooking(job) || !booking.hostYes || booking.access !== "code" || job.crew || vendorWaiting(job)) continue;
       const phone = this.reachOfId(file, job, booking.proId).phone;
       if (!phone) continue;
       const lead = booking.urgentStay ? 0 : 30 * 60_000;
@@ -1896,18 +1901,26 @@ export class FixerDesk {
     const tz = this.timeZone();
     const due: Record<string, unknown>[] = [];
     for (const item of file.upkeep) {
-      const jobs = file.jobs.filter((job) => job.sourceRef === item.id);
-      if (jobs.some(isOpen)) continue;
-      const start = localYmd(new Date(item.lastDoneAt ?? item.savedAt), tz);
-      const nextDate = nextDates(item.schedule, start, start, 1)[0];
-      if (!nextDate) continue;
-      const leadStart = addCalendarDays(nextDate, -item.leadDays);
-      if (today < leadStart) continue;
-      // A job already made for this date (even a cancelled one) means the date was dealt with.
-      if (jobs.some((job) => localYmd(new Date(job.createdAt), tz) >= leadStart)) continue;
-      due.push({ upkeepId: item.id, trade: item.trade, what: item.what, nextDate, ...(item.proId ? { proId: item.proId } : {}) });
+      const next = this.upkeepNext(file, item, tz);
+      if (!next || today < next.leadStart) continue;
+      due.push({ upkeepId: item.id, trade: item.trade, what: item.what, nextDate: next.nextDate, ...(item.proId ? { proId: item.proId } : {}) });
     }
     return due;
+  }
+
+  /**
+   * An upkeep item's next date and the day its lead time opens, or undefined while a job for it is open or one was
+   * already made for this date (even a cancelled one: the date was dealt with).
+   */
+  private upkeepNext(file: FixerFile, item: Upkeep, tz: string): { nextDate: string; leadStart: string } | undefined {
+    const jobs = file.jobs.filter((job) => job.sourceRef === item.id);
+    if (jobs.some(isOpen)) return undefined;
+    const start = localYmd(new Date(item.lastDoneAt ?? item.savedAt), tz);
+    const nextDate = nextDates(item.schedule, start, start, 1)[0];
+    if (!nextDate) return undefined;
+    const leadStart = addCalendarDays(nextDate, -item.leadDays);
+    if (jobs.some((job) => localYmd(new Date(job.createdAt), tz) >= leadStart)) return undefined;
+    return { nextDate, leadStart };
   }
 
   /** The next saved pro to contact for each job the host said go to, the best ranked one not yet tried. */
@@ -2575,12 +2588,18 @@ export class FixerDesk {
       for (const job of file.jobs) {
         const booking = job.booking;
         if (!booking?.hostYes || !liveBooking(job)) continue;
+        // A routine vendor's visit nobody confirmed never starts: no code, no late news (#237).
+        if (vendorWaiting(job)) {
+          if (!file.offAt) this.vendorWaitPass(file, job, notes);
+          continue;
+        }
         if (job.state === "booked" && now >= Date.parse(booking.from)) job.state = "in-progress";
         if (!file.offAt) this.lockPass(file, job, notes);
         if (!file.offAt) await this.codeTextPass(file, job, notes);
         this.delayPass(file, job, notes);
       }
       if (!file.offAt) this.visitPass(file, notes);
+      if (!file.offAt) await this.vendorPass(file, notes);
       // A done job's photos go 30 days after done, a cancelled job's 30 days after the cancel.
       prunePhotos(this.root, file.jobs.flatMap((job) => {
         const closedAt = job.done?.at ?? (job.state === "cancelled" ? job.cancelledAt : undefined);
@@ -2621,7 +2640,7 @@ export class FixerDesk {
       const live = new Set<string>();
       for (const job of file.jobs) {
         const booking = job.booking;
-        if (!booking?.hostYes || !liveBooking(job)) continue;
+        if (!booking?.hostYes || !liveBooking(job) || vendorWaiting(job)) continue;
         const who = { role: "pro" as const, name: this.bookedName(file, job), proId: booking.proId };
         const windows: Omit<WindowEvent, "id" | "at">[] = job.crew
           ? crewWindows(job.crew, { ...this.occupyInput(file), stays: this.crewStays(file) }).windows.map((w) => ({ type: "visit-window", visit: crewVisit(job.id, w.day), kind: "crew-day", from: w.from, until: w.until, expectedAt: w.from, sameDay: false, who }))
@@ -2654,6 +2673,102 @@ export class FixerDesk {
     } catch {
       // The log is a record, not a gate.
     }
+  }
+
+  /** How many days past the due date a routine vendor's usual hours are looked for (#237). */
+  private static readonly VENDOR_DAYS = 7;
+
+  /**
+   * Routine vendor visits (#237), on the clock pass with visit records on: for each upkeep item with a standing yes
+   * whose lead time has opened, the vendor's usual hours on the first day from the due date that fits between stays
+   * (up to 7 days later) become a booked visit under that yes, and the vendor is texted the proposal once. No code is
+   * made until they confirm. When no day fits, the host hears once and the item is left to today's upkeep flow.
+   */
+  private async vendorPass(file: FixerFile, notes: HostNote[]): Promise<void> {
+    const env = this.deps.env?.();
+    if (!env || !visitRecordsOn(env) || this.staysUnknown()) return;
+    const people = this.deps.people?.();
+    const here = this.deps.propertyId;
+    if (!people || !here) return;
+    const tz = this.timeZone();
+    const today = this.today();
+    const now = this.deps.now();
+    for (const item of file.upkeep) {
+      const standing = item.standing;
+      if (!standing) continue;
+      const next = this.upkeepNext(file, item, tz);
+      if (!next || today < next.leadStart) continue;
+      const pro = file.pros.find((entry) => entry.id === standing.proId && entry.status === "saved");
+      const phone = pro?.reach.phone;
+      if (!pro || !phone || !pro.prefersText) continue;
+      if (!people.optedIn(phone) || people.stopped(phone) || !people.rolesOn(phone, here).includes("pro") || holdsOtherRole(people, phone)) continue;
+      if ((await this.deps.textsAllowed?.()) !== true) continue;
+      const lastDay = addCalendarDays(next.nextDate, FixerDesk.VENDOR_DAYS);
+      const draft: Job = { id: newId("job_", 10), trade: item.trade, what: item.what, source: "upkeep", sourceRef: item.id, photos: [], urgency: "by-date", byDate: lastDay, state: "booked", candidates: [], picked: [], contacts: [], news: [], createdAt: now.toISOString(), standingYes: { upkeepId: item.id, at: standing.yesAt } };
+      let span: { from: string; until: string } | undefined;
+      for (let ymd = next.nextDate; ymd <= lastDay && !span; ymd = addCalendarDays(ymd, 1)) {
+        const candidate = { from: zonedInstant(ymd, standing.from, tz), until: zonedInstant(ymd, standing.until, tz) };
+        if (Date.parse(candidate.from) <= now.getTime()) continue;
+        const { holds } = await this.holdsFor(file, draft, candidate, standing.usualCents);
+        if (holds.every((hold) => hold === "cost" || hold === "no-estimate")) span = candidate;
+      }
+      if (!span) {
+        const kind = `vendor-no-day:${item.id}:${next.nextDate}`;
+        if (!(file.news ?? []).some((entry) => entry.kind === kind)) notes.push(this.fileNews(file, { kind, text: vendorNoDayNews({ what: item.what, proName: pro.name }) }, `fixer:${kind}`));
+        continue;
+      }
+      const at = now.toISOString();
+      draft.hostGo = { at: standing.yesAt };
+      draft.booking = {
+        proId: pro.id,
+        ...span,
+        ...(standing.usualCents !== undefined ? { estimateCents: standing.usualCents } : {}),
+        access: standing.access,
+        hostYes: { at: standing.yesAt },
+        fingerprint: bookingFingerprint({ proId: pro.id, ...span, ...(standing.usualCents !== undefined ? { estimateCents: standing.usualCents } : {}), access: standing.access }),
+        vendor: { upkeepId: item.id, proposedAt: at },
+      };
+      file.jobs.push(draft);
+      // Saved before the send, so a restart never proposes twice.
+      this.write(file);
+      const body = vendorProposal({ proName: pro.name, what: item.what, street: streetOf(this.hub().property().address ?? ""), when: visitWhen(span.from, span.until, tz) });
+      let sent = false;
+      try {
+        sent = (await this.deps.send?.(phone, body)) === true;
+      } catch {
+        // Unknown: never sent again. The no-answer note tells the host.
+      }
+      if (sent) draft.booking.vendor!.proposalSent = true;
+      this.logVendorText(draft, "out", "window-proposed", body, phone);
+      this.write(file);
+    }
+  }
+
+  /** One message line in the visit log about a vendor's visit, when visit records are on. */
+  private logVendorText(job: Job, direction: "in" | "out", label: string, body: string, phone: string, sourceId?: string): void {
+    const log = this.visitLog();
+    if (!log) return;
+    const at = this.deps.now().toISOString();
+    try {
+      log.append({ type: "message", id: messageEventId(direction, sourceId ?? `vendor:${job.id}:${label}:${at}`), at, direction, role: "pro", personKey: log.personKey(phone), visit: repairVisit(job.id), label, body });
+    } catch {
+      // The log is a record, not a gate.
+    }
+  }
+
+  /** A proposed visit the vendor hasn't confirmed: one note when 48 hours are left, or at once if fewer were. */
+  private vendorWaitPass(file: FixerFile, job: Job, notes: HostNote[]): void {
+    const booking = job.booking!;
+    const vendor = booking.vendor!;
+    if (vendor.noAnswerAt) return;
+    const now = this.deps.now().getTime();
+    const from = Date.parse(booking.from);
+    const proposed = Date.parse(vendor.proposedAt);
+    // Ask by 48 hours before, but give the vendor at least a day when the proposal went later than that.
+    const askAt = Math.max(from - 48 * HOUR_MS, Math.min(proposed + 24 * HOUR_MS, from));
+    if (now < askAt) return;
+    vendor.noAnswerAt = new Date(now).toISOString();
+    notes.push(this.news(job, "vendor-no-answer", vendorNoAnswerNews({ proName: this.bookedName(file, job), what: job.what, when: visitWhen(booking.from, booking.until, this.timeZone()) }), `fixer:${job.id}:vendor-no-answer`));
   }
 
   /** The host says the guests have left: today counts as cleared for every job's checkout-day check, even one opened later today. */
