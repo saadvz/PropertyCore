@@ -58,7 +58,7 @@ export function normalizeSources(input: readonly Partial<BookingSource>[], carri
       out.push({ platform });
       continue;
     }
-    const preset = platform === "vrbo" || platform === "booking" ? PRESET_SENDERS[platform] : undefined;
+    const preset = platform === "vrbo" || platform === "booking" ? PRESET_SENDERS[platform as keyof typeof PRESET_SENDERS] : undefined;
     const sender = (item.sender?.trim() || preset || "").toLowerCase();
     if (!sender) return { ok: false, error: `Give the address ${platformLabel({ platform, name: item.name })}'s booking emails come from.` };
     if (!ADDRESS.test(sender) || sender.length > 200) return { ok: false, error: `"${sender}" isn't an email address. Give only the address, like bookings@example.com.` };
