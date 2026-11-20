@@ -1,7 +1,8 @@
 # Vendor visits: routine upkeep by text, codes that move with the window
 
 Date: 2026-11-20. Status: decisions taken with Saad on 20 Nov (below); built
-on `claude/visit-records-237-vendor`.
+on `claude/visit-records-237-vendor` on the fake lock. "As built" at the end
+lists the builder's calls. The live run waits for Saad's okay.
 Issue: saadvz/PropertyCore#237, the vendor-visit part. Project 2 of the
 verification roadmap (#236). Builds on the visit records design
 (`docs/superpowers/specs/2026-11-19-visit-records-design.md`), Fixer Core
@@ -244,4 +245,36 @@ All on the fake lock adapter, 555 numbers and made-up codes:
   timeline on the fake lock (none before YES, issued at YES, moved, ended at
   done), time on site, and the hours-log row as `measured`.
 - `test/serviceNotices.test.ts`: the store, redaction, dedupe and matching.
-- A Scratch journey: two pest-control visits end to end on the fake lock.
+- Two pest-control visits end to end on the fake lock, in
+  `test/vendorVisits.test.ts`, through to the hours log's `measured` rows.
+
+## As built
+
+Builder's calls, for review:
+
+- **The standing-yes job.** A proposed visit is a normal Fixer job, `source:
+  "upkeep"`, with `standingYes: { upkeepId, at }`. Its `hostGo` and
+  `booking.hostYes` carry the standing yes's time, so every existing gate
+  reads it as approved. A `booking.vendor` record holds the proposal, the
+  confirm, the moves and any held time.
+- **The hours log.** `fixerRows` doesn't add "approved the repair" or
+  "approved the booking" rows for a standing-yes visit, because the host
+  didn't approve that visit. A row for the standing yes itself is left to
+  #238.
+- **Moves.** At most 3 by the vendor's text. A move after the visit
+  started puts it back to `booked` when the new start is later. A move ends
+  any visit link, as a rebook does. The vendor texts, so the code normally
+  goes by text.
+- **No answer.** One note at 48 hours before the visit. When the proposal
+  went later than that, the vendor gets a day first, and the note is never
+  later than the visit's start.
+- **The proposal is saved before the send.** A failed send isn't retried.
+  The no-answer note then tells the host.
+- **Notices.** A notice whose visit isn't found is kept with no visit, and
+  the reply says so. A second copy, by message id or body, adds a
+  `duplicate` line with no body. `VisitRecord.notices` lists the hashes.
+- **Vendor-facing and host-facing wording** is new, in
+  `src/fixer-core/texts.ts` after the "Routine vendor visits (#237)" comment.
+  It's flagged for a design pass.
+- **No change to `grants.ts`.** A move changes the booking in place, and the
+  existing `syncGrants` moves the code.

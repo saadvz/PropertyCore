@@ -361,6 +361,18 @@ describe("the vendor's reply", () => {
     expect(w.fake.liveCodes("dev-front")).toEqual([]);
   });
 
+  it("only the vendor's own opted-in phone moves the visit: not after their STOP, not from another number", async () => {
+    const w = await proposed();
+    await w.desk().proInbound({ id: "other", from: "+15555550199", text: "Tuesday 1 to 3" });
+    expect(w.job()!.booking!.from).toBe(DUE_VISIT.from);
+    await w.text("STOP");
+    await w.text("Tuesday 1 to 3");
+    await w.text("YES");
+    expect(w.job()!.booking!.from).toBe(DUE_VISIT.from);
+    expect(w.job()!.booking!.vendor!.confirmedAt).toBeUndefined();
+    expect(w.fake.liveCodes("dev-front")).toEqual([]);
+  });
+
   it("a replayed YES or move does nothing a second time", async () => {
     const w = await proposed();
     await w.text("Tuesday 1 to 3", "same");
