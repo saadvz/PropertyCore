@@ -1,6 +1,6 @@
 # Booking emails from more platforms
 
-Date: 2026-11-20. Status: **draft, with open questions for Saad** (marked ❓).
+Date: 2026-11-20. Status: agreed with Saad on 20 Nov (the four questions below are settled).
 Issue: saadvz/PropertyCore#263, a child of #236. Builds on #244 (done in #248):
 [the Airbnb design](2026-11-14-airbnb-booking-emails-design.md).
 Feeds #180 (cleaner codes), #262 (guest codes), #239 (headcount).
@@ -29,6 +29,22 @@ booking until the host says yes.
   passing SPF/DKIM results where the host's mailbox shows them.
 - No Vrbo or Booking.com reader is built until real sample emails exist,
   with personal details removed.
+
+## Decided (20 Nov, with Saad)
+
+- **Vrbo and Booking.com start on the Other path**, with their senders
+  pre-filled and the host's yes on each booking. With the host's okay,
+  redacted copies of the emails that arrive become the samples for each
+  platform's own reader.
+- **A failed sender check:**
+  - on a sender the host named (their own site, or Other), the host is warned
+    in the ask and still decides;
+  - on Vrbo's or Booking.com's pre-filled sender, or on Airbnb, it changes
+    nothing.
+- **No calendar link for a platform:** the calendar rule stays. An email never
+  adds a night, and the host is asked to add that platform's calendar.
+- **A stay waiting for the host's yes is hidden from every caller.** Only
+  `waitingStays()` lists it, for the host's to-do list.
 
 ## The stay shape (for #262 and #180)
 
@@ -151,9 +167,11 @@ read_booking_email({
    ignoring case. A display name counts for nothing, as with Airbnb.
    Anything else gets `not-a-saved-sender`: nothing is stored but the hash,
    and nothing changes.
-2. **Authentication** (below). An email whose results show a failure gets
-   `failed-authentication`: nothing is stored but the hash, and nothing
-   changes.
+2. **Authentication** (below). A failure on a pre-filled sender (Vrbo,
+   Booking.com) gets `failed-authentication`: nothing is stored but the hash,
+   and nothing changes. A failure on a sender the host named goes on to the
+   host's ask, with a warning in it: "This email didn't pass its sender check.
+   Only say yes if you know this booking."
 3. **Shape.** Property Core checks the extracted fields:
    - real dates, with checkout after check-in, at most 60 nights, and
      check-in no more than 2 years ahead;
@@ -194,7 +212,7 @@ property.
 
 ## Authentication results
 
-❓ **Checked for one agent so far.** Claude's Gmail connector can return a
+**Checked for one agent so far.** Claude's Gmail connector can return a
 message in `RAW` format, the full MIME source, which includes the
 `Authentication-Results` header Gmail adds. I couldn't check the email
 connectors ChatGPT, Grok or Muse use from here. So the field is optional, and
@@ -216,7 +234,11 @@ the design never needs it to be present.
   - `fail`: `dmarc=fail`, or neither DKIM nor SPF passes.
   - `unknown`: no header was passed, or none from a known provider.
 - **What the readers do with it:**
-  - `fail` changes nothing on any path (`failed-authentication`).
+  - `fail` changes nothing for Airbnb's reader and for Vrbo's and
+    Booking.com's pre-filled senders (`failed-authentication`). For a sender
+    the host named, the ask carries the warning and the host decides.
+  - With `BOOKING_PLATFORMS` off, `authentication` is ignored, so nothing
+    changes for anyone.
   - Booking.com is heavily spoofed, so a Booking.com reader, once one exists,
     needs `pass`. Until then, a `unknown` Booking.com email still goes to the
     host for a yes, with "I couldn't check this email's sender" in the ask.
@@ -226,9 +248,10 @@ the design never needs it to be present.
 
 ## Samples for the platform readers
 
-❓ **Proposal, for Saad to decide:** Vrbo and Booking.com start on the Other
-path with their sender pre-filled, as above. When the host agrees, a
-confirmed booking's log line is marked `sampleOk: true`. A
+**Decided (20 Nov):** Vrbo and Booking.com start on the Other
+path with their sender pre-filled, as above. The host's okay is saved once
+per property (`save_sources` with `shareSamples: true`). It covers that
+property's Vrbo and Booking.com emails that the host said yes to. A
 command, `npm run booking-samples -- <property>`, writes those emails out
 with guest names, phones and email addresses replaced (the stored body
 already has door codes removed). Saad reads them before any goes into
@@ -237,7 +260,7 @@ emails go through the reader, and the per-booking yes drops away.
 
 ## A platform with no calendar link
 
-❓ An email still never adds a booked night. A booking from a platform
+**Decided (20 Nov):** an email still never adds a booked night. A booking from a platform
 whose calendar isn't saved stays `pending`. After 3 hours it gets the
 existing "the calendar doesn't show it" host note, which now adds "If you
 take bookings on Vrbo, add its calendar link."
