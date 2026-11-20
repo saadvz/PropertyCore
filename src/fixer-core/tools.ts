@@ -265,6 +265,12 @@ export const FIXER_TOOLS: FixerTool[] = [
     input: z.object({ jobId: Id, until: Instant, confirmation: Confirmation }).strict(),
   },
   {
+    name: "move_vendor_visit",
+    title: "Move a routine vendor's visit",
+    description: `A routine vendor (one with a standing yes) asked for a new time in words the line couldn't read, or one waiting for the host: the time they asked for, from and until as ISO times, at most 4 hours. A time that fits between stays moves the visit and texts the vendor. One outside the open times takes the host's yes: ${TWO_CALL} A time over a stay is refused. Never returns a code.`,
+    input: z.object({ jobId: Id, from: Instant, until: Instant, confirmation: Confirmation }).strict(),
+  },
+  {
     name: "approve_code",
     title: "OK a pro's door code",
     description: `On a property where each pro's code waits for the host, the host's OK to give the booked pro their code for this visit. The code itself is never returned. ${TWO_CALL}`,
@@ -418,6 +424,8 @@ export async function handleFixerTool(desk: FixerDesk, name: string, args: unkno
       return desk.revokeVisit(input);
     case "extend_visit":
       return desk.extendVisit(input);
+    case "move_vendor_visit":
+      return desk.moveVendorVisit(input);
     case "approve_code":
       return desk.approveCode(input);
     case "guests_left":

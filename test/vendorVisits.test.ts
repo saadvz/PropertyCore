@@ -369,3 +369,43 @@ describe("the vendor's reply", () => {
     expect(w.toBugs().filter((b) => b.startsWith("Moved to"))).toHaveLength(1);
   });
 });
+
+describe("move_vendor_visit", () => {
+  const move = (w: Awaited<ReturnType<typeof setup>>, span: { from: string; until: string }, confirmation?: string) => w.desk().moveVendorVisit({ jobId: w.job()!.id, ...span, ...(confirmation ? { confirmation } : {}) });
+
+  it("moves at once when the vendor's time fits, and texts them the echo", async () => {
+    const w = await proposed();
+    const reply = await move(w, { from: "2027-01-12T18:00:00.000Z", until: "2027-01-12T20:00:00.000Z" });
+    expect(reply.isError).toBe(false);
+    expect(w.job()!.booking!.from).toBe("2027-01-12T18:00:00.000Z");
+    expect(w.job()!.booking!.vendor!.moves!.at(-1)!.by).toBe("agent");
+    expect(w.toBugs().at(-1)).toBe("Moved to Tue, Jan 12, 1 to 3 PM. Your door code comes by text when the visit starts.");
+  });
+
+  it("outside the open times takes the host's two-call yes", async () => {
+    const w = await proposed();
+    const late = { from: "2027-01-25T14:00:00.000Z", until: "2027-01-25T16:00:00.000Z" };
+    const first = await move(w, late);
+    expect(first.isError).toBe(false);
+    expect(codeOf(first)).toBeDefined();
+    expect(w.job()!.booking!.from).toBe(DUE_VISIT.from);
+    expect((await move(w, late, codeOf(first))).isError).toBe(false);
+    expect(w.job()!.booking!.from).toBe(late.from);
+    expect(w.job()!.booking!.vendor!.moves!.at(-1)!.by).toBe("host");
+  });
+
+  it("never moves a visit over a stay, even with the host's code", async () => {
+    const w = await proposed({ stays: [["2027-01-13", "2027-01-16"]] });
+    const over = { from: "2027-01-14T14:00:00.000Z", until: "2027-01-14T16:00:00.000Z" };
+    const first = await move(w, over);
+    expect(first.isError).toBe(true);
+    expect(w.job()!.booking!.from).toBe(DUE_VISIT.from);
+  });
+
+  it("refuses a job that isn't a routine vendor's visit", async () => {
+    const w = await proposed();
+    await w.desk().openJob({ trade: "plumbing", what: "Sink leaks", urgency: "soon", source: "host" });
+    const reply = await move(w, { from: "2027-01-12T18:00:00.000Z", until: "2027-01-12T20:00:00.000Z" });
+    expect(reply.isError).toBe(true);
+  });
+});

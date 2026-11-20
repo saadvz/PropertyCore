@@ -2770,16 +2770,7 @@ export class FixerDesk {
     const proName = this.bookedName(file, job);
     const tz = this.timeZone();
     const notes: HostNote[] = [];
-    const reply = async (body: string, label: string) => {
-      if ((await this.deps.textsAllowed?.()) !== true) return;
-      let sent = false;
-      try {
-        sent = (await this.deps.send?.(phone, body)) === true;
-      } catch {
-        // Unknown: not sent again.
-      }
-      if (sent) this.logVendorText(job, "out", label, body, phone, `${sourceId}:${label}`);
-    };
+    const reply = (body: string, label: string) => this.textVendor(file, job, body, label, sourceId);
     if (isYes(text)) {
       if (!waiting) return false;
       this.logVendorText(job, "in", "confirm", text, phone, sourceId);
@@ -2810,6 +2801,59 @@ export class FixerDesk {
     this.write(file);
     await this.tell(notes);
     return true;
+  }
+
+  /** Texts a routine vendor about their visit, on the consent-checked path, and logs it once sent. */
+  private async textVendor(file: FixerFile, job: Job, body: string, label: string, sourceId: string): Promise<void> {
+    const phone = this.reachOfId(file, job, job.booking!.proId).phone;
+    const people = this.deps.people?.();
+    if (!phone || !people?.optedIn(phone) || people.stopped(phone) || (await this.deps.textsAllowed?.()) !== true) return;
+    let sent = false;
+    try {
+      sent = (await this.deps.send?.(phone, body)) === true;
+    } catch {
+      // Unknown: not sent again.
+    }
+    if (sent) this.logVendorText(job, "out", label, body, phone, `${sourceId}:${label}`);
+  }
+
+  /**
+   * The agent enters a routine vendor's new time, from the vendor's own words (#237). A time that fits moves the
+   * visit at once; one outside the open times takes the host's two-call yes; a stay over it is always refused. The
+   * vendor is texted what was set. Never returns a code.
+   */
+  moveVendorVisit(input: { jobId?: string; from?: string; until?: string; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, async () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      const booking = job?.booking;
+      if (!job || !booking?.vendor || !booking.hostYes || !liveBooking(job) || job.done) return fail("That isn't a routine vendor's visit that's still to come. Use reschedule_job for other visits.");
+      const from = Date.parse(input.from ?? "");
+      const until = Date.parse(input.until ?? "");
+      if (!Number.isFinite(from) || !Number.isFinite(until) || until <= from) return fail("Give from and until as ISO times, until after from.");
+      if (until - from > MAX_VENDOR_HOURS * HOUR_MS) return fail(`A routine visit can be at most ${MAX_VENDOR_HOURS} hours.`);
+      if (from <= this.deps.now().getTime()) return fail("That time has already started.");
+      const span = { from: new Date(from).toISOString(), until: new Date(until).toISOString() };
+      const { holds } = await this.holdsFor(file, job, span, booking.estimateCents);
+      if (holds.includes("overlaps-stay")) return fail("That time is over a stay, so it can't be booked. Ask the vendor for another time.");
+      const proName = this.bookedName(file, job);
+      const when = visitWhen(span.from, span.until, this.timeZone());
+      let by: "agent" | "host" = "agent";
+      if (holds.includes("outside-window")) {
+        const gate = this.confirm("fixer-vendor-move", job.id, tokenHash(JSON.stringify([span, booking.fingerprint])), input.confirmation, vendorHeldQuestion({ proName, what: job.what, when }));
+        if (gate !== "go") return gate;
+        by = "host";
+      }
+      const notes: HostNote[] = [];
+      const result = await this.moveVendor(file, job, span, by, notes);
+      this.write(file);
+      // The host's own yes needs no line back to them; the agent's entry does.
+      await this.tell(by === "host" ? [] : notes);
+      if (result !== "held") await this.textVendor(file, job, vendorMoved({ when, access: booking.access }), "move-echo", `move:${job.id}:${span.from}`);
+      return ok({ moved: true, jobId: job.id, from: booking.from, until: booking.until, next: `${proName} was texted the new time.` });
+    });
   }
 
   /** The vendor confirmed: from here their code may exist, and the standing yes is the host's OK for it (#237). */
