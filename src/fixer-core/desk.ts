@@ -2395,6 +2395,8 @@ export class FixerDesk {
     if (booking?.urgentStay) return this.urgentAccess(file, job, booking, overlaps, { checkoutDay, cleared });
     const check = accessCheck({ job, pro: booking ? { reach: this.reachOfId(file, job, booking.proId) } : undefined, now: this.deps.now(), checkoutDay, cleared, overlapsStay: overlaps, staysUnread: this.staysUnknown() });
     if (!job.crew || booking?.access !== "code" || !check.ok) return check;
+    // Off connected locks (switched off since the booking), a crew never gets the host's saved code: the host lets them in.
+    if (!this.lockSettings()) return { ok: false, reason: "host-access" };
     if (!crewToday) return { ok: false, reason: "outside-crew-hours" };
     return { ok: true, window: { from: crewToday.from, until: crewToday.until } };
   }

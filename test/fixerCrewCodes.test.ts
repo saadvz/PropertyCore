@@ -187,6 +187,17 @@ describe("crew-day codes", () => {
     expect(readFileSync(join(auto.root, "fixer.json"), "utf8")).not.toContain(code);
   });
 
+  it("never falls back to the host's saved code for a crew once the property leaves connected locks", async () => {
+    const w = await setup({ pros: "automatic" });
+    await w.offer();
+    await w.book("code");
+    hubFor(w.root, { now: () => NOW }).doorAccess(() => w.env).saveLocks({ ...emptyLocks() });
+    w.at("2026-11-16T14:00:00.000Z");
+    expect(await w.desk().revealCode(w.job().id)).toEqual({ ok: false, reason: "host-access" });
+    await w.desk().tick();
+    expect(w.sent.some((item) => item.body.includes(SAVED))).toBe(false);
+  });
+
   it("revokes the crew's code when the job is cancelled", async () => {
     const w = await setup();
     await w.offer();
