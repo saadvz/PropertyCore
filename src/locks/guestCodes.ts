@@ -102,8 +102,9 @@ export function guestCodesOn(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 /**
- * True when a booking still needs the host's yes before it moves anything. Booking emails from other
- * platforms (#263) will; every booking in the log today is Airbnb's and counts as it is.
+ * True when a booking still needs the host's yes before it moves anything. A booking from a platform
+ * without its own reader (#263) waiting on that yes is already left out of rebuildBookings, so none
+ * reaches here; this stays as a second hook.
  */
 export function needsHostYes(_booking: EmailBooking): boolean {
   return false;
@@ -120,7 +121,12 @@ export interface WantedInput {
 
 /** One upcoming stay that can carry a guest code, whatever the host's choice. */
 export interface GuestStay {
-  confirmationCode: string;
+  /**
+   * The booking's key in the booking-email log: Airbnb's confirmation code, or another platform's
+   * prefixed with it, like vrbo:HA-1A2B3C, or direct:2026-12-12:2026-12-15 when its email gave no
+   * reference (#263). Unique across platforms, so it names the stay's code, its state and its notes.
+   */
+  key: string;
   checkIn: string;
   checkout: string;
   window: CodeWindow;
@@ -147,7 +153,8 @@ export function stayLabel(checkIn: string, checkout: string): string {
   return `the guest on ${stayDates(checkIn, checkout)}`;
 }
 
-export const stayJob = (confirmationCode: string): string => `stay:${confirmationCode}`;
+/** A stay's job, by its booking key: `stay:HM…` for Airbnb, as before #263; `stay:vrbo:…` and the like for other platforms. */
+export const stayJob = (key: string): string => `stay:${key}`;
 export const leaseJob = (id: string): string => `lease:${id}`;
 
 /** Every booking in the log that isn't cancelled and hasn't checked out, oldest check-in first. */
@@ -155,7 +162,7 @@ export function guestStays(root: string, input: WantedInput): GuestStay[] {
   const late = readGuestMessages(root);
   const out: GuestStay[] = [];
   const holds = input.needsHostYes ?? needsHostYes;
-  for (const booking of rebuildBookings(readBookingEmails(root)).values()) {
+  for (const [key, booking] of rebuildBookings(readBookingEmails(root))) {
     if (booking.cancelled || holds(booking)) continue;
     const checkInTime = booking.checkInTime ?? input.checkInTime ?? DEFAULT_CHECK_IN;
     const checkoutTime = lateCheckoutFor(late, booking.checkout) ?? booking.checkoutTime ?? input.checkoutTime ?? DEFAULT_CHECKOUT;
@@ -167,7 +174,7 @@ export function guestStays(root: string, input: WantedInput): GuestStay[] {
     }
     if (Date.parse(window.until) <= input.now.getTime() || Date.parse(window.from) >= Date.parse(window.until)) continue;
     out.push({
-      confirmationCode: booking.confirmationCode,
+      key,
       checkIn: booking.checkIn,
       checkout: booking.checkout,
       window,
@@ -205,8 +212,8 @@ export function wantedGuestCodes(root: string, file: GuestCodesFile, input: Want
   if (file.mode === "automatic" || file.mode === "ask") {
     for (const stay of guestStays(root, input)) {
       if (!stay.due) continue;
-      if (file.mode === "ask" && !file.stays[stay.confirmationCode]?.yesAt) continue;
-      wanted.push({ jobId: stayJob(stay.confirmationCode), person: `guest:${stay.confirmationCode}`, window: stay.window, label: stay.label, who: { role: "guest" } });
+      if (file.mode === "ask" && !file.stays[stay.key]?.yesAt) continue;
+      wanted.push({ jobId: stayJob(stay.key), person: `guest:${stay.key}`, window: stay.window, label: stay.label, who: { role: "guest" } });
     }
   }
   for (const lease of liveLeases(file, input)) {
