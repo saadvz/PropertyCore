@@ -7,6 +7,7 @@ import { readHubFile, type Stay } from "../hub/store";
 import { effectiveSeen, PACKAGES_FILE, readPackages, supplyKey, type PackagesFile } from "../package-arrivals/store";
 import { readSupply, SUPPLY_FILE, type SupplyFile } from "../supply-core/store";
 import { buildVisits, type VisitRecord } from "../visits/derive";
+import { codePerson } from "../visits/events";
 import { VISIT_EVENTS_DIR, VisitLog } from "../visits/store";
 import type { RowFact } from "./fact";
 import { routeFact } from "./ownerRules";
@@ -55,6 +56,8 @@ export interface PropertyRecords {
   fixer?: FixerFile;
   supply?: SupplyFile;
   packages?: PackagesFile;
+  /** Unlocks with the host's own standing code (#180), with the next lock from outside when the lock reported one. Never a code. */
+  ownerEntries?: { eventId: string; at: string; until?: string; device: string }[];
   /** Visit records (#237), when the property has a visit log. Absent keeps every row as it was. */
   visits?: VisitRecord[];
 }
@@ -126,7 +129,31 @@ export function readRecords(root: string): PropertyRecords {
     ...(supply ? { supply } : {}),
     ...(packages ? { packages } : {}),
     ...(visits ? { visits } : {}),
+    ...ownerEntriesOf(root, safe),
   };
+}
+
+/** How long after an owner's entry a lock from outside counts as them leaving. */
+const OWNER_EXIT_WINDOW_MS = 12 * 60 * 60_000;
+
+/**
+ * The host's own entries on their standing code (#180): each unlock in the visit log whose code is the
+ * host's (`visit-codes.json`), and the first lock from outside on any door within 12 hours after it.
+ */
+function ownerEntriesOf(root: string, safe: <T>(read: () => T) => T | undefined): { ownerEntries?: PropertyRecords["ownerEntries"] } {
+  if (!existsSync(join(root, VISIT_EVENTS_DIR))) return {};
+  const log = new VisitLog(root);
+  const names = safe(() => log.codeNames()) ?? {};
+  if (!Object.values(names).some((person) => person.role === "host")) return {};
+  const locks = (safe(() => log.read()) ?? []).flatMap((event) => (event.type === "lock" ? [event] : [])).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const entries: NonNullable<PropertyRecords["ownerEntries"]> = [];
+  for (const event of locks) {
+    if (event.action !== "unlock" || codePerson(names, event.codeName)?.role !== "host") continue;
+    const start = Date.parse(event.at);
+    const exit = locks.find((other) => other.action === "lock" && other.side === "outside" && Date.parse(other.at) > start && Date.parse(other.at) - start <= OWNER_EXIT_WINDOW_MS);
+    entries.push({ eventId: event.id, at: event.at, ...(exit ? { until: exit.at } : {}), device: event.device });
+  }
+  return entries.length > 0 ? { ownerEntries: entries } : {};
 }
 
 /** A visit's measured span, when visit records (#237) have both an arrival and a departure for it. */
@@ -407,12 +434,25 @@ export const packageRows: RowSource = (records) => {
 };
 
 /**
- * The owners' own entries on their standing lock codes: arrival, departure and time on site, measured.
- * Waiting on the smart-lock connection (saadvz/PropertyCore#180) and the lock partner's event shape, so it
- * gives nothing yet. When it lands, each entry is one row: kind "owner-on-site", actor "host", log "owner",
- * timing "measured", from the entry to the exit, with the lock event as its reference.
+ * The owners' own entries on their standing lock codes (#180): arrival, departure and time on site,
+ * measured. Each entry is one row: kind "owner-on-site", actor "host", log "owner", timing "measured", from
+ * the entry to the next lock from outside, with the lock event as its reference. An entry with no exit
+ * the lock reported asks the host when they left.
  */
-export const ownerLockEntries: RowSource = () => [];
+export const ownerLockEntries: RowSource = (records) =>
+  (records.ownerEntries ?? []).map((entry) => ({
+    kind: "owner-on-site",
+    actor: "host",
+    log: "owner",
+    participant: "",
+    at: entry.at,
+    ...(entry.until ? { until: entry.until } : {}),
+    task: `On site (${entry.device})`,
+    reference: `Lock event ${entry.eventId}`,
+    onSite: true,
+    timing: "measured",
+    ...(entry.until ? {} : { needs: "When did you leave? The lock didn't report it." }),
+  }));
 
 export const DEFAULT_SOURCES: readonly RowSource[] = [cleanerRows, fixerRows, supplyRows, packageRows, ownerLockEntries];
 

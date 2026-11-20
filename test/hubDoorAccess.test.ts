@@ -192,41 +192,41 @@ const PERSON = "+15555550123";
 const WINDOW = { from: "2026-11-07T15:00:00Z", until: "2026-11-09T05:00:00Z" };
 
 describe("hub door access: the request", () => {
-  it("grants the saved code and lock location", () => {
+  it("grants the saved code and lock location", async () => {
     const { door } = open();
     door.save(CODE, "back door", KEY);
-    expect(door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toEqual({ ok: true, kind: "code", code: CODE, lockLocation: "back door", until: WINDOW.until });
+    expect(await door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toEqual({ ok: true, kind: "code", code: CODE, lockLocation: "back door", until: WINDOW.until });
   });
 
-  it("refuses no-code before anything is saved", () => {
-    expect(open().door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toEqual({ ok: false, reason: "no-code" });
+  it("refuses no-code before anything is saved", async () => {
+    expect(await open().door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toEqual({ ok: false, reason: "no-code" });
   });
 
-  it("refuses no-key with an empty env and no key", () => {
+  it("refuses no-key with an empty env and no key", async () => {
     const { root, door } = open();
     door.save(CODE, undefined, KEY);
     resetHubs();
-    expect(open(root).door.request({ person: PERSON, window: WINDOW, purpose: "cleaning" })).toEqual({ ok: false, reason: "no-key" });
+    expect(await open(root).door.request({ person: PERSON, window: WINDOW, purpose: "cleaning" })).toEqual({ ok: false, reason: "no-key" });
   });
 
-  it("refuses sealed when the key doesn't open the seal", () => {
+  it("refuses sealed when the key doesn't open the seal", async () => {
     const { root, door } = open();
     door.save(CODE, undefined, KEY);
     resetHubs();
-    expect(open(root).door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: randomBytes(32) })).toEqual({ ok: false, reason: "sealed" });
+    expect(await open(root).door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: randomBytes(32) })).toEqual({ ok: false, reason: "sealed" });
   });
 
-  it("refuses window-over when now is at or past until", () => {
+  it("refuses window-over when now is at or past until", async () => {
     let now = new Date(WINDOW.until);
     const root = folder();
     const door = hubFor(root, { now: () => now }).doorAccess(() => ({}));
     door.save(CODE, undefined, KEY);
-    expect(door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toEqual({ ok: false, reason: "window-over" });
+    expect(await door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toEqual({ ok: false, reason: "window-over" });
     now = new Date(Date.parse(WINDOW.until) - 1);
-    expect(door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY }).ok).toBe(true);
+    expect((await door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).ok).toBe(true);
   });
 
-  it("a fake second provider answers behind request()", () => {
+  it("a fake second provider answers behind request()", async () => {
     const { door } = open();
     door.save(CODE, undefined, KEY);
     const seen: string[] = [];
@@ -237,16 +237,16 @@ describe("hub door access: the request", () => {
       },
     };
     door.useProvider(partner);
-    expect(door.request({ person: PERSON, window: WINDOW, purpose: "repair", key: KEY })).toEqual({ ok: true, kind: "code", code: OTHER, until: WINDOW.until });
+    expect(await door.request({ person: PERSON, window: WINDOW, purpose: "repair", key: KEY })).toEqual({ ok: true, kind: "code", code: OTHER, until: WINDOW.until });
     expect(seen).toEqual([`${PERSON}:repair`]);
   });
 
-  it("a re-saved code replaces the open one", () => {
+  it("a re-saved code replaces the open one", async () => {
     const { door } = open();
     door.save(CODE, undefined, KEY);
-    expect(door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toMatchObject({ ok: true, code: CODE });
+    expect(await door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toMatchObject({ ok: true, code: CODE });
     door.save(OTHER, undefined, KEY);
-    expect(door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toMatchObject({ ok: true, code: OTHER });
+    expect(await door.request({ person: PERSON, window: WINDOW, purpose: "cleaning", key: KEY })).toMatchObject({ ok: true, code: OTHER });
     expect(door.codeForChecks(KEY)).toBe(OTHER);
   });
 });
@@ -262,12 +262,12 @@ describe("hub door access: review minors", () => {
     expect(fileOf(root)).toBe(before);
   });
 
-  it("a request with no key uses the key the code was last saved with, then the server's", () => {
+  it("a request with no key uses the key the code was last saved with, then the server's", async () => {
     const { root, door } = open();
     door.save(CODE, undefined, KEY);
-    expect(door.request({ person: "+15555550123", window: { from: "2026-11-07T15:00:00Z", until: "2026-11-09T05:00:00Z" }, purpose: "cleaning" })).toMatchObject({ ok: true, code: CODE });
+    expect(await door.request({ person: "+15555550123", window: { from: "2026-11-07T15:00:00Z", until: "2026-11-09T05:00:00Z" }, purpose: "cleaning" })).toMatchObject({ ok: true, code: CODE });
     resetHubs();
     // After a restart nothing is in memory: with no server key there's no key.
-    expect(open(root).door.request({ person: "+15555550123", window: { from: "2026-11-07T15:00:00Z", until: "2026-11-09T05:00:00Z" }, purpose: "cleaning" })).toEqual({ ok: false, reason: "no-key" });
+    expect(await open(root).door.request({ person: "+15555550123", window: { from: "2026-11-07T15:00:00Z", until: "2026-11-09T05:00:00Z" }, purpose: "cleaning" })).toEqual({ ok: false, reason: "no-key" });
   });
 });

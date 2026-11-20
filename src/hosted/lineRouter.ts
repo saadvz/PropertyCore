@@ -17,6 +17,7 @@ import { proRoute } from "../fixer-core/proLine";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { isStartText, isStopText, TenantOptOuts } from "./crossService";
 import { fixerProText } from "./fixer";
+import { standingLineText } from "./locks";
 import { LineAsks } from "./lineAsks";
 import { accountPeople } from "./sharedPeople";
 import { answerOf, bareAnswer, businessFor, droppedNote, lineStartText, lineStopText, namedProperty, whichPropertyText, type Named } from "./sharedRoute";
@@ -205,6 +206,11 @@ export async function handleLineText(h: HostedCleaner, r: HostedRequest, tenant:
   const from = parsePhone(fields.From ?? "") ?? "";
   const text = fields.Body ?? "";
   const people = await accountPeople(h, tenant);
+  // A person the host gave a standing code: their YES gets their private code link. Nothing else is taken here.
+  if (await standingLineText(h, tenant, from, text)) {
+    h.registry.touch(tenant.id);
+    return r.send(200, "text/xml", EMPTY_TWIML);
+  }
   // A pro, and nothing else on the account, texts Fixer Core: their DONE, a price, photos, or YES and STOP.
   const pros = proRoute(tenant, people, from);
   if (pros) {

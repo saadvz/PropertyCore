@@ -43,6 +43,9 @@ import { phoneCodesFor } from "../hosted/phoneCodes";
 import { accountDoor, SignUpDesk } from "../hosted/signUp";
 import { openAccount, pointVoiceOnce } from "../cleaner-core/hosted/lines";
 import { retryVoiceDeletes, VOICE_PATH, VOICE_TRANSCRIPT_PATH } from "../hosted/voice";
+import { LOCK_WEBHOOK_PATH, tickAllLocks } from "../hosted/locks";
+import { lockAdapter, setLockAdapter, smartLocksOn } from "../locks/registry";
+import { seamFromEnv } from "../locks/seam";
 import { handleCleanerUploadPage, isFormPost } from "../cleaner-core/uploadPage";
 import { ALERT_UPLOAD_MAX_BYTES, alertUploadCode, calendarUploadCode, doorCodeUploadCode, uploadPageOf, CLEANER_MCP_PATH, CLEANER_TWILIO_GROUP_PATH, CLEANER_TWILIO_PATH, CLEANER_TWILIO_STATUS_PATH, handleCleanerAlertUpload, handleCleanerCalendarUpload, handleCleanerDoorCodeUpload, handleCleanerGroupWebhook, handleCleanerMcpHttp, handleCleanerTwilioStatus, handleCleanerTwilioWebhook, textAddressedTo } from "../cleaner-core/http";
 import { drainCleanerAlerts } from "../cleaner-core/liveDesk";
@@ -227,7 +230,7 @@ function publicRouteAllowed(method: string, path: string, oauth: boolean, hosted
     return (method === "GET" && path.startsWith("/portable/artifacts/")) || (method === "POST" && path.startsWith("/portable/uploads/"));
   }
   if (oauth && (isOAuthPublicPath(path, OAUTH_RESOURCE_PATHS) || (method === "GET" && CONNECT_PAGE_FILES.includes(path)))) return true;
-  if (method === "POST" && (path === SENDBLUE_WEBHOOK_PATH || path === TWILIO_WEBHOOK_PATH || path === CLEANER_TWILIO_PATH || path === CLEANER_TWILIO_STATUS_PATH || path === CLEANER_TWILIO_GROUP_PATH || path === VOICE_PATH || path === VOICE_TRANSCRIPT_PATH || path === PHOTON_WEBHOOK_PATH || path === LOCAL_WEBHOOK_PATH)) return true;
+  if (method === "POST" && (path === LOCK_WEBHOOK_PATH || path === SENDBLUE_WEBHOOK_PATH || path === TWILIO_WEBHOOK_PATH || path === CLEANER_TWILIO_PATH || path === CLEANER_TWILIO_STATUS_PATH || path === CLEANER_TWILIO_GROUP_PATH || path === VOICE_PATH || path === VOICE_TRANSCRIPT_PATH || path === PHOTON_WEBHOOK_PATH || path === LOCAL_WEBHOOK_PATH)) return true;
   if (method === "GET" && isPublicCompliancePath(path)) return true;
   if (method === "GET" && (/^\/verify\/[A-Za-z0-9_-]+$/.test(path) || path === "/verify.js" || path === "/styles.css")) return true;
   if (hosted && method === "GET" && (path === "/connect" || path === "/connect.js" || path === "/install" || path === "/install.js" || path === "/styles.css")) return true;
@@ -497,6 +500,13 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     now: clock,
     log,
   });
+  // Connected locks (#180): the lock partner's adapter, only with SMART_LOCKS on and its API key in the
+  // environment. An adapter already set (a test's fake) stays. The key is never logged.
+  if (cleanerMultiTenant(installation.env()) && smartLocksOn(installation.env()) && !lockAdapter()) {
+    const partner = seamFromEnv(installation.env());
+    if (partner) setLockAdapter(partner);
+    else log("SMART_LOCKS is on, but no lock partner key is set: properties keep their saved door codes.");
+  }
   // Lines pointed before voice get their voice webhook once, so a pro's call reaches the service.
   if (cleanerMultiTenant(installation.env())) {
     void pointVoiceOnce(hostedCleanerService).catch(() => log("Couldn't point the lines' voice webhooks this time."));
@@ -1116,7 +1126,8 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
           return drainAllTenants(hostedCleanerService)
             .catch(() => undefined)
             .then(() => tickAllFixers(hostedCleanerService))
-            .then(() => tickAllCameras(hostedCleanerService));
+            .then(() => tickAllLocks(hostedCleanerService).catch(() => undefined))
+            .then(() => tickAllCameras(hostedCleanerService).catch(() => undefined));
         return drainCleanerAlerts(installation.root, () => installation.env(), clock);
       })
       .catch(() => undefined);
