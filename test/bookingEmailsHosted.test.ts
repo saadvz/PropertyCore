@@ -21,8 +21,8 @@ afterEach(() => {
   closeHostedApps();
 });
 
-async function twoProperties(courtName = "Harbor Cottage by the Water", laneName = "Lane House") {
-  open = await multiTenantApp();
+async function twoProperties(courtName = "Harbor Cottage by the Water", laneName = "Lane House", env?: NodeJS.ProcessEnv) {
+  open = await multiTenantApp(env ? { env } : {});
   const m = open;
   const account = m.registry.create({ label: "Lane", twilioNumber: "+15555550150" }).tenant;
   const token = await m.join(account.id, "grok");
@@ -71,5 +71,49 @@ describe("an Airbnb email on an account with two properties", () => {
     const reply = await m.toolAt(PATH, token, "read_booking_email", { email: sampleEmail("confirmed-stacked") });
     expect(reply.isError).toBe(true);
     expect(reply.text).toContain("matches more than one property");
+  });
+});
+
+/** A booking from the host's own site (#263), with BOOKING_PLATFORMS on. Made-up reference. */
+const DIRECT = {
+  from: "Court Stays <bookings@example.test>",
+  subject: "New Booking DB-4417",
+  body: "Booking #DB-4417 at Court Flat, Oct 18, 2026 to Oct 22, 2026, 2 guests.",
+  messageId: "<db-4417@example.test>",
+  receivedAt: "2026-10-14T15:00:00.000Z",
+};
+const DIRECT_FIELDS = { kind: "confirmed", reference: "DB-4417", listing: "Court Flat", checkIn: { date: "2026-10-18" }, checkout: { date: "2026-10-22" }, guests: { adults: 2 } };
+const ON = { BOOKING_PLATFORMS: "1" };
+
+describe("a booking email from another platform on an account with two properties (#263)", () => {
+  it("goes to the one property that saved its sender, and waits there for the host's yes", SLOW, async () => {
+    const { m, token, lane, court, folder } = await twoProperties("Court Flat", "Lane House", ON);
+    expect((await m.toolAt(PATH, token, "save_sources", { property: court.id, bookingEmails: [{ platform: "direct", sender: "bookings@example.test" }] })).isError).toBe(false);
+    const reply = await m.toolAt(PATH, token, "read_booking_email", { email: DIRECT, extracted: DIRECT_FIELDS });
+    expect(reply.isError).toBe(false);
+    expect(reply.structured?.outcome).toBe("awaiting-host");
+    expect(readBookingEmails(folder(court)).map((item) => item.outcome)).toEqual(["awaiting-host"]);
+    expect(existsSync(join(folder(lane), BOOKING_EMAILS_FILE))).toBe(false);
+  });
+
+  it("goes by the listing when both properties saved the sender, and asks which when nothing tells them apart", SLOW, async () => {
+    const { m, token, lane, court, folder } = await twoProperties("Court Flat", "Lane House", ON);
+    for (const property of [lane, court]) expect((await m.toolAt(PATH, token, "save_sources", { property: property.id, bookingEmails: [{ platform: "direct", sender: "bookings@example.test" }] })).isError).toBe(false);
+    const routed = await m.toolAt(PATH, token, "read_booking_email", { email: DIRECT, extracted: DIRECT_FIELDS });
+    expect(routed.structured?.outcome).toBe("awaiting-host");
+    expect(readBookingEmails(folder(court))).toHaveLength(1);
+    const { listing: _listing, ...unnamed } = DIRECT_FIELDS;
+    const asked = await m.toolAt(PATH, token, "read_booking_email", { email: { ...DIRECT, messageId: "<other@example.test>" }, extracted: { ...unnamed, reference: "" } });
+    expect(asked.isError).toBe(true);
+    expect(asked.text).toContain("Which property is this booking email for?");
+  });
+
+  it("names no property for a sender no property saved, and keeps nothing", SLOW, async () => {
+    const { m, token, lane, court, folder } = await twoProperties("Court Flat", "Lane House", ON);
+    const reply = await m.toolAt(PATH, token, "read_booking_email", { email: DIRECT, extracted: DIRECT_FIELDS });
+    expect(reply.isError).toBe(true);
+    expect(reply.text).toContain("Which property is this booking email for?");
+    expect(existsSync(join(folder(lane), BOOKING_EMAILS_FILE))).toBe(false);
+    expect(existsSync(join(folder(court), BOOKING_EMAILS_FILE))).toBe(false);
   });
 });

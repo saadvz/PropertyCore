@@ -17,7 +17,7 @@ import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink,
 import { joinSplitDigits } from "../hub/digits";
 import { sameHash, uploadHash } from "../hub/uploadCode";
 import { isDeparture, openCleanerCore, redactDigitRuns, SAFETY, storedConsent, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type TextKind } from "./core";
-import { cleanerMultiTenant, groupChatEnabled, guestMessagesOn, visitRecordsOn } from "./flag";
+import { bookingPlatformsOn, cleanerMultiTenant, groupChatEnabled, guestMessagesOn, visitRecordsOn } from "./flag";
 import { visitLogFor } from "../visits/store";
 import { LATE_CHECKOUT_ACTION, setLateCheckout } from "./lateCheckout";
 import { GROUP_RECIPIENT, draftStatus, earlierThan, replyStateAt, type ReplyState, type StoredDraft } from "./replies";
@@ -25,6 +25,8 @@ import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
 import { calendarUrlAllowed, type CalendarFetch } from "../hub/fetchLimits";
 import { setCalendarFetch } from "../hub/calendarFetch";
+import { waitingStays } from "../hub/bookingEmails";
+import { bookingEmailsLine, type BookingSource as EmailSource } from "../hub/bookingSources";
 import { forgetHub, hubFor, resetHubs, type Hub, type HubSave, type UploadResult } from "../hub/hub";
 import type { HubProperty } from "../hub/store";
 import { DOOR_CODE_IN_CHAT, LEGACY_CALENDAR, MAX_CALENDARS, maskedLink, setAsideLine, type StoredCalendar } from "../hub/calendars";
@@ -361,6 +363,10 @@ interface SourcesInput {
   uploadLink?: { name?: string };
   /** The host has no more booking calendars to add. */
   done?: boolean;
+  /** The platforms the host takes bookings on (#263), with BOOKING_PLATFORMS on. Saved alone, the calendars stay as they are. */
+  bookingEmails?: Partial<EmailSource>[];
+  /** The host agreed that redacted copies of their Vrbo and Booking.com emails may be kept as samples (#263). */
+  shareSamples?: boolean;
 }
 
 interface ScheduleInput {
@@ -1360,6 +1366,22 @@ export class LiveDesk {
   private saveSourcesNow(input: SourcesInput, pinKey: Buffer | undefined): ToolReply {
     if (!this.place.address) return this.fail("Save the property first.");
     this.openSeal(pinKey);
+    const { bookingEmails, shareSamples, ...calendarPart } = input;
+    if (bookingEmails !== undefined || shareSamples !== undefined) {
+      if (!this.bookingPlatformsOn()) return this.fail("Booking platforms aren't available yet. Airbnb's emails are read as they are.");
+      if (bookingEmails !== undefined) {
+        const valid = this.hub.setBookingSources(bookingEmails, true);
+        if (!valid.ok) return this.fail(valid.error);
+      }
+      // The calendar part of the same call goes first: when it's refused, nothing is saved.
+      const calendarsGiven = calendarPart.calendars !== undefined || calendarPart.google !== undefined || calendarPart.uploadLink !== undefined || calendarPart.done !== undefined;
+      const calendarReply = calendarsGiven ? this.saveSourcesNow(calendarPart, pinKey) : undefined;
+      if (calendarReply && !calendarReply.ok) return calendarReply;
+      if (bookingEmails !== undefined) this.hub.setBookingSources(bookingEmails);
+      if (shareSamples !== undefined) this.hub.setShareSamples(shareSamples === true);
+      // An upload link from the calendar part stays in the reply.
+      return calendarReply ?? this.setupReply();
+    }
     if (input.uploadLink) return this.issueCalendarUpload(input.uploadLink.name?.trim() || LEGACY_CALENDAR, input.google, pinKey);
     let calendars: StoredCalendar[] = this.hub.stored();
     if (input.calendars !== undefined) {
@@ -1906,6 +1928,7 @@ export class LiveDesk {
       ...(this.needsTimes(engine) ? { needsTimes: true as const } : {}),
       ...(read.unread.length > 0 ? { unread: read.unread } : {}),
       ...(read.googleUnread ? { googleUnread: true as const } : {}),
+      ...this.bookingEmailsReply(),
     });
   }
 
@@ -2252,6 +2275,7 @@ export class LiveDesk {
       listings: () => this.hub.airbnbListings(),
       addListing: (title) => this.hub.addAirbnbListing(title),
       carriesCode: (text) => this.carriesCode(text) || this.leaks(text),
+      isCode: (text) => this.leaks(text),
       readCalendars: async () => {
         if (!this.engine || !this.file.checked) return false;
         if (this.hub.google() && !googleEvents) return false;
@@ -2259,8 +2283,10 @@ export class LiveDesk {
         return true;
       },
       cleanerName: () => this.file.cleanerName ?? "your cleaner",
-      issueApproval: (target, fingerprint, next) => this.approvals.issue(CANCEL_ACTION, target, fingerprint, next),
-      redeem: (code, target, fingerprint) => this.redeemed(this.approvals, code, CANCEL_ACTION, target, fingerprint),
+      issueApproval: (target, fingerprint, next, action = CANCEL_ACTION) => this.approvals.issue(action, target, fingerprint, next),
+      redeem: (code, target, fingerprint, action = CANCEL_ACTION) => this.redeemed(this.approvals, code, action, target, fingerprint),
+      platformsOn: () => bookingPlatformsOn(this.env()),
+      sources: () => this.hub.bookingSources(),
     };
   }
 
@@ -2588,6 +2614,20 @@ export class LiveDesk {
         inProgress: jobs.some((job) => job.status === "cleared" || job.status === "in_progress"),
       };
     });
+  }
+
+  /** Booking emails from more platforms (#263) are on for this deployment. */
+  bookingPlatformsOn(): boolean {
+    return bookingPlatformsOn(this.env());
+  }
+
+  /** With BOOKING_PLATFORMS on (#263): which senders the agent passes, and the bookings waiting on the host. */
+  private bookingEmailsReply(): { bookingEmails?: string; waitingBookings?: number } {
+    if (!this.bookingPlatformsOn()) return {};
+    const saved = this.hub.bookingSourcesSaved();
+    const ask = saved ? "" : " If the host also takes bookings anywhere else (Vrbo, Booking.com, their own booking site, or another platform), ask once which, with a choice card, and save them with save_sources bookingEmails.";
+    const waiting = waitingStays(this.root).length;
+    return { bookingEmails: `${bookingEmailsLine(this.hub.bookingSources())}${ask}`, ...(waiting > 0 ? { waitingBookings: waiting } : {}) };
   }
 
   /** Guest messages (#242) are on for this deployment: set_late_checkout is listed and answered. */
@@ -3508,9 +3548,9 @@ export class LiveDesk {
     const timesMissing = !this.file.texting && (!this.place.checkoutTime || !this.place.checkInTime);
     if (!this.place.address || timesMissing) {
       ask = propertyAsk({ address: Boolean(this.place.address), checkoutTime: Boolean(this.place.checkoutTime), checkInTime: Boolean(this.place.checkInTime) });
-    } else if (!this.hasSources()) ask = sourcesAsk(this.place.nickname ?? this.file.business ?? "the property");
+    } else if (!this.hasSources()) ask = sourcesAsk(this.place.nickname ?? this.file.business ?? "the property", this.asksPlatforms());
     // A setup that already saved the cleaner was past this step, so it isn't asked again.
-    else if (!this.hub.calendarsDone() && !this.file.cleaner) ask = moreSourcesAsk(this.sourceNames(), this.place.nickname ?? this.file.business ?? "the property");
+    else if (!this.hub.calendarsDone() && !this.file.cleaner) ask = moreSourcesAsk(this.sourceNames(), this.place.nickname ?? this.file.business ?? "the property", this.asksPlatforms());
     else if (!this.file.cleaner) ask = peopleAsk(this.file.business ?? "the host");
     // Setups that saved texting before the schedule step existed skip it.
     else if (!this.file.schedule && !this.file.texting) ask = SCHEDULE_STEP;
@@ -3559,6 +3599,7 @@ export class LiveDesk {
       ...(this.file.checked ? { turns: this.turns() } : {}),
       ...(notes.length > 0 ? { notes } : {}),
       ...this.setAsideReply(),
+      ...this.bookingEmailsReply(),
     };
   }
 
@@ -3631,9 +3672,9 @@ export class LiveDesk {
     if (!place.address || !place.checkoutTime || !place.checkInTime) {
       needsYou.push(propertyAsk({ address: Boolean(place.address), checkoutTime: Boolean(place.checkoutTime), checkInTime: Boolean(place.checkInTime) }));
     }
-    if (!this.hasSources()) needsYou.push(sourcesAsk(name));
+    if (!this.hasSources()) needsYou.push(sourcesAsk(name, this.asksPlatforms()));
     // Whether bookings come from anywhere else stays in the summary until the host says that's all.
-    else if (!this.hub.calendarsDone()) needsYou.push(moreSourcesAsk(this.sourceNames(), name));
+    else if (!this.hub.calendarsDone()) needsYou.push(moreSourcesAsk(this.sourceNames(), name, this.asksPlatforms()));
     if (!this.file.cleaner) needsYou.push(peopleAsk(this.file.business ?? "the host"));
     if (!this.file.schedule) needsYou.push(SCHEDULE_STEP);
     if (!this.codeSaved()) needsYou.push(DOOR_CODE_STEP);
@@ -3646,6 +3687,11 @@ export class LiveDesk {
     const missingTools = new Set(needsYou.map((step) => step.tool));
     const fill = DRAFT_FILL.filter((part) => !part.tool || missingTools.has(part.tool));
     return { fill, confirm: DRAFT_CONFIRM, needsYou: needsYou.map(shown) };
+  }
+
+  /** The platforms question (#263) is asked with BOOKING_PLATFORMS on, until the host saves an answer. */
+  private asksPlatforms(): boolean {
+    return this.bookingPlatformsOn() && !this.hub.bookingSourcesSaved();
   }
 
   /** What texting needs before it can be saved, in the host's words: what the old save order guaranteed. */

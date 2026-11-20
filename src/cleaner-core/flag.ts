@@ -69,3 +69,8 @@ export function guestMessagesOn(env: NodeJS.ProcessEnv = process.env): boolean {
 export function camerasOn(env: NodeJS.ProcessEnv = process.env): boolean {
   return isOn(env.CAMERAS);
 }
+
+/** Booking emails from more platforms (#263): the host's platforms and the Other path. Off unless BOOKING_PLATFORMS is exactly "1" or "true". */
+export function bookingPlatformsOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isOn(env.BOOKING_PLATFORMS);
+}
