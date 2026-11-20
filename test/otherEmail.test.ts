@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { checkOtherEmail, type ExtractedBooking } from "../src/hub/otherEmail";
+import { DOOR_CODE } from "./wiringProof";
 
 /** The shape check on fields the agent extracted from a non-Airbnb booking email (#263). Made-up emails and references. */
 
@@ -44,8 +45,8 @@ describe("checkOtherEmail", () => {
   });
 
   it("refuses fields that carry the door code", () => {
-    const carries = (text: string) => text.includes("4821");
-    expect(checkOtherEmail(EMAIL, { ...GOOD, listing: "Door 4821" }, SOURCE, NOW, carries)).toMatchObject({ ok: false, reason: "door-code" });
+    const carries = (text: string) => text.includes(DOOR_CODE);
+    expect(checkOtherEmail(EMAIL, { ...GOOD, listing: `Door ${DOOR_CODE}` }, SOURCE, NOW, carries)).toMatchObject({ ok: false, reason: "door-code" });
   });
 
   it("names the listing when given", () => {

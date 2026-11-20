@@ -86,8 +86,10 @@ extra. `vouchedBy` is there so a caller can say where the times came from
 two differently.
 
 For a caller that wants to show what's waiting (the host's to-do list),
-`waitingStays(root)` returns the stays still waiting for a yes, each with the
-same shape plus `vouchedBy: "none"`. Nothing should act on those stays.
+`waitingStays(root)` returns the stays still waiting for a yes. Each has the
+same shape, with `vouchedBy: "none"` and the email's `kind`. Nothing should
+act on those stays. `get_state` and `check_now` carry their count as
+`waitingBookings`.
 
 Keys: an Airbnb booking keeps its bare `HM…` code as its key, so existing
 logs rebuild unchanged. Any other platform's booking is keyed
@@ -134,12 +136,19 @@ interface HubFile { /* … */ bookingSources?: BookingSource[] }
 `initialize` instructions are shared by every property on a connection, so
 they can't list one property's platforms. Instead:
 - `get_state` and `check_now` return `bookingEmails`: one line naming the
-  senders to look for, like "Look for Airbnb's reservation emails, and emails
-  from sender@messages.homeaway.com (Vrbo) and bookings@myplace.com (your
-  booking site)."
-- `BOOKING_EMAIL_INSTRUCTION` gains one sentence, only with the flag on:
-  "Look only for the senders get_state's bookingEmails names."
-- Grok gets it from the tool description, as with Airbnb.
+  senders to look for. An example: "Look only for Airbnb's reservation emails,
+  and reservation emails from sender@messages.homeaway.com (Vrbo). Pass each
+  one to read_booking_email as it arrives…"
+- Until the host saves their platforms, the line also asks the agent to ask
+  once. Without that, a property set up before #263 would never be asked: its
+  sources step is already done.
+- With the flag on, `BOOKING_PLATFORMS_INSTRUCTION` follows the chat's own
+  instructions, for Claude, ChatGPT and Muse, single-tenant and hosted.
+  `BOOKING_EMAIL_INSTRUCTION` itself is unchanged.
+- Grok's instructions are pinned, so Grok reads all of this from the flag-on
+  tool description instead.
+- With the flag on, `read_booking_email` and `save_sources` are listed with
+  their new fields. Off, both are listed exactly as before.
 
 ## The Other path, end to end
 
@@ -166,7 +175,8 @@ read_booking_email({
 1. **Sender.** The From address must be one this property saved, exactly,
    ignoring case. A display name counts for nothing, as with Airbnb.
    Anything else gets `not-a-saved-sender`: nothing is stored but the hash,
-   and nothing changes.
+   and nothing changes. With the flag on, this covers Airbnb too: a property
+   whose host didn't pick Airbnb reads no Airbnb email.
 2. **Authentication** (below). A failure on a pre-filled sender (Vrbo,
    Booking.com) gets `failed-authentication`: nothing is stored but the hash,
    and nothing changes. A failure on a sender the host named goes on to the
@@ -182,7 +192,13 @@ read_booking_email({
    It also checks that the reference, when given, appears in the email. A
    failure gets `bad-fields` naming the field, and nothing changes.
 4. **Door codes.** The body is redacted as Airbnb's is before anything is
-   stored. Extracted fields that carry the door code are refused.
+   stored.
+   - A listing that carries the door code is refused (`door-code`).
+   - A reference is refused only when it holds a guarded code itself. It's
+     often all digits, and the chat guard's "any 4 to 8 digits" rule would
+     refuse every numeric booking number.
+   - Dates and times are checked strictly for shape, so they can't hold a
+     code, and they aren't guarded.
 5. **The host's yes.** The email is logged `awaiting-host` with its
    extracted fields. The reply carries a one-line summary for the host, plus
    an approval code from the desk's existing `issueApproval`, bound to a hash
@@ -231,7 +247,9 @@ the design never needs it to be present.
   - `pass`: `dmarc=pass` with `header.from` equal to the From address's
     domain, or `dkim=pass` with `header.d` equal to that domain or a parent of
     it.
-  - `fail`: `dmarc=fail`, or neither DKIM nor SPF passes.
+  - `fail`: `dmarc=fail`, or no aligned pass at all. This catches a spoof
+    signed for the attacker's own domain: its DKIM and SPF pass, but not for
+    the From domain. A bare top-level domain (`com`) never aligns.
   - `unknown`: no header was passed, or none from a known provider.
 - **What the readers do with it:**
   - `fail` changes nothing for Airbnb's reader and for Vrbo's and
@@ -251,11 +269,18 @@ the design never needs it to be present.
 **Decided (20 Nov):** Vrbo and Booking.com start on the Other
 path with their sender pre-filled, as above. The host's okay is saved once
 per property (`save_sources` with `shareSamples: true`). It covers that
-property's Vrbo and Booking.com emails that the host said yes to. A
-command, `npm run booking-samples -- <property>`, writes those emails out
-with guest names, phones and email addresses replaced (the stored body
-already has door codes removed). Saad reads them before any goes into
-`test/fixtures/`. Once a platform's reader passes on them, that platform's
+property's Vrbo and Booking.com emails that the host said yes to.
+
+A command, `npm run booking:samples -- <property folder> <out folder>`, writes
+those emails out in the fixtures' shape. It replaces:
+- email addresses, except the platform's own From address;
+- phone numbers with separators (a bare run of digits is a booking number, so
+  it stays);
+- the names on labeled lines (Guest, Name, Traveler and the like), wherever
+  else they appear.
+
+The stored body already has door codes removed. Saad reads every sample
+before any goes into `test/fixtures/`. Once a platform's reader passes on them, that platform's
 emails go through the reader, and the per-booking yes drops away.
 
 ## A platform with no calendar link
@@ -290,11 +315,21 @@ each with a test:
 
 All with made-up emails, made-up references and door codes, and 555 numbers.
 
-- `test/bookingSources.test.ts`: the setup question, saved sources, the
-  defaults, and the instructions' line.
-- `test/otherBookingEmail.test.ts`: the sender, shape and authentication
+- `test/bookingSources.test.ts`: the saved sources, the defaults, sender
+  matching, and the agent's line.
+- `test/bookingPlatformsSetup.test.ts`: covers
+  - the flag off, where tools, instructions and `get_state` are unchanged;
+  - the setup question, and `save_sources`;
+  - the flag-on schema and instructions, including Grok's pinned ones.
+- `test/otherEmail.test.ts`: the shape checks.
+- `test/otherBookingEmail.test.ts`: the sender, authentication and field
   checks, and the host's-yes flow end to end. It covers a confirmed booking,
-  a change and a cancellation, and a stale code after the fields changed.
+  a cancellation, a stale code after the fields changed, an email asked again
+  in a new chat, and a booking the calendar doesn't show.
+- `test/bookingEmailsHosted.test.ts`: routing by saved sender on a
+  two-property account.
+- `test/bookingSamples.test.ts`: samples need the host's okay, and names,
+  phones and emails are replaced.
 - `test/emailAuth.test.ts`: the `Authentication-Results` verdicts. It covers
   a forged lower header, an unknown provider, DKIM on a parent domain, and an
   unaligned pass.

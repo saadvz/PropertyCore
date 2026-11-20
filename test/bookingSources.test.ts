@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { bookingPlatformsOn } from "../src/cleaner-core/flag";
 import { bookingEmailsLine, normalizeSources, PRESET_SENDERS, senderAddress, sourceFor, type BookingSource } from "../src/hub/bookingSources";
 import { hubFor, resetHubs } from "../src/hub/hub";
+import { DOOR_CODE } from "./wiringProof";
 
 /** Where a property takes bookings (#263). Made-up addresses only. */
 
@@ -54,9 +55,9 @@ describe("normalizeSources", () => {
   });
 
   it("refuses a name or sender that carries the door code", () => {
-    const carries = (text: string) => text.includes("4821");
-    expect(normalizeSources([{ platform: "other", sender: "stays@example.test", name: "Code 4821" }], carries)).toMatchObject({ ok: false });
-    expect(normalizeSources([{ platform: "direct", sender: "door4821@example.test" }], carries)).toMatchObject({ ok: false });
+    const carries = (text: string) => text.includes(DOOR_CODE);
+    expect(normalizeSources([{ platform: "other", sender: "stays@example.test", name: `Code ${DOOR_CODE}` }], carries)).toMatchObject({ ok: false });
+    expect(normalizeSources([{ platform: "direct", sender: `door${DOOR_CODE}@example.test` }], carries)).toMatchObject({ ok: false });
   });
 });
 
