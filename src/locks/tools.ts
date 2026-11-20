@@ -45,8 +45,8 @@ const SAVE = {
 const SETTINGS = {
   name: "lock_settings",
   title: "How codes go out",
-  description: `On connected locks, how codes go out. cleaners: ask (default; the code waits for the host's "guests have left") or automatic (the code goes at checkout time; the host gets a heads-up an hour before and can say pause). pros: ask (default; the host OKs each pro's code with approve_code) or automatic. extend: ask (default) or automatic (a pro still inside 15 minutes before their code stops gets 30 more minutes, never into the next check-in). ${TWO_CALL}`,
-  inputSchema: { type: "object", properties: { cleaners: MODE, pros: MODE, extend: MODE, confirmation: CONFIRMATION }, additionalProperties: false },
+  description: `On connected locks, how codes go out. cleaners: ask (default; the code waits for the host's "guests have left") or automatic (the code goes at checkout time; the host gets a heads-up an hour before and can say pause). pros: ask (default; the host OKs each pro's code with approve_code) or automatic. packages: ask (default; the code for the person bringing a package in waits for the host's OK with approve_bring_in_code) or automatic (they get it by text once the drop is seen). extend: ask (default) or automatic (a pro still inside 15 minutes before their code stops gets 30 more minutes, never into the next check-in). ${TWO_CALL}`,
+  inputSchema: { type: "object", properties: { cleaners: MODE, pros: MODE, packages: MODE, extend: MODE, confirmation: CONFIRMATION }, additionalProperties: false },
 };
 
 const ADD_STANDING = {
