@@ -92,7 +92,9 @@ act on those stays. `get_state` and `check_now` carry their count as
 `waitingBookings`.
 
 Keys: an Airbnb booking keeps its bare `HM…` code as its key, so existing
-logs rebuild unchanged. Any other platform's booking is keyed
+logs rebuild unchanged. Guest codes (#262) name each stay's code by this key,
+not by `confirmationCode`, so the same reference on two platforms, or two
+bookings with no reference, never share a code. Any other platform's booking is keyed
 `<platform>:<code>`, or `<platform>:<checkIn>:<checkout>` when the email gave
 no code.
 
