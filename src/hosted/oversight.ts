@@ -3,6 +3,9 @@ import { propertyFolder, type Property } from "../cleaner-core/hosted/properties
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { hubFor } from "../hub/hub";
+import { lockAdapter, smartLocksOn } from "../locks/registry";
+import { doorDevices } from "../locks/settings";
+import { redactDigitRuns } from "../visits/store";
 import { oversightDeskFor } from "../oversight/desk";
 import { handleOversightTool, OVERSIGHT_TOOL_NAMES, OVERSIGHT_TOOLS } from "../oversight/tools";
 import type { FrontReply } from "./serviceTools";
@@ -29,14 +32,24 @@ export function oversightCall(h: HostedCleaner, tenant: Tenant, property: Proper
   if (!remoteOversightOn(h.baseEnv())) return { text: "Expected visits aren't available yet.", isError: true };
   if (!anyFlowOn(property)) return { text: `Nothing runs at ${property.label} yet, so it has no expected visits.`, isError: true };
   const root = propertyFolder(h.dataRoot, tenant.id, property);
-  const locks = () => {
+  const door = () => {
+    const ctx = propertyContext(h, tenant, property);
+    return hubFor(ctx.root, { now: () => h.now() }).doorAccess(ctx.env);
+  };
+  const safely = <T>(read: () => T, fallback: T): T => {
     try {
-      const ctx = propertyContext(h, tenant, property);
-      return hubFor(ctx.root, { now: () => h.now() }).doorAccess(ctx.env).connected();
+      return read();
     } catch {
-      return false;
+      return fallback;
     }
   };
-  const desk = oversightDeskFor(root, { now: () => h.now(), locks, cameras: () => camerasOn(h.baseEnv()) });
+  const desk = oversightDeskFor(root, {
+    now: () => h.now(),
+    locks: () => smartLocksOn(h.baseEnv()) && Boolean(lockAdapter()),
+    lockedNow: () => safely(() => door().connected(), false),
+    // As the visit log writes a device's name, so a door with digits in its name still matches.
+    doors: () => safely(() => doorDevices(door().locks()).map((device) => redactDigitRuns(device.name).trim().slice(0, 80)), []),
+    cameras: () => camerasOn(h.baseEnv()),
+  });
   return handleOversightTool(desk, name, args) ?? { text: "Expected visits couldn't answer that.", isError: true };
 }

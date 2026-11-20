@@ -25,9 +25,17 @@ export interface Sighting {
   device: string;
 }
 
+/** A stretch when the host had the property switched to connected locks. Unset `until` while it still is. */
+export interface SwitchedOn {
+  from: string;
+  until?: string;
+}
+
 export interface Evidence {
-  /** Whether the property is on connected locks, so its entries can be read. */
+  /** Whether lock lines are read at all (SMART_LOCKS on, property on connected locks or once was). */
   lock: boolean;
+  /** The host's switch to connected locks over time, from its own `pc-locks:` lines. Unset when there are none. */
+  switched?: SwitchedOn[];
   entries: EntryEvent[];
   quiet: QuietSpan[];
   sightings: Sighting[];
@@ -40,7 +48,12 @@ export interface EvidenceInput {
   locks: boolean;
   /** CAMERAS is on. */
   cameras: boolean;
+  /** The property's door locks, by name. Only these open quiet spans: a thermostat or noise sensor isn't a door. Unset: every device. */
+  doors?: readonly string[];
 }
+
+/** The id prefix of the host's own switch lines (`recordLockConnection`). Any other connection line is the lock partner's. */
+const SWITCH_PREFIX = "pc-locks:";
 
 const ms = (iso: string) => Date.parse(iso);
 const byTime = <T extends { at: string }>(list: T[]): T[] => [...list].sort((a, b) => ms(a.at) - ms(b.at));
@@ -48,22 +61,33 @@ const byTime = <T extends { at: string }>(list: T[]): T[] => [...list].sort((a, 
 /** Ring's label for a person, in any case. */
 const PERSON_LABELS = new Set(["human", "person"]);
 
-function quietSpans(events: readonly VisitEvent[]): QuietSpan[] {
+/**
+ * When a door couldn't report: from its `offline` to its next `online`, or its next lock or unlock line (it reported).
+ * The lock partner's account disconnect is a span for every door. The host's own switch lines aren't spans: they
+ * are `switchedOn`.
+ */
+function quietSpans(events: readonly VisitEvent[], doors: readonly string[] | undefined): QuietSpan[] {
+  const isDoor = (device: string) => !doors || doors.includes(device);
   const spans: QuietSpan[] = [];
   const offline = new Map<string, QuietSpan>();
   let disconnected: QuietSpan | undefined;
+  const close = (device: string, at: string) => {
+    const open = offline.get(device);
+    if (!open) return;
+    open.until = at;
+    offline.delete(device);
+  };
   for (const event of byTime([...events])) {
     if (event.type === "lock-status" && (event.kind === "offline" || event.kind === "online")) {
-      const open = offline.get(event.device);
-      if (event.kind === "offline" && !open) {
+      if (!isDoor(event.device)) continue;
+      if (event.kind === "offline" && !offline.has(event.device)) {
         const span: QuietSpan = { from: event.at, device: event.device, why: "offline" };
         offline.set(event.device, span);
         spans.push(span);
-      } else if (event.kind === "online" && open) {
-        open.until = event.at;
-        offline.delete(event.device);
-      }
-    } else if (event.type === "lock-connection") {
+      } else if (event.kind === "online") close(event.device, event.at);
+    } else if (event.type === "lock") {
+      close(event.device, event.at);
+    } else if (event.type === "lock-connection" && !event.id.startsWith(SWITCH_PREFIX)) {
       if (!event.connected && !disconnected) {
         disconnected = { from: event.at, why: "disconnected" };
         spans.push(disconnected);
@@ -74,6 +98,24 @@ function quietSpans(events: readonly VisitEvent[]): QuietSpan[] {
     }
   }
   return spans.sort((a, b) => ms(a.from) - ms(b.from));
+}
+
+/** The stretches the host had connected locks switched on, from their own switch lines. Undefined when there are none. */
+function switchedOn(events: readonly VisitEvent[]): SwitchedOn[] | undefined {
+  const lines = byTime(events.filter((event): event is Extract<VisitEvent, { type: "lock-connection" }> => event.type === "lock-connection" && event.id.startsWith(SWITCH_PREFIX)));
+  if (!lines.length) return undefined;
+  const out: SwitchedOn[] = [];
+  let open: SwitchedOn | undefined;
+  for (const line of lines) {
+    if (line.connected && !open) {
+      open = { from: line.at };
+      out.push(open);
+    } else if (!line.connected && open) {
+      open.until = line.at;
+      open = undefined;
+    }
+  }
+  return out;
 }
 
 function sightingsFrom(events: readonly VisitEvent[]): Sighting[] {
@@ -91,8 +133,9 @@ function sightingsFrom(events: readonly VisitEvent[]): Sighting[] {
 export function dayEvidence(events: readonly VisitEvent[], input: EvidenceInput): Evidence {
   return {
     lock: input.locks,
+    ...(input.locks && switchedOn(events) ? { switched: switchedOn(events)! } : {}),
     entries: input.locks ? entryEventsFrom(events, input.codeNames, input.names) : [],
-    quiet: input.locks ? quietSpans(events) : [],
+    quiet: input.locks ? quietSpans(events, input.doors) : [],
     sightings: input.cameras ? sightingsFrom(events) : [],
   };
 }

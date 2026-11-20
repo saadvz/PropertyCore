@@ -171,3 +171,29 @@ lock partner or Ring:
   standing names from `door-grants.json`, `list_expected_visits` results that
   record nothing.
 - `test/oversightHosted.test.ts`: the flags reach the desk.
+
+## As built (20 Nov), after review
+
+An independent review found three cases the first build got wrong. Fixed,
+each with tests:
+
+- **Only doors go quiet.** Thermostats and noise sensors write the same
+  `offline` lines. Only the property's saved door locks (by name, as the log
+  writes them) open a quiet span.
+- **A quiet span ends when the door reports.** Besides `online`, the door's
+  next lock or unlock line closes its span, so a lost `online` webhook doesn't
+  make every later miss "can't tell". A door removed or renamed isn't a door any
+  more, so its old span is dropped.
+- **The lock switch is read per window.** The host's own switch lines
+  (`pc-locks:on`/`off`, from `save_locks`) give the stretches the property was
+  on connected locks. A window outside every stretch is `no-lock`. A window the
+  switch falls inside is "can't tell" for the part outside it. The lock
+  partner's own disconnect is still a quiet span. With no switch lines in the
+  log, the property's state now stands for every day. So a past day is still
+  checked after the host switches off, and a day before the switch-on isn't
+  called missed.
+- **A span from another day gives its day** in the alert ("since 12:40 PM on
+  Tuesday, Nov 17").
+- `OversightDeps` is now `locks` (SMART_LOCKS on with a lock connection: the
+  lines can be read), `lockedNow` (switched on now, the fallback above),
+  `doors` and `cameras`.

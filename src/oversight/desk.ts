@@ -22,8 +22,12 @@ export interface OversightReply {
 
 export interface OversightDeps {
   now: () => Date;
-  /** The property is switched to connected locks (SMART_LOCKS on), so its unlocks can be read. Off by default. */
+  /** SMART_LOCKS is on with a lock connection, so the property's lock lines can be read. Off by default. */
   locks?: () => boolean;
+  /** The property is switched to connected locks now. Used only for a log with no switch lines of the host's. Defaults to `locks`. */
+  lockedNow?: () => boolean;
+  /** The property's door locks, by name as the log writes them. Only these can be a lock that couldn't report. */
+  doors?: () => readonly string[];
   /** CAMERAS is on, so camera sightings can be read. Off by default. */
   cameras?: () => boolean;
 }
@@ -119,8 +123,11 @@ export class OversightDesk {
     if (!locks && !cameras) return { entries: [], lock: false };
     const log = visitLogFor(this.root, this.deps.now);
     const events = log.read();
-    const found = dayEvidence(events, { codeNames: log.codeNames(), names: entryNamesFrom(events, locks ? standingNames(this.root) : {}), locks, cameras });
-    return { entries: found.entries, lock: found.lock, quiet: found.quiet, sightings: found.sightings };
+    const doors = this.deps.doors?.();
+    const found = dayEvidence(events, { codeNames: log.codeNames(), names: entryNamesFrom(events, locks ? standingNames(this.root) : {}), locks, cameras, ...(doors ? { doors } : {}) });
+    // The host's switch lines decide each window; with none in the log, the property's state now stands for every day.
+    const lock = found.lock && (found.switched !== undefined || (this.deps.lockedNow?.() ?? true));
+    return { entries: found.entries, lock, ...(found.switched ? { switched: found.switched } : {}), quiet: found.quiet, sightings: found.sightings };
   }
 
   /** Visits from today on, and the last week's with their flags and cancellations. */

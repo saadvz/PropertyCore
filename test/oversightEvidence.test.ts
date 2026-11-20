@@ -70,6 +70,33 @@ describe("dayEvidence", () => {
     expect(dayEvidence(events, ON).quiet).toEqual([{ from: "2026-11-19T17:00:00.000Z", until: "2026-11-19T18:00:00.000Z", device: "Front door", why: "offline" }]);
   });
 
+  it("only the property's doors open quiet spans: a thermostat going offline is not a lock (review)", () => {
+    const events = [status("s-1", "2026-11-19T17:00:00.000Z", "offline", "Hall thermostat"), status("s-2", "2026-11-19T17:10:00.000Z", "offline")];
+    expect(dayEvidence(events, { ...ON, doors: ["Front door"] }).quiet).toEqual([{ from: "2026-11-19T17:10:00.000Z", device: "Front door", why: "offline" }]);
+  });
+
+  it("a door's lock or unlock line ends its quiet span: it reported (review)", () => {
+    const events = [status("s-1", "2026-11-05T17:40:00.000Z", "offline"), unlock("u-1", "2026-11-06T15:00:00.000Z")];
+    expect(dayEvidence(events, ON).quiet).toEqual([{ from: "2026-11-05T17:40:00.000Z", until: "2026-11-06T15:00:00.000Z", device: "Front door", why: "offline" }]);
+  });
+
+  it("the host's own switch lines are on-periods, not quiet spans; the lock partner's disconnect stays quiet (review)", () => {
+    const events = [
+      { type: "lock-connection" as const, id: "pc-locks:on:2026-11-19T19:00:00.000Z", at: "2026-11-19T19:00:00.000Z", connected: true },
+      { type: "lock-connection" as const, id: "pc-locks:off:2026-11-21T19:00:00.000Z", at: "2026-11-21T19:00:00.000Z", connected: false },
+      { type: "lock-connection" as const, id: "pc-locks:on:2026-11-23T19:00:00.000Z", at: "2026-11-23T19:00:00.000Z", connected: true },
+      connection("seam-1", "2026-11-20T12:00:00.000Z", false),
+      connection("seam-2", "2026-11-20T13:00:00.000Z", true),
+    ];
+    const evidence = dayEvidence(events, ON);
+    expect(evidence.switched).toEqual([{ from: "2026-11-19T19:00:00.000Z", until: "2026-11-21T19:00:00.000Z" }, { from: "2026-11-23T19:00:00.000Z" }]);
+    expect(evidence.quiet).toEqual([{ from: "2026-11-20T12:00:00.000Z", until: "2026-11-20T13:00:00.000Z", why: "disconnected" }]);
+  });
+
+  it("no switch lines: no on-periods, so the property's current state stands", () => {
+    expect(dayEvidence([], ON).switched).toBeUndefined();
+  });
+
   it("a person seen is our count when there is one, else Ring's human label, or a doorbell press", () => {
     const events = [
       camera("m-1", "2026-11-19T18:00:00.000Z", "motion", "human"),

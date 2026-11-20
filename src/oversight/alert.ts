@@ -1,4 +1,4 @@
-import { formatClockTime, formatVisitorClock } from "../core/timezone";
+import { formatClockTime, formatVisitorClock, localDateOf, timeOnDay } from "../core/timezone";
 import type { VisitResult } from "./check";
 
 /**
@@ -10,9 +10,17 @@ const clock = (hhmm: string) => formatClockTime(hhmm).replace(":00", "");
 
 const at = (iso: string, timeZone: string) => formatVisitorClock(new Date(iso), timeZone);
 
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** The time, with its day when it isn't the visit's own day. */
+function onDay(iso: string, date: string, timeZone: string): string {
+  const d = localDateOf(new Date(iso), timeZone);
+  return `${d.year}-${pad(d.month)}-${pad(d.day)}` === date ? at(iso, timeZone) : timeOnDay(new Date(iso), timeZone);
+}
+
 function quietSentence(visit: VisitResult, timeZone: string): string {
   const spans = (visit.quiet ?? []).map((span) => {
-    const when = span.until ? `from ${at(span.from, timeZone)} to ${at(span.until, timeZone)}` : `since ${at(span.from, timeZone)}`;
+    const when = span.until ? `from ${onDay(span.from, visit.date, timeZone)} to ${onDay(span.until, visit.date, timeZone)}` : `since ${onDay(span.from, visit.date, timeZone)}`;
     return span.device ? `The ${span.device} lock couldn't report ${when}` : `The lock connection was off ${when}`;
   });
   return `${spans.join(", and ")}, so I can't tell if anyone came in.`;

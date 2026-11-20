@@ -1,6 +1,6 @@
 import { addCalendarDays, zonedInstant } from "../hub/calendar";
 import { alertText } from "./alert";
-import type { QuietSpan, Sighting } from "./evidence";
+import type { QuietSpan, Sighting, SwitchedOn } from "./evidence";
 import type { EntryEvent } from "./events";
 import { whoMatches, type ExpectedVisit } from "./visits";
 
@@ -46,8 +46,27 @@ export type DayResult =
 export interface DayEvidence {
   entries: EntryEvent[];
   lock?: boolean;
+  /** The host's switch to connected locks over time. A window with none of it is no lock; a part of a window outside it is quiet. */
+  switched?: SwitchedOn[];
   quiet?: QuietSpan[];
   sightings?: Sighting[];
+}
+
+/** The parts of [start, end] outside every on-stretch, as quiet spans. Undefined when no part is inside one. */
+function switchGaps(switched: readonly SwitchedOn[], start: number, end: number): QuietSpan[] | undefined {
+  const on = switched
+    .map((s) => [Math.max(ms(s.from), start), Math.min(s.until === undefined ? Infinity : ms(s.until), end)] as const)
+    .filter(([a, b]) => a < b)
+    .sort((x, y) => x[0] - y[0]);
+  if (!on.length) return undefined;
+  const gaps: QuietSpan[] = [];
+  let cursor = start;
+  for (const [a, b] of on) {
+    if (a > cursor) gaps.push({ from: new Date(cursor).toISOString(), until: new Date(a).toISOString(), why: "disconnected" });
+    cursor = Math.max(cursor, b);
+  }
+  if (cursor < end) gaps.push({ from: new Date(cursor).toISOString(), why: "disconnected" });
+  return gaps;
 }
 
 export const EARLY_MS = 30 * 60_000;
@@ -75,7 +94,8 @@ function judge(visit: ExpectedVisit, evidence: DayEvidence, timeZone: string, no
     .filter((e) => inWindow(e.at) && (named(e) || e.party) && !counts(e))
     .map((e) => (e.party ? { at: e.at, party: e.party } : { at: e.at, person: e.person!.trim() }));
   const sightings = (evidence.sightings ?? []).filter((s) => inWindow(s.at)).sort((a, b) => ms(a.at) - ms(b.at));
-  const quiet = (evidence.quiet ?? []).filter((q) => ms(q.from) <= windowEnd && (q.until === undefined || ms(q.until) >= start));
+  const gaps = evidence.switched ? switchGaps(evidence.switched, start, windowEnd) : [];
+  const quiet = [...(evidence.quiet ?? []).filter((q) => ms(q.from) <= windowEnd && (q.until === undefined || ms(q.until) >= start)), ...(gaps ?? [])].sort((a, b) => ms(a.from) - ms(b.from));
 
   const base = {
     id: visit.id,
@@ -91,7 +111,7 @@ function judge(visit: ExpectedVisit, evidence: DayEvidence, timeZone: string, no
     const entry = { at: match.at, device: match.device, ...(named(match) ? { person: match.person!.trim() } : { unnamed: true as const }) };
     return { ...base, outcome: "came", entry, ...(ms(match.at) > flagAt ? { late: true as const } : {}) };
   }
-  if (evidence.lock === false) return { ...base, outcome: "unknown", why: "no-lock" };
+  if (evidence.lock === false || gaps === undefined) return { ...base, outcome: "unknown", why: "no-lock" };
   if (now.getTime() < flagAt) return { ...base, outcome: "waiting" };
   const flagged = visit.flaggedAt ? { alreadyFlagged: true as const } : {};
   if (quiet.length) return { ...base, outcome: "unknown", why: "lock-quiet", quiet, ...flagged };

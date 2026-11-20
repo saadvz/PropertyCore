@@ -216,4 +216,32 @@ describe("the same-day check on real evidence (#240)", () => {
   it("sightings outside the counting window are left off", () => {
     expect(runWith([MIKE], now("18:01"), { sightings: [seen("12:29"), seen("18:01")] })).toMatchObject({ status: "flags", missed: [{ sightings: [] }] });
   });
+
+  describe("the host's switch to connected locks, per window (review)", () => {
+    const runSwitched = (switched: { from: string; until?: string }[], when = now("18:01")) => checkDay({ label: LABEL, visits: [MIKE], entries: [], switched, date: DATE, timeZone: NY, now: when });
+
+    it("a window entirely before the switch is no lock, with no alert", () => {
+      expect(runSwitched([{ from: at("19:00") }])).toMatchObject({ status: "ok", visits: [{ outcome: "unknown", why: "no-lock" }] });
+    });
+
+    it("a window entirely after a switch-off is no lock", () => {
+      expect(runSwitched([{ from: at("08:00", "2026-11-10"), until: at("09:00") }])).toMatchObject({ status: "ok", visits: [{ outcome: "unknown", why: "no-lock" }] });
+    });
+
+    it("a window the switch-on falls inside is can't tell for the part before it", () => {
+      const result = runSwitched([{ from: at("14:00") }]);
+      expect(result).toMatchObject({ status: "flags", unsure: [{ why: "lock-quiet", quiet: [{ from: at("12:30"), until: at("14:00"), why: "disconnected" }] }] });
+      if (result.status === "flags") expect(result.alert).toContain("The lock connection was off from 12:30 PM to 2 PM");
+    });
+
+    it("a window fully inside an on-period is checked as usual", () => {
+      expect(runSwitched([{ from: at("08:00", "2026-11-10") }])).toMatchObject({ status: "flags", missed: [{ outcome: "missed" }] });
+    });
+  });
+
+  it("a quiet span from an earlier day gives its day in the alert (review)", () => {
+    const result = checkDay({ label: LABEL, visits: [MIKE], entries: [], quiet: [{ from: at("12:40", "2026-11-17"), device: "Front door", why: "offline" }], date: DATE, timeZone: NY, now: now("18:01") });
+    if (result.status !== "flags") throw new Error("expected flags");
+    expect(result.alert).toContain("The Front door lock couldn't report since 12:40 PM on Tuesday, Nov 17,");
+  });
 });

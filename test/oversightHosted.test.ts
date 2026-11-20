@@ -123,7 +123,7 @@ describe("expected visits on a property with connected locks (#240)", () => {
     resetVisitLogCache();
   });
 
-  async function switched(env: NodeJS.ProcessEnv, on: boolean) {
+  async function switched(env: NodeJS.ProcessEnv, on: boolean, offline = "Front door") {
     open = await multiTenantApp({ env, now: () => NOW });
     const m = open;
     const fake = new FakeLockAdapter();
@@ -138,7 +138,7 @@ describe("expected visits on a property with connected locks (#240)", () => {
     const hub = hubFor(ctx.root, { now: () => NOW });
     hub.saveProperty({ address: "12 Scratch Lane, Teaneck, NJ 07666", timeZone: "America/New_York" });
     hub.doorAccess(ctx.env).saveLocks({ ...emptyLocks(), customerKey: tenant.id, devices: [storedDevice(device)], doors: [device.id], ...(on ? { activeAt: NOW.toISOString() } : {}) });
-    new VisitLog(ctx.root, () => NOW).append({ type: "lock-status", id: "st-1", at: "2026-11-17T12:40:00.000Z", kind: "offline", device: "Front door" });
+    new VisitLog(ctx.root, () => NOW).append({ type: "lock-status", id: "st-1", at: "2026-11-17T12:40:00.000Z", kind: "offline", device: offline });
     const token = await m.joinAt(tenant.id, "grok", PATH);
     await m.toolAt(PATH, token, "add_expected_visit", { property: property.id, who: "Mike Doyle", date: "2026-11-17", from: "08:00", to: "09:00" });
     const listed = await m.toolAt(PATH, token, "list_expected_visits", { property: property.id });
@@ -155,5 +155,9 @@ describe("expected visits on a property with connected locks (#240)", () => {
 
   it("SMART_LOCKS off: no lock", SLOW, async () => {
     expect(await switched({ REMOTE_OVERSIGHT: "1" }, true)).toEqual([expect.objectContaining({ outcome: "unknown", why: "no-lock" })]);
+  });
+
+  it("a device that isn't one of the property's doors going offline is no quiet lock (review)", SLOW, async () => {
+    expect(await switched({ REMOTE_OVERSIGHT: "1", SMART_LOCKS: "1" }, true, "Hall thermostat")).toEqual([expect.objectContaining({ outcome: "missed" })]);
   });
 });

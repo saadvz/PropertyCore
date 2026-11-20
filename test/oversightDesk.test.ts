@@ -20,13 +20,13 @@ afterEach(() => {
 
 const invite = (name: string) => readFileSync(join(__dirname, "fixtures", "oversight", `${name}.ics`), "utf8");
 
-function property(opts: { timeZone?: string | null; now?: () => Date; locks?: boolean; cameras?: boolean } = {}) {
+function property(opts: { timeZone?: string | null; now?: () => Date; locks?: boolean; lockedNow?: boolean; doors?: string[]; cameras?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), "oversight-desk-"));
   roots.push(root);
   const timeZone = opts.timeZone === null ? {} : { timeZone: opts.timeZone ?? NY };
   writeFileSync(join(root, "hub.json"), JSON.stringify({ schemaVersion: 1, property: { nickname: "Lake House", ...timeZone }, calendars: [], stays: [] }));
   let clock = NOW;
-  const desk = oversightDeskFor(root, { now: opts.now ?? (() => clock), locks: () => opts.locks ?? true, cameras: () => opts.cameras ?? false });
+  const desk = oversightDeskFor(root, { now: opts.now ?? (() => clock), locks: () => opts.locks ?? true, ...(opts.lockedNow !== undefined ? { lockedNow: () => opts.lockedNow! } : {}), ...(opts.doors ? { doors: () => opts.doors! } : {}), cameras: () => opts.cameras ?? false });
   return { root, desk, setNow: (date: Date) => (clock = date) };
 }
 
@@ -206,6 +206,40 @@ describe("the expected visits desk", () => {
     }
     expect(withCams.desk.runDay("2026-11-19", "Lake House")).toMatchObject({ status: "flags", missed: [{ sightings: [{ device: "Front porch" }] }] });
     expect(without.desk.runDay("2026-11-19", "Lake House")).toMatchObject({ status: "flags", missed: [{ sightings: [] }] });
+  });
+
+  it("runDay reads the host's switch per window: before the switch is no lock, even while switched on now (review)", () => {
+    const { desk, root, setNow } = property({ locks: true, lockedNow: true });
+    desk.addVisit(MIKE);
+    new VisitLog(root, () => NOW).append({ type: "lock-connection", id: `pc-locks:on:${zonedInstant("2026-11-19", "20:00", NY)}`, at: zonedInstant("2026-11-19", "20:00", NY), connected: true });
+    setNow(new Date(zonedInstant("2026-11-19", "20:30", NY)));
+    expect(desk.runDay("2026-11-19", "Lake House")).toMatchObject({ status: "ok", visits: [{ outcome: "unknown", why: "no-lock" }] });
+  });
+
+  it("a past day on connected locks is still checked after the host switched off (review)", () => {
+    const { desk, root, setNow } = property({ locks: true, lockedNow: false });
+    desk.addVisit(MIKE);
+    const log = new VisitLog(root, () => NOW);
+    log.append({ type: "lock-connection", id: "pc-locks:on:2026-11-10T12:00:00.000Z", at: "2026-11-10T12:00:00.000Z", connected: true });
+    log.append({ type: "lock", id: "lk-1", at: zonedInstant("2026-11-19", "14:10", NY), device: "Front door", action: "unlock", side: "outside" });
+    log.append({ type: "lock-connection", id: "pc-locks:off:2026-11-20T12:00:00.000Z", at: "2026-11-20T12:00:00.000Z", connected: false });
+    setNow(new Date(zonedInstant("2026-11-21", "09:00", NY)));
+    expect(desk.listVisits().structured?.results).toEqual([expect.objectContaining({ outcome: "came" })]);
+  });
+
+  it("no switch lines and not switched on now: no lock (review)", () => {
+    const { desk, setNow } = property({ locks: true, lockedNow: false });
+    desk.addVisit(MIKE);
+    setNow(new Date(zonedInstant("2026-11-19", "18:30", NY)));
+    expect(desk.runDay("2026-11-19", "Lake House")).toMatchObject({ status: "ok", visits: [{ outcome: "unknown", why: "no-lock" }] });
+  });
+
+  it("a sensor going offline is not a lock that couldn't report (review)", () => {
+    const { desk, root, setNow } = property({ locks: true, doors: ["Front door"] });
+    desk.addVisit(MIKE);
+    new VisitLog(root, () => NOW).append({ type: "lock-status", id: "st-1", at: zonedInstant("2026-11-19", "14:00", NY), kind: "offline", device: "Hall thermostat" });
+    setNow(new Date(zonedInstant("2026-11-19", "18:30", NY)));
+    expect(desk.runDay("2026-11-19", "Lake House")).toMatchObject({ status: "flags", missed: [{ outcome: "missed" }], unsure: [] });
   });
 
   it("list_expected_visits gives today's and last week's results, and records nothing", () => {
