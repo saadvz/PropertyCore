@@ -55,7 +55,8 @@ function to24(clock: Clock, meridiem: "am" | "pm" | undefined): number | undefin
 }
 
 const CLOCK = String.raw`(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.|a|p)?`;
-const RANGE = new RegExp(String.raw`(?<![\d/:])${CLOCK}\s*(?:-|–|to|until|till)\s*${CLOCK}(?![\d/:])`, "gi");
+/** A range followed by a length ("2-3 hours", "1 to 2 hrs") is how long, not when: never read as a time. */
+const RANGE = new RegExp(String.raw`(?<![\d/:])${CLOCK}\s*(?:-|–|to|until|till)\s*${CLOCK}(?![\d/:])(?!\s*(?:hours?|hrs?|h|minutes?|mins?|m|days?|weeks?|wks?)\b)`, "gi");
 
 function clockOf(hour: string | undefined, minute: string | undefined, m: string | undefined): Clock | undefined {
   const h = Number(hour);
@@ -66,7 +67,7 @@ function clockOf(hour: string | undefined, minute: string | undefined, m: string
 }
 
 /** The day the text names, against the proposed day. Undefined when it names two days or one that doesn't exist. */
-function dayOf(text: string, anchorYmd: string): string | undefined | null {
+function dayOf(text: string, anchorYmd: string, todayYmd: string): string | undefined | null {
   const days = new Set<string>();
   let bad = false;
   for (const m of text.matchAll(/\b(sun|mon|tue|tues|wed|weds|thu|thur|thurs|fri|sat)(?:day|nesday|sday|urday|rsday)?\b/gi)) {
@@ -84,18 +85,20 @@ function dayOf(text: string, anchorYmd: string): string | undefined | null {
     if (ymd) days.add(ymd);
     else bad = true;
   }
-  if (/\btoday\b/i.test(text)) days.add(anchorYmd);
-  if (/\btomorrow\b/i.test(text)) days.add(addCalendarDays(anchorYmd, 1));
+  if (/\btoday\b/i.test(text)) days.add(todayYmd);
+  if (/\btomorrow\b/i.test(text)) days.add(addCalendarDays(todayYmd, 1));
   if (bad || days.size > 1) return null;
   return [...days][0];
 }
 
 /**
  * The time a vendor's text names, as ISO instants, or undefined. `anchor` is the proposed visit's start: its day is
- * the one meant when the text names none, and a weekday means the next one on or after it.
+ * the one meant when the text names none, and a weekday means the next one on or after it. "today" and "tomorrow"
+ * are read against `now`, the day the vendor texts.
  */
-export function parseVendorTime(text: string, context: { anchor: string; timeZone: string }): { from: string; until: string } | undefined {
+export function parseVendorTime(text: string, context: { anchor: string; timeZone: string; now?: Date }): { from: string; until: string } | undefined {
   const anchorYmd = ymdOf(context.anchor, context.timeZone);
+  const todayYmd = context.now ? ymdOf(context.now.toISOString(), context.timeZone) : anchorYmd;
   // m/d dates are read before ranges are looked for, so "1/19 9-11" isn't read as a range starting at 19.
   const withoutDates = text.replace(/(?<![\d:])\d{1,2}\/\d{1,2}(?![\d/:])/g, " ");
   const ranges = [...withoutDates.matchAll(RANGE)];
@@ -115,7 +118,7 @@ export function parseVendorTime(text: string, context: { anchor: string; timeZon
   const startMin = startHour * 60 + start.minute;
   const endMin = endHour * 60 + end.minute;
   if (endMin <= startMin || endMin - startMin > MAX_VENDOR_HOURS * 60) return undefined;
-  const day = dayOf(text, anchorYmd);
+  const day = dayOf(text, anchorYmd, todayYmd);
   if (day === null) return undefined;
   const ymd = day ?? anchorYmd;
   const hm = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;

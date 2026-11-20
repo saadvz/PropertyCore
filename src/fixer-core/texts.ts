@@ -427,10 +427,18 @@ export function visitWhen(from: string, until: string, timeZone: string): string
   return `${day}, ${a.half === b.half ? `${a.text} to ${b.text} ${b.half}` : `${a.text} ${a.half} to ${b.text} ${b.half}`}`;
 }
 
-export function standingQuestion(f: { what: string; proName: string; from: string; until: string; access: "code" | "host"; usualCents?: number }): string {
+/** How often, in a few words: "every 21 days", "on day 15 of each month", or the host's own words for a rule. */
+export function scheduleWords(schedule: { kind: string; days?: number; monthlyOn?: number; said?: string }): string {
+  if (schedule.kind === "every" && schedule.days !== undefined) return schedule.days === 1 ? "every day" : `every ${schedule.days} days`;
+  if (schedule.kind === "every" && schedule.monthlyOn !== undefined) return `on day ${schedule.monthlyOn} of each month`;
+  if (schedule.kind === "custom" && schedule.said) return schedule.said;
+  return "on its schedule";
+}
+
+export function standingQuestion(f: { what: string; proName: string; schedule: string; from: string; until: string; access: "code" | "host"; usualCents?: number }): string {
   const access = f.access === "code" ? "they get their own door code for that visit" : "you let them in";
   const price = f.usualCents !== undefined ? ` About ${shortDollars(f.usualCents)} each time; more than that waits for you.` : "";
-  return `${f.what} with ${f.proName}, ${hoursText(f.from, f.until)}: when it's due, I'll text ${f.proName} the date, they confirm or move it, and ${access}. You won't be asked each time.${price} Okay?`;
+  return `${f.what} with ${f.proName}, ${f.schedule}, ${hoursText(f.from, f.until)}: when it's due, I'll text ${f.proName} the date, they confirm or move it, and ${access}. You won't be asked each time.${price} Okay?`;
 }
 
 export function standingOffQuestion(f: { what: string; proName: string }): string {
@@ -469,4 +477,20 @@ export function vendorNoAnswerNews(f: { proName: string; what: string; when: str
 
 export function vendorNoDayNews(f: { what: string; proName: string }): string {
   return `${f.what} is due, but ${f.proName}'s usual hours don't fit between stays in the next week.`;
+}
+
+export function vendorTimeTaken(f: { street: string }): string {
+  return `Sorry, that time isn't free at ${f.street}. Can you send another day and time?`;
+}
+
+export function vendorTakenNews(f: { proName: string; when: string }): string {
+  return `${f.proName} asked for ${f.when}, but a guest stay or calendar block is on then. I asked them for another time.`;
+}
+
+export function vendorTooManyQuestion(f: { proName: string; what: string; when: string; moves: number }): string {
+  return `${f.proName} asked to move ${f.what.toLowerCase()} again, to ${f.when}, after ${f.moves} moves. Move it?`;
+}
+
+export function vendorCalledOffNews(f: { proName: string; what: string; when: string }): string {
+  return `${f.proName} never confirmed ${f.what.toLowerCase()} for ${f.when}, so it's called off. I'll propose the next date when it comes due.`;
 }

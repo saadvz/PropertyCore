@@ -256,7 +256,8 @@ describe("proposing a routine visit", () => {
     }
     expect(w.toBugs().length).toBe(1);
     expect(w.fake.liveCodes("dev-front")).toEqual([]);
-    expect(w.job()!.state).toBe("booked");
+    // Past its end, never confirmed, it's called off rather than started.
+    expect(w.job()!.state).toBe("cancelled");
     expect(w.log().read().filter((e) => e.type === "visit-window")).toEqual([]);
   });
 });
@@ -316,14 +317,15 @@ describe("the vendor's reply", () => {
   });
 
   it("a time that doesn't fit changes nothing: the vendor is told the host will check, the host is asked", async () => {
-    const w = await proposed({ stays: [["2027-01-13", "2027-01-16"]] });
-    await w.text("Thursday 9-11?");
+    const w = await proposed();
+    // Past the days looked at for this visit: outside the open times, not over a stay.
+    await w.text("Jan 25, 9-11?");
     const booking = w.job()!.booking!;
     expect({ from: booking.from, until: booking.until }).toEqual(DUE_VISIT);
     expect(booking.vendor!.confirmedAt).toBeUndefined();
-    expect(booking.vendor!.held).toMatchObject({ from: "2027-01-14T14:00:00.000Z", until: "2027-01-14T16:00:00.000Z" });
+    expect(booking.vendor!.held).toMatchObject({ from: "2027-01-25T14:00:00.000Z", until: "2027-01-25T16:00:00.000Z" });
     expect(w.toBugs().at(-1)).toBe("Thanks, I'll check that time with the host and text you back.");
-    expect(w.news().filter((t) => t.includes("asked to move pest control to Thu, Jan 14"))).toHaveLength(1);
+    expect(w.news().filter((t) => t.includes("asked to move pest control to Mon, Jan 25"))).toHaveLength(1);
     expect(w.fake.liveCodes("dev-front")).toEqual([]);
   });
 
@@ -379,6 +381,74 @@ describe("the vendor's reply", () => {
     await w.text("Tuesday 1 to 3", "same");
     expect(w.job()!.booking!.vendor!.moves).toHaveLength(1);
     expect(w.toBugs().filter((b) => b.startsWith("Moved to"))).toHaveLength(1);
+  });
+});
+
+describe("review fixes", () => {
+  it("a reply with the proposed time confirms like YES: the vendor is thanked and the host hears once", async () => {
+    const w = await proposed();
+    await w.text("9 to 11 works");
+    expect(w.job()!.booking!.vendor!.confirmedAt).toBeDefined();
+    expect(w.toBugs().at(-1)).toBe("Thanks, see you Sun, Jan 10, 9 to 11 AM. Your door code comes by text when the visit starts.");
+    expect(w.news().filter((t) => t.startsWith("Bug Busters confirmed pest control"))).toHaveLength(1);
+  });
+
+  it("a time over a stay is never offered to the host: the vendor is asked for another time", async () => {
+    const w = await proposed({ stays: [["2027-01-13", "2027-01-16"]] });
+    await w.text("Thursday 9-11?");
+    expect(w.job()!.booking!.vendor!.held).toBeUndefined();
+    expect(w.toBugs().at(-1)).toBe("Sorry, that time isn't free at 12 Scratch Lane. Can you send another day and time?");
+    expect(w.news().some((t) => t.includes("Move it anyway"))).toBe(false);
+    expect(w.news().filter((t) => t.includes("asked for Thu, Jan 14") && t.includes("guest stay"))).toHaveLength(1);
+  });
+
+  it("a fourth move that fits is held with its own question", async () => {
+    const w = await proposed();
+    for (const day of ["Monday", "Tuesday", "Wednesday", "Thursday"]) await w.text(`${day} 9 to 11`);
+    expect(w.news().filter((t) => t === "Bug Busters asked to move pest control again, to Thu, Jan 14, 9 to 11 AM, after 3 moves. Move it?")).toHaveLength(1);
+  });
+
+  it("an unanswered visit is called off at its end, once, and the next date comes due", async () => {
+    const w = await proposed();
+    w.at(Date.parse(DUE_VISIT.until) + MIN);
+    await w.desk().tick();
+    await w.desk().tick();
+    const first = readFixer(w.root).jobs[0]!;
+    expect(first.state).toBe("cancelled");
+    expect(w.news().filter((t) => t.includes("never confirmed"))).toHaveLength(1);
+    // Due 31 Jan (21 days on), proposed from 24 Jan.
+    w.at("2027-01-24T13:00:00.000Z");
+    await w.desk().tick();
+    expect(readFixer(w.root).jobs).toHaveLength(2);
+    expect(w.toBugs().at(-1)).toContain("Sun, Jan 31, 9 to 11 AM");
+  });
+
+  it("the standing yes question says how often, and a schedule change drops the standing yes", async () => {
+    const w = await setup();
+    const first = await w.desk().saveUpkeep({ trade: "pest-control", what: "Pest control", schedule: { kind: "every", days: 21 }, leadDays: 7, standing: w.standing() } as never);
+    expect(String(first.structured?.question)).toContain("every 21 days");
+    await w.savePest();
+    const id = readFixer(w.root).upkeep[0]!.id;
+    await approved((confirmation) => w.desk().saveUpkeep({ id, trade: "pest-control", what: "Pest control", schedule: { kind: "every", days: 7 }, leadDays: 7, ...(confirmation ? { confirmation } : {}) } as never));
+    expect(readFixer(w.root).upkeep[0]!.standing).toBeUndefined();
+  });
+
+  it("the host's own yes to move a vendor's visit is in the hours log", async () => {
+    const { fixerRows, readRecords } = await import("../src/hours-log/sources");
+    const w = await proposed();
+    const late = { from: "2027-01-25T14:00:00.000Z", until: "2027-01-25T16:00:00.000Z" };
+    await approved((confirmation) => w.desk().moveVendorVisit({ jobId: w.job()!.id, ...late, ...(confirmation ? { confirmation } : {}) }));
+    expect(fixerRows(readRecords(w.root)).filter((row) => row.kind === "reschedule-repair" && row.actor === "host")).toHaveLength(1);
+  });
+
+  it("a proposal that didn't send isn't logged as proposed", async () => {
+    const w = await setup();
+    await w.savePest();
+    const desk = w.desk() as unknown as { deps: { send: () => Promise<boolean> } };
+    desk.deps.send = async () => false;
+    w.at(LEAD);
+    await w.desk().tick();
+    expect(w.log().read().filter((e) => e.type === "message")).toEqual([]);
   });
 });
 

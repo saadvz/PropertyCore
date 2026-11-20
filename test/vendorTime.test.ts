@@ -21,9 +21,20 @@ describe("parseVendorTime", () => {
     expect(at("1/19 9-11am")).toEqual({ from: "2027-01-19T14:00:00.000Z", until: "2027-01-19T16:00:00.000Z" });
   });
 
-  it("keeps the proposed day for a time alone, and reads today and tomorrow against it", () => {
+  it("keeps the proposed day for a time alone", () => {
     expect(at("can we do 1 to 3")).toEqual({ from: "2027-01-12T18:00:00.000Z", until: "2027-01-12T20:00:00.000Z" });
-    expect(at("tomorrow 9 to 11")).toEqual({ from: "2027-01-13T14:00:00.000Z", until: "2027-01-13T16:00:00.000Z" });
+  });
+
+  it("reads today and tomorrow against the day the vendor texts, not the proposed day", () => {
+    const sentJan5 = (text: string) => parseVendorTime(text, { anchor: ANCHOR, timeZone: TZ, now: new Date("2027-01-05T15:00:00.000Z") });
+    expect(sentJan5("tomorrow 9 to 11")).toEqual({ from: "2027-01-06T14:00:00.000Z", until: "2027-01-06T16:00:00.000Z" });
+    expect(sentJan5("today 1-3")).toEqual({ from: "2027-01-05T18:00:00.000Z", until: "2027-01-05T20:00:00.000Z" });
+  });
+
+  it("never reads how long the job takes as a time", () => {
+    for (const text of ["Takes 2-3 hours, about $150", "it'll be 1 to 2 hrs", "2-3 h", "back in 1-2 weeks", "10 to 15 minutes late", "3-4 days"]) {
+      expect(at(text), text).toBeUndefined();
+    }
   });
 
   it("takes the next such weekday on or after the proposed day", () => {

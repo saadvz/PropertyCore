@@ -34,7 +34,7 @@ import { doorFor, repairBlockProblem, repairBlockStatus, staysForCrew } from "./
 import { crewScheduleProblem, crewWindows, type CrewSchedule } from "./crewDays";
 import { MAX_VENDOR_HOURS, parseVendorTime } from "./vendorTime";
 import { appendServiceNotice, cleanNoticeText, MAX_NOTICE_BODY, noticeDates, noticeHash, readServiceNotices, senderAddress, type ServiceNoticeInput } from "./serviceNotices";
-import { standingOffQuestion, standingQuestion, vendorConfirmed, vendorConfirmedNews, vendorHeldQuestion, vendorMoved, vendorMovedNews, vendorNoAnswerNews, vendorNoDayNews, vendorProposal, visitWhen, VENDOR_ASKING_HOST } from "./texts";
+import { scheduleWords, vendorCalledOffNews, vendorTakenNews, vendorTimeTaken, vendorTooManyQuestion, standingOffQuestion, standingQuestion, vendorConfirmed, vendorConfirmedNews, vendorHeldQuestion, vendorMoved, vendorMovedNews, vendorNoAnswerNews, vendorNoDayNews, vendorProposal, visitWhen, VENDOR_ASKING_HOST } from "./texts";
 import { visitRecordsOn } from "../cleaner-core/flag";
 import { buildVisits } from "../visits/derive";
 import { fixerDue } from "../visits/due";
@@ -973,7 +973,7 @@ export class FixerDesk {
       // A standing yes, or taking one back, is always the host's two-call yes, even before Activate.
       const gate =
         standing !== undefined
-          ? this.confirm("fixer-upkeep-standing", existing?.id ?? "new", tokenHash(JSON.stringify({ ...input, confirmation: undefined })), input.confirmation, standing ? standingQuestion({ what: input.what.trim(), proName: this.proNameOf(file, standing.proId), from: standing.from, until: standing.until, access: standing.access, ...(standing.usualCents !== undefined ? { usualCents: standing.usualCents } : {}) }) : standingOffQuestion({ what: input.what.trim(), proName: this.proNameOf(file, existing?.standing?.proId) }))
+          ? this.confirm("fixer-upkeep-standing", existing?.id ?? "new", tokenHash(JSON.stringify({ ...input, confirmation: undefined })), input.confirmation, standing ? standingQuestion({ what: input.what.trim(), proName: this.proNameOf(file, standing.proId), schedule: scheduleWords(input.schedule!), from: standing.from, until: standing.until, access: standing.access, ...(standing.usualCents !== undefined ? { usualCents: standing.usualCents } : {}) }) : standingOffQuestion({ what: input.what.trim(), proName: this.proNameOf(file, existing?.standing?.proId) }))
           : this.approved(file, "fixer-upkeep", existing?.id ?? "new", input, `Save upkeep: ${input.what.trim()}?`);
       if (gate !== "go") return gate;
       const item: Upkeep = {
@@ -990,7 +990,10 @@ export class FixerDesk {
       if (standing) {
         item.standing = { ...standing, yesAt: this.deps.now().toISOString() };
         item.proId = standing.proId;
-      } else if (standing === null || (item.standing && item.proId !== item.standing.proId)) delete item.standing;
+      } else if (standing === null || (item.standing && (item.proId !== item.standing.proId || JSON.stringify(existing?.schedule) !== JSON.stringify(item.schedule)))) {
+        // The standing yes was for this pro on this schedule: a change to either needs a new one.
+        delete item.standing;
+      }
       if (existing) file.upkeep[file.upkeep.indexOf(existing)] = item;
       else file.upkeep.push(item);
       this.write(file);
@@ -1925,11 +1928,14 @@ export class FixerDesk {
     const jobs = file.jobs.filter((job) => job.sourceRef === item.id);
     if (jobs.some(isOpen)) return undefined;
     const start = localYmd(new Date(item.lastDoneAt ?? item.savedAt), tz);
-    const nextDate = nextDates(item.schedule, start, start, 1)[0];
-    if (!nextDate) return undefined;
-    const leadStart = addCalendarDays(nextDate, -item.leadDays);
-    if (jobs.some((job) => localYmd(new Date(job.createdAt), tz) >= leadStart)) return undefined;
-    return { nextDate, leadStart };
+    let nextDate = nextDates(item.schedule, start, start, 1)[0];
+    // A date whose job was cancelled was dealt with: the one after it comes due in turn.
+    for (let guard = 0; nextDate && guard < 12; guard++) {
+      const leadStart = addCalendarDays(nextDate, -item.leadDays);
+      if (!jobs.some((job) => localYmd(new Date(job.createdAt), tz) >= leadStart)) return { nextDate, leadStart };
+      nextDate = nextDates(item.schedule, start, addCalendarDays(nextDate, 1), 1)[0];
+    }
+    return undefined;
   }
 
   /** The next saved pro to contact for each job the host said go to, the best ranked one not yet tried. */
@@ -2747,8 +2753,10 @@ export class FixerDesk {
       } catch {
         // Unknown: never sent again. The no-answer note tells the host.
       }
-      if (sent) draft.booking.vendor!.proposalSent = true;
-      this.logVendorText(draft, "out", "window-proposed", body, phone);
+      if (sent) {
+        draft.booking.vendor!.proposalSent = true;
+        this.logVendorText(draft, "out", "window-proposed", body, phone);
+      }
       this.write(file);
     }
   }
@@ -2777,8 +2785,10 @@ export class FixerDesk {
     const tz = this.timeZone();
     const notes: HostNote[] = [];
     const reply = (body: string, label: string) => this.textVendor(file, job, body, label, sourceId);
-    if (isYes(text)) {
-      if (!waiting) return false;
+    const span = isDone(text) ? undefined : parseVendorTime(text, { anchor: booking.from, timeZone: tz, now: this.deps.now() });
+    const sameTime = span !== undefined && span.from === booking.from && span.until === booking.until;
+    if (isYes(text) || sameTime) {
+      if (!waiting) return sameTime;
       this.logVendorText(job, "in", "confirm", text, phone, sourceId);
       this.confirmVendor(booking);
       const when = visitWhen(booking.from, booking.until, tz);
@@ -2788,7 +2798,6 @@ export class FixerDesk {
       await reply(vendorConfirmed({ when, access: booking.access }), "confirmed");
       return true;
     }
-    const span = isDone(text) ? undefined : parseVendorTime(text, { anchor: booking.from, timeZone: tz });
     if (span) {
       this.logVendorText(job, "in", "move", text, phone, sourceId);
       const moved = await this.moveVendor(file, job, span, "vendor", notes);
@@ -2797,6 +2806,7 @@ export class FixerDesk {
       const when = visitWhen(booking.from, booking.until, tz);
       if (moved === "moved") await reply(vendorMoved({ when, access: booking.access }), "move-echo");
       else if (moved === "held") await reply(VENDOR_ASKING_HOST, "move-held");
+      else if (moved === "taken") await reply(vendorTimeTaken({ street: streetOf(this.hub().property().address ?? "") }), "move-taken");
       return true;
     }
     if (!waiting) return false;
@@ -2874,7 +2884,7 @@ export class FixerDesk {
    * standing yes covers the usual price), so the lock sync moves their code rather than making a new one. A time
    * that doesn't fit, or a fourth move by text, is held for the host. A stay over the time is never moved into.
    */
-  private async moveVendor(file: FixerFile, job: Job, span: { from: string; until: string }, by: "vendor" | "agent" | "host", notes: HostNote[]): Promise<"moved" | "held" | "same"> {
+  private async moveVendor(file: FixerFile, job: Job, span: { from: string; until: string }, by: "vendor" | "agent" | "host", notes: HostNote[]): Promise<"moved" | "held" | "taken" | "same"> {
     const booking = job.booking!;
     const vendor = booking.vendor!;
     if (span.from === booking.from && span.until === booking.until) {
@@ -2883,12 +2893,19 @@ export class FixerDesk {
     }
     const { holds } = await this.holdsFor(file, job, span, booking.estimateCents);
     const fits = holds.every((hold) => hold === "cost" || hold === "no-estimate") && Date.parse(span.from) > this.deps.now().getTime();
-    const tooMany = by === "vendor" && (vendor.moves ?? []).filter((move) => move.by === "vendor").length >= MAX_VENDOR_MOVES;
+    const vendorMoves = (vendor.moves ?? []).filter((move) => move.by === "vendor").length;
+    const tooMany = by === "vendor" && vendorMoves >= MAX_VENDOR_MOVES;
     const proName = this.bookedName(file, job);
     const when = visitWhen(span.from, span.until, this.timeZone());
+    if (by === "vendor" && holds.includes("overlaps-stay")) {
+      // Never bookable, so never the host's question: the vendor is asked for another time, and the host told.
+      notes.push(this.news(job, `vendor-taken:${span.from}`, vendorTakenNews({ proName, when }), `fixer:${job.id}:vendor-taken:${span.from}`));
+      return "taken";
+    }
     if (by === "vendor" && (!fits || tooMany)) {
       vendor.held = { ...span, at: this.deps.now().toISOString() };
-      notes.push(this.news(job, `vendor-held:${span.from}`, vendorHeldQuestion({ proName, what: job.what, when }), `fixer:${job.id}:vendor-held:${span.from}`));
+      const question = tooMany && fits ? vendorTooManyQuestion({ proName, what: job.what, when, moves: vendorMoves }) : vendorHeldQuestion({ proName, what: job.what, when });
+      notes.push(this.news(job, `vendor-held:${span.from}`, question, `fixer:${job.id}:vendor-held:${span.from}`));
       return "held";
     }
     const at = this.deps.now().toISOString();
@@ -2900,6 +2917,8 @@ export class FixerDesk {
     delete booking.visitToken;
     booking.fingerprint = bookingFingerprint({ proId: booking.proId, from: span.from, until: span.until, ...(booking.estimateCents !== undefined ? { estimateCents: booking.estimateCents } : {}), access: booking.access });
     (vendor.moves ??= []).push({ at, ...span, by });
+    // The host's own yes to a new time is theirs in the hours log, like a reschedule.
+    if (by === "host") (job.reschedules ??= []).push({ at, reason: "the vendor's new time" });
     delete vendor.held;
     this.confirmVendor(booking);
     if (job.state === "in-progress" && Date.parse(span.from) > Date.parse(at)) job.state = "booked";
@@ -2923,8 +2942,16 @@ export class FixerDesk {
   private vendorWaitPass(file: FixerFile, job: Job, notes: HostNote[]): void {
     const booking = job.booking!;
     const vendor = booking.vendor!;
-    if (vendor.noAnswerAt) return;
     const now = this.deps.now().getTime();
+    if (now >= this.endOf(booking)) {
+      // Never confirmed by its end: called off, so the upkeep's next date can come due.
+      job.state = "cancelled";
+      job.cancelledAt = new Date(now).toISOString();
+      job.cancelReason = "The vendor never confirmed.";
+      notes.push(this.news(job, "vendor-called-off", vendorCalledOffNews({ proName: this.bookedName(file, job), what: job.what, when: visitWhen(booking.from, booking.until, this.timeZone()) }), `fixer:${job.id}:vendor-called-off`));
+      return;
+    }
+    if (vendor.noAnswerAt) return;
     const from = Date.parse(booking.from);
     const proposed = Date.parse(vendor.proposedAt);
     // Ask by 48 hours before, but give the vendor at least a day when the proposal went later than that.

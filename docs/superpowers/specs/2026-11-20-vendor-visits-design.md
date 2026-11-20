@@ -278,3 +278,17 @@ Builder's calls, for review:
   It's flagged for a design pass.
 - **No change to `grants.ts`.** A move changes the booking in place, and the
   existing `syncGrants` moves the code.
+- **After review (20 Nov).** Changes made after the code review:
+  - A time over a stay is never put to the host. The vendor is asked for
+    another time, and the host gets news.
+  - A fourth move that fits gets its own question.
+  - Replying with the proposed time confirms, the same as YES.
+  - A visit never confirmed is called off at its end.
+  - The upkeep rule "a cancelled job means the date was dealt with" now moves
+    on to the following date. Before this, the item never came due again.
+    That was a bug that existed before this branch.
+  - The standing-yes question names how often. A change of schedule drops
+    the standing yes.
+  - The host's yes to a vendor's move is a reschedule row in the hours log.
+  - The parser ignores durations ("2-3 hours"), and reads "today" and
+    "tomorrow" as the day the vendor texts.
