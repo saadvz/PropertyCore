@@ -31,7 +31,7 @@ const MODE = {
 const MAKE = {
   name: "make_guest_code",
   title: "Make one booking's door code",
-  description: `When guests' codes are on ask: the host's yes to one booking's code. It then follows the booking's changes on its own. ${TWO_CALL}`,
+  description: `When guests' codes are on ask: the host's yes to one booking's code. Take stay from get_guest_codes, where that booking shows waiting-for-host. It then follows the booking's changes on its own. ${TWO_CALL}`,
   inputSchema: { type: "object", properties: { stay: STAY, confirmation: CONFIRMATION }, required: ["stay"], additionalProperties: false },
 };
 

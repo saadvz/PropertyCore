@@ -63,7 +63,7 @@ async function connect(m: MultiTenantApp, token: string, propertyId: string) {
   expect(page.status).toBe(200);
   const consent = await page.text();
   expect(consent).toContain("never sees your password");
-  expect(consent).toContain("open-source detector on Property Core's own server");
+  expect(consent).toContain("Property Core's own server counts the people, vehicles and pets in it, then deletes it. The image is never sent to anyone else");
   expect(consent).not.toMatch(/Google|Gemini/);
   const agreed = await m.app.http(link.pathname, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "agree=yes" });
   expect(agreed.status).toBe(302);
@@ -151,7 +151,7 @@ describe("cameras on the shared service", () => {
     await tickAllCameras(m.hosted());
     await tickAllCameras(m.hosted());
     const listed = await m.toolAt(PATH, token, "list_cameras", { property: property.id });
-    expect(listed.structured?.notes).toEqual([{ id: "camera-offline:off-1", text: "The Front door camera at 12 Scratch Lane has been offline since 2:10 PM." }]);
+    expect(listed.structured?.notes).toEqual([{ id: "camera-offline:off-1", text: "The Front door camera at 12 Scratch Lane has been offline since 2:10 PM. Check its power and Wi-Fi." }]);
     expect((await m.toolAt(PATH, token, "list_cameras", { property: property.id })).structured?.notes).toBeUndefined();
     const on = provider.webhook({ id: "on-1", at: "2026-11-21T20:30:00.000Z", deviceId: "dev-aaa", kind: "online" });
     await m.app.http("/webhooks/ring", { method: "POST", headers: on.headers, body: on.body.toString() });

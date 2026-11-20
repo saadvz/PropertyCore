@@ -357,7 +357,7 @@ export async function serveGuestPage(h: HostedCleaner, r: HostedRequest, tenant:
   const page = !open
     ? undefined
     : open.kind === "stay"
-      ? { heading: `${open.title} at ${open.street}`, intro: "Tap to see the code, then copy it into your arrival message. It shows once.", button: "Show the code", shownAs: "Door code: " }
-      : { heading: open.title, intro: "Tap to see your code. It shows once, so note it somewhere safe.", button: "Show my code", shownAs: "Your code: " };
+      ? { heading: `${open.title} at ${open.street}`, intro: "Tap to see the code. It shows only once, so copy it into your arrival message right away.", button: "Show the code", shownAs: "Door code: " }
+      : { heading: open.title, intro: `Hi ${open.name}. Tap to see your code. It shows once, so note it somewhere safe.`, button: "Show my code", shownAs: "Your code: " };
   return serveCodePage(r, sub, page, () => desk.showCode(token), "This link has ended. Ask for a new one.");
 }

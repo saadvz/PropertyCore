@@ -454,7 +454,7 @@ export const ownerLockEntries: RowSource = (records) =>
     reference: `Lock event ${entry.eventId}`,
     onSite: true,
     timing: "measured",
-    ...(entry.until ? {} : { needs: "When did you leave? The lock didn't report it." }),
+    ...(entry.until ? {} : { needs: "The lock didn't record when you left. What time was it?" }),
   }));
 
 export const DEFAULT_SOURCES: readonly RowSource[] = [cleanerRows, fixerRows, supplyRows, packageRows, ownerLockEntries];

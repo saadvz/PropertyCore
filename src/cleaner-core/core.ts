@@ -2381,7 +2381,7 @@ class Engine implements CleanerCore {
       const time = this.clock(job.checkoutDate, checkout.minutes).time;
       if (now < at - 60 * 60_000) continue;
       if (now < at) {
-        this.keepHostNote(`host:code-at-checkout-soon:${job.id}:${checkout.minutes}:${checkout.version}`, `The cleaner's code goes out at ${time}. Any late checkout?`);
+        this.keepHostNote(`host:code-at-checkout-soon:${job.id}:${checkout.minutes}:${checkout.version}`, `The cleaner's code goes out at checkout, ${time}. If the guests are staying late, say pause.`);
         continue;
       }
       this.recordClearance(job);
@@ -2416,8 +2416,8 @@ class Engine implements CleanerCore {
       const checkin = job.nextCheckInDate ? this.latestFact(job.id, "checkin") : undefined;
       const next = checkin && job.nextCheckInDate ? Date.parse(zonedInstant(job.nextCheckInDate, hm(checkin.minutes), this.options.property.timeZone)) : undefined;
       const atRisk = next !== undefined && next - now < 3 * 60 * 60_000;
-      const base = `The turnover at ${this.options.property.address} is still paused. When the guests have left, resume it and say they've left, and I'll send ${who} a new code.`;
-      const text = atRisk ? `${base} The next guests check in at ${this.clock(job.nextCheckInDate!, checkin!.minutes).time}, so the cleaning is running short on time.` : base;
+      const base = `The turnover at ${this.options.property.address} is still paused. Once the guests have left, tell me and I'll send ${who} a new code.`;
+      const text = atRisk ? `${base} The next guests check in at ${this.clock(job.nextCheckInDate!, checkin!.minutes).time}, so time for the cleaning is getting short.` : base;
       this.keepHostNote(`host:paused:${job.id}:${this.heldAt}:${slot}`, text);
     }
   }

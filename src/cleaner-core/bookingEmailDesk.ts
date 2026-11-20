@@ -36,8 +36,8 @@ export const PENDING_MS = 3 * 60 * 60 * 1000;
 export const CANCEL_ACTION = "cleaner-booking-cancel";
 /** The host's yes to a booking from a platform without its own reader (#263). */
 export const BOOKING_YES_ACTION = "cleaner-booking-yes";
-const FAIL_WARNING = "This email didn't pass its sender check. Only say yes if you know this booking.";
-const UNCHECKED_WARNING = "I couldn't check this email's sender. Only say yes if you know this booking.";
+const failWarning = (platform: string) => `This email failed its sender check, so it may not be from ${platform}. Only say yes if you recognize this booking.`;
+const UNCHECKED_WARNING = "I couldn't check who sent this email. Only say yes if you recognize this booking.";
 
 /** One line in every chat's instructions. The agent fetches the emails; Cleaner Core reads them. */
 export const BOOKING_EMAIL_INSTRUCTION =
@@ -489,7 +489,7 @@ async function otherPath(desk: EmailDesk, input: EmailInput, source: BookingSour
   const label = labelOf(parsed);
   const key = bookingKey(parsed);
   const confirming = typeof input.confirmation === "string" && input.confirmation.trim() !== "";
-  const warning = auth === "fail" ? FAIL_WARNING : source.platform === "booking" && auth !== "pass" ? UNCHECKED_WARNING : undefined;
+  const warning = auth === "fail" ? failWarning(platformLabel({ platform: parsed.platform ?? "airbnb", ...(parsed.platformName ? { name: parsed.platformName } : {}) })) : source.platform === "booking" && auth !== "pass" ? UNCHECKED_WARNING : undefined;
   // A cancellation is one ask: the host's yes covers the texts calling the cleaning off sends.
   let texts: { to: string; body: string }[] = [];
   if (parsed.kind === "cancelled" && engine) {
@@ -504,8 +504,8 @@ async function otherPath(desk: EmailDesk, input: EmailInput, source: BookingSour
   const summary = summaryOf(desk, parsed, label);
   if (!confirming) {
     ctx.keep("awaiting-host", { parsed });
-    const question = parsed.kind === "cancelled" ? "Call off its cleaning?" : "Use these times for the cleaning?";
-    engine?.keepHostNote(`booking-email:yes:${key}:${ctx.base.bodyHash}`, `${summary} I won't use it until you say yes in chat.`);
+    const question = parsed.kind === "cancelled" ? "Call off the cleaning for it?" : "Use these times for the cleaning?";
+    engine?.keepHostNote(`booking-email:yes:${key}:${ctx.base.bodyHash}`, `${summary} I'll hold off until you say yes in chat.`);
     const next = `Show the host this booking exactly: "${summary}"${warning ? ` ${warning}` : ""}${parsed.kind === "cancelled" ? textsLine(texts) : ""} Ask "${question}" with Yes and No. Only after their yes, call read_booking_email again with the same email, the same extracted and confirmation. Nothing changes until then.`;
     return done({
       outcome: "awaiting-host",

@@ -225,7 +225,7 @@ describe("release", () => {
     const grant = await door.request(ask());
     expect(waits).toBe(8);
     const backup = fake.liveCodes("dev-front").find((code) => code.backup)!;
-    expect(grant).toMatchObject({ ok: true, code: backup.code, notes: [{ text: "The Front door didn't take Maria's code, so Maria got a backup code for it.", urgent: true }] });
+    expect(grant).toMatchObject({ ok: true, code: backup.code, notes: [{ text: "The Front door couldn't save Maria's code, so Maria got a backup code for it.", urgent: true }] });
     expect(JSON.stringify(grant.ok && grant.notes)).not.toContain(backup.code);
   });
 
@@ -249,7 +249,30 @@ describe("release", () => {
     await door.syncGrants("cleaning", [want("job-1")]);
     const grant = await door.request(ask());
     expect(grant).toMatchObject({ ok: true, code: SAVED, lockLocation: "back door" });
-    expect(grant.ok && grant.notes?.map((note) => note.text)).toEqual(["The Front door didn't take Maria's code and has no backup code left.", "The lock didn't take Maria's own code, so Maria got your saved door code."]);
+    expect(grant.ok && grant.notes?.map((note) => note.text)).toEqual(["The Front door couldn't save Maria's code and has no backup codes left.", "The lock couldn't save Maria's own code, so Maria got your saved door code."]);
+  });
+
+  it("doesn't repeat a failed code the lock's event already told the host about (one note per failed code)", async () => {
+    const { root, door, fake } = setup();
+    fake.failCodes("dev-front");
+    await door.syncGrants("cleaning", [want("job-1")]);
+    const stored = JSON.parse(readFileSync(join(root, DOOR_GRANTS_FILE), "utf8")) as { grants: { devices: { codeId?: string }[] }[] };
+    const codeId = stored.grants[0]!.devices[0]!.codeId!;
+    expect(await door.grants().backupNow(codeId)).toBe(true);
+    const backup = fake.liveCodes("dev-front").find((code) => code.backup)!;
+    const grant = await door.request(ask());
+    expect(grant).toMatchObject({ ok: true, code: backup.code });
+    expect(grant.ok && (grant.notes ?? [])).toEqual([]);
+  });
+
+  it("with no backup and no saved code, the release note tells the host to let them in", async () => {
+    const { door, fake } = setup();
+    fake.failCodes("dev-front");
+    fake.setBackups("dev-front", 0);
+    await door.syncGrants("cleaning", [want("job-1")]);
+    const grant = await door.request(ask());
+    expect(grant).toMatchObject({ ok: false, reason: "lock-failed" });
+    expect(!grant.ok && grant.notes?.map((note) => note.text)).toEqual(["The Front door couldn't save Maria's code and has no backup codes left. You'll need to let them in."]);
   });
 
   it("refuses lock-failed with no backup and no saved code", async () => {

@@ -144,7 +144,7 @@ export class LockDesk {
     const confirmation = typeof input.confirmation === "string" ? input.confirmation : undefined;
     const door = this.door();
     if (input.off === true) {
-      const gate = this.confirm("locks-off", "off", confirmation, "Switch this property back to your saved door code? Every per-visit code here is removed.");
+      const gate = this.confirm("locks-off", "off", confirmation, "Switch this property back to your saved door code? I'll remove every per-visit code here.");
       if (gate !== "go") return gate;
       const file = door.locks();
       for (const flow of ["cleaning", "repair", "standing"] as const) await door.syncGrants(flow, []);
@@ -204,11 +204,11 @@ export class LockDesk {
     const next = { cleaners: mode(input.cleaners, file.release.cleaners), pros: mode(input.pros, file.release.pros), extend: mode(input.extend, file.extend) };
     if (next.cleaners === "automatic" && (!door.connected() || !this.deps.cleaningOn())) return fail("The cleaner's code can go at checkout time only on a property with connected locks and Cleaner Core on.");
     const words = [
-      next.cleaners === "automatic" ? "the cleaner's code goes at checkout time, without your \"guests have left\"" : "the cleaner's code waits for your \"guests have left\"",
-      next.pros === "automatic" ? "a pro's code shows when they reach the door in their window" : "a pro's code waits for your OK",
-      next.extend === "automatic" ? "a pro still inside gets 30 more minutes" : "you're asked before a pro gets more time",
+      next.cleaners === "automatic" ? "the cleaner's code goes out at checkout without waiting for you" : "the cleaner's code waits for your \"guests have left\"",
+      next.pros === "automatic" ? "a pro's code shows when they reach the door in their window" : "each pro's code waits for your OK",
+      next.extend === "automatic" ? "a pro still inside gets 30 more minutes" : "I'll ask before giving a pro more time",
     ];
-    const question = `So ${words.join("; ")}?`;
+    const question = `Just to check: ${words.join("; ")}. Okay?`;
     const gate = this.confirm("locks-settings", JSON.stringify(next), typeof input.confirmation === "string" ? input.confirmation : undefined, question);
     if (gate !== "go") return gate;
     door.saveLocks({ ...file, release: { cleaners: next.cleaners, pros: next.pros }, extend: next.extend });
@@ -315,7 +315,7 @@ export class LockDesk {
     person.link = { hash: hashOf(token), expiresAt: new Date(this.deps.now().getTime() + STANDING_LINK_HOURS * 3600_000).toISOString(), sentAt: this.deps.now().toISOString() };
     this.saveStanding(file, all);
     try {
-      return await this.deps.send(person.phone, `Here's your private link to your door code at ${this.street()}. It opens once, within ${STANDING_LINK_HOURS} hours: ${base}${STANDING_PAGE_PREFIX}${token}`);
+      return await this.deps.send(person.phone, `Here's your private link to your door code at ${this.street()}. It works once, in the next ${STANDING_LINK_HOURS} hours: ${base}${STANDING_PAGE_PREFIX}${token}`);
     } catch {
       return false;
     }

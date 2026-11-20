@@ -167,7 +167,7 @@ export class GuestCodeDesk {
     const street = this.street();
     const question =
       mode === "automatic"
-        ? `Should I make guests' door codes at ${street} myself: one for each booking, on the lock from check-in to checkout, made 7 days ahead, with a private link for you to copy it into your arrival message? You'd stop making guests' codes in the lock app.`
+        ? `Should I make a door code for each booking at ${street}? Each one goes on the lock 7 days ahead and works from check-in to checkout. You'd get a private link to copy it into your arrival message, and you'd stop making guests' codes in the lock app.`
         : mode === "ask"
           ? `Should I ask you before making each booking's door code at ${street}? Once you say yes for a booking, its code follows the booking's changes on its own.`
           : `Turn guest door codes off at ${street}? I'll take every booking's code off the lock, and you'll make guests' codes yourself again.`;
@@ -263,7 +263,9 @@ export class GuestCodeDesk {
     });
     const next = !file.mode
       ? "Ask the host how guests' door codes should work here: automatic (I make one for each booking, 7 days ahead), ask (I ask before each booking's code), or off (they keep making them). Then call guest_codes."
-      : `Guest door codes are ${file.mode === "off" ? "off" : file.mode} here.`;
+      : file.mode === "ask"
+        ? "Guest door codes are ask here. For a stay with status waiting-for-host, ask the host, and only after their yes call make_guest_code with that stay."
+        : `Guest door codes are ${file.mode === "off" ? "off" : file.mode} here.`;
     return ok({ connected: true, mode: file.mode ?? "not-chosen", stays, leases, next });
   }
 
@@ -324,7 +326,7 @@ export class GuestCodeDesk {
       const state: StayCodeState = (file.stays[stay.key] ??= {});
       if (file.mode === "ask" && stay.due && !state.yesAt && !state.askedAt) {
         state.askedAt = input.now.toISOString();
-        notes.push({ id: `guest:ask:${stay.key}`, text: `New booking: ${stay.label}. Should I make their door code, ${this.span(stay.window, input.timeZone)}? If the host says yes, call make_guest_code with stay ${stay.key}.` });
+        notes.push({ id: `guest:ask:${stay.key}`, text: `New booking: ${stay.label}. Should I make their door code, ${this.span(stay.window, input.timeZone)}?` });
       }
       if (!wantedJobs.has(job)) continue;
       if (state.removedTold) {
@@ -344,7 +346,7 @@ export class GuestCodeDesk {
         notes.push({
           id: `guest:ready:${stay.key}`,
           text: made
-            ? `The door code for ${stay.label} is on the lock, ${this.span(stay.window, input.timeZone)}. Open this private link once to copy it into your arrival message: ${made.url}`
+            ? `The door code for ${stay.label} is on the lock, ${this.span(stay.window, input.timeZone)}. This private link shows it once, so copy it into your arrival message when you open it: ${made.url}`
             : `The door code for ${stay.label} is on the lock, ${this.span(stay.window, input.timeZone)}. Its private link waits until the server's public address is saved.`,
         });
       } else if (ready && state.toldWindow && !sameWindow(state.toldWindow, stay.window)) {
@@ -357,8 +359,8 @@ export class GuestCodeDesk {
         notes.push({
           id: `guest:moved:${stay.key}:${stay.window.until}`,
           text: startMoved
-            ? `Same door code for ${stay.label}, now ${this.span(stay.window, input.timeZone)}. Nothing to send again.`
-            : `Same door code for ${stay.label}, now until ${this.when(stay.window.until, input.timeZone)}. Nothing to send again.`,
+            ? `The booking for ${stay.label} moved to ${this.span(stay.window, input.timeZone)}. The door code stays the same, so there's nothing to resend.`
+            : `The booking for ${stay.label} now ends ${this.when(stay.window.until, input.timeZone)}. The door code stays the same, so there's nothing to resend.`,
         });
       }
       if (!ready && !state.urgentTold && Date.parse(stay.window.from) - now <= URGENT_BEFORE_MS) {
@@ -400,11 +402,11 @@ export class GuestCodeDesk {
   }
 
   /** Whether a page token is live: for showing the page. Reads only. */
-  pageOpen(token: string): { kind: "stay" | "lease"; title: string; street: string } | undefined {
+  pageOpen(token: string): { kind: "stay"; title: string; street: string } | { kind: "lease"; title: string; name: string; street: string } | undefined {
     const found = this.byToken(token);
     if (!found) return undefined;
     const street = this.street();
-    return found.kind === "stay" ? { kind: "stay", title: `The door code for ${found.stay.label}`, street } : { kind: "lease", title: `Hi ${found.lease.name}. Your door code at ${street}`, street };
+    return found.kind === "stay" ? { kind: "stay", title: `Door code for ${found.stay.label}`, street } : { kind: "lease", title: `Your door code at ${street}`, name: found.lease.name, street };
   }
 
   /**
@@ -489,7 +491,7 @@ export class GuestCodeDesk {
     lease.link = made.link;
     writeGuestCodes(this.root, file);
     try {
-      return await this.deps.send(lease.phone, `Here's your private link to your door code at ${this.street()}. It opens once, within ${LEASE_LINK_HOURS} hours: ${made.url}`);
+      return await this.deps.send(lease.phone, `Here's your private link to your door code at ${this.street()}. It works once, in the next ${LEASE_LINK_HOURS} hours: ${made.url}`);
     } catch {
       return false;
     }

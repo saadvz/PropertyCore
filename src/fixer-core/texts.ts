@@ -167,7 +167,7 @@ export function codeOkNews(f: { proName: string; from: string; timeZone: string 
 }
 
 export function codeOkReminder(f: { proName: string }): string {
-  return `${f.proName}'s visit has started, and their code is still waiting for your OK.`;
+  return `${f.proName}'s visit has started, and they're waiting for your OK on their code.`;
 }
 
 export function extendAskNews(f: { proName: string; until: string; timeZone: string }): string {
@@ -179,7 +179,7 @@ export function extendedNews(f: { proName: string; until: string; timeZone: stri
 }
 
 export function noExtendNews(f: { proName: string; until: string; timeZone: string }): string {
-  return `${f.proName} hasn't said done, and their code stops at ${clock(f.until, f.timeZone)}. I can't give them more time: the next check-in is too close.`;
+  return `${f.proName} hasn't said done, and their code stops at ${clock(f.until, f.timeZone)}. The next check-in is too close to give them more time.`;
 }
 
 export function extendQuestion(f: { proName: string; until: string; timeZone: string }): string {
@@ -436,13 +436,13 @@ export function scheduleWords(schedule: { kind: string; days?: number; monthlyOn
 }
 
 export function standingQuestion(f: { what: string; proName: string; schedule: string; from: string; until: string; access: "code" | "host"; usualCents?: number }): string {
-  const access = f.access === "code" ? "they get their own door code for that visit" : "you let them in";
-  const price = f.usualCents !== undefined ? ` About ${shortDollars(f.usualCents)} each time; more than that waits for you.` : "";
-  return `${f.what} with ${f.proName}, ${f.schedule}, ${hoursText(f.from, f.until)}: when it's due, I'll text ${f.proName} the date, they confirm or move it, and ${access}. You won't be asked each time.${price} Okay?`;
+  const access = f.access === "code" ? "They'll get their own door code for each visit." : "You'll let them in.";
+  const price = f.usualCents !== undefined ? ` It's usually about ${shortDollars(f.usualCents)}; anything more waits for your OK.` : "";
+  return `Want me to book ${f.what.toLowerCase()} with ${f.proName} on its own, ${f.schedule}, between ${hoursText(f.from, f.until).replace(" to ", " and ")}? When it's due, I'll text ${f.proName} the date, and they'll confirm or pick another time. ${access} You won't be asked each time.${price}`;
 }
 
 export function standingOffQuestion(f: { what: string; proName: string }): string {
-  return `Stop booking ${f.what} with ${f.proName} on its own? You'll be asked each time again.`;
+  return `Stop booking ${f.what} with ${f.proName} on its own? I'll ask you each time again.`;
 }
 
 export function vendorProposal(f: { proName: string; what: string; street: string; when: string }): string {
@@ -450,11 +450,11 @@ export function vendorProposal(f: { proName: string; what: string; street: strin
 }
 
 export function vendorConfirmed(f: { when: string; access: "code" | "host" }): string {
-  return `Thanks, see you ${f.when}. ${f.access === "code" ? "Your door code comes by text when the visit starts." : "The host will let you in."}`;
+  return `Thanks, see you ${f.when}. ${f.access === "code" ? "You'll get your door code by text when the visit starts." : "The host will let you in."}`;
 }
 
 export function vendorMoved(f: { when: string; access: "code" | "host" }): string {
-  return `Moved to ${f.when}. ${f.access === "code" ? "Your door code comes by text when the visit starts." : "The host will let you in."}`;
+  return `Done, you're moved to ${f.when}. ${f.access === "code" ? "You'll get your door code by text when the visit starts." : "The host will let you in."}`;
 }
 
 export const VENDOR_ASKING_HOST = "Thanks, I'll check that time with the host and text you back.";
@@ -476,11 +476,11 @@ export function vendorNoAnswerNews(f: { proName: string; what: string; when: str
 }
 
 export function vendorNoDayNews(f: { what: string; proName: string }): string {
-  return `${f.what} is due, but ${f.proName}'s usual hours don't fit between stays in the next week.`;
+  return `${f.what} is due, but ${f.proName}'s usual hours don't fit between stays in the next week, so I'll handle it the usual way.`;
 }
 
 export function vendorTimeTaken(f: { street: string }): string {
-  return `Sorry, that time isn't free at ${f.street}. Can you send another day and time?`;
+  return `Sorry, ${f.street} isn't free then. Could you send another day and time?`;
 }
 
 export function vendorTakenNews(f: { proName: string; when: string }): string {
@@ -488,9 +488,9 @@ export function vendorTakenNews(f: { proName: string; when: string }): string {
 }
 
 export function vendorTooManyQuestion(f: { proName: string; what: string; when: string; moves: number }): string {
-  return `${f.proName} asked to move ${f.what.toLowerCase()} again, to ${f.when}, after ${f.moves} moves. Move it?`;
+  return `${f.proName} wants to move ${f.what.toLowerCase()} again, to ${f.when}. That would be move ${f.moves + 1}. Okay?`;
 }
 
 export function vendorCalledOffNews(f: { proName: string; what: string; when: string }): string {
-  return `${f.proName} never confirmed ${f.what.toLowerCase()} for ${f.when}, so it's called off. I'll propose the next date when it comes due.`;
+  return `${f.proName} never confirmed ${f.what.toLowerCase()} for ${f.when}, so I called it off. I'll offer them the next date when it comes due.`;
 }
