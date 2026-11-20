@@ -1,6 +1,6 @@
 # Guest codes: a door code for each stay
 
-Status: design, for Saad's review. Issue #262, part of #236. Ships with #180 (merged in #266) as one
+Status: design approved by Saad on 2026-11-20. Issue #262, part of #236. Ships with #180 (merged in #266) as one
 access package. Decisions from Saad in chat on 2026-11-20 are marked **(decided)**.
 
 ## Why
@@ -51,6 +51,8 @@ owners); only 16 of 92 automate it today.
 | Leases | The host enters the tenant's name, phone, start and move-out day. The tenant gets one opt-in text and, after YES, a single-use page, like a standing code. |
 | When a code is made | 7 days before check-in, or at once for a booking made inside 7 days. |
 | Flag | A new `GUEST_CODES` flag, which also needs `SMART_LOCKS`. |
+| How guest codes work | The host's choice per property: automatic, ask me each time, or off. Only offered once the property's lock is connected; without a connection no code can be made, and the property works as today. |
+| Design sign-off (Saad, 20 Nov) | Approved with the host's choice above. No saved-code fallback, an urgent note 24 hours ahead, leases from their start date, only a stay's end moves, and the "guest on 12–15 Dec" label stand as written. |
 
 ## How it works today (what this builds on)
 
@@ -71,16 +73,30 @@ owners); only 16 of 92 automate it today.
 
 ## The design
 
-### 1. Switching it on
+### 1. Switching it on: the host chooses how guest codes work (decided)
 
 - Service: `GUEST_CODES=1`, and `SMART_LOCKS` on with a lock adapter. Either off: no tool listed,
   no code made, page routes answer 404.
-- Property: guest codes are switched on per property, with the host's yes (a confirm code), only on
-  a property already on connected locks. Default off: the host keeps making codes by hand until
-  they choose otherwise, and switching on tells them to stop. Switching off revokes every guest and
-  lease code at once, after its own yes.
+- **No connected lock, no guest codes.** Property Core can only make a code on a lock it's
+  connected to. A property not on connected locks isn't asked about guest codes, keeps working
+  exactly as today, and `get_guest_codes` says so and points to the lock step (`connect_lock`).
+- **The host's choice, per property.** Once the property is on connected locks, the lock setup asks
+  "How should guests' door codes work?", with the same shape as #180's release setting:
+
+  | Choice | What happens |
+  | --- | --- |
+  | **Automatic** | Property Core makes a code for each booking, 7 days before check-in, and the host gets the page link. |
+  | **Ask me each time** | For each booking, 7 days before check-in (or when it lands, if sooner), the host gets "Make a door code for the guest on 12–15 Dec?" Nothing goes on the lock until their yes for that booking. After it, the code follows the booking (moves, removal) with no further ask. |
+  | **Off** | The host keeps making guest codes themselves. Nothing changes. |
+
+  There's no default: until the host answers, it's off. Changing the choice takes the host's yes
+  (a confirm code). Choosing off revokes every live guest code at once; the host is told which stays
+  had one. Ask to automatic makes codes for the stays still waiting; automatic to ask keeps the
+  codes already made.
+- Leases (section 5) don't follow this choice: each lease is its own host yes when it's entered.
 - Settings and the leases live in a new per-property file, `guest-codes.json`, next to
-  `door-locks.json`. It holds no code: on/off, the leases, page-link hashes, and which notes went.
+  `door-locks.json`. It holds no code: the choice, each booking's yes under ask, the leases,
+  page-link hashes, and which notes went.
 
 ### 2. Which codes are wanted
 
@@ -88,7 +104,8 @@ A new grant flow, `guest`. On each pass the property's guest desk works out the 
 `syncGrants("guest", wanted)` makes the locks match:
 
 - **Each booking** in `rebuildBookings(readBookingEmails(root))` that is not cancelled, whose
-  checkout is still ahead, and whose check-in is within 7 days (or already passed):
+  checkout is still ahead, whose check-in is within 7 days (or already passed), and, under ask,
+  that has the host's yes:
   - `jobId`: `stay:<confirmation code>`;
   - `person`: `guest:<confirmation code>` (a guest has no phone in Property Core; the grant only
     needs a stable key);
@@ -108,8 +125,9 @@ Everything else follows from the reconcile, with no per-event code:
 
 | Event | What happens |
 | --- | --- |
-| A booking email lands, inside 7 days | Code issued on the next pass (right after the email, and on the clock) |
-| A booking 7 days out | Issued when the clock pass sees it inside 7 days |
+| A booking email lands, inside 7 days | Automatic: code issued on the next pass. Ask: the host is asked once. |
+| A booking 7 days out | The same, when the clock pass sees it inside 7 days |
+| The host's yes for a booking (ask) | Code issued on the next pass |
 | A changed booking (new dates or times) | Window moves |
 | A cancellation the log counts | Revoked. A cancellation still waiting on the host (`asked`) changes nothing until their yes. |
 | The host's late checkout (#260) | End moves to the new time |
@@ -191,7 +209,8 @@ cleaning's checkout time, which a late checkout already moves.
 
 | Tool | What it does |
 | --- | --- |
-| `guest_codes` | Switch guest codes on or off for this property, with a yes |
+| `guest_codes` | The host's choice for this property: automatic, ask or off, with a yes |
+| `make_guest_code` | Under ask, the host's yes for one booking, with a confirm code |
 | `get_guest_codes` | Status of each stay's and lease's code, no digits |
 | `guest_code_link` | A new single-use page link for one stay, with a yes |
 | `add_lease`, `change_lease`, `remove_lease`, `lease_code_link` | Leases, each with a yes |
@@ -206,7 +225,10 @@ A "Guest codes (#262)" section in `docs/cleaner-core-safety-gates.md`, and a lin
 test on the fake adapter:
 
 - **Off means unchanged.** Flag off, `SMART_LOCKS` off, no adapter, a property not on connected
-  locks, or guest codes not switched on: nothing reaches a lock, no tool is listed, the page is 404.
+  locks, or the host's choice unset or off: nothing reaches a lock, and the page is 404. Without
+  `GUEST_CODES` no tool is listed.
+- **The host's choice.** No choice means off. Under ask, no code is made for a booking before the
+  host's yes for it, and each booking is asked once. Choosing off revokes every guest code.
 - **One code per stay, its dates only.** A code is made only for a booking in the log, 7 days
   ahead, for its check-in to checkout; never for a calendar-only stay or a booking waiting on the
   host's platform yes.
@@ -231,7 +253,8 @@ test on the fake adapter:
 
 ## Wording for a design pass
 
-Every host-facing and tenant-facing line here is new and is flagged in the PR: the code-ready note,
+Every host-facing and tenant-facing line here is new and is flagged in the PR: the setup question
+and its three choices, the per-booking ask, the code-ready note,
 the moved and removed notes, the failed-code notes, the page text, the switch-on question, and the
 lease invite and link texts.
 
