@@ -134,14 +134,16 @@ Everything else follows from the reconcile, with no per-event code:
 | Checkout passes | The window ends; the lock drops it; the grant stays in the leak checks a day longer |
 | A lease removed, or the tenant's STOP | Revoked |
 
-The pass runs on the lock clock (`tickAllLocks`) and right after a booking email or a late checkout
-(the existing `StayCodeHook` asks, extended to the stay's job). A failed lock call is retried on the
-next pass, as for every other flow.
+The pass runs on every tick of the lock clock (`tickAllLocks`, every 15 seconds). It reads the
+booking-email log and the late checkouts each time, so a new email or a late checkout reaches the lock
+within a tick, and `StayCodeHook` needs no change. The reconcile itself runs only when the wanted
+codes changed, or every 10 minutes, so a failed lock call is retried.
 
 ### 3. How the host gets a stay's code
 
-When a stay's code is set on every door (or by the latest the next morning's pass, when one door is
-still programming), the host gets one note in agent chat through `tellLockNote`:
+When a stay's code is set on every door (or a door took a backup code), the host gets one note in
+agent chat through `tellLockNote`. A door still programming holds the note back; within a day of
+check-in that becomes the urgent note in section 4.
 
 > The code for the guest on 12–15 Dec is on the lock, from 3:00 PM on the 12th until 11:00 AM on
 > the 15th. Open this once to copy it into your arrival message: https://…/locks/guest/‹token›
@@ -188,8 +190,8 @@ YES first." Then, exactly as a standing code:
 - `remove_lease` (with a yes) or the tenant's STOP revokes the code. Changing move-out is
   `change_lease`, with a yes; the code's end moves.
 
-A lease code is made from the start date (or at YES, if later), not 7 days ahead: a lease is known
-and stable, and a tenant may need the door on the first day.
+A lease's code goes on the lock at the tenant's YES, live from the start date, not 7 days ahead: a
+lease is known and stable, and a tenant may need the door on the first day.
 
 ### 6. What the agent sees
 
@@ -257,6 +259,14 @@ Every host-facing and tenant-facing line here is new and is flagged in the PR: t
 and its three choices, the per-booking ask, the code-ready note,
 the moved and removed notes, the failed-code notes, the page text, the switch-on question, and the
 lease invite and link texts.
+
+## Builder's calls (2026-11-20)
+
+- The reconcile runs on the lock clock, with no change to `StayCodeHook` (section 2).
+- The host's ready note waits until every door holds the code (section 3).
+- A lease's code goes on the lock at the tenant's YES (section 5).
+- The page refactor: standing codes and guest codes share one page renderer in `src/hosted/locks.ts`;
+  the standing page's text and behavior are unchanged.
 
 ## Left to the builder
 

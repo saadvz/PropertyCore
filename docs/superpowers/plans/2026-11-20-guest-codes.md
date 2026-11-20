@@ -57,8 +57,8 @@ tenant's YES and STOP.
 5. **Leases.** `add_lease`, `change_lease`, `remove_lease`, `lease_code_link`, each with a yes; one
    opt-in text under texting consent; YES makes the code and texts a single-use link; STOP and remove
    revoke. Tests: `test/guestCodesLeases.test.ts`.
-6. **Hosted wiring.** Tools listed only with both flags and an adapter; the clock pass; a sync after
-   a booking email and a late checkout; a lease tenant's YES and STOP on the shared line; page route
+6. **Hosted wiring.** Tools listed only with both flags and an adapter; the clock pass, which picks
+   up a booking email and a late checkout within a tick; a lease tenant's YES and STOP on the shared line; page route
    on its property's path only. Tests: `test/guestCodesHosted.test.ts`.
 7. **Gates and docs.** "Guest codes (#262)" in `docs/cleaner-core-safety-gates.md`, a line in
    `docs/fixer-core-safety-gates.md`, `GUEST_CODES` in `docs/environment-variables.md`, the setup
