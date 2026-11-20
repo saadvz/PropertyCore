@@ -148,6 +148,20 @@ describe("the host's choice", () => {
     expect(after.map((note) => note.id)).toEqual(["guest:ready:HMSCRATCHAA"]);
   });
 
+  it("under ask, takes another platform's booking by its prefixed key, in any case, after the host's yes (#263)", async () => {
+    const { root, desk, codes } = world();
+    sentAt += 1;
+    const at = new Date(Date.parse("2026-12-01T00:00:00Z") + sentAt * 60_000).toISOString();
+    appendBookingEmail(root, { at, receivedAt: at, from: "sender@messages.homeaway.com", subject: "Reservation", parsed: { ...booked("HA-1A2B3C", "2026-12-12", "2026-12-15"), platform: "vrbo" }, outcome: "applied", hostConfirmed: true });
+    await approved((confirmation) => desk.setMode({ mode: "ask", ...(confirmation ? { confirmation } : {}) }));
+    const first = await desk.sync();
+    expect(first.map((note) => note.id)).toEqual(["guest:ask:vrbo:HA-1A2B3C"]);
+    expect(first[0]!.text).toContain("stay vrbo:HA-1A2B3C");
+    expect((await approved((confirmation) => desk.makeCode({ stay: "VRBO:ha-1a2b3c", ...(confirmation ? { confirmation } : {}) }))).isError).toBe(false);
+    await desk.sync();
+    expect(codes()).toHaveLength(1);
+  });
+
   it("automatic to ask keeps the codes already made", async () => {
     const { root, desk, codes } = world();
     email(root, booked("HMSCRATCHAA", "2026-12-12", "2026-12-15"));

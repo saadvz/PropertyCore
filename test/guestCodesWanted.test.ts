@@ -27,10 +27,10 @@ function folder(): string {
 }
 
 let sent = 0;
-function email(root: string, parsed: ParsedBookingEmail, outcome: BookingEmailOutcome = "applied"): void {
+function email(root: string, parsed: ParsedBookingEmail, outcome: BookingEmailOutcome = "applied", hostConfirmed = false): void {
   sent += 1;
   const at = new Date(Date.parse("2026-12-01T00:00:00Z") + sent * 60_000).toISOString();
-  appendBookingEmail(root, { at, receivedAt: at, from: "automated@airbnb.com", subject: "Reservation", parsed, outcome });
+  appendBookingEmail(root, { at, receivedAt: at, from: "automated@airbnb.com", subject: "Reservation", parsed, outcome, ...(hostConfirmed ? { hostConfirmed: true } : {}) });
 }
 
 const booked = (code: string, checkIn: string, checkout: string, times: { in?: string; out?: string } = {}): ParsedBookingEmail => ({
@@ -126,6 +126,40 @@ describe("the host's choice", () => {
     const root = folder();
     email(root, booked("HMSCRATCHAA", "2026-12-12", "2026-12-15"));
     expect(wantedGuestCodes(root, mode("automatic"), { ...input, needsHostYes: () => true })).toEqual([]);
+  });
+});
+
+describe("stays from other platforms (#263)", () => {
+  const other = (platform: "vrbo" | "booking" | "direct", code: string, checkIn: string, checkout: string): ParsedBookingEmail => ({ ...booked(code, checkIn, checkout), platform });
+
+  it("wants no code for a booking still waiting on the host's yes, and one after it", () => {
+    const root = folder();
+    email(root, other("direct", "DB-4417", "2026-12-12", "2026-12-15"), "awaiting-host");
+    expect(guestStays(root, input)).toEqual([]);
+    expect(wantedGuestCodes(root, mode("automatic"), input)).toEqual([]);
+    email(root, other("direct", "DB-4417", "2026-12-12", "2026-12-15"), "applied", true);
+    expect(wantedGuestCodes(root, mode("automatic"), input).map((code) => code.jobId)).toEqual(["stay:direct:DB-4417"]);
+  });
+
+  it("gives the same reference on two platforms its own code each", () => {
+    const root = folder();
+    email(root, other("vrbo", "44172033", "2026-12-12", "2026-12-14"), "applied", true);
+    email(root, other("booking", "44172033", "2026-12-14", "2026-12-16"), "applied", true);
+    expect(wantedGuestCodes(root, mode("automatic"), input).map((code) => code.jobId)).toEqual(["stay:vrbo:44172033", "stay:booking:44172033"]);
+  });
+
+  it("gives two bookings with no reference their own code each", () => {
+    const root = folder();
+    email(root, other("direct", "", "2026-12-12", "2026-12-14"), "applied", true);
+    email(root, other("direct", "", "2026-12-14", "2026-12-16"), "applied", true);
+    const jobs = wantedGuestCodes(root, mode("automatic"), input).map((code) => code.jobId);
+    expect(jobs).toEqual(["stay:direct:2026-12-12:2026-12-14", "stay:direct:2026-12-14:2026-12-16"]);
+  });
+
+  it("keeps an Airbnb booking's code named by its bare code, as before", () => {
+    const root = folder();
+    email(root, booked("HMSCRATCHAA", "2026-12-12", "2026-12-15"));
+    expect(wantedGuestCodes(root, mode("automatic"), input).map((code) => code.jobId)).toEqual(["stay:HMSCRATCHAA"]);
   });
 });
 
