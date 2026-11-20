@@ -260,3 +260,112 @@ describe("proposing a routine visit", () => {
     expect(w.log().read().filter((e) => e.type === "visit-window")).toEqual([]);
   });
 });
+
+/** Proposes the due visit and gives back the world. */
+async function proposed(options: Options = {}) {
+  const w = await setup(options);
+  await w.savePest();
+  w.at(LEAD);
+  await w.desk().tick();
+  w.at(Date.parse(LEAD) + 60 * MIN);
+  return w;
+}
+
+describe("the vendor's reply", () => {
+  it("YES confirms: their own code is made, the window goes in the visit log, they're thanked, the host hears once", async () => {
+    const w = await proposed();
+    await w.text("Yes", "m1");
+    const booking = w.job()!.booking!;
+    expect(booking.vendor!.confirmedAt).toBeDefined();
+    const live = w.fake.liveCodes("dev-front");
+    expect(live).toHaveLength(1);
+    expect(live[0]!.window).toEqual({ from: new Date(Date.parse(DUE_VISIT.from) - 30 * MIN).toISOString(), until: DUE_VISIT.until });
+    expect(w.toBugs().at(-1)).toBe("Thanks, see you Sun, Jan 10, 9 to 11 AM. Your door code comes by text when the visit starts.");
+    expect(w.news().filter((t) => t.startsWith("Bug Busters confirmed pest control for Sun, Jan 10"))).toHaveLength(1);
+    await w.desk().tick();
+    const windows = w.log().read().filter((e) => e.type === "visit-window");
+    expect(windows).toHaveLength(1);
+    expect(windows[0]).toMatchObject({ visit: `repair:${w.job()!.id}`, ...DUE_VISIT });
+    // A second YES confirms nothing new.
+    await w.text("YES", "m2");
+    expect(w.news().filter((t) => t.includes("confirmed pest control"))).toHaveLength(1);
+    const code = live[0]!.code;
+    expect(w.sent.some((s) => s.body.includes(code) || s.body.includes(SAVED))).toBe(false);
+  });
+
+  it("a new time that fits moves the visit and confirms it, with an echo and one host line", async () => {
+    const w = await proposed();
+    await w.text("Can we do Tuesday 1 to 3 instead?");
+    const booking = w.job()!.booking!;
+    expect({ from: booking.from, until: booking.until }).toEqual({ from: "2027-01-12T18:00:00.000Z", until: "2027-01-12T20:00:00.000Z" });
+    expect(booking.vendor!.confirmedAt).toBeDefined();
+    expect(w.toBugs().at(-1)).toBe("Moved to Tue, Jan 12, 1 to 3 PM. Your door code comes by text when the visit starts.");
+    expect(w.news().filter((t) => t === "Bug Busters moved pest control to Tue, Jan 12, 1 to 3 PM.")).toHaveLength(1);
+    expect(w.fake.liveCodes("dev-front")[0]!.window.until).toBe("2027-01-12T20:00:00.000Z");
+  });
+
+  it("after YES, a move moves the same code on the lock, not a new one", async () => {
+    const w = await proposed();
+    await w.text("YES");
+    const before = w.fake.liveCodes("dev-front");
+    await w.text("Actually Monday 9 to 11 works better");
+    const after = w.fake.liveCodes("dev-front");
+    expect(after).toHaveLength(1);
+    expect(after[0]!.codeId).toBe(before[0]!.codeId);
+    expect(after[0]!.window).toEqual({ from: "2027-01-11T13:30:00.000Z", until: "2027-01-11T16:00:00.000Z" });
+  });
+
+  it("a time that doesn't fit changes nothing: the vendor is told the host will check, the host is asked", async () => {
+    const w = await proposed({ stays: [["2027-01-13", "2027-01-16"]] });
+    await w.text("Thursday 9-11?");
+    const booking = w.job()!.booking!;
+    expect({ from: booking.from, until: booking.until }).toEqual(DUE_VISIT);
+    expect(booking.vendor!.confirmedAt).toBeUndefined();
+    expect(booking.vendor!.held).toMatchObject({ from: "2027-01-14T14:00:00.000Z", until: "2027-01-14T16:00:00.000Z" });
+    expect(w.toBugs().at(-1)).toBe("Thanks, I'll check that time with the host and text you back.");
+    expect(w.news().filter((t) => t.includes("asked to move pest control to Thu, Jan 14"))).toHaveLength(1);
+    expect(w.fake.liveCodes("dev-front")).toEqual([]);
+  });
+
+  it("NO or words it can't read go to the host as news, and change nothing", async () => {
+    const w = await proposed();
+    await w.text("Sorry we can't that week, call me 5555550177");
+    expect(w.job()!.booking!.vendor!.confirmedAt).toBeUndefined();
+    expect(w.job()!.booking!.from).toBe(DUE_VISIT.from);
+    const said = w.news().filter((t) => t.includes("can't that week"));
+    expect(said).toHaveLength(1);
+    expect(said[0]!.includes("5555550177")).toBe(false);
+  });
+
+  it("takes at most 3 moves by text; a fourth goes to the host", async () => {
+    const w = await proposed();
+    await w.text("Monday 9 to 11");
+    await w.text("Tuesday 9 to 11");
+    await w.text("Wednesday 9 to 11");
+    await w.text("Thursday 9 to 11");
+    const booking = w.job()!.booking!;
+    expect(booking.vendor!.moves).toHaveLength(3);
+    expect(booking.from).toBe("2027-01-13T14:00:00.000Z");
+    expect(booking.vendor!.held).toBeDefined();
+  });
+
+  it("no answer: one host note 48 hours before the visit, and still no code", async () => {
+    const w = await proposed();
+    w.at(Date.parse(DUE_VISIT.from) - 49 * 60 * MIN);
+    await w.desk().tick();
+    expect(w.news().filter((t) => t.includes("hasn't answered"))).toHaveLength(0);
+    w.at(Date.parse(DUE_VISIT.from) - 48 * 60 * MIN);
+    await w.desk().tick();
+    await w.desk().tick();
+    expect(w.news().filter((t) => t === "Bug Busters hasn't answered about pest control on Sun, Jan 10, 9 to 11 AM. No code goes out until they confirm.")).toHaveLength(1);
+    expect(w.fake.liveCodes("dev-front")).toEqual([]);
+  });
+
+  it("a replayed YES or move does nothing a second time", async () => {
+    const w = await proposed();
+    await w.text("Tuesday 1 to 3", "same");
+    await w.text("Tuesday 1 to 3", "same");
+    expect(w.job()!.booking!.vendor!.moves).toHaveLength(1);
+    expect(w.toBugs().filter((b) => b.startsWith("Moved to"))).toHaveLength(1);
+  });
+});

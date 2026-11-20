@@ -275,6 +275,9 @@ const fail = (text: string): FixerReply => ({ text, isError: true });
 
 const isInt = (n: unknown, min: number, max: number): n is number => typeof n === "number" && Number.isInteger(n) && n >= min && n <= max;
 
+/** The most times a vendor's own texts move one visit; after that the host decides (#237). */
+const MAX_VENDOR_MOVES = 3;
+
 /** A routine vendor's visit proposed under a standing yes and not yet confirmed by the vendor (#237). */
 function vendorWaiting(job: Job): boolean {
   return Boolean(job.booking?.vendor && !job.booking.vendor.confirmedAt);
@@ -2744,6 +2747,116 @@ export class FixerDesk {
     }
   }
 
+  /** The vendor's own routine visit a text is about: proposed and waiting, or confirmed and not over. The earliest first. */
+  private vendorJobOf(file: FixerFile, proId: string): Job | undefined {
+    const env = this.deps.env?.();
+    if (!env || !visitRecordsOn(env)) return undefined;
+    const now = this.deps.now().getTime();
+    return file.jobs
+      .filter((job) => job.booking?.vendor && job.booking.proId === proId && job.booking.hostYes && liveBooking(job) && !job.done && now < this.endOf(job.booking))
+      .sort((a, b) => Date.parse(a.booking!.from) - Date.parse(b.booking!.from))[0];
+  }
+
+  /**
+   * A routine vendor's text about their visit (#237). YES confirms a proposed visit. A time the parser reads moves it
+   * when it fits between stays (at most 3 times by text), and is held for the host when it doesn't. On a proposed
+   * visit, anything else is news on the job. True when it was handled here; false leaves it to the usual pro path
+   * (DONE, a price, news) once the visit is confirmed.
+   */
+  private async vendorReply(file: FixerFile, job: Job, phone: string, text: string, sourceId: string): Promise<boolean> {
+    const booking = job.booking!;
+    const vendor = booking.vendor!;
+    const waiting = !vendor.confirmedAt;
+    const proName = this.bookedName(file, job);
+    const tz = this.timeZone();
+    const notes: HostNote[] = [];
+    const reply = async (body: string, label: string) => {
+      if ((await this.deps.textsAllowed?.()) !== true) return;
+      let sent = false;
+      try {
+        sent = (await this.deps.send?.(phone, body)) === true;
+      } catch {
+        // Unknown: not sent again.
+      }
+      if (sent) this.logVendorText(job, "out", label, body, phone, `${sourceId}:${label}`);
+    };
+    if (isYes(text)) {
+      if (!waiting) return false;
+      this.logVendorText(job, "in", "confirm", text, phone, sourceId);
+      this.confirmVendor(booking);
+      const when = visitWhen(booking.from, booking.until, tz);
+      notes.push(this.news(job, "vendor-confirmed", vendorConfirmedNews({ proName, what: job.what, when }), `fixer:${job.id}:vendor-confirmed`));
+      this.write(file);
+      await this.tell(notes);
+      await reply(vendorConfirmed({ when, access: booking.access }), "confirmed");
+      return true;
+    }
+    const span = isDone(text) ? undefined : parseVendorTime(text, { anchor: booking.from, timeZone: tz });
+    if (span) {
+      this.logVendorText(job, "in", "move", text, phone, sourceId);
+      const moved = await this.moveVendor(file, job, span, "vendor", notes);
+      this.write(file);
+      await this.tell(notes);
+      const when = visitWhen(booking.from, booking.until, tz);
+      if (moved === "moved") await reply(vendorMoved({ when, access: booking.access }), "move-echo");
+      else if (moved === "held") await reply(VENDOR_ASKING_HOST, "move-held");
+      return true;
+    }
+    if (!waiting) return false;
+    // Anything else on a proposed visit (a no, a question) is the host's to read, with digit runs taken out.
+    this.logVendorText(job, "in", "other", text, phone, sourceId);
+    if (!text) return true;
+    notes.push(this.news(job, "pro-text", proTextNews({ proName, text: redactDigits(text).slice(0, 300).trim() }), `fixer:${job.id}:pro-text:${sourceId}`));
+    this.write(file);
+    await this.tell(notes);
+    return true;
+  }
+
+  /** The vendor confirmed: from here their code may exist, and the standing yes is the host's OK for it (#237). */
+  private confirmVendor(booking: Booking): void {
+    const at = this.deps.now().toISOString();
+    booking.vendor!.confirmedAt ??= at;
+    if (booking.access === "code") booking.codeYes ??= { at };
+  }
+
+  /**
+   * Moves a routine vendor's visit in place when the new time passes the booking gate (a cost hold aside: the
+   * standing yes covers the usual price), so the lock sync moves their code rather than making a new one. A time
+   * that doesn't fit, or a fourth move by text, is held for the host. A stay over the time is never moved into.
+   */
+  private async moveVendor(file: FixerFile, job: Job, span: { from: string; until: string }, by: "vendor" | "agent" | "host", notes: HostNote[]): Promise<"moved" | "held" | "same"> {
+    const booking = job.booking!;
+    const vendor = booking.vendor!;
+    if (span.from === booking.from && span.until === booking.until) {
+      if (!vendor.confirmedAt) this.confirmVendor(booking);
+      return "same";
+    }
+    const { holds } = await this.holdsFor(file, job, span, booking.estimateCents);
+    const fits = holds.every((hold) => hold === "cost" || hold === "no-estimate") && Date.parse(span.from) > this.deps.now().getTime();
+    const tooMany = by === "vendor" && (vendor.moves ?? []).filter((move) => move.by === "vendor").length >= MAX_VENDOR_MOVES;
+    const proName = this.bookedName(file, job);
+    const when = visitWhen(span.from, span.until, this.timeZone());
+    if (by === "vendor" && (!fits || tooMany)) {
+      vendor.held = { ...span, at: this.deps.now().toISOString() };
+      notes.push(this.news(job, `vendor-held:${span.from}`, vendorHeldQuestion({ proName, what: job.what, when }), `fixer:${job.id}:vendor-held:${span.from}`));
+      return "held";
+    }
+    const at = this.deps.now().toISOString();
+    booking.from = span.from;
+    booking.until = span.until;
+    delete booking.extendedUntil;
+    delete booking.extendNoted;
+    // A visit link is a key for the old time: a move ends it, as a rebook does.
+    delete booking.visitToken;
+    booking.fingerprint = bookingFingerprint({ proId: booking.proId, from: span.from, until: span.until, ...(booking.estimateCents !== undefined ? { estimateCents: booking.estimateCents } : {}), access: booking.access });
+    (vendor.moves ??= []).push({ at, ...span, by });
+    delete vendor.held;
+    this.confirmVendor(booking);
+    if (job.state === "in-progress" && Date.parse(span.from) > Date.parse(at)) job.state = "booked";
+    notes.push(this.news(job, `vendor-moved:${span.from}`, vendorMovedNews({ proName, what: job.what, when }), `fixer:${job.id}:vendor-moved:${span.from}`));
+    return "moved";
+  }
+
   /** One message line in the visit log about a vendor's visit, when visit records are on. */
   private logVendorText(job: Job, direction: "in" | "out", label: string, body: string, phone: string, sourceId?: string): void {
     const log = this.visitLog();
@@ -3264,6 +3377,9 @@ export class FixerDesk {
       if (keyword === "stop" || isPlainLanguageStop(text)) return people.relay(people.stop(input.from));
       if (keyword === "help") return;
       if (keyword === "start") return people.relay(people.start(input.from));
+      // A routine vendor's YES or new time for their own proposed or upcoming visit (#237), from their own opted-in phone.
+      const vendorJob = pro && !this.inactive(file) && people.optedIn(input.from) && !people.stopped(input.from) ? this.vendorJobOf(file, pro.id) : undefined;
+      if (vendorJob && (await this.vendorReply(file, vendorJob, input.from, text, id))) return;
       if (isYes(text)) return people.relay(people.optIn(input.from, here));
       const now = this.deps.now().getTime();
       const mine = pro && !this.inactive(file) ? file.jobs.filter((job) => job.booking?.proId === pro.id && job.booking.hostYes && liveBooking(job)) : [];
