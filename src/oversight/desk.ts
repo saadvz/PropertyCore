@@ -1,16 +1,17 @@
 import { localDateOf } from "../core/timezone";
 import { addCalendarDays } from "../hub/calendar";
 import { readHubFile } from "../hub/store";
-import { checkDay, type DayResult } from "./check";
-import type { EntryEvent } from "./events";
+import { visitLogFor } from "../visits/store";
+import { checkDay, type DayEvidence, type DayResult, type VisitResult } from "./check";
+import { dayEvidence, entryNamesFrom, standingNames } from "./evidence";
 import { visitFromInvite } from "./invite";
 import { OversightFileError, readOversight, writeOversight, type OversightFile } from "./store";
 import { cleanVisit, isDate, MAX_OPEN_VISITS, newVisitId, sameVisit, visitProblem, type ExpectedVisit, type VisitInput } from "./visits";
 
 /**
  * Expected visits for one property (#240): save one from what the host says or a calendar invite, list and cancel
- * them, and run one day against given entry events. It texts nobody: the result goes back to the caller, and
- * sending is #250's.
+ * them, and run one day against the property's visit log: its unlocks, when a lock couldn't report, and people seen
+ * on a camera. It texts nobody: the result goes back to the caller, and sending is #250's.
  */
 
 export interface OversightReply {
@@ -21,6 +22,10 @@ export interface OversightReply {
 
 export interface OversightDeps {
   now: () => Date;
+  /** The property is switched to connected locks (SMART_LOCKS on), so its unlocks can be read. Off by default. */
+  locks?: () => boolean;
+  /** CAMERAS is on, so camera sightings can be read. Off by default. */
+  cameras?: () => boolean;
 }
 
 const RECENT_DAYS = 7;
@@ -107,6 +112,17 @@ export class OversightDesk {
     });
   }
 
+  /** The day's evidence from the property's visit log. Read only; nothing is written. */
+  private evidence(): DayEvidence {
+    const locks = this.deps.locks?.() === true;
+    const cameras = this.deps.cameras?.() === true;
+    if (!locks && !cameras) return { entries: [], lock: false };
+    const log = visitLogFor(this.root, this.deps.now);
+    const events = log.read();
+    const found = dayEvidence(events, { codeNames: log.codeNames(), names: entryNamesFrom(events, locks ? standingNames(this.root) : {}), locks, cameras });
+    return { entries: found.entries, lock: found.lock, quiet: found.quiet, sightings: found.sightings };
+  }
+
   /** Visits from today on, and the last week's with their flags and cancellations. */
   listVisits(): OversightReply {
     return this.guarded(() => {
@@ -117,7 +133,15 @@ export class OversightDesk {
       const file = readOversight(this.root);
       const open = file.visits.filter((v) => !v.cancelledAt && v.date >= today).sort(byWhen);
       const recent = file.visits.filter((v) => v.date < today && v.date >= since).sort(byWhen);
-      return ok({ today, open, recent, next: open.length ? NOTHING_SENT : `No visits are expected ahead. ${NOTHING_SENT}` });
+      // Each checked day's results, read only: listing never records a flag, so it can't swallow one not yet sent.
+      const days = [...new Set([...recent.map((v) => v.date), today])].sort();
+      const evidence = days.length ? this.evidence() : { entries: [] };
+      const now = this.deps.now();
+      const results: VisitResult[] = days.flatMap((date) => {
+        const day = checkDay({ label: "", visits: file.visits, date, timeZone, now, ...evidence });
+        return day.status === "none" ? [] : day.visits;
+      });
+      return ok({ today, open, recent, results, next: open.length ? NOTHING_SENT : `No visits are expected ahead. ${NOTHING_SENT}` });
     });
   }
 
@@ -136,10 +160,11 @@ export class OversightDesk {
   }
 
   /**
-   * One day at the property against the given entry events. Records when each visit is first found missed, so a
-   * later run of the same day leaves it out of the alert. Sends nothing.
+   * One day at the property against its visit log. Records when each visit is first found missed, or first found
+   * can't-tell because its lock couldn't report, so a later run of the same day leaves it out of the alert. Sends
+   * nothing.
    */
-  runDay(date: string, entries: EntryEvent[], label: string): DayResult {
+  runDay(date: string, label: string): DayResult {
     if (!isDate(date)) return { status: "none", reason: "Give the day as YYYY-MM-DD." };
     let file: OversightFile;
     try {
@@ -151,9 +176,9 @@ export class OversightDesk {
     const timeZone = this.timeZone();
     if (!timeZone) return { status: "none", reason: "The property has no time zone, so its days can't be told apart." };
     const now = this.deps.now();
-    const result = checkDay({ label, visits: file.visits, entries, date, timeZone, now });
+    const result = checkDay({ label, visits: file.visits, date, timeZone, now, ...this.evidence() });
     if (result.status === "flags") {
-      const fresh = new Set(result.missed.filter((v) => !v.alreadyFlagged).map((v) => v.id));
+      const fresh = new Set([...result.missed, ...result.unsure].filter((v) => !v.alreadyFlagged).map((v) => v.id));
       if (fresh.size) writeOversight(this.root, { ...file, visits: file.visits.map((v) => (fresh.has(v.id) ? { ...v, flaggedAt: now.toISOString() } : v)) });
     }
     return result;
