@@ -5,6 +5,7 @@ import type { SettingName } from "../install/secretStore";
 import { ASSISTANT_PROFILES, CHATGPT_INSTRUCTIONS, CLAUDE_INSTRUCTIONS, MUSE_INSTRUCTIONS, type CleanerAssistant } from "./assistant";
 import { DOOR_CODE_IN_CHAT, type LiveDesk, type ToolReply } from "./liveDesk";
 import type { GoogleEventList } from "../hub/sources";
+import { BOOKING_PLATFORMS_INSTRUCTION } from "./bookingEmailDesk";
 import { DELIVERY_REPORTS, SCRATCH_TOOLS } from "./scratchQa";
 
 export const CLEANER_MCP_PATH = "/mcp/cleaner-core";
@@ -315,6 +316,55 @@ const SCRATCH_TOOL_LIST = [
   },
 ] as const;
 
+const BASE_EMAIL = TOOLS.find((tool) => tool.name === "read_booking_email")!;
+const BASE_SOURCES = TOOLS.find((tool) => tool.name === "save_sources")!;
+
+/** With BOOKING_PLATFORMS on (#263), these replace read_booking_email and save_sources. Off, TOOLS lists exactly as before. */
+const PLATFORM_TOOLS: Record<string, (typeof TOOLS)[number]> = {
+  read_booking_email: {
+    ...BASE_EMAIL,
+    title: "Read a booking email",
+    description:
+      "Reads one reservation email (confirmed, changed or cancelled) that you fetched from the host's connected email, from a sender get_state's bookingEmails names, exactly as received, and puts its times, guest count and confirmation code on the matching cleanings. The calendar still decides which nights are booked. Airbnb's emails are read here. For any other platform's, also pass extracted: kind, reference, listing, checkIn and checkout ({ date: YYYY-MM-DD, time?: HH:MM }) and guests, as you read them in the email. Such a booking changes nothing until the host says yes: show the host the summary it returns, then call again with the same email, the same extracted and confirmation. When your mail connector shows the email's headers (Gmail's raw format does), pass its Authentication-Results header lines, topmost first, as email.authentication; never the whole message. Never pass a guest message or a forward. A door code in it is never kept. thisListing: true only after the host said an Airbnb email's listing is this property. confirmation also answers the host's yes to calling off a cancelled stay the calendar still shows, with the same email. When the host uses Google Calendar, pass its events as googleEvents.",
+    input: z.object({
+      email: z.object({
+        from: z.string().max(500),
+        subject: z.string().max(1000),
+        body: z.string().max(50_000),
+        messageId: z.string().max(500).optional(),
+        receivedAt: z.string().max(40).optional(),
+        authentication: z.string().max(4000).optional(),
+      }),
+      extracted: z
+        .object({
+          kind: z.enum(["confirmed", "changed", "cancelled"]),
+          reference: z.string().max(40).optional(),
+          listing: z.string().max(200).optional(),
+          checkIn: z.object({ date: z.string().max(10), time: z.string().max(5).optional() }),
+          checkout: z.object({ date: z.string().max(10), time: z.string().max(5).optional() }),
+          guests: z
+            .object({ adults: z.number().int().optional(), children: z.number().int().optional(), infants: z.number().int().optional(), pets: z.number().int().optional(), total: z.number().int().optional() })
+            .optional(),
+        })
+        .optional(),
+      thisListing: z.boolean().optional(),
+      confirmation: z.string().max(40).optional(),
+      googleEvents: z.object({ timeZone: z.string().optional(), items: z.array(z.unknown()) }).optional(),
+    }),
+  } as unknown as (typeof TOOLS)[number],
+  save_sources: {
+    ...BASE_SOURCES,
+    description: `${BASE_SOURCES.description} bookingEmails replaces the platforms the host takes bookings on, each { platform: airbnb, vrbo, booking, direct or other, sender?, name? }: Vrbo's and Booking.com's senders are filled in; direct and other need the address their booking emails come from, and other needs its name. Saving bookingEmails alone leaves the calendars as they are. shareSamples: true only after the host agrees that redacted copies of their Vrbo and Booking.com booking emails may be kept as samples for Property Core's readers.`,
+    input: (BASE_SOURCES.input as z.ZodObject).extend({
+      bookingEmails: z
+        .array(z.object({ platform: z.enum(["airbnb", "vrbo", "booking", "direct", "other"]), sender: z.string().max(200).optional(), name: z.string().max(60).optional() }))
+        .max(8)
+        .optional(),
+      shareSamples: z.boolean().optional(),
+    }),
+  } as unknown as (typeof TOOLS)[number],
+};
+
 type ToolName = (typeof TOOLS)[number]["name"] | (typeof SCRATCH_TOOL_LIST)[number]["name"];
 
 /** Every tool Cleaner Core can list, Scratch ones included. The shared service uses it to tell a cleaning tool from a touring one. */
@@ -325,9 +375,14 @@ function guestMessagesListed(desk: LiveDesk): boolean {
   return typeof desk.guestMessagesOn === "function" && desk.guestMessagesOn();
 }
 
-/** set_late_checkout is listed only with guest messages (#242) on. */
-function listedTools(scratchTools: boolean, guestMessages = false) {
-  const tools = TOOLS.filter((tool) => guestMessages || tool.name !== "set_late_checkout");
+/** Booking platforms (#263) are on for this desk. A desk stand-in without the check has them off. */
+function platformsListed(desk: LiveDesk): boolean {
+  return typeof desk.bookingPlatformsOn === "function" && desk.bookingPlatformsOn();
+}
+
+/** set_late_checkout is listed only with guest messages (#242) on; the booking platform variants only with BOOKING_PLATFORMS on. */
+function listedTools(scratchTools: boolean, guestMessages = false, platforms = false) {
+  const tools = TOOLS.filter((tool) => guestMessages || tool.name !== "set_late_checkout").map((tool) => (platforms && PLATFORM_TOOLS[tool.name]) || tool);
   return scratchTools ? [...tools, ...SCRATCH_TOOL_LIST] : tools;
 }
 
@@ -382,13 +437,13 @@ export async function handleCleanerMcpMessage(
       capabilities: { tools: { listChanged: false } },
       serverInfo: SERVER_INFO,
       // A Claude deployment has its own words. A Grok deployment's stay exactly as they were.
-      instructions: cleanerInstructions(assistant),
+      instructions: `${cleanerInstructions(assistant)}${assistant !== "grok" && platformsListed(desk) ? ` ${BOOKING_PLATFORMS_INSTRUCTION}` : ""}`,
     });
   }
   if (method === "ping") return rpcResult(id, {});
   if (method === "tools/list") {
     return rpcResult(id, {
-      tools: listedTools(scratchTools, guestMessagesListed(desk)).map((tool) => {
+      tools: listedTools(scratchTools, guestMessagesListed(desk), platformsListed(desk)).map((tool) => {
         const { $schema: _schema, ...inputSchema } = z.toJSONSchema(tool.input) as Record<string, unknown>;
         return { name: tool.name, title: tool.title, description: tool.description, inputSchema };
       }),
@@ -396,7 +451,7 @@ export async function handleCleanerMcpMessage(
   }
   if (method === "tools/call") {
     const name = typeof params?.name === "string" ? params.name : "";
-    const tool = listedTools(scratchTools, guestMessagesListed(desk)).find((item) => item.name === name);
+    const tool = listedTools(scratchTools, guestMessagesListed(desk), platformsListed(desk)).find((item) => item.name === name);
     if (!tool) return rpcError(id, -32602, "I can't do that from this chat.");
     const args = tool.input.safeParse(params?.arguments ?? {});
     if (!args.success) return rpcResult(id, { content: [{ type: "text", text: "That was missing something I need." }], isError: true });
@@ -439,7 +494,7 @@ function chatCarriesDoorCode(name: string, args: object, desk: LiveDesk): boolea
   for (const [key, value] of Object.entries(args)) {
     if (name === "save_door_code" && key === "code") continue;
     // The approval code is Cleaner Core's own, and a wrong one is refused when it is redeemed.
-    if ((name === "send_message" || name === "save_answer" || name === "reset_property" || name === "hold_job" || name === "resume_job") && key === "confirmation") continue;
+    if ((name === "send_message" || name === "save_answer" || name === "reset_property" || name === "hold_job" || name === "resume_job" || name === "read_booking_email" || name === "set_late_checkout") && key === "confirmation") continue;
     if (typeof value === "string" && desk.chatCarriesDoorCode(value)) return true;
   }
   // Calendar names, contact names, and checklist items are shown back, so a door code can't hide in one.

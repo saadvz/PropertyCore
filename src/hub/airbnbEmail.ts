@@ -5,6 +5,8 @@
  * See docs/superpowers/specs/2026-11-14-airbnb-booking-emails-design.md.
  */
 
+import type { BookingPlatform } from "./bookingSources";
+
 export interface BookingEmailInput {
   /** The From header, like `Airbnb <automated@airbnb.com>`. */
   from: string;
@@ -15,6 +17,8 @@ export interface BookingEmailInput {
   messageId?: string;
   /** When the email arrived, as an ISO instant. */
   receivedAt?: string;
+  /** The email's Authentication-Results header(s), topmost first, exactly as received (#263). Read only with BOOKING_PLATFORMS on, and never kept. */
+  authentication?: string;
 }
 
 export interface BookingEmailDay {
@@ -36,7 +40,11 @@ export interface GuestCount {
 
 export interface ParsedBookingEmail {
   kind: "confirmed" | "changed" | "cancelled";
-  /** Airbnb's HM code, like HMABC12345. */
+  /** Which platform's email it was (#263). Absent means Airbnb, as every email before #263 was. */
+  platform?: BookingPlatform;
+  /** The name the host gave an Other platform, for the host's notes. */
+  platformName?: string;
+  /** Airbnb's HM code, like HMABC12345, or another platform's reference. Empty when an Other email gave none. */
   confirmationCode: string;
   /** The listing's title as the email shows it. */
   listing?: string;

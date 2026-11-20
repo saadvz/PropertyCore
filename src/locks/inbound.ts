@@ -1,4 +1,4 @@
-import type { DoorAccess, GrantNote } from "../hub/doorAccess";
+import type { DoorAccess, GrantFlow, GrantNote } from "../hub/doorAccess";
 import { visitLogFor } from "../visits/store";
 import type { LockAdapter, LockWebhookEvent } from "./adapter";
 import { lockLines, recordLockEvent } from "./eventLog";
@@ -13,7 +13,7 @@ import type { DoorLocksFile } from "./settings";
 export const OFFLINE_ALERT_MS = 30 * 60_000;
 
 function who(label: string | undefined, flow: GrantRef["flow"]): string {
-  return label?.trim() || (flow === "cleaning" ? "the cleaner" : flow === "repair" ? "the pro" : "they");
+  return label?.trim() || (flow === "cleaning" ? "the cleaner" : flow === "repair" ? "the pro" : flow === "guest" ? "the guest" : "they");
 }
 
 /** Marks an alert told. False when it was already. */
@@ -28,7 +28,7 @@ function once(file: DoorLocksFile, key: string): boolean {
 
 /** Which Property Core code an event names, never the code. */
 export interface GrantRef {
-  flow: "cleaning" | "repair" | "standing";
+  flow: GrantFlow;
   jobId: string;
   backup?: boolean;
 }
@@ -69,13 +69,17 @@ export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, eve
       const info = door.grants().markDevice(event.codeId, "failed");
       const person = who(info?.label, ref.flow);
       const ready = await door.grants().backupNow(event.codeId);
+      // A guest's or standing code never falls back to the host's saved code.
+      const ownOnly = ref.flow === "guest" || ref.flow === "standing";
       notes.push({
         id: `lock:failed:${event.codeId}`,
         jobId: ref.jobId,
         urgent: true,
         text: ready
           ? `The ${door_} didn't take ${person}'s code. A backup code for that door is ready, and ${person} gets it with their code.`
-          : `The ${door_} didn't take ${person}'s code, and it has no backup code left. If you saved your own door code, ${person} gets that; otherwise let them in yourself.`,
+          : ownOnly
+            ? `The ${door_} didn't take ${person}'s code, and it has no backup code left. Let them in another way.`
+            : `The ${door_} didn't take ${person}'s code, and it has no backup code left. If you saved your own door code, ${person} gets that; otherwise let them in yourself.`,
       });
       break;
     }

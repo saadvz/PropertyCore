@@ -33,6 +33,7 @@
     "cameras:count-test": "tsx src/cameras/countTestCli.ts",
     "cameras:live-count": "tsx src/cameras/liveCountCli.ts",
     "cameras:get-detector": "tsx src/cameras/getDetectorCli.ts",
+    "booking:samples": "tsx src/hub/bookingSamplesCli.ts",
     "build": "node scripts/build.mjs",
     "start": "node dist/server.js",
     "test": "vitest run",

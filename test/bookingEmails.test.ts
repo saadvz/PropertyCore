@@ -272,6 +272,20 @@ describe("an Airbnb cancellation", () => {
     expect((await turn(desk, "2026-10-22")).status).toBe("canceled");
   });
 
+  it("goes by the first cleaning with the stay's dates, as before #263, even when another one has them", async () => {
+    const { desk } = await opened();
+    ok(await read(desk, sampleEmail("confirmed-stacked"), { thisListing: true }));
+    calendar(() => ONLY_A);
+    ok(await desk.checkNow());
+    expect((await turn(desk, "2026-10-22"))?.status ?? "canceled").toBe("canceled");
+    // A new booking for the same nights: its cleaning is on, next to the old one's called-off cleaning.
+    calendar(() => LATER);
+    ok(await desk.checkNow());
+    const reply = ok(await read(desk, sampleEmail("cancelled-bare")));
+    expect(reply.outcome).toBe("applied");
+    expect(reply).not.toHaveProperty("confirmation");
+  });
+
   it("changes nothing and tells the host when the calendar never showed the cancelled stay", async () => {
     const { desk } = await opened();
     ok(await read(desk, sampleEmail("confirmed-stacked"), { thisListing: true }));

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { BookingSource } from "./bookingSources";
 import type { StoredCalendar } from "./calendars";
 
 /** One property's hub file: its details and booking calendars, shared by every flow. */
@@ -47,6 +48,10 @@ export interface HubFile {
   calendarsSetAside?: StoredCalendar[];
   /** The Airbnb listing titles the host said are this property's, for matching booking emails (#244). */
   airbnbListings?: string[];
+  /** The platforms the host takes bookings on, and their senders (#263). None saved means Airbnb only. */
+  bookingSources?: BookingSource[];
+  /** The host's okay to keep redacted copies of Vrbo and Booking.com emails as samples for their readers (#263). */
+  shareSamples?: boolean;
 }
 
 export function emptyHub(): HubFile {

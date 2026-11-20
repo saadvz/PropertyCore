@@ -56,7 +56,7 @@ export interface AccessRequest {
   person: string;
   /** ISO instants. */
   window: { from: string; until: string };
-  purpose: "cleaning" | "repair" | "standing";
+  purpose: "cleaning" | "repair" | "standing" | "guest";
   /** The request's own key, else the server's key. */
   key?: Buffer;
   /** The flow's job. On connected locks the code is that job's own; without one, the saved code answers. */
@@ -296,8 +296,8 @@ export class DoorAccess {
   private async requestGrant(request: AccessRequest, jobId: string): Promise<AccessGrant> {
     if (this.now().getTime() >= Date.parse(request.window.until)) return { ok: false, reason: "window-over" };
     let saved: string | undefined;
-    // A standing code never falls back to the host's saved code: its page shows the person's own code or nothing.
-    if (this.file.pinSeal && request.purpose !== "standing") {
+    // A standing or guest code never falls back to the host's saved code: its page shows the person's own code or nothing.
+    if (this.file.pinSeal && request.purpose !== "standing" && request.purpose !== "guest") {
       const key = this.keyFor(request.key ?? this.openKey);
       try {
         saved = key ? openPin(this.file.pinSeal, key) : undefined;

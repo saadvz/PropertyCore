@@ -20,6 +20,7 @@ import { interpretFeed, type FeedBlock, type Turnover } from "./calendar";
 import { calendarFetch } from "./calendarFetch";
 import { calendarUrlAllowed, readPublicCalendar } from "./fetchLimits";
 import { googleCalendarSource, type GoogleEventList, type SourceSnapshot } from "./sources";
+import { AIRBNB_ONLY, normalizeSources, type BookingSource } from "./bookingSources";
 import { DoorAccess } from "./doorAccess";
 import { sameHash, UPLOAD_GONE, UPLOAD_MINUTES, uploadHash } from "./uploadCode";
 import { folderNeedsMove, migrateFolder } from "./migrate";
@@ -216,6 +217,38 @@ export class Hub {
     if (this.carriesCode(text)) return { ok: false, reason: "code", error: DOOR_CODE_IN_CHAT };
     const saved = this.file.airbnbListings ?? [];
     if (!saved.includes(text)) this.file = { ...this.file, airbnbListings: [...saved, text].slice(-10) };
+    this.save();
+    return { ok: true };
+  }
+
+  /** The platforms the host takes bookings on (#263). None saved means Airbnb only. */
+  bookingSources(): BookingSource[] {
+    return (this.file.bookingSources ?? AIRBNB_ONLY).map((source) => ({ ...source }));
+  }
+
+  /** Saves the host's platforms, with Vrbo's and Booking.com's senders filled in. A sender or name that carries the door code is refused. */
+  setBookingSources(input: readonly Partial<BookingSource>[], check = false): HubSave {
+    const checked = normalizeSources(input, (text) => this.carriesCode(text));
+    if (!checked.ok) return { ok: false, reason: "code", error: checked.error };
+    // check: only whether it would save.
+    if (check) return { ok: true };
+    this.file = { ...this.file, bookingSources: checked.sources };
+    this.save();
+    return { ok: true };
+  }
+
+  /** True once the host saved their platforms (#263). */
+  bookingSourcesSaved(): boolean {
+    return this.file.bookingSources !== undefined;
+  }
+
+  /** The host said redacted copies of their Vrbo and Booking.com emails may become samples (#263). */
+  shareSamples(): boolean {
+    return this.file.shareSamples === true;
+  }
+
+  setShareSamples(on: boolean): HubSave {
+    this.file = { ...this.file, shareSamples: on };
     this.save();
     return { ok: true };
   }
