@@ -23,7 +23,10 @@ const POLL_MS = 15_000;
 export const KEEP_AFTER_MS = 24 * 60 * 60_000;
 const CODE_SHAPE = /^\d{4,8}$/;
 
-export type GrantFlow = "cleaning" | "repair" | "standing";
+export type GrantFlow = "cleaning" | "repair" | "standing" | "guest";
+
+/** How a flow's codes are named on the lock. The name never holds the person, a phone or a digit. */
+const CODE_NAME_PREFIX: Record<GrantFlow, string> = { cleaning: "Cleaning", repair: "Repair", standing: "Standing", guest: "Guest" };
 
 /** A code a flow wants on the locks now. */
 export interface WantedCode {
@@ -114,7 +117,7 @@ function sameWindow(a: CodeWindow, b: CodeWindow): boolean {
 }
 
 function whoOf(flow: GrantFlow, label: string | undefined): string {
-  return label?.trim() || (flow === "cleaning" ? "the cleaner" : flow === "repair" ? "the pro" : "they");
+  return label?.trim() || (flow === "cleaning" ? "the cleaner" : flow === "repair" ? "the pro" : flow === "guest" ? "the guest" : "they");
 }
 
 export class GrantBook {
@@ -354,7 +357,7 @@ export class GrantBook {
     if (!key || doors.length === 0) return { ok: false, note: failed };
     for (let attempt = 0; attempt < 3; attempt++) {
       const id = letters(8);
-      const codeName = `${flow === "cleaning" ? "Cleaning" : flow === "repair" ? "Repair" : "Standing"} ${id}`;
+      const codeName = `${CODE_NAME_PREFIX[flow]} ${id}`;
       let made: Awaited<ReturnType<typeof makeSameCode>>;
       try {
         made = await makeSameCode(adapter, { devices: doors, name: codeName, window: want.window, avoid: new Set(this.codesForChecks()) });
@@ -381,7 +384,7 @@ export class GrantBook {
         continue;
       }
       this.file.grants.push(grant);
-      const who: CodePerson | undefined = want.who ?? (flow === "cleaning" ? { role: "cleaner" } : flow === "standing" ? { role: "shared" } : undefined);
+      const who: CodePerson | undefined = want.who ?? (flow === "cleaning" ? { role: "cleaner" } : flow === "standing" ? { role: "shared" } : flow === "guest" ? { role: "guest" } : undefined);
       try {
         if (who) this.deps.named?.(codeName, who);
       } catch {
