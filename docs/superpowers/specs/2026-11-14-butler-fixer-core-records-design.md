@@ -1,8 +1,11 @@
 # Butler and Fixer Core: who holds an owner's pros and upkeep schedules
 
-Date: 2026-11-14. Status: proposed, waiting on Saad and on answers about
-Butler. Issue: saadvz/PropertyCore#245, part of #236. It blocks switching
-Fixer Core on (#159), the vendor-visit part of #237, and #243.
+Date: 2026-11-14. Status: **decided 2026-11-20: option B, for now.** Fixer
+Core holds the owner's pros and upkeep schedules; nothing reads from Butler.
+The split is revisited when Property Core works with Butler's Book later.
+This doc's option C stays here as the starting point for that.
+Issue: saadvz/PropertyCore#245, part of #236. The decision unblocks the
+vendor-visit part of #237 and #243.
 
 ## The question
 
