@@ -145,6 +145,10 @@ export function cleanEvent(event: VisitEvent, redact: (text: string) => string =
       const codeName = typeof event.codeName === "string" && event.codeName.trim() ? cleanName(event.codeName) : undefined;
       return { type: "lock-status", id: event.id, at: event.at, kind: event.kind, device: cleanName(event.device), ...(codeName ? { codeName } : {}), ...(event.battery !== undefined ? { battery: event.battery } : {}) };
     }
+    case "service-notice":
+      if (!isId(event.visit) || typeof event.notice !== "string" || !/^[a-f0-9]{8,64}$/.test(event.notice)) return undefined;
+      if (event.serviceDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(event.serviceDate)) return undefined;
+      return { type: "service-notice", id: event.id, at: event.at, visit: event.visit, notice: event.notice, ...(event.serviceDate ? { serviceDate: event.serviceDate } : {}) };
     case "visit-cancelled":
       return isId(event.visit) ? { type: "visit-cancelled", id: event.id, at: event.at, visit: event.visit } : undefined;
     case "visit-page":

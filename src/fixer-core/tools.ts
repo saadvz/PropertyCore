@@ -76,7 +76,7 @@ export const FIXER_TOOLS: FixerTool[] = [
   {
     name: "save_fixer_settings",
     title: "Save repair settings",
-    description: `Saves any of: checkInBufferMinutes (how long before check-in a pro must be gone), cleaningMinutes (how long a cleaning takes), askCleaner (ask the cleaner "Anything broken?" after each cleaning), prosDone (the pro list is final), upkeepDone (no more upkeep to add), alertsSkipped (the host said Not now to alerts). ${AFTER_ACTIVATE} ${NO_CARDS}`,
+    description: `Saves any of: checkInBufferMinutes (how long before check-in a pro must be gone), cleaningMinutes (how long a cleaning takes), askCleaner (ask the cleaner "Anything broken?" after each cleaning), prosDone (the pro list is final), upkeepDone (no more upkeep to add), alertsSkipped (the host said Not now to alerts), serviceNotices (the host lets you pass vendors' completed-service emails with save_service_notice). ${AFTER_ACTIVATE} ${NO_CARDS}`,
     input: z
       .object({
         checkInBufferMinutes: z.number().int().optional(),
@@ -85,6 +85,7 @@ export const FIXER_TOOLS: FixerTool[] = [
         prosDone: z.literal(true).optional(),
         upkeepDone: z.literal(true).optional(),
         alertsSkipped: z.literal(true).optional(),
+        serviceNotices: z.boolean().optional(),
         confirmation: Confirmation,
       })
       .strict(),
@@ -271,6 +272,17 @@ export const FIXER_TOOLS: FixerTool[] = [
     input: z.object({ jobId: Id, from: Instant, until: Instant, confirmation: Confirmation }).strict(),
   },
   {
+    name: "save_service_notice",
+    title: "Keep a vendor's service notice",
+    description: "Only when the host turned serviceNotices on: a vendor's completed-service email you read in the host's mail, passed as received (from, subject, body, messageId, receivedAt), with jobId when you know the visit. It's kept as evidence on the visit, with door codes and long numbers taken out, and never changes the visit's times. Don't pass any other email.",
+    input: z
+      .object({
+        jobId: Id.optional(),
+        email: z.object({ from: z.string().max(300), subject: z.string().max(500), body: z.string().max(20_000), messageId: z.string().max(300).optional(), receivedAt: Instant.optional() }).strict(),
+      })
+      .strict(),
+  },
+  {
     name: "approve_code",
     title: "OK a pro's door code",
     description: `On a property where each pro's code waits for the host, the host's OK to give the booked pro their code for this visit. The code itself is never returned. ${TWO_CALL}`,
@@ -426,6 +438,8 @@ export async function handleFixerTool(desk: FixerDesk, name: string, args: unkno
       return desk.extendVisit(input);
     case "move_vendor_visit":
       return desk.moveVendorVisit(input);
+    case "save_service_notice":
+      return desk.saveServiceNotice(input);
     case "approve_code":
       return desk.approveCode(input);
     case "guests_left":

@@ -33,6 +33,7 @@ import { insideWindow, latestYmd, nextCheckIn, overlapsStay, visitWindows, type 
 import { doorFor, repairBlockProblem, repairBlockStatus, staysForCrew } from "./repairBlock";
 import { crewScheduleProblem, crewWindows, type CrewSchedule } from "./crewDays";
 import { MAX_VENDOR_HOURS, parseVendorTime } from "./vendorTime";
+import { appendServiceNotice, cleanNoticeText, MAX_NOTICE_BODY, noticeDates, noticeHash, readServiceNotices, senderAddress, type ServiceNoticeInput } from "./serviceNotices";
 import { standingOffQuestion, standingQuestion, vendorConfirmed, vendorConfirmedNews, vendorHeldQuestion, vendorMoved, vendorMovedNews, vendorNoAnswerNews, vendorNoDayNews, vendorProposal, visitWhen, VENDOR_ASKING_HOST } from "./texts";
 import { visitRecordsOn } from "../cleaner-core/flag";
 import { buildVisits } from "../visits/derive";
@@ -170,6 +171,8 @@ export interface SettingsInput {
   upkeepDone?: true;
   /** Setup: the host said Not now to alerts. */
   alertsSkipped?: true;
+  /** The host's agent passes vendors' completed-service emails (#237). */
+  serviceNotices?: boolean;
   confirmation?: string;
 }
 
@@ -750,6 +753,7 @@ export class FixerDesk {
           checkInBufferMinutes: file.settings.checkInBufferMinutes,
           cleaningMinutes: file.settings.cleaningMinutes,
           askCleaner: file.settings.askCleaner,
+          ...(file.settings.serviceNotices ? { serviceNotices: true } : {}),
         },
       });
     });
@@ -762,6 +766,7 @@ export class FixerDesk {
       if (input.checkInBufferMinutes !== undefined && !isInt(input.checkInBufferMinutes, 0, 240)) return fail("The check-in buffer has to be from 0 to 240 minutes.");
       if (input.cleaningMinutes !== undefined && !isInt(input.cleaningMinutes, 30, 480)) return fail("The cleaning length has to be from 30 to 480 minutes.");
       if (input.askCleaner !== undefined && typeof input.askCleaner !== "boolean") return fail("Asking the cleaner is yes or no.");
+      if (input.serviceNotices !== undefined && typeof input.serviceNotices !== "boolean") return fail("Service notices are yes or no.");
       if (input.prosDone && file.pros.some((pro) => pro.status === "draft")) return fail("Confirm or remove the drafted pros first.");
       const gate = this.approved(file, "fixer-settings", "settings", input, "Save these settings?");
       if (gate !== "go") return gate;
@@ -771,6 +776,7 @@ export class FixerDesk {
         s.askCleaner = input.askCleaner;
         file.setup.cleanerAsked = true;
       }
+      if (input.serviceNotices !== undefined) s.serviceNotices = input.serviceNotices;
       if (input.prosDone) file.setup.prosDone = true;
       if (input.upkeepDone) file.setup.upkeepDone = true;
       if (input.alertsSkipped) file.setup.alertsSkipped = true;
@@ -2926,6 +2932,69 @@ export class FixerDesk {
     if (now < askAt) return;
     vendor.noAnswerAt = new Date(now).toISOString();
     notes.push(this.news(job, "vendor-no-answer", vendorNoAnswerNews({ proName: this.bookedName(file, job), what: job.what, when: visitWhen(booking.from, booking.until, this.timeZone()) }), `fixer:${job.id}:vendor-no-answer`));
+  }
+
+  /**
+   * A vendor's completed-service email, as the host's agent received it (#237): kept append-only with every code the
+   * property knows and every digit run taken out, matched to the visit by the job given, else by the sender's address
+   * and the service date, and linked in the visit log. Evidence only: it never sets a time. Off until the host turns
+   * service notices on. The reply never repeats the body.
+   */
+  saveServiceNotice(input: { jobId?: string; email?: Partial<ServiceNoticeInput> }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const log = this.visitLog();
+      if (!log || !file.settings.serviceNotices) return fail("Service notices aren't on for this property. The host turns them on with save_fixer_settings.");
+      const email = input.email;
+      if (!email || typeof email.from !== "string" || typeof email.subject !== "string" || typeof email.body !== "string" || !email.body.trim()) return fail("Pass the email as received: from, subject and body.");
+      if (email.body.length > MAX_NOTICE_BODY || email.subject.length > 500 || email.from.length > 300) return fail("That email is too long to keep.");
+      const now = this.deps.now();
+      const receivedAt = email.receivedAt && Number.isFinite(Date.parse(email.receivedAt)) ? new Date(email.receivedAt).toISOString() : now.toISOString();
+      let codes: string[] = [];
+      try {
+        codes = this.door().codesForChecksAll();
+      } catch {
+        // No key: digit runs still go.
+      }
+      const body = cleanNoticeText(email.body, codes);
+      const subject = cleanNoticeText(email.subject, codes);
+      const from = cleanNoticeText(email.from, codes).slice(0, 300);
+      const messageId = typeof email.messageId === "string" && email.messageId.length <= 300 ? cleanNoticeText(email.messageId, codes) : undefined;
+      const hash = noticeHash(body);
+      const kept = readServiceNotices(this.root);
+      const base = { at: now.toISOString(), receivedAt, ...(messageId ? { messageId } : {}), from, subject, bodyHash: hash };
+      if (kept.some((record) => record.outcome !== "duplicate" && ((messageId && record.messageId === messageId) || record.bodyHash === hash))) {
+        appendServiceNotice(this.root, { ...base, outcome: "duplicate" });
+        return ok({ saved: false, duplicate: true });
+      }
+      const tz = this.timeZone();
+      const dates = noticeDates(`${email.subject}\n${email.body}`, receivedAt, tz);
+      const job = this.noticeJob(file, input.jobId, senderAddress(email.from), dates, receivedAt);
+      if (input.jobId && !job) return fail("There's no visit with that job id.");
+      const visitDay = job?.booking ? localYmd(new Date(job.booking.from), tz) : undefined;
+      const serviceDate = dates.find((date) => visitDay && Math.abs(Date.parse(date) - Date.parse(visitDay)) <= 86_400_000) ?? dates[0];
+      appendServiceNotice(this.root, { ...base, body, ...(job ? { jobId: job.id } : {}), ...(serviceDate ? { serviceDate } : {}), outcome: job ? "matched" : "unmatched" });
+      if (job) log.append({ type: "service-notice", id: `notice:${hash}`, at: receivedAt, visit: job.crew ? crewVisit(job.id, visitDay!) : repairVisit(job.id), notice: hash, ...(serviceDate ? { serviceDate } : {}) });
+      return ok({ saved: true, matched: Boolean(job), ...(job ? { jobId: job.id } : {}), ...(serviceDate ? { serviceDate } : {}), ...(job ? {} : { next: "It's kept, but no visit matched it. Pass jobId if you know which visit it was." }) });
+    });
+  }
+
+  /** The visit a notice is about: the job given; else a visit by the pro with the sender's address, on or a day either side of a date it names; else that pro's visit done in the 3 days before it arrived. */
+  private noticeJob(file: FixerFile, jobId: string | undefined, sender: string, dates: readonly string[], receivedAt: string): Job | undefined {
+    if (jobId) return file.jobs.find((job) => job.id === jobId && job.booking);
+    const pros = file.pros.filter((pro) => pro.status === "saved" && pro.reach.email && pro.reach.email.toLowerCase() === sender);
+    if (pros.length === 0) return undefined;
+    const tz = this.timeZone();
+    const visits = file.jobs.filter((job) => job.booking && pros.some((pro) => pro.id === job.booking!.proId) && job.state !== "cancelled");
+    const near = (date: string, job: Job) => Math.abs(Date.parse(date) - Date.parse(localYmd(new Date(job.booking!.from), tz))) <= 86_400_000;
+    const byDate = visits.filter((job) => dates.some((date) => near(date, job)));
+    if (byDate.length > 0) return byDate.sort((a, b) => Date.parse(b.booking!.from) - Date.parse(a.booking!.from))[0];
+    const got = Date.parse(receivedAt);
+    return visits
+      .filter((job) => job.done && Date.parse(job.done.at) <= got && got - Date.parse(job.done.at) <= 3 * 86_400_000)
+      .sort((a, b) => Date.parse(b.done!.at) - Date.parse(a.done!.at))[0];
   }
 
   /** The host says the guests have left: today counts as cleared for every job's checkout-day check, even one opened later today. */
