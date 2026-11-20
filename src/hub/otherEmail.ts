@@ -27,14 +27,25 @@ const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const REFERENCE = /^[A-Za-z0-9][A-Za-z0-9-]{0,39}$/;
 const KINDS = new Set(["confirmed", "changed", "cancelled"]);
 
-/** Checks the agent's fields against the email. Pass the email with door codes already taken out. */
-export function checkOtherEmail(email: Pick<BookingEmailInput, "subject" | "body">, extracted: unknown, source: BookingSource, now: Date, carriesCode: (text: string) => boolean): OtherCheck {
+/**
+ * Checks the agent's fields against the email. Pass the email with door codes already taken out.
+ * `carriesCode` guards the free text (the listing); `isCode`, when given, guards the reference, which is
+ * often all digits: only a saved code itself is refused there. Dates and times can hold nothing but a
+ * date or a time, so they aren't guarded.
+ */
+export function checkOtherEmail(
+  email: Pick<BookingEmailInput, "subject" | "body">,
+  extracted: unknown,
+  source: BookingSource,
+  now: Date,
+  carriesCode: (text: string) => boolean,
+  isCode: (text: string) => boolean = carriesCode,
+): OtherCheck {
   const bad = (field: string, message: string): OtherCheck => ({ ok: false, reason: "bad-fields", field, message });
   if (!extracted || typeof extracted !== "object") return bad("extracted", "Pass extracted: the kind, check-in and checkout you read in the email.");
   const x = extracted as Partial<ExtractedBooking>;
-  for (const text of [x.reference, x.listing, x.checkIn?.date, x.checkIn?.time, x.checkout?.date, x.checkout?.time]) {
-    if (typeof text === "string" && carriesCode(text)) return { ok: false, reason: "door-code", field: "extracted", message: "Those fields look like they carry the door code, so nothing changed." };
-  }
+  const coded = (typeof x.listing === "string" && carriesCode(x.listing)) || (typeof x.reference === "string" && isCode(x.reference));
+  if (coded) return { ok: false, reason: "door-code", field: "extracted", message: "Those fields look like they carry the door code." };
   if (typeof x.kind !== "string" || !KINDS.has(x.kind)) return bad("kind", "kind is confirmed, changed or cancelled.");
   const checkIn = day(x.checkIn);
   if (!checkIn) return bad("checkIn", "checkIn is { date: YYYY-MM-DD, time?: HH:MM }, a real date.");

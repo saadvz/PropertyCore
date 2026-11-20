@@ -17,6 +17,8 @@ export interface BookingEmailInput {
   messageId?: string;
   /** When the email arrived, as an ISO instant. */
   receivedAt?: string;
+  /** The email's Authentication-Results header(s), topmost first, exactly as received (#263). Read only with BOOKING_PLATFORMS on, and never kept. */
+  authentication?: string;
 }
 
 export interface BookingEmailDay {
@@ -40,6 +42,8 @@ export interface ParsedBookingEmail {
   kind: "confirmed" | "changed" | "cancelled";
   /** Which platform's email it was (#263). Absent means Airbnb, as every email before #263 was. */
   platform?: BookingPlatform;
+  /** The name the host gave an Other platform, for the host's notes. */
+  platformName?: string;
   /** Airbnb's HM code, like HMABC12345, or another platform's reference. Empty when an Other email gave none. */
   confirmationCode: string;
   /** The listing's title as the email shows it. */

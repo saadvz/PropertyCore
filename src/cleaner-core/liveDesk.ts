@@ -17,7 +17,7 @@ import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink,
 import { joinSplitDigits } from "../hub/digits";
 import { sameHash, uploadHash } from "../hub/uploadCode";
 import { isDeparture, openCleanerCore, redactDigitRuns, SAFETY, storedConsent, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type TextKind } from "./core";
-import { cleanerMultiTenant, groupChatEnabled, guestMessagesOn, visitRecordsOn } from "./flag";
+import { bookingPlatformsOn, cleanerMultiTenant, groupChatEnabled, guestMessagesOn, visitRecordsOn } from "./flag";
 import { visitLogFor } from "../visits/store";
 import { LATE_CHECKOUT_ACTION, setLateCheckout } from "./lateCheckout";
 import { GROUP_RECIPIENT, draftStatus, earlierThan, replyStateAt, type ReplyState, type StoredDraft } from "./replies";
@@ -2252,6 +2252,7 @@ export class LiveDesk {
       listings: () => this.hub.airbnbListings(),
       addListing: (title) => this.hub.addAirbnbListing(title),
       carriesCode: (text) => this.carriesCode(text) || this.leaks(text),
+      isCode: (text) => this.leaks(text),
       readCalendars: async () => {
         if (!this.engine || !this.file.checked) return false;
         if (this.hub.google() && !googleEvents) return false;
@@ -2259,8 +2260,10 @@ export class LiveDesk {
         return true;
       },
       cleanerName: () => this.file.cleanerName ?? "your cleaner",
-      issueApproval: (target, fingerprint, next) => this.approvals.issue(CANCEL_ACTION, target, fingerprint, next),
-      redeem: (code, target, fingerprint) => this.redeemed(this.approvals, code, CANCEL_ACTION, target, fingerprint),
+      issueApproval: (target, fingerprint, next, action = CANCEL_ACTION) => this.approvals.issue(action, target, fingerprint, next),
+      redeem: (code, target, fingerprint, action = CANCEL_ACTION) => this.redeemed(this.approvals, code, action, target, fingerprint),
+      platformsOn: () => bookingPlatformsOn(this.env()),
+      sources: () => this.hub.bookingSources(),
     };
   }
 
