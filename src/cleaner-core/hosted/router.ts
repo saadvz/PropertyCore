@@ -1,6 +1,6 @@
 import type { DoorAccess } from "../../hub/doorAccess";
 import { registerSecretSaver } from "../../hub/doorAccess";
-import { handleLockWebhook, isStandingPath, LOCK_WEBHOOK_PATH, serveStandingPage } from "../../hosted/locks";
+import { handleLockWebhook, isGuestPath, isStandingPath, LOCK_WEBHOOK_PATH, serveGuestPage, serveStandingPage } from "../../hosted/locks";
 import { hubFor, type Hub } from "../../hub/hub";
 import { hubCalendarCode } from "../../hub/paths";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -364,6 +364,12 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
   if (isStandingPath(rest)) {
     if (!cleaning.on && !fixer.on) return false;
     await serveStandingPage(h, r, tenant, property, rest);
+    return true;
+  }
+  // A guest code's page (#262), for this path's property only. Its path holds the link's token, so it is never logged.
+  if (isGuestPath(rest)) {
+    if (!cleaning.on && !fixer.on) return false;
+    await serveGuestPage(h, r, tenant, property, rest);
     return true;
   }
   const ctx = propertyContext(h, tenant, property);
