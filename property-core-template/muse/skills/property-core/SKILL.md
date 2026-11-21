@@ -13,8 +13,8 @@ Property Core runs a short-term rental's flows, property by property:
   and Supply Core decides go or hold on every cart.
 
 - **Fixer Core**: repairs and upkeep. You find, call and book the host's pros
-  yourself, and Fixer Core holds the rules and the door access. It is offered
-  only on a service with `FIXER_CORE=1`.
+  yourself, and Fixer Core holds the rules and the door access. It starts off
+  on each property, until the host says yes.
 
 The service keeps every record, sends every text, and holds the safety rules.
 You ask the questions, use your own browser to open the service's private

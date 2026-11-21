@@ -12,7 +12,6 @@ import type { FrontReply } from "./serviceTools";
  */
 
 export const LABEL_MAX = 120;
-export const FIXER_NOT_YET = "Fixer Core isn't available yet.";
 export const FIRST_PROPERTY = "Ask the host for the property's address, then call add_property with it.";
 export const TURN_A_FLOW_ON = "No flow is on for this property yet. Ask the host what they want here, then call set_flows to turn Cleaner Core, Supply Core or Fixer Core on.";
 

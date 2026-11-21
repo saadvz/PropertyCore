@@ -43,7 +43,7 @@ const UNCHECKED_WARNING = "I couldn't check who sent this email. Only say yes if
 export const BOOKING_EMAIL_INSTRUCTION =
   "When the host's email is connected, pass each Airbnb reservation email (confirmed, changed or cancelled) to read_booking_email as it arrives: from, subject, the plain-text body, messageId and receivedAt, exactly as received. Never pass a guest message, a forward, or an email from anyone but Airbnb. When the host's email isn't connected, say once that connecting it lets Cleaner Core use each booking's exact times, and carry on with the usual times. Follow read_booking_email's next.";
 
-/** With BOOKING_PLATFORMS on (#263), added after the chat's instructions (Grok's are pinned, so its tool description says it). */
+/** With the account's booking platforms on (#263), added after the chat's instructions (Grok's are pinned, so its tool description says it). */
 export const BOOKING_PLATFORMS_INSTRUCTION =
   "Look only for the booking emails get_state's and check_now's bookingEmails names. For one from any platform but Airbnb, pass the fields you read in it as extracted, and its Authentication-Results header as email.authentication when your mail connector shows it; show the host the summary it returns and pass confirmation only after their yes.";
 
@@ -63,7 +63,7 @@ export interface EmailDesk {
   cleanerName(): string;
   issueApproval(target: string, fingerprint: string, next: string, action?: string): { code: string; question: string; expiresInMinutes?: number };
   redeem(code: string, target: string, fingerprint: string, action?: string): boolean;
-  /** BOOKING_PLATFORMS is on (#263). Off, everything here behaves as before #263. */
+  /** The account's booking platforms are on (#263). Off, everything here behaves as before #263. */
   platformsOn(): boolean;
   /** The platforms the host takes bookings on (#263). */
   sources(): BookingSource[];
@@ -107,7 +107,7 @@ export async function takeBookingEmail(desk: EmailDesk, input: EmailInput): Prom
   const hash = bodyHash(body);
   const records = readBookingEmails(desk.root);
   const seen = { from, subject, ...(messageId ? { messageId } : {}) };
-  // With BOOKING_PLATFORMS on (#263): the platform the sender belongs to, and the email's sender check.
+  // With the account's booking platforms on (#263): the platform the sender belongs to, and the email's sender check.
   const platforms = desk.platformsOn();
   const source = platforms ? sourceFor(desk.sources(), email.from) : undefined;
   const address = senderAddress(email.from);

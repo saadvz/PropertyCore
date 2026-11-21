@@ -1,7 +1,7 @@
 import type { LockDesk, LockReply } from "./desk";
 
 /**
- * Connected-lock tools (#180), as tools/list shows them, behind SMART_LOCKS. Each takes `property` on
+ * Connected-lock tools (#180), as tools/list shows them, behind the account's "locks" switch. Each takes `property` on
  * the shared service. No tool returns or takes a door code, and no text here names the lock partner.
  */
 

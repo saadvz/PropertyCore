@@ -6,7 +6,7 @@ import type { DeviceKind, LockDevice } from "./adapter";
 /**
  * One property's connected locks and sensors, and how its codes go out, in door-locks.json next to
  * door-access.json. Holds no code. A property is on connected locks only when it's switched on here,
- * every door the cleaner and pros go through is a connected lock, and the service runs SMART_LOCKS.
+ * every door the cleaner and pros go through is a connected lock, and the account has connected locks on.
  */
 
 export const DOOR_LOCKS_FILE = "door-locks.json";

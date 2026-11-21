@@ -10,6 +10,7 @@ import { hubFor, resetHubs } from "../src/hub/hub";
 import { peopleFor, resetPeople } from "../src/hub/people";
 import { buildVisits } from "../src/visits/derive";
 import { resetVisitLogCache, VISIT_EVENTS_DIR, VisitLog } from "../src/visits/store";
+import { deskFeatures } from "./featureEnv";
 
 /** #237 through Fixer Core: a repair visit's window, measured times, and one news line per flag. Made-up pros, 555 numbers, fake lock events. */
 
@@ -41,7 +42,7 @@ async function setup(opts: { visits?: boolean } = {}) {
   dirs.push(root, account);
   let clock = new Date(NOW);
   const key = randomBytes(32).toString("base64");
-  const env = (): NodeJS.ProcessEnv => ({ CLEANER_CORE_PIN_KEY: key, ...(opts.visits === false ? {} : { VISIT_RECORDS: "1" }) });
+  const env = (): NodeJS.ProcessEnv => ({ CLEANER_CORE_PIN_KEY: key, ...(opts.visits === false ? {} : deskFeatures("visits")) });
   const now = () => clock;
   const hub = hubFor(root, { now });
   hub.saveProperty(PROPERTY);
@@ -96,10 +97,15 @@ describe("visit records in Fixer Core", () => {
     expect(windows).toEqual([expect.objectContaining({ visit: `repair:${w.job().id}`, kind: "repair", from: TUE.from, until: TUE.until, who: { role: "pro", name: "Joe's Plumbing", proId: w.proId } })]);
   });
 
-  it("with the flag off, writes no log", async () => {
+  it("with the account's visits switch off, still writes the log, but tells the host nothing", async () => {
     const w = await setup({ visits: false });
+    w.log.append({ type: "lock-connection", id: "conn", at: "2026-11-01T00:00:00.000Z", connected: true });
     await w.desk().tick();
-    expect(existsSync(join(w.root, VISIT_EVENTS_DIR))).toBe(false);
+    expect(existsSync(join(w.root, VISIT_EVENTS_DIR))).toBe(true);
+    expect(w.log.read().filter((event) => event.type === "visit-window")).toEqual([expect.objectContaining({ visit: `repair:${w.job().id}` })]);
+    w.at(Date.parse(TUE.from) + 45 * MIN);
+    await w.desk().tick();
+    expect(lateNews(w.notes)).toEqual([]);
   });
 
   it("with a lock, tells the host once when the pro isn't in by the start plus 30 minutes, and never texts the pro about it", async () => {

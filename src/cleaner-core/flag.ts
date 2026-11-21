@@ -1,3 +1,8 @@
+/**
+ * The Cleaner Core settings that stay on the service. The roadmap features are switched per account on /admin and
+ * read through featureOn (src/features/features.ts).
+ */
+
 /** True when a flag's value is "1" or "true", ignoring case and surrounding spaces. */
 export function isOn(value: string | undefined): boolean {
   const raw = value?.trim().toLowerCase();
@@ -25,52 +30,7 @@ export function supplyCoreOn(env: NodeJS.ProcessEnv = process.env): boolean {
   return isOn(env.SUPPLY_CORE);
 }
 
-/** Fixer Core as a service choice on the multi-tenant service. Off unless FIXER_CORE is exactly "1" or "true". */
-export function fixerCoreOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isOn(env.FIXER_CORE);
-}
-
 /** Touring tenants on the multi-tenant service. Off unless TOUR_CORE_TENANTS is exactly "1" or "true". */
 export function tourCoreTenants(env: NodeJS.ProcessEnv = process.env): boolean {
   return isOn(env.TOUR_CORE_TENANTS);
-}
-
-/** The hours log (#238) on the multi-tenant service. Off unless HOURS_LOG is exactly "1" or "true". */
-export function hoursLogOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isOn(env.HOURS_LOG);
-}
-
-/** The nightly stay check's house rules (#239) on the multi-tenant service. Off unless STAY_CHECK is exactly "1" or "true". */
-export function stayCheckOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isOn(env.STAY_CHECK);
-}
-
-/** Remote oversight's expected visits (#240) on the multi-tenant service. Off unless REMOTE_OVERSIGHT is exactly "1" or "true". */
-export function remoteOversightOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isOn(env.REMOTE_OVERSIGHT);
-}
-
-/** Visit records (#237): arrival, departure and time on site. Off unless VISIT_RECORDS is exactly "1" or "true". */
-export function visitRecordsOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isOn(env.VISIT_RECORDS);
-}
-
-/** Package arrivals (#241) on the multi-tenant service. Off unless PACKAGE_ARRIVALS is exactly "1" or "true". */
-export function packageArrivalsOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isOn(env.PACKAGE_ARRIVALS);
-}
-
-/** Guest messages (#242) on the multi-tenant service. Off unless GUEST_MESSAGES is exactly "1" or "true". */
-export function guestMessagesOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isOn(env.GUEST_MESSAGES);
-}
-
-/** The camera connection (#239) on the multi-tenant service. Off unless CAMERAS is exactly "1" or "true". */
-export function camerasOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isOn(env.CAMERAS);
-}
-
-/** Booking emails from more platforms (#263): the host's platforms and the Other path. Off unless BOOKING_PLATFORMS is exactly "1" or "true". */
-export function bookingPlatformsOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isOn(env.BOOKING_PLATFORMS);
 }

@@ -45,7 +45,8 @@ import { accountDoor, SignUpDesk } from "../hosted/signUp";
 import { openAccount, pointVoiceOnce } from "../cleaner-core/hosted/lines";
 import { retryVoiceDeletes, VOICE_PATH, VOICE_TRANSCRIPT_PATH } from "../hosted/voice";
 import { LOCK_WEBHOOK_PATH, tickAllLocks } from "../hosted/locks";
-import { lockAdapter, setLockAdapter, smartLocksOn } from "../locks/registry";
+import { lockAdapter, setLockAdapter } from "../locks/registry";
+import { locksConfigured, logFeatureSettings } from "../features/features";
 import { seamFromEnv } from "../locks/seam";
 import { handleCleanerUploadPage, isFormPost } from "../cleaner-core/uploadPage";
 import { ALERT_UPLOAD_MAX_BYTES, alertUploadCode, calendarUploadCode, doorCodeUploadCode, uploadPageOf, CLEANER_MCP_PATH, CLEANER_TWILIO_GROUP_PATH, CLEANER_TWILIO_PATH, CLEANER_TWILIO_STATUS_PATH, handleCleanerAlertUpload, handleCleanerCalendarUpload, handleCleanerDoorCodeUpload, handleCleanerGroupWebhook, handleCleanerMcpHttp, handleCleanerTwilioStatus, handleCleanerTwilioWebhook, textAddressedTo } from "../cleaner-core/http";
@@ -222,7 +223,7 @@ function workerRouteAllowed(method: string, path: string, internal: boolean): bo
 function publicRouteAllowed(method: string, path: string, oauth: boolean, hosted: boolean, uploadPages = false, multiTenant = false): boolean {
   // A multi-tenant Cleaner Core's per-tenant links. The router checks the tenant and the route.
   if (multiTenant && (splitTenantPath(path) || path === "/admin" || path.startsWith("/admin/"))) return true;
-  // The camera connection (#239): Ring's signed webhook, the one-time consent link and Ring's sign-in return. The router answers 404 unless CAMERAS is on.
+  // The camera connection (#239): Ring's signed webhook, the one-time consent link and Ring's sign-in return. The router answers 404 unless an account has cameras on.
   if (multiTenant && (path === "/webhooks/ring" || path === "/cameras/ring/linked" || /^\/cameras\/connect\/[A-Za-z0-9_-]{32,100}$/.test(path))) return true;
   if (path === MCP_PATH || path === MCP_OPS_PATH || path === MCP_QA_PATH || path === CLEANER_MCP_PATH) return true;
   if (method === "GET" && path === HEALTH_PATH) return true;
@@ -501,13 +502,18 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     now: clock,
     log,
   });
-  // Connected locks (#180): the lock partner's adapter, only with SMART_LOCKS on and its API key in the
-  // environment. An adapter already set (a test's fake) stays. The key is never logged.
-  if (cleanerMultiTenant(installation.env()) && smartLocksOn(installation.env()) && !lockAdapter()) {
-    const partner = seamFromEnv(installation.env());
-    if (partner) setLockAdapter(partner);
-    else log("SMART_LOCKS is on, but no lock partner key is set: properties keep their saved door codes.");
+  // Connected locks (#180): the lock partner's adapter, only with its API key and webhook secret in the
+  // environment. Each account's "locks" switch on /admin still decides. An adapter already set (a test's fake)
+  // stays. The key is never logged.
+  if (cleanerMultiTenant(installation.env()) && !lockAdapter()) {
+    if (locksConfigured(installation.env())) {
+      const partner = seamFromEnv(installation.env());
+      if (partner) setLockAdapter(partner);
+    } else if (installation.env().SEAM_API_KEY?.trim()) {
+      log("SEAM_API_KEY is set without SEAM_WEBHOOK_SECRET: connected locks stay off, and properties keep their saved door codes.");
+    }
   }
+  if (cleanerMultiTenant(installation.env())) logFeatureSettings(installation.env(), log);
   // Lines pointed before voice get their voice webhook once, so a pro's call reaches the service.
   if (cleanerMultiTenant(installation.env())) {
     void pointVoiceOnce(hostedCleanerService).catch(() => log("Couldn't point the lines' voice webhooks this time."));

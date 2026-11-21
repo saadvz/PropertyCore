@@ -13,9 +13,11 @@ import { setLockAdapter } from "../src/locks/registry";
 import { emptyLocks, storedDevice } from "../src/locks/settings";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
+import { FAKE_LOCK_CREDENTIALS, switchOn } from "./featureEnv";
+import type { Feature } from "../src/features/features";
 
 /**
- * Guest codes on the shared service (#262): tools listed only with GUEST_CODES and SMART_LOCKS, a code
+ * Guest codes on the shared service (#262): tools listed only with the account's guest-codes and locks switches, a code
  * made on the lock clock with the host told through their notes, and the host's page served only on
  * its property's path. Fake lock adapter, 555 numbers, made-up confirmation codes.
  */
@@ -35,13 +37,15 @@ afterEach(() => {
   clock = new Date(NOW);
 });
 
-async function world(env: NodeJS.ProcessEnv = { SMART_LOCKS: "1", GUEST_CODES: "1", FIXER_CORE: "1" }) {
-  open = await multiTenantApp({ env, now: () => clock });
+/** Two accounts on one service, each with these switches on (both locks and guest codes unless told otherwise). */
+async function world(features: Feature[] = ["locks", "guest-codes"]) {
+  open = await multiTenantApp({ env: { ...FAKE_LOCK_CREDENTIALS }, now: () => clock });
   const m = open;
   const fake = new FakeLockAdapter();
   setLockAdapter(fake);
   const make = (label: string, number: string, deviceId: string) => {
     const { tenant } = m.registry.create({ label, twilioNumber: number });
+    switchOn(m.registry, tenant.id, ...features);
     const property = m.registry.addProperty(tenant.id, `${label} house`);
     m.registry.setFlow(tenant.id, property.id, "fixer", true);
     const device = fake.addDevice(tenant.id, { id: deviceId, name: "Front door" });
@@ -64,7 +68,7 @@ function booking(root: string): void {
 }
 
 describe("guest codes on the shared service", () => {
-  it("lists the guest-code tools only with GUEST_CODES and SMART_LOCKS on", async () => {
+  it("lists the guest-code tools only with the account's guest-codes and locks switches on", async () => {
     const on = await world();
     const token = await on.m.joinAt(on.a.tenant.id, "grok", "/mcp");
     const names = await on.m.toolNames("/mcp", token);
@@ -73,7 +77,7 @@ describe("guest codes on the shared service", () => {
     open = undefined;
     closeHostedApps();
     resetLockDesks();
-    const off = await world({ SMART_LOCKS: "1", FIXER_CORE: "1" });
+    const off = await world(["locks"]);
     const offToken = await off.m.joinAt(off.a.tenant.id, "grok", "/mcp");
     const offNames = await off.m.toolNames("/mcp", offToken);
     expect(offNames.filter((name) => GUEST_TOOL_NAMES.has(name))).toEqual([]);
@@ -105,8 +109,8 @@ describe("guest codes on the shared service", () => {
     expect(again.status).toBe(404);
   });
 
-  it("makes no guest code and serves no page without GUEST_CODES", async () => {
-    const { m, fake, a } = await world({ SMART_LOCKS: "1", FIXER_CORE: "1" });
+  it("makes no guest code and serves no page with the account's guest-codes switch off", async () => {
+    const { m, fake, a } = await world(["locks"]);
     booking(a.root);
     writeGuestCodes(a.root, { ...readGuestCodes(a.root), mode: "automatic" });
     await tickAllLocks(m.hosted());

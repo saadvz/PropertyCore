@@ -7,7 +7,8 @@ import { forgetPeople } from "../../hub/people";
 import { setFlows } from "../../hosted/service";
 import { propertyFolder } from "./properties";
 import { refreshTouringAlerts as tellTouringAlerts } from "../../hosted/touringAlerts";
-import { ADMIN_HEADERS, invitePage, loginPage, messagePage, poolPage, tenantPage, tenantsPage, type PoolRow, type TenantHealth } from "./adminPages";
+import { FEATURES, featureState, isFeature } from "../../features/features";
+import { ADMIN_HEADERS, type FeatureRow, invitePage, loginPage, messagePage, poolPage, tenantPage, tenantsPage, type PoolRow, type TenantHealth } from "./adminPages";
 import { attachTypedLine, closeLine, numberPool, openAccount, recordAccountLines, releasePooled, repointLine, topUp, type CloseLine, type LineClosed, type TopUpRefusal } from "./lines";
 import { PoolError } from "./numberPool";
 import { RegistryError, tenantFolder, type Tenant } from "./registry";
@@ -243,6 +244,16 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
       if (reply.isError) return html(400, page(h, h.registry.get(tenant.id) ?? tenant, live.csrf, reply.text));
       return redirect(back);
     }
+    case "features": {
+      // Only this page changes a switch, and only for the account in its path.
+      const feature = (form.get("feature") ?? "").trim();
+      const on = form.get("on");
+      if (!isFeature(feature) || (on !== "1" && on !== "0")) return html(400, page(h, tenant, live.csrf, "Pick a feature to turn on or off."));
+      if (tenant.service === "touring") return html(400, page(h, tenant, live.csrf, "Touring accounts have no feature switches."));
+      h.registry.setFeature(tenant.id, feature, on === "1", "admin");
+      h.log(`Turned ${feature} ${on === "1" ? "on" : "off"} for ${tenant.id}.`);
+      return redirect(back);
+    }
     case "touring": {
       if (!touringOffered(h)) return html(400, page(h, tenant, live.csrf, "Touring isn't on for this service."));
       try {
@@ -362,7 +373,15 @@ function touringOffered(h: HostedCleaner): boolean {
 }
 
 function page(h: HostedCleaner, tenant: Tenant, csrf: string, error?: string): string {
-  return tenantPage(tenant, csrf, error, healthOf(h, tenant), touringOffered(h));
+  return tenantPage(tenant, csrf, error, healthOf(h, tenant), touringOffered(h), featureRows(h, tenant));
+}
+
+/** Each feature's switch on this account, and what featureOn makes of it with the service's settings. */
+function featureRows(h: HostedCleaner, tenant: Tenant): FeatureRow[] {
+  return FEATURES.map((feature) => {
+    const saved = tenant.features?.[feature];
+    return { feature, switchOn: saved?.on === true, state: featureState(tenant, feature, h.baseEnv()), ...(saved ? { changedAt: saved.changedAt, changedBy: saved.changedBy } : {}) };
+  });
 }
 
 /**

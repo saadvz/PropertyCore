@@ -31,7 +31,7 @@ afterEach(() => {
 
 /** An account whose one property runs Fixer Core with Joe saved, Maria as its cleaner, and the host's phone. */
 async function setup() {
-  open = await multiTenantApp({ env: { FIXER_CORE: "1" }, now: () => NOW });
+  open = await multiTenantApp({ env: {}, now: () => NOW });
   const m = open;
   const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LINE });
   const property = m.registry.addProperty(tenant.id, "12 Scratch Lane");
@@ -125,7 +125,7 @@ describe("a call to the line", () => {
     expect(await (await ring(m, MARIA)).text()).not.toContain("<Record");
   });
 
-  it("records nobody while FIXER_CORE is off", SLOW, async () => {
+  it("records no pro saved on a property where Fixer Core is off", SLOW, async () => {
     open = await multiTenantApp({ env: {}, now: () => NOW });
     const m = open;
     const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LINE });

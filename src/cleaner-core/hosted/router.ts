@@ -210,7 +210,7 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
     return true;
   }
 
-  // Ring's webhook and the camera sign-in pages (#239), on the service's own paths. 404 unless CAMERAS is on.
+  // Ring's webhook and the camera sign-in pages (#239), on the service's own paths. 404 until an account has cameras on.
   if (await handleCameraRoutes(h, r)) return true;
 
   if (method === "POST" && path === VOICE_TRANSCRIPT_PATH) {

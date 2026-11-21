@@ -1,8 +1,8 @@
 # Client matrix
 
 Property Core runs on always-on agents. Today those are **Grok Bot** and
-**Muse**. Both run Cleaner Core and Supply Core end to end, and Fixer Core
-on a service with `FIXER_CORE=1`. Claude's and ChatGPT's agent products join this list
+**Muse**. Both run Cleaner Core, Supply Core and Fixer Core end to end.
+Claude's and ChatGPT's agent products join this list
 when they're generally available.
 
 Claude and ChatGPT as plain chats keep working at a basic level: Cleaner Core,

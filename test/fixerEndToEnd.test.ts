@@ -51,7 +51,7 @@ afterEach(() => {
 
 async function start() {
   resetVisitLookups();
-  open = await multiTenantApp({ env: { FIXER_CORE: "1" }, now: () => clock });
+  open = await multiTenantApp({ env: {}, now: () => clock });
   return open;
 }
 

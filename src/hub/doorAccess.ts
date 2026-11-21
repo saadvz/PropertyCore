@@ -9,7 +9,8 @@ import { openPin, sealPin, serverPinKey, type PinSeal } from "./pinSeal";
 export { pinKeyFromHeader, serverPinKey } from "./pinSeal";
 import { HUB_DOOR_CODE_PREFIX } from "./paths";
 import { DOOR_GRANTS_FILE, GrantBook, type GrantFlow, type GrantNote, type GrantStatus, type WantedCode } from "./grants";
-import { lockAdapter, smartLocksOn } from "../locks/registry";
+import { lockAdapter } from "../locks/registry";
+import { deskFeatureOn } from "../features/features";
 import { visitLogFor } from "../visits/store";
 import { allDoorsConnected, asLockDevice, doorDevices, readDoorLocks, writeDoorLocks, type DoorLocksFile } from "../locks/settings";
 import type { HubCaller } from "./store";
@@ -175,12 +176,12 @@ export class DoorAccess {
   }
 
   /**
-   * True when this property is on connected locks: the service runs SMART_LOCKS with a lock adapter,
+   * True when this property is on connected locks: the account has connected locks on (featureOn) with a lock adapter,
    * the property switched on, and every door the cleaner and pros go through is a connected lock.
    * Otherwise every request gets the saved code, exactly as before.
    */
   connected(): boolean {
-    if (!smartLocksOn(this.env()) || !lockAdapter()) return false;
+    if (!deskFeatureOn(this.env(), "locks") || !lockAdapter()) return false;
     const locks = this.locks();
     return Boolean(locks.activeAt) && allDoorsConnected(locks);
   }

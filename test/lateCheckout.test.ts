@@ -8,6 +8,7 @@ import type { LiveDesk } from "../src/cleaner-core/liveDesk";
 import { handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
 import { setStayCodeHook } from "../src/cleaner-core/stayCodeHook";
 import { readGuestMessages } from "../src/guest-messages/store";
+import { deskFeatures } from "./featureEnv";
 import { PIN_KEY, cleanupDesks, liveGroup, liveOneToOne, ok, refused } from "./cleanerDeskHarness";
 
 /**
@@ -30,7 +31,7 @@ async function opened(flag = true, open: typeof liveOneToOne = liveOneToOne) {
     async stayCancelled() {},
   });
   const desk = await open();
-  if (flag) desk.env.GUEST_MESSAGES = "1";
+  if (flag) Object.assign(desk.env, deskFeatures("guest-messages"));
   return desk;
 }
 
@@ -45,7 +46,7 @@ async function listed(desk: LiveDesk): Promise<string[]> {
 }
 
 describe("late checkout", () => {
-  it("isn't listed or answered without GUEST_MESSAGES", async () => {
+  it("isn't listed or answered without the account's guest-messages switch", async () => {
     const { desk } = await opened(false);
     expect(await listed(desk)).not.toContain("set_late_checkout");
     expect(refused(await desk.setLateCheckout({ checkout: "2026-10-18", time: "13:00" }, PIN_KEY)).error).toContain("isn't available");

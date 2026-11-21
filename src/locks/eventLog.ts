@@ -7,8 +7,8 @@ import type { LockWebhookEvent } from "./adapter";
  * (`visit-events/<YYYY-MM>.jsonl`), through `VisitLog.append`: written once per event id, append-only,
  * with every name through the digit-run redaction. An unlock or lock is a `lock` line; a code set or
  * failed, the battery, offline or online, and the backup pool low are `lock-status` lines; a lock account
- * connected or disconnected is a `lock-connection` line. These lines are written under SMART_LOCKS,
- * whether VISIT_RECORDS is on or off (each writer checks its own flag).
+ * connected or disconnected is a `lock-connection` line. These lines are written for an account
+ * with connected locks on, and like every visit log line they need no other switch.
  */
 
 export { VISIT_EVENTS_DIR };

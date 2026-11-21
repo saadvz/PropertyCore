@@ -9,14 +9,16 @@ import { SCRATCH_TENANTS } from "../../../../src/cleaner-core/tenants";
 import { buildVisits } from "../../../../src/visits/derive";
 import { resetVisitLogCache, VISIT_EVENTS_DIR, VisitLog } from "../../../../src/visits/store";
 import { fakeConversations } from "../../../../test/fakeConversations";
+import { deskFeatures } from "../../../../test/featureEnv";
 import { ADDRESS, BUSINESS, CALENDAR_ICS, CALENDAR_URL, CLEANER, CLEANER_LINE, DOOR_CODE, FROZEN, HOST, TEST_PIN_KEY, fakeSms } from "../../../../test/wiringProof";
 
 /**
- * Visit records (#237) on Scratch numbers only, with fake lock events. Part one drives the live desk with
- * VISIT_RECORDS on and off, and checks a cleaning's window reaches the log only with it on. Part two drives Scratch
- * Lane's same-day turnover (11 AM checkout, 4 PM check-in on 18 Oct 2026) through the engine: a late cleaner gets one
- * text and the host one at-risk note, a restart sends nothing new, a cleaner who came in with their code gets
- * nothing and a measured visit, and a property with no lock gets nothing new. Nothing reaches a phone.
+ * Visit records (#237) on Scratch numbers only, with fake lock events. Part one drives the live desk with the
+ * account's "visits" switch on and off, and checks a cleaning's window reaches the log either way: the log only
+ * records. Part two drives Scratch Lane's same-day turnover (11 AM checkout, 4 PM check-in on 18 Oct 2026) through the
+ * engine: a late cleaner gets one text and the host one at-risk note, a restart sends nothing new, a cleaner who came
+ * in with their code gets nothing and a measured visit, a property with no lock gets nothing new, and with the switch
+ * off the same late cleaner gets nothing at all. Nothing reaches a phone.
  */
 const outPath = process.argv[2];
 if (!outPath) throw new Error("prove-visits.ts needs an output path");
@@ -36,9 +38,9 @@ function ok(reply: ToolReply): Record<string, unknown> {
   return reply.result;
 }
 
-/** Part one: the live desk writes the window only with VISIT_RECORDS on. */
-async function wiring(flag: boolean): Promise<{ windows: { from: string; until: string; sameDay: boolean }[]; logWritten: boolean }> {
-  const root = temp(flag ? "on" : "off");
+/** Part one: the live desk writes the window with the account's "visits" switch on or off. */
+async function wiring(switchOn: boolean): Promise<{ windows: { from: string; until: string; sameDay: boolean }[]; logWritten: boolean }> {
+  const root = temp(switchOn ? "on" : "off");
   const sms = fakeSms();
   const groups = fakeConversations();
   setCleanerTwilioClient(sms);
@@ -53,7 +55,7 @@ async function wiring(flag: boolean): Promise<{ windows: { from: string; until: 
     CLEANER_CORE_TWILIO_ACCOUNT_SID: "ACfake",
     CLEANER_CORE_TWILIO_AUTH_TOKEN: "token",
     CLEANER_CORE_TWILIO_PHONE_NUMBER: CLEANER_LINE,
-    ...(flag ? { VISIT_RECORDS: "1" } : {}),
+    ...(switchOn ? deskFeatures("visits") : {}),
   };
   const desk = liveDeskFor(root, () => env, () => new Date(FROZEN));
   ok(await desk.getState("cleaners"));
@@ -73,8 +75,11 @@ async function wiring(flag: boolean): Promise<{ windows: { from: string; until: 
   return { windows, logWritten };
 }
 
-/** Part two: one Scratch Lane engine with the visit log, a confirmed same-day turnover, and a clock to move. */
-async function lane(opts: { lock: boolean }) {
+/**
+ * Part two: one Scratch Lane engine with the visit log, a confirmed same-day turnover, and a clock to move. `notify`
+ * is the account's "visits" switch, on unless a journey turns it off.
+ */
+async function lane(opts: { lock: boolean; notify?: boolean }) {
   const root = temp("lane");
   let now = new Date(FROZEN);
   const sent: CleanerText[] = [];
@@ -93,7 +98,7 @@ async function lane(opts: { lock: boolean }) {
       sink: { async send(text) { sent.push(text); } },
       now: () => now,
       dataDir: join(root, "cleaner-job"),
-      visits: { log: new VisitLog(root, () => now), cleanerName: "Ana" },
+      visits: { log: new VisitLog(root, () => now), cleanerName: "Ana", notify: opts.notify !== false },
     });
   const job = open();
   await job.pollFeed(FEED);
@@ -156,19 +161,32 @@ async function noLockJourney() {
   return { texts: w.visitTexts(), allRecipients: w.sent.map((text) => text.to) };
 }
 
+/** The late journey's clock with the account's "visits" switch off: the log is written, and nothing is sent. */
+async function switchOffJourney() {
+  const w = await lane({ lock: true, notify: false });
+  for (const at of ["2026-10-18T15:15:00.000Z", "2026-10-18T16:00:00.000Z", "2026-10-18T16:30:00.000Z", "2026-10-18T17:00:00.000Z"]) {
+    w.at(at);
+    await w.job.runReminders();
+  }
+  const windows = w.log.read().filter((event) => event.type === "visit-window").length;
+  return { texts: w.visitTexts(), windows, allRecipients: w.sent.map((text) => text.to) };
+}
+
 try {
-  const flagOn = await wiring(true);
-  const flagOff = await wiring(false);
+  const switchOn = await wiring(true);
+  const switchOff = await wiring(false);
   const late = await lateJourney();
   const arrived = await arrivedJourney();
   const noLock = await noLockJourney();
-  const recipients = [...new Set([...late.allRecipients, ...arrived.allRecipients, ...noLock.allRecipients])];
+  const off = await switchOffJourney();
+  const recipients = [...new Set([...late.allRecipients, ...arrived.allRecipients, ...noLock.allRecipients, ...off.allRecipients])];
   const evidence = {
-    flagOn: { logWritten: flagOn.logWritten, windows: flagOn.windows },
-    flagOff,
+    switchOn: { logWritten: switchOn.logWritten, windows: switchOn.windows },
+    switchOff: { logWritten: switchOff.logWritten, windows: switchOff.windows },
     late: { texts: late.texts, newAfterRestart: late.newAfterRestart },
     arrived: { texts: arrived.texts, visit: arrived.visit, logHoldsCode: arrived.logHoldsCode, logHoldsPhone: arrived.logHoldsPhone },
     noLock: { texts: noLock.texts },
+    switchOffLate: { texts: off.texts, windows: off.windows },
     recipients,
   };
   mkdirSync(dirname(outPath), { recursive: true });
@@ -178,15 +196,20 @@ try {
     { to: LANE.ownerPhone, kind: "visit-note", body: `Ana hasn't arrived at ${LANE.property.address} yet. The next guests check in at 4 PM.` },
   ];
   const text = JSON.stringify(evidence);
+  function sameDayWindow(part: { logWritten: boolean; windows: { from: string; until: string; sameDay: boolean }[] }): boolean {
+    return part.logWritten && part.windows.some((w) => w.from === "2026-10-18T15:00:00.000Z" && w.until === "2026-10-18T20:00:00.000Z" && w.sameDay);
+  }
   const failures = [
-    flagOn.logWritten && flagOn.windows.some((w) => w.from === "2026-10-18T15:00:00.000Z" && w.until === "2026-10-18T20:00:00.000Z" && w.sameDay) ? "" : "flag on: no same-day window in the log",
-    !flagOff.logWritten ? "" : "flag off: a log was written",
+    sameDayWindow(switchOn) ? "" : "switch on: no same-day window in the log",
+    sameDayWindow(switchOff) ? "" : "switch off: no same-day window in the log",
     JSON.stringify(late.texts) === JSON.stringify(expectedLate) ? "" : "late: not exactly one late text and one at-risk note",
     late.newAfterRestart === 0 ? "" : "late: a restart sent something new",
     arrived.texts.length === 0 ? "" : "arrived: a visit text went to a cleaner who came in",
     arrived.visit?.arrival?.source === "lock" && arrived.visit.departure?.lockCheck === "matched" && arrived.visit.minutes === 141 ? "" : "arrived: the visit wasn't measured from the lock",
     !arrived.logHoldsCode && !arrived.logHoldsPhone ? "" : "arrived: the log holds the door code or a phone",
     noLock.texts.length === 0 ? "" : "no lock: something new was sent",
+    off.texts.length === 0 ? "" : "switch off: a late text or a visit note was sent",
+    off.windows > 0 ? "" : "switch off: the engine wrote no window",
     recipients.every((to) => SCRATCH.test(to)) ? "" : "a recipient isn't a Scratch number",
     !text.includes(LANE.pin) && !text.includes(DOOR_CODE) ? "" : "the evidence holds a door code",
   ].filter(Boolean);

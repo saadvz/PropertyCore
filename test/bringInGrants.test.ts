@@ -8,6 +8,7 @@ import { FakeLockAdapter } from "../src/locks/fake";
 import { setLockAdapter } from "../src/locks/registry";
 import { emptyLocks, storedDevice } from "../src/locks/settings";
 import { visitLogFor } from "../src/visits/store";
+import { deskFeatures } from "./featureEnv";
 
 /**
  * The bring-in flow in the hub's grants (#241): a package helper's own code beside cleaning, repair, standing
@@ -18,7 +19,7 @@ const NOW = new Date("2026-11-17T15:00:00Z");
 const WINDOW = { from: "2026-11-17T15:00:00.000Z", until: "2026-11-17T19:00:00.000Z" };
 const SAVED = ["4", "8", "2", "1"].join("");
 const ANA = "+15555550111";
-const ON = { SMART_LOCKS: "1", CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64") };
+const ON = { ...deskFeatures("locks"), CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64") };
 const roots: string[] = [];
 
 afterEach(() => {

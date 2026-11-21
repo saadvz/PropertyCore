@@ -45,7 +45,8 @@ function setup(opts: { visits?: boolean; lock?: boolean } = {}) {
       sink: { async send(text) { sent.push(text); } },
       now: () => now,
       dataDir: data,
-      ...(opts.visits === false ? {} : { visits: { log: new VisitLog(root, () => now), cleanerName: "Maria Lopez" } }),
+      // The log is always written; the late text and the host's notes need the account's "visits" switch (notify).
+      visits: { log: new VisitLog(root, () => now), cleanerName: "Maria Lopez", notify: opts.visits !== false },
     });
   return { root, log, sent, open, at: (iso: string) => (now = new Date(iso)) };
 }
@@ -155,7 +156,7 @@ describe("visit records in Cleaner Core", () => {
     expect(sent.slice(before).filter((text) => text.kind === "late-ask" || text.kind === "visit-note")).toEqual([]);
   });
 
-  it("with the flag off, writes no log and sends nothing new", async () => {
+  it("with the account's visits switch off, still writes the log, and sends nothing new", async () => {
     const { open, sent, at, root } = setup({ visits: false });
     const job = open();
     await confirm(job);
@@ -163,8 +164,10 @@ describe("visit records in Cleaner Core", () => {
     await job.runReminders();
     expect(lateAsks(sent)).toEqual([]);
     expect(notes(sent)).toEqual([]);
-    // Only the test's own connection line is there: the engine wrote nothing.
-    expect(logText(root).trim().split("\n")).toHaveLength(1);
+    // Beside the test's own connection line, the engine wrote the cleaning's window: recording needs no switch.
+    const lines = logText(root).trim().split("\n").map((line) => JSON.parse(line) as { type: string });
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.some((line) => line.type === "visit-window")).toBe(true);
   });
 
   it("doesn't text a cleaner who said STOP", async () => {

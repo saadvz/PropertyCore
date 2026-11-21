@@ -437,10 +437,10 @@ export interface CleanerCoreOptions {
   /** The cleaner's saved name. The done text uses its first word. A group text names them itself. */
   cleanerName?: string;
   /**
-   * Visit records (#237), set only while VISIT_RECORDS is on: the property's visit log, written at each text in or
-   * out and each window change, and read by the clock pass for the late text and the host's visit notes.
+   * Visit records (#237): the property's visit log, written at each text in or out and each window change. With
+   * `notify` (the account's "visits" switch), the clock pass also reads it for the late text and the host's visit notes.
    */
-  visits?: { log: VisitLog; cleanerName?: string };
+  visits?: { log: VisitLog; cleanerName?: string; notify?: boolean };
   /**
    * The host's other instructions, added to the end of the door code text, so the cleaner reads them
    * as the cleaning starts. LiveDesk sets it only when instructions are saved, so the Scratch CLI and
@@ -4140,7 +4140,7 @@ class Engine implements CleanerCore {
    */
   private async visitPass(): Promise<CleanerText[]> {
     const visits = this.options.visits;
-    if (!visits) return [];
+    if (!visits?.notify) return [];
     let items;
     try {
       const timeZone = this.options.property.timeZone;

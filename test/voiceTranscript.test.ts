@@ -51,7 +51,7 @@ afterEach(() => {
 /** An account with two Fixer Core properties; Joe is saved on both, Maria is the first one's cleaner. */
 async function setup() {
   stubRecordings();
-  open = await multiTenantApp({ env: { FIXER_CORE: "1" }, now: () => NOW });
+  open = await multiTenantApp({ env: {}, now: () => NOW });
   const m = open;
   const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LINE });
   const a = m.registry.addProperty(tenant.id, "12 Scratch Lane");

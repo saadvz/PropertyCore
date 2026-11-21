@@ -9,6 +9,7 @@ import { emptyLocks, storedDevice } from "../src/locks/settings";
 import { cleanupDesks, ok, openDesk, PIN_KEY, setUp, testClock } from "./cleanerDeskHarness";
 import { approvedOnDesk } from "./hostApproval";
 import { CLEANER, DOOR_CODE, HOST } from "./wiringProof";
+import { deskFeatures } from "./featureEnv";
 
 /**
  * Cleaner Core's leak checks guard every live code on a connected lock (#180): the saved code, the
@@ -25,7 +26,7 @@ const CHECKOUT = "2026-10-18T15:00:00.000Z";
 async function released() {
   const clock = testClock();
   const opened = openDesk([HOST, CLEANER], "0", clock.now);
-  opened.env.SMART_LOCKS = "1";
+  Object.assign(opened.env, deskFeatures("locks"));
   opened.env.CLEANER_CORE_PIN_KEY = randomBytes(32).toString("base64");
   const fake = new FakeLockAdapter();
   setLockAdapter(fake);

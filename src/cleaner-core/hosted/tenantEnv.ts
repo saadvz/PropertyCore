@@ -1,4 +1,5 @@
 import { parsePhone } from "../../core/phone";
+import { ACCOUNT_FEATURES, accountFeaturesValue, FEATURES_OFF } from "../../features/features";
 import { propertyBasePath, type Property } from "./properties";
 import type { Tenant, TenantConnection } from "./registry";
 import type { TenantSecrets } from "./tenantSecrets";
@@ -24,7 +25,11 @@ export const PER_TENANT_NAMES = [
   "CLEANER_CORE_PROPERTY_LABEL",
   "CLEANER_CORE_PROPERTY_COUNT",
   "CLEANER_CORE_LANDLORD_PHONE",
+  ACCOUNT_FEATURES,
 ] as const;
+
+/** The service's own: featureOn reads them, so an account's saved values never replace the process's. */
+const SERVICE_ONLY_NAMES = [FEATURES_OFF, "SEAM_API_KEY", "SEAM_WEBHOOK_SECRET", "CAMERA_TOKEN_KEY", "RING_CLIENT_ID", "RING_CLIENT_SECRET", "RING_WEBHOOK_SECRET"] as const;
 
 /** Saved per connection: each connected chat has its own alert routine. */
 export const ROUTINE_NAMES = ["CLEANER_CORE_ROUTINE_URL", "CLEANER_CORE_ROUTINE_KEY"] as const;
@@ -50,8 +55,11 @@ export function buildTenantEnv(input: {
   for (const name of PER_TENANT_NAMES) delete env[name];
   const own = input.secrets.tenant(input.tenant.id);
   for (const name of ROUTINE_NAMES) delete own[name];
+  for (const name of SERVICE_ONLY_NAMES) delete own[name];
   Object.assign(env, own);
   env.CLEANER_CORE_TWILIO_PHONE_NUMBER = input.tenant.twilioNumber;
+  // This account's own feature switches, never the process's or another account's: featureOn reads them from here.
+  env[ACCOUNT_FEATURES] = accountFeaturesValue(input.tenant);
   if (input.serviceLines?.length) env.CLEANER_CORE_SERVICE_LINES = input.serviceLines.join(",");
   // Only the phone the landlord confirmed with a code counts, never a saved secret: the account's texts start from it.
   // An owner whose phone isn't confirmed yet is still a landlord record, so the old allowlist can't

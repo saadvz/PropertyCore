@@ -1,4 +1,4 @@
-import { camerasOn, packageArrivalsOn, remoteOversightOn, stayCheckOn } from "../cleaner-core/flag";
+import { featureOn } from "../features/features";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { propertyFolder, type Property } from "../cleaner-core/hosted/properties";
 import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
@@ -106,27 +106,28 @@ function camerasPicked(root: string): boolean {
   }
 }
 
-/** The sources that run at this property on this pass, each behind its own feature's flag. */
+/** The sources that run at this property on this pass, each behind the account's own switch for its feature (featureOn). */
 function sourcesFor(h: HostedCleaner, tenant: Tenant, property: Property, root: string, ledger: HostAlertLedger, now: Date): AlertSource[] {
   const env = h.baseEnv();
-  if (!camerasOn(env) && !remoteOversightOn(env) && !packageArrivalsOn(env)) return [];
+  const on = (feature: "cameras" | "oversight" | "packages" | "stay-check") => featureOn(tenant, feature, env);
+  if (!on("cameras") && !on("oversight") && !on("packages")) return [];
   const at = now.getTime();
   const sources: AlertSource[] = [];
   const path = hostNotePath(property);
   const timeZone = timeZoneOf(root);
-  const cameras = camerasOn(env) && camerasPicked(root);
+  const cameras = on("cameras") && camerasPicked(root);
   const label = property.label;
   // Camera notes ran on the camera clock for every property with cameras picked: they still do, with or without a path.
   if (cameras) sources.push(cameraHealthSource(cameraDeskFor(h, tenant, property)));
   // The rest have no host-note path without Cleaner Core or Fixer Core: they stay as they are today.
   if (!path || !timeZone) return sources;
-  if (remoteOversightOn(env) && anyFlowOn(property) && localHour(now, timeZone) >= OVERSIGHT_FROM_HOUR && dueToRun(root, "oversight", at)) {
+  if (on("oversight") && anyFlowOn(property) && localHour(now, timeZone) >= OVERSIGHT_FROM_HOUR && dueToRun(root, "oversight", at)) {
     sources.push(oversightSource(oversightDeskOf(h, tenant, property, () => now), localToday(now, timeZone), label));
   }
-  if (cameras && stayCheckOn(env) && dueToRun(root, "stay-night", at)) {
+  if (cameras && on("stay-check") && dueToRun(root, "stay-night", at)) {
     sources.push(stayNightSource(cameraDeskFor(h, tenant, property), ledger, now, timeZone));
   }
-  if (packageArrivalsOn(env) && property.flows.supplies.on && dueToRun(root, "packages", at)) {
+  if (on("packages") && property.flows.supplies.on && dueToRun(root, "packages", at)) {
     // Its own desk, not packageDeskFor's cached one: that one keeps the deps it was first made with.
     sources.push(packageSource(new PackageDesk(root, { now: () => now }), label));
   }

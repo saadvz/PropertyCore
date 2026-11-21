@@ -7,6 +7,7 @@ import { emptyLocks, storedDevice, type ReleaseMode } from "../src/locks/setting
 import { cleanupDesks, ok, openDesk, PIN_KEY, setUp, testClock } from "./cleanerDeskHarness";
 import { approvedOnDesk, resumeApproved } from "./hostApproval";
 import { CLEANER, DOOR_CODE, HOST } from "./wiringProof";
+import { deskFeatures } from "./featureEnv";
 
 /**
  * The cleaner's code at checkout time (codeAtCheckout, #180): off by default, only on connected
@@ -23,10 +24,10 @@ afterEach(() => {
 const CHECKOUT = Date.parse("2026-10-18T15:00:00.000Z");
 const MIN = 60_000;
 
-async function world(options: { cleaners?: ReleaseMode; smartLocks?: boolean; take?: boolean } = {}) {
+async function world(options: { cleaners?: ReleaseMode; locks?: boolean; take?: boolean } = {}) {
   const clock = testClock();
   const opened = openDesk([HOST, CLEANER], "0", clock.now);
-  if (options.smartLocks !== false) opened.env.SMART_LOCKS = "1";
+  if (options.locks !== false) Object.assign(opened.env, deskFeatures("locks"));
   opened.env.CLEANER_CORE_PIN_KEY = randomBytes(32).toString("base64");
   const fake = new FakeLockAdapter();
   setLockAdapter(fake);
@@ -89,8 +90,8 @@ describe("the cleaner's code at checkout time", () => {
     expect(w.codeTexts()).toEqual([]);
   });
 
-  it("needs connected locks: with SMART_LOCKS off nothing goes on its own", async () => {
-    const w = await world({ smartLocks: false });
+  it("needs connected locks: with the account's locks switch off nothing goes on its own", async () => {
+    const w = await world({ locks: false });
     w.at(CHECKOUT + MIN);
     await w.desk.lockClock();
     ok(await w.desk.checkNow());

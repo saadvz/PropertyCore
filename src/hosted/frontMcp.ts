@@ -26,7 +26,7 @@ import { listedStayCheckFront, STAY_CHECK_FRONT_NAMES, stayCheckCall } from "./s
 import { CAMERA_FRONT_NAMES, camerasCall, listedCameraFront } from "./cameras";
 import { listedPackageFront, PACKAGE_FRONT_NAMES, packageCall } from "./packages";
 import { GUEST_FRONT_NAMES, withRoutedProperty, GUEST_MESSAGES_INSTRUCTION, guestCall, guestMessageProperty, listedGuestFront } from "./guestMessages";
-import { bookingPlatformsOn, guestMessagesOn } from "../cleaner-core/flag";
+import { featureOn } from "../features/features";
 import { BOOKING_PLATFORMS_INSTRUCTION } from "../cleaner-core/bookingEmailDesk";
 import { FIXER_FRONT_NAMES, fixerCall, fixerDesk, fixerPhotos, fixerPreview, listedFixerFront, namesRepairJob, repairsLine } from "./fixer";
 import { taskWarning } from "./touringAlerts";
@@ -173,7 +173,7 @@ async function propertiesAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tena
   if (message.id === undefined) return r.send(202, JSON_TYPE, "");
   if (message.method === "initialize") {
     const version = negotiatedProtocolVersion(message.params?.protocolVersion);
-    return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "property-core", title: "Property Core", version: "0.1.0" }, instructions: `${PROPERTY_INSTRUCTIONS}${guestMessagesOn(h.baseEnv()) ? ` ${GUEST_MESSAGES_INSTRUCTION}` : ""} ${cleanerInstructions(caller.assistant)}${bookingPlatformsOn(h.baseEnv()) && caller.assistant !== "grok" ? ` ${BOOKING_PLATFORMS_INSTRUCTION}` : ""}` }));
+    return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "property-core", title: "Property Core", version: "0.1.0" }, instructions: `${PROPERTY_INSTRUCTIONS}${featureOn(tenant, "guest-messages", h.baseEnv()) ? ` ${GUEST_MESSAGES_INSTRUCTION}` : ""} ${cleanerInstructions(caller.assistant)}${featureOn(tenant, "booking-platforms", h.baseEnv()) && caller.assistant !== "grok" ? ` ${BOOKING_PLATFORMS_INSTRUCTION}` : ""}` }));
   }
   if (message.method === "ping") return r.send(200, JSON_TYPE, rpcResult(message.id, {}));
   if (message.method === "tools/list") return r.send(200, JSON_TYPE, rpcResult(message.id, { tools: await propertyToolList(h, r, tenant, caller) }));
@@ -293,7 +293,7 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
   if (name === "check_now" && !namesProperty(args) && !googleEvents && tenant.properties.length > 1) return checkEveryProperty(h, r, tenant, caller, args);
   // An Airbnb booking email that names no property goes to the one whose listing it matches.
   if (name === "read_booking_email" && !namesProperty(args) && tenant.properties.length > 1) {
-    const routed = bookingEmailProperty(h.dataRoot, tenant, args, () => h.now(), bookingPlatformsOn(h.baseEnv()));
+    const routed = bookingEmailProperty(h.dataRoot, tenant, args, () => h.now(), featureOn(tenant, "booking-platforms", h.baseEnv()));
     if ("refusal" in routed) return { text: routed.refusal, isError: true };
     return cleaningTool(h, r, tenant, routed.property, caller, name, (args ?? {}) as Record<string, unknown>);
   }

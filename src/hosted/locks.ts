@@ -6,7 +6,6 @@ import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import { peopleFor } from "../hub/people";
 import { LockDesk, STANDING_PAGE_PREFIX } from "../locks/desk";
 import { handleLockTool, LOCK_TOOL_NAMES, LOCK_TOOLS } from "../locks/tools";
-import { guestCodesOn } from "../locks/guestCodes";
 import { GUEST_PAGE_PREFIX, GuestCodeDesk } from "../locks/guestDesk";
 import { GUEST_TOOL_NAMES, GUEST_TOOLS, handleGuestTool } from "../locks/guestTools";
 import type { FrontReply } from "./serviceTools";
@@ -15,7 +14,8 @@ import type { GrantNote } from "../hub/doorAccess";
 import { hubFor } from "../hub/hub";
 import type { LockWebhookEvent } from "../locks/adapter";
 import { applyLockEvent, lockHealthNotes } from "../locks/inbound";
-import { lockAdapter, smartLocksOn } from "../locks/registry";
+import { lockAdapter } from "../locks/registry";
+import { featureOn } from "../features/features";
 import { readDoorLocks } from "../locks/settings";
 import { fixerDesk } from "./fixer";
 
@@ -42,7 +42,8 @@ export function lockOwners(h: HostedCleaner, event: LockWebhookEvent): Owner[] {
   const owners: Owner[] = [];
   for (const listed of h.registry.list()) {
     const tenant = h.registry.get(listed.id);
-    if (!tenant || tenant.disabled) continue;
+    // An account with connected locks off takes no lock event: its properties keep their saved door codes.
+    if (!tenant || tenant.disabled || !featureOn(tenant, "locks", h.baseEnv())) continue;
     if (event.customerKey && event.customerKey !== tenant.id) continue;
     for (const property of tenant.properties) {
       let file;
@@ -79,7 +80,7 @@ export async function tellLockNote(h: HostedCleaner, owner: Owner, note: GrantNo
 /** POST /webhooks/seam. Answered 401 when the signature fails, 200 otherwise, so the partner doesn't resend a dropped event. */
 export async function handleLockWebhook(h: HostedCleaner, r: HostedRequest): Promise<void> {
   const adapter = lockAdapter();
-  if (!smartLocksOn(h.baseEnv()) || !adapter) {
+  if (!adapter || !anyAccountOn(h)) {
     r.send(404, "text/plain", "Not found");
     return;
   }
@@ -118,10 +119,10 @@ export async function handleLockWebhook(h: HostedCleaner, r: HostedRequest): Pro
  * with Cleaner Core on, the checkout-time release and a paused turnover's reminders.
  */
 export async function tickAllLocks(h: HostedCleaner): Promise<void> {
-  if (!smartLocksOn(h.baseEnv()) || !lockAdapter()) return;
+  if (!lockAdapter()) return;
   for (const listed of h.registry.list()) {
     const tenant = h.registry.get(listed.id);
-    if (!tenant || tenant.disabled) continue;
+    if (!tenant || tenant.disabled || !featureOn(tenant, "locks", h.baseEnv())) continue;
     for (const property of tenant.properties) {
       const ctx = propertyContext(h, tenant, property);
       try {
@@ -129,7 +130,7 @@ export async function tickAllLocks(h: HostedCleaner): Promise<void> {
         if (!door.locks().activeAt) continue;
         for (const note of lockHealthNotes(door, h.now())) await tellLockNote(h, { tenant, property }, note);
         // Guest codes (#262): each stay's code follows the booking log on this clock, so a booking email or late checkout reaches the lock within a tick.
-        if (guestCodesAvailable(h) && anyDoorFlow(property)) for (const note of await guestDesk(h, tenant, property).sync()) await tellLockNote(h, { tenant, property }, note);
+        if (guestCodesAvailable(h, tenant) && anyDoorFlow(property)) for (const note of await guestDesk(h, tenant, property).sync()) await tellLockNote(h, { tenant, property }, note);
         // The checkout-time release and a paused turnover's reminders run on this clock.
         if (property.flows.cleaning.on) await liveDeskFor(ctx.root, ctx.env, () => h.now()).lockClock();
       } catch {
@@ -148,10 +149,19 @@ export function resetLockDesks(): void {
   guestDesks.clear();
 }
 
-/** Guest codes on the service (#262): GUEST_CODES and SMART_LOCKS, with a lock adapter. */
-export function guestCodesAvailable(h: HostedCleaner): boolean {
-  const env = h.baseEnv();
-  return guestCodesOn(env) && smartLocksOn(env) && Boolean(lockAdapter());
+/** Some account on the service has connected locks on. */
+function anyAccountOn(h: HostedCleaner): boolean {
+  return h.registry.list().some((tenant) => !tenant.disabled && featureOn(tenant, "locks", h.baseEnv()));
+}
+
+/** Connected locks for this account: its "locks" switch, the partner's credentials, and the adapter. */
+export function locksAvailable(h: HostedCleaner, tenant: Tenant): boolean {
+  return featureOn(tenant, "locks", h.baseEnv()) && Boolean(lockAdapter());
+}
+
+/** Guest codes for this account (#262): its "guest-codes" switch (which needs its locks on), with the adapter. */
+export function guestCodesAvailable(h: HostedCleaner, tenant: Tenant): boolean {
+  return featureOn(tenant, "guest-codes", h.baseEnv()) && Boolean(lockAdapter());
 }
 
 /** The property's guest-code desk. Every dependency reads the account again on each call. */
@@ -231,18 +241,18 @@ export const LOCK_FRONT_NAMES: ReadonlySet<string> = new Set([...LOCK_TOOL_NAMES
 
 const anyDoorFlow = (property: Property) => property.flows.cleaning.on || property.flows.fixer.on;
 
-/** The lock tools as tools/list shows them: with SMART_LOCKS and an adapter on the service, and a property running Cleaner Core or Fixer Core. */
+/** The lock tools as tools/list shows them: with the account's locks on, and a property running Cleaner Core or Fixer Core. */
 export function listedLockFront(h: HostedCleaner, tenant: Tenant): Record<string, unknown>[] {
-  if (!smartLocksOn(h.baseEnv()) || !lockAdapter() || !tenant.properties.some(anyDoorFlow)) return [];
-  return [...LOCK_TOOLS, ...(guestCodesAvailable(h) ? GUEST_TOOLS : [])];
+  if (!locksAvailable(h, tenant) || !tenant.properties.some(anyDoorFlow)) return [];
+  return [...LOCK_TOOLS, ...(guestCodesAvailable(h, tenant) ? GUEST_TOOLS : [])];
 }
 
 /** Answers one lock tool for the property it names. */
 export async function lockCall(h: HostedCleaner, tenant: Tenant, property: Property, name: string, args: Record<string, unknown>): Promise<FrontReply> {
-  if (!smartLocksOn(h.baseEnv()) || !lockAdapter()) return { text: "Connected locks aren't available yet.", isError: true };
+  if (!locksAvailable(h, tenant)) return { text: "Connected locks aren't available yet.", isError: true };
   if (!anyDoorFlow(property)) return { text: `Connected locks work with Cleaner Core or Fixer Core, and neither is on for ${property.label}.`, isError: true };
   if (GUEST_TOOL_NAMES.has(name)) {
-    if (!guestCodesAvailable(h)) return { text: "Guest door codes aren't available yet.", isError: true };
+    if (!guestCodesAvailable(h, tenant)) return { text: "Guest door codes aren't available yet.", isError: true };
     const guest = await handleGuestTool(guestDesk(h, tenant, property), name, args);
     return guest ?? { text: "That guest-code tool couldn't answer.", isError: true };
   }
@@ -255,7 +265,7 @@ export async function lockCall(h: HostedCleaner, tenant: Tenant, property: Prope
  * Only its YES (after the invite) is taken here; STOP is noted and still goes on to the usual routing.
  */
 export async function standingLineText(h: HostedCleaner, tenant: Tenant, from: string, text: string): Promise<boolean> {
-  if (!smartLocksOn(h.baseEnv()) || !lockAdapter() || !from) return false;
+  if (!locksAvailable(h, tenant) || !from) return false;
   let handled = false;
   for (const property of tenant.properties) {
     if (!anyDoorFlow(property)) continue;
@@ -274,7 +284,7 @@ export async function standingLineText(h: HostedCleaner, tenant: Tenant, from: s
  * its YES (after the invite) is taken here; STOP takes the code off and still goes on to the usual routing.
  */
 export async function guestLineText(h: HostedCleaner, tenant: Tenant, from: string, text: string): Promise<boolean> {
-  if (!guestCodesAvailable(h) || !from) return false;
+  if (!guestCodesAvailable(h, tenant) || !from) return false;
   let handled = false;
   for (const property of tenant.properties) {
     if (!anyDoorFlow(property)) continue;
@@ -341,7 +351,7 @@ async function serveCodePage(r: HostedRequest, sub: string, page: CodePage | und
 /** A standing code's page, shown to its person once. */
 export async function serveStandingPage(h: HostedCleaner, r: HostedRequest, tenant: Tenant, property: Property, rest: string): Promise<void> {
   const [token = "", sub = ""] = rest.slice(STANDING_PAGE_PREFIX.length).split("/");
-  if (!smartLocksOn(h.baseEnv()) || !lockAdapter()) return r.send(404, "text/plain", "Not found");
+  if (!locksAvailable(h, tenant)) return r.send(404, "text/plain", "Not found");
   const desk = lockDesk(h, tenant, property);
   const open = r.method === "GET" && sub === "" ? desk.pageOpen(token) : undefined;
   const page = open ? { heading: `Your door code at ${open.street}`, intro: `Hi ${open.name}. Tap to see your code. It shows once, so note it somewhere safe.`, button: "Show my code", shownAs: "Your code: " } : undefined;
@@ -351,7 +361,7 @@ export async function serveStandingPage(h: HostedCleaner, r: HostedRequest, tena
 /** A guest code's page (#262): the host's for a stay, or a tenant's for a lease. Shows the code once. */
 export async function serveGuestPage(h: HostedCleaner, r: HostedRequest, tenant: Tenant, property: Property, rest: string): Promise<void> {
   const [token = "", sub = ""] = rest.slice(GUEST_PAGE_PREFIX.length).split("/");
-  if (!guestCodesAvailable(h)) return r.send(404, "text/plain", "Not found");
+  if (!guestCodesAvailable(h, tenant)) return r.send(404, "text/plain", "Not found");
   const desk = guestDesk(h, tenant, property);
   const open = r.method === "GET" && sub === "" ? desk.pageOpen(token) : undefined;
   const page = !open

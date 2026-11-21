@@ -106,7 +106,7 @@ export type CameraKind = "motion" | "ding" | "online" | "offline";
 
 /**
  * One camera event in a shape no camera provider owns. The camera adapter (#239) writes it under its own flag
- * (`CAMERAS`). Visit records don't read it yet: a camera departure will later replace a DONE one. Media stays with
+ * (the account's cameras switch). Visit records don't read it yet: a camera departure will later replace a DONE one. Media stays with
  * the provider: the adapter fetches it from `deviceId` and `at`, and writes no media reference.
  */
 export interface CameraEvent {

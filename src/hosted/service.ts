@@ -7,11 +7,11 @@ import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/rout
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { ConfirmationBook } from "../operator/confirmations";
 import { supplyDesk, turnOffSupplies, turnOnSupplies } from "./supplies";
-import { fixerCoreOn, supplyCoreOn } from "../cleaner-core/flag";
+import { supplyCoreOn } from "../cleaner-core/flag";
 import { FIXER_AGENTS_ONLY, runsFixer, runsSupplies, SUPPLIES_AGENTS_ONLY, type CleanerAssistant } from "../cleaner-core/assistant";
 import { fixerOffQuestion } from "../fixer-core/texts";
 import { cancelFingerprint, jobsToCancel, turnOffFixer, turnOnFixer } from "./fixer";
-import { FIXER_NOT_YET, resolveProperty } from "./propertyTools";
+import { resolveProperty } from "./propertyTools";
 import type { FrontReply } from "./serviceTools";
 
 /**
@@ -65,8 +65,6 @@ export async function setFlows(ctx: FlowContext, input: FlowInput): Promise<Fron
   const latest = () => (h.registry.get(tenant.id) ?? tenant).properties.find((p) => p.id === property.id) ?? property;
   const wanted = (["cleaning", "supplies", "fixer"] as const).filter((flow) => typeof input[flow] === "boolean");
   if (wanted.length === 0) return fail("Say which flow to turn on or off: cleaning, supplies, or fixer, each true or false.");
-  // Fixer Core turns on only while FIXER_CORE is set on the service; without it nothing changes.
-  if (input.fixer === true && !fixerCoreOn(h.baseEnv())) return fail(FIXER_NOT_YET);
   if (wanted.length > 1 && typeof input.confirmation === "string") return fail("Turn one flow off at a time when you pass a confirmation.");
   const forced = ctx.actor === "admin" && input.force === true;
   const confirmation = typeof input.confirmation === "string" ? input.confirmation.trim() : "";

@@ -35,7 +35,7 @@
       "name": "Fixer Core",
       "choice": "Fixer Core: repairs and upkeep for a property",
       "profile": "../FIXER_CORE_BOOTSTRAP.md",
-      "note": "Offered only on a service with FIXER_CORE=1. Elsewhere set_flows answers that it isn't available yet."
+      "note": "Off on each property until the host says yes. Grok Bot and Muse only; on Claude and ChatGPT set_flows answers with the plain-chat line."
     },
     {
       "service": "touring",

@@ -50,7 +50,7 @@ export function propertyAsk(saved: { address: boolean; checkoutTime: boolean; ch
   return { step: "property", tool: "save_property", questions };
 }
 
-/** Where the host takes bookings (#263), asked with BOOKING_PLATFORMS on until the host saves an answer. */
+/** Where the host takes bookings (#263), asked with the account's booking platforms on until the host saves an answer. */
 export function platformsQuestion(): AskQuestion {
   return {
     field: "bookingEmails",

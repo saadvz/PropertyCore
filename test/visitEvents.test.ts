@@ -138,9 +138,9 @@ describe("the visit log", () => {
     ]);
   });
 
-  it("is written whatever flag is on: each writer checks its own", () => {
-    // The store has no flag of its own. Cleaner Core and Fixer Core check VISIT_RECORDS before they write; the lock
-    // adapter checks #180's flag, and the camera adapter CAMERAS.
+  it("is written whatever switch is on: each writer checks its own", () => {
+    // The store has no switch of its own. Cleaner Core and Fixer Core always write texts and windows; lock events
+    // come only for an account with connected locks on, and camera events only for one with cameras on.
     const { log: visits } = log();
     expect(visits.append(unlock("lk-1", "2027-01-04T16:00:00.000Z"))).toBe(true);
   });

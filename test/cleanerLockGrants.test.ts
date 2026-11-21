@@ -7,6 +7,7 @@ import { emptyLocks, storedDevice } from "../src/locks/settings";
 import { cleanupDesks, ok, openDesk, PIN_KEY, setUp, testClock } from "./cleanerDeskHarness";
 import { approvedOnDesk, resumeApproved } from "./hostApproval";
 import { CLEANER, DOOR_CODE, HOST } from "./wiringProof";
+import { deskFeatures } from "./featureEnv";
 
 /**
  * Cleaner Core on connected locks (#180): the cleaner's own code is made at their YES, moved with the
@@ -22,10 +23,10 @@ afterEach(() => {
 const CHECKOUT = "2026-10-18T15:00:00.000Z";
 const UNTIL = "2026-10-19T04:00:00.000Z";
 
-async function connected(options: { smartLocks?: boolean; doors?: number } = {}) {
+async function connected(options: { locks?: boolean; doors?: number } = {}) {
   const clock = testClock();
   const opened = openDesk([HOST, CLEANER], "0", clock.now);
-  if (options.smartLocks !== false) opened.env.SMART_LOCKS = "1";
+  if (options.locks !== false) Object.assign(opened.env, deskFeatures("locks"));
   opened.env.CLEANER_CORE_PIN_KEY = randomBytes(32).toString("base64");
   const fake = new FakeLockAdapter();
   setLockAdapter(fake);
@@ -108,8 +109,8 @@ describe("Cleaner Core on connected locks", () => {
     expect(JSON.stringify(state)).not.toContain(main);
   });
 
-  it("with SMART_LOCKS off, nothing reaches the lock and the saved code goes as before", async () => {
-    const { desk, fake, sms, clock } = await connected({ smartLocks: false });
+  it("with the account's locks switch off, nothing reaches the lock and the saved code goes as before", async () => {
+    const { desk, fake, sms, clock } = await connected({ locks: false });
     await taken(desk);
     clock.advance(Date.parse(CHECKOUT) - clock.now().getTime() + 30 * 60_000);
     ok(await desk.markGuestsLeft({ confirmed: true }, PIN_KEY));

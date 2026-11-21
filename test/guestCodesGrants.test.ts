@@ -9,6 +9,7 @@ import { applyLockEvent } from "../src/locks/inbound";
 import { setLockAdapter } from "../src/locks/registry";
 import { emptyLocks, storedDevice } from "../src/locks/settings";
 import { visitLogFor } from "../src/visits/store";
+import { deskFeatures } from "./featureEnv";
 
 /**
  * Guest codes in the hub's grants (#262): a guest flow beside cleaning, repair and standing. Only the
@@ -18,7 +19,7 @@ import { visitLogFor } from "../src/visits/store";
 const NOW = new Date("2026-12-10T12:00:00Z");
 const STAY = { from: "2026-12-12T20:00:00.000Z", until: "2026-12-15T16:00:00.000Z" };
 const SAVED = ["4", "8", "2", "1"].join("");
-const ON = { SMART_LOCKS: "1", CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64") };
+const ON = { ...deskFeatures("locks"), CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64") };
 const roots: string[] = [];
 
 afterEach(() => {

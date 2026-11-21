@@ -18,6 +18,8 @@ import { zonedInstant } from "../src/hub/calendar";
 import type { NightResult } from "../src/stay-check/check";
 import { resetVisitLogCache } from "../src/visits/store";
 import { closeHostedApps } from "./cleanerOauthHarness";
+import { credentialsFor, switchOn } from "./featureEnv";
+import type { Feature } from "../src/features/features";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 import { order, writeOrders } from "./packageFixture";
 
@@ -32,7 +34,8 @@ const KEY = randomBytes(32).toString("base64");
 const PLACE = { address: "12 Scratch Lane, Teaneck, NJ 07666", timeZone: NY };
 const JOES = { name: "Joe's Plumbing", trades: ["plumbing"], reach: { phone: JOE }, preferredFor: [{ trade: "plumbing", rank: 1 }] };
 const HOOK = { url: "https://example.com/alerts-hook", token: "made-up-key-250" };
-const ALL_FLAGS = { FIXER_CORE: "1", SUPPLY_CORE: "1", PACKAGE_ARRIVALS: "1", REMOTE_OVERSIGHT: "1", CAMERAS: "1", STAY_CHECK: "1", CAMERA_TOKEN_KEY: KEY };
+/** The four features the host-alert clock reads, switched on for the account. */
+const ALL_FEATURES: Feature[] = ["packages", "oversight", "cameras", "stay-check"];
 
 let open: MultiTenantApp | undefined;
 const clock = { now: new Date("2026-11-21T15:00:00.000Z") };
@@ -47,10 +50,12 @@ afterEach(() => {
   clock.now = new Date("2026-11-21T15:00:00.000Z");
 });
 
-async function account(env: NodeJS.ProcessEnv) {
-  open = await multiTenantApp({ env, now: () => clock.now });
+/** Ring's made-up credentials and the token key are always on the service here: the account's switches decide. */
+async function account(features: Feature[]) {
+  open = await multiTenantApp({ env: { SUPPLY_CORE: "1", CAMERA_TOKEN_KEY: KEY, ...credentialsFor(["cameras"]) }, now: () => clock.now });
   const m = open;
   const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+  switchOn(m.registry, tenant.id, ...features);
   const property = m.registry.addProperty(tenant.id, "12 Scratch Lane");
   m.registry.setFlow(tenant.id, property.id, "supplies", true);
   const root = propertyFolder(m.app.root, tenant.id, property);
@@ -87,8 +92,8 @@ function pickFrontDoor(root: string) {
 const fileNews = (m: MultiTenantApp, tenant: Tenant, property: Property) => readFixer(propertyFolder(m.app.root, tenant.id, property)).news ?? [];
 
 describe("host alerts on the shared service", () => {
-  it("with the four flags off, nothing runs, nothing is kept, and check_packages is unchanged", SLOW, async () => {
-    const { m, token, property, root } = await account({ FIXER_CORE: "1", SUPPLY_CORE: "1" });
+  it("with the account's four switches off, nothing runs, nothing is kept, and check_packages is unchanged", SLOW, async () => {
+    const { m, token, property, root } = await account([]);
     writeOrders(root, [order("ord_1", { expectedBy: "2026-11-21" })]);
     pickFrontDoor(root);
     sharedCameraLog(root, () => clock.now).append({ type: "camera", id: "off-1", at: "2026-11-21T19:00:00.000Z", kind: "offline", deviceId: "dev-aaa", provider: "ring", device: "Front door" });
@@ -99,7 +104,7 @@ describe("host alerts on the shared service", () => {
   });
 
   it("a Fixer Core property: a package not seen and a camera offline go to check_fixes once, wake the Alerts routine, and text nobody", SLOW, async () => {
-    const { m, tenant, token, property, root } = await account(ALL_FLAGS);
+    const { m, tenant, token, property, root } = await account(ALL_FEATURES);
     const call = await activeFixer(m, token, property);
     writeOrders(root, [order("ord_1", { expectedBy: "2026-11-21" })]);
     pickFrontDoor(root);
@@ -143,7 +148,7 @@ describe("host alerts on the shared service", () => {
   });
 
   it("tries Cleaner Core first; a Cleaner Core not yet active never swallows an alert, so Fixer Core carries it", SLOW, async () => {
-    const { m, tenant, token, property, root } = await account(ALL_FLAGS);
+    const { m, tenant, token, property, root } = await account(ALL_FEATURES);
     await activeFixer(m, token, property);
     m.registry.setFlow(tenant.id, property.id, "cleaning", true);
     pickFrontDoor(root);
@@ -155,7 +160,7 @@ describe("host alerts on the shared service", () => {
   });
 
   it("without connected locks, the same-day check can't tell and sends nothing", SLOW, async () => {
-    const { m, tenant, token, property, root } = await account({ ...ALL_FLAGS, SMART_LOCKS: "0" });
+    const { m, tenant, token, property, root } = await account(ALL_FEATURES);
     const call = await activeFixer(m, token, property);
     // Without connected locks the check can't tell, so it never alerts: the host isn't told a guess.
     const added = await call("add_expected_visit", { who: "Mike Doyle", date: "2026-11-21", from: "13:00", to: "17:00", note: "walk-through" });
@@ -167,7 +172,7 @@ describe("host alerts on the shared service", () => {
   });
 
   it("a Supply Core property alone has no host-note path: packages stay with check_packages, camera notes wait for list_cameras", SLOW, async () => {
-    const { m, token, property, root } = await account(ALL_FLAGS);
+    const { m, token, property, root } = await account(ALL_FEATURES);
     writeFileSync(join(root, "supply.json"), "{}");
     writeOrders(root, [order("ord_1", { expectedBy: "2026-11-21" })]);
     pickFrontDoor(root);

@@ -8,6 +8,7 @@ import { FakeLockAdapter } from "../src/locks/fake";
 import { DOOR_GRANTS_FILE, KEEP_AFTER_MS } from "../src/hub/grants";
 import { setLockAdapter } from "../src/locks/registry";
 import { emptyLocks, storedDevice } from "../src/locks/settings";
+import { deskFeatures } from "./featureEnv";
 
 /**
  * Per-visit codes in the hub (#180): issued ahead, moved, revoked, released with fallbacks. Only the
@@ -22,7 +23,7 @@ const OTHER = "+15555550102";
 // Built at runtime so the secret scan never finds a code in this file.
 const SAVED = ["4", "8", "2", "1"].join("");
 const SERVER = randomBytes(32).toString("base64");
-const ON = { SMART_LOCKS: "1", CLEANER_CORE_PIN_KEY: SERVER };
+const ON = { ...deskFeatures("locks"), CLEANER_CORE_PIN_KEY: SERVER };
 const roots: string[] = [];
 
 afterEach(() => {
@@ -57,7 +58,7 @@ function setup(options: { env?: NodeJS.ProcessEnv; doors?: number; active?: bool
 const want = (jobId: string, person = CLEANER, window = WINDOW) => ({ jobId, person, window, label: "Maria" });
 
 describe("no connected lock: today's saved code, unchanged", () => {
-  it("with SMART_LOCKS off, a job's request gets the saved code and nothing reaches the lock", async () => {
+  it("with the account's locks switch off, a job's request gets the saved code and nothing reaches the lock", async () => {
     const { door, fake } = setup({ env: { CLEANER_CORE_PIN_KEY: SERVER }, saved: true });
     expect(door.connected()).toBe(false);
     expect(await door.syncGrants("cleaning", [want("job-1")])).toEqual([]);
@@ -143,7 +144,7 @@ describe("issuing ahead", () => {
 
   it("seals with the account's server key, made if missing, whatever key the saved code used", async () => {
     const saved: Record<string, string> = {};
-    const env: NodeJS.ProcessEnv = { SMART_LOCKS: "1" };
+    const env: NodeJS.ProcessEnv = { ...deskFeatures("locks") };
     const { door } = setup({ env });
     door.useSecretSaver((values) => {
       Object.assign(saved, values);

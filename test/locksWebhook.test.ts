@@ -16,6 +16,7 @@ import { LOCK_TOOL_NAMES } from "../src/locks/tools";
 import { emptyLocks, storedDevice } from "../src/locks/settings";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
+import { FAKE_LOCK_CREDENTIALS, switchOn } from "./featureEnv";
 
 /**
  * The lock partner's webhook on the shared service (#180): verified before it's read, applied only to
@@ -38,13 +39,16 @@ afterEach(() => {
   clock = new Date(NOW);
 });
 
-async function world(env: NodeJS.ProcessEnv = { SMART_LOCKS: "1", FIXER_CORE: "1" }) {
-  open = await multiTenantApp({ env, now: () => clock });
+/** Two accounts on one service. Each account's "locks" switch is on unless `switchedOn` leaves it out. */
+async function world(options: { env?: NodeJS.ProcessEnv; switchedOn?: ("Lane" | "Court")[] } = {}) {
+  const switchedOn = options.switchedOn ?? ["Lane", "Court"];
+  open = await multiTenantApp({ env: options.env ?? { ...FAKE_LOCK_CREDENTIALS }, now: () => clock });
   const m = open;
   const fake = new FakeLockAdapter();
   setLockAdapter(fake);
   const make = (label: string, number: string, deviceId: string) => {
     const { tenant } = m.registry.create({ label, twilioNumber: number });
+    if ((switchedOn as string[]).includes(label)) switchOn(m.registry, tenant.id, "locks");
     const property = m.registry.addProperty(tenant.id, `${label} house`);
     m.registry.setFlow(tenant.id, property.id, "fixer", true);
     const device = fake.addDevice(tenant.id, { id: deviceId, name: "Front door" });
@@ -235,7 +239,7 @@ describe("the lock webhook", () => {
     expect(((await again.json()) as { code?: string }).code).toBeUndefined();
   });
 
-  it("lists the lock tools and puts the lock status in get_state only with SMART_LOCKS on, never a code", async () => {
+  it("lists the lock tools and puts the lock status in get_state only with the account's locks switch on, never a code", async () => {
     const { a, m, fake } = await world();
     const ctx = propertyContext(m.hosted(), a.tenant, a.property);
     await hubFor(ctx.root, { now: () => clock }).doorAccess(ctx.env).syncGrants("cleaning", [{ jobId: "job-1", person: "+15555550131", window: WINDOW }]);
@@ -250,13 +254,26 @@ describe("the lock webhook", () => {
     open?.close();
     open = undefined;
     closeHostedApps();
-    const off = await world({ FIXER_CORE: "1" });
+    const off = await world({ switchedOn: [] });
     const offToken = await off.m.joinAt(off.a.tenant.id, "grok", "/mcp");
     expect((await off.m.toolNames("/mcp", offToken)).filter((name) => LOCK_TOOL_NAMES.has(name))).toEqual([]);
   });
 
-  it("is not served with SMART_LOCKS off", async () => {
-    const { send } = await world({ FIXER_CORE: "1" });
+  it("is not served while no account has its locks switch on", async () => {
+    const { send } = await world({ switchedOn: [] });
     expect((await send(unlock("evt-12", "dev-a"))).status).toBe(404);
+  });
+
+  it("is not served without the lock partner's credentials, even with an account's switch on", async () => {
+    const { send } = await world({ env: {} });
+    expect((await send(unlock("evt-13", "dev-a"))).status).toBe(404);
+  });
+
+  it("drops an event for an account whose locks switch is off, while another account's is on", async () => {
+    const { send, a, b } = await world({ switchedOn: ["Lane"] });
+    expect((await send(unlock("evt-14", "dev-b"))).status).toBe(200);
+    expect(lines(b.root).filter((line) => line.type === "lock")).toEqual([]);
+    expect((await send(unlock("evt-15", "dev-a"))).status).toBe(200);
+    expect(lines(a.root).some((line) => line.type === "lock")).toBe(true);
   });
 });

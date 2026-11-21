@@ -128,10 +128,10 @@ describe("the entry folder", () => {
     expect(readme).toContain(TEMPLATE_LINK);
   });
 
-  it("offers Cleaner Core and Supply Core, offers Fixer Core only with FIXER_CORE=1, and keeps Tour Core parked", () => {
+  it("offers Cleaner Core, Supply Core and Fixer Core, off on each property until the host says yes, and keeps Tour Core parked", () => {
     for (const flow of ["Cleaner Core", "Supply Core", "Fixer Core"]) expect(readme).toContain(flow);
     expect(readme).toMatch(/Fixer Core:\*\* repairs and upkeep\./);
-    expect(readme).toContain("offered only on a service with `FIXER_CORE=1`");
+    expect(readme).toContain("It starts off on each property, until the host says yes.");
     expect(readme).toMatch(/## Tour Core is parked/);
   });
 

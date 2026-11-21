@@ -13,7 +13,7 @@ import { ROUTINE, setUp } from "./cleanerDeskHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 import { CLEANER, HOST, TEST_PIN_KEY } from "./wiringProof";
 
-/** set_flows on one property of an account: on, off with a stand-down, and Fixer Core behind FIXER_CORE=1. Only 555 numbers. */
+/** set_flows on one property of an account: on, off with a stand-down, and Fixer Core, offered on every account. Only 555 numbers. */
 
 const LINE = "+15555550150";
 const SLOW = { timeout: 90_000 };
@@ -143,15 +143,14 @@ describe("set_flows", () => {
     expect(s.m.sms.sent).toEqual([]);
   });
 
-  it("fixer is refused without FIXER_CORE=1", SLOW, async () => {
+  it("fixer starts off on every property", SLOW, async () => {
     const s = await start();
-    const fixer = await s.m.toolAt(PATH, s.token, "set_flows", { property: s.lane().id, fixer: true });
-    expect(fixer).toMatchObject({ isError: true, text: "Fixer Core isn't available yet." });
     expect(s.lane().flows.fixer.on).toBe(false);
+    expect(s.court().flows.fixer.on).toBe(false);
   });
 
-  it("fixer turns on and off with FIXER_CORE=1, texting nobody", SLOW, async () => {
-    const s = await start({ FIXER_CORE: "1" });
+  it("fixer turns on and off with no service flag, texting nobody", SLOW, async () => {
+    const s = await start();
     expect((await s.m.toolAt(PATH, s.token, "set_flows", { property: s.lane().id, fixer: true })).isError).toBe(false);
     expect(s.lane().flows.fixer.on).toBe(true);
     expect(s.court().flows.fixer.on).toBe(false);

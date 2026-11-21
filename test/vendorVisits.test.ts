@@ -11,8 +11,10 @@ import { peopleFor, resetPeople } from "../src/hub/people";
 import { FakeLockAdapter } from "../src/locks/fake";
 import { setLockAdapter } from "../src/locks/registry";
 import { emptyLocks, storedDevice } from "../src/locks/settings";
+import { ACCOUNT_FEATURES } from "../src/features/features";
 import { buildVisits } from "../src/visits/derive";
 import { resetVisitLogCache, visitLogFor } from "../src/visits/store";
+import { deskFeatures } from "./featureEnv";
 
 /**
  * Routine vendor visits (#237): a standing yes per upkeep item, the visit proposed by text, the vendor's YES or
@@ -68,9 +70,7 @@ async function setup(options: Options = {}) {
   let clock = new Date(NOW);
   const env: NodeJS.ProcessEnv = {
     CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64"),
-    FIXER_CORE: "1",
-    ...(options.visitRecords === false ? {} : { VISIT_RECORDS: "1" }),
-    ...(options.locks === false ? {} : { SMART_LOCKS: "1" }),
+    ...deskFeatures(...(options.visitRecords === false ? [] : (["visits"] as const)), ...(options.locks === false ? [] : (["locks"] as const))),
   };
   const now = () => clock;
   const hub = hubFor(root, { now });
@@ -238,7 +238,7 @@ describe("proposing a routine visit", () => {
 
     const off = await setup();
     await off.savePest();
-    delete off.env.VISIT_RECORDS;
+    off.env[ACCOUNT_FEATURES] = "locks";
     off.at(LEAD);
     await off.desk().tick();
     expect(off.toBugs()).toEqual([]);

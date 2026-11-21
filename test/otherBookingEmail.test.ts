@@ -9,6 +9,7 @@ import type { BookingSource } from "../src/hub/bookingSources";
 import { hubFor } from "../src/hub/hub";
 import type { ExtractedBooking } from "../src/hub/otherEmail";
 import { sampleEmail } from "./airbnbEmails";
+import { deskFeatures } from "./featureEnv";
 import { PIN_KEY, cleanupDesks, liveOneToOne, ok, refused, testClock } from "./cleanerDeskHarness";
 import { DOOR_CODE } from "./wiringProof";
 
@@ -60,7 +61,7 @@ const VRBO_RELAY: BookingEmailInput = {
   receivedAt: "2026-10-14T15:00:00.000Z",
 };
 
-async function opened(sources: Partial<BookingSource>[] = [{ platform: "airbnb" }, { platform: "direct", sender: "bookings@example.test" }], flag = "1") {
+async function opened(sources: Partial<BookingSource>[] = [{ platform: "airbnb" }, { platform: "direct", sender: "bookings@example.test" }], on = true) {
   const clock = testClock();
   setStayCodeHook({
     async windowMoved(input) {
@@ -71,7 +72,7 @@ async function opened(sources: Partial<BookingSource>[] = [{ platform: "airbnb" 
     },
   });
   const desk = await liveOneToOne(clock.now);
-  if (flag) desk.env.BOOKING_PLATFORMS = flag;
+  if (on) Object.assign(desk.env, deskFeatures("booking-platforms"));
   expect(hubFor(desk.root, { now: clock.now }).setBookingSources(sources).ok).toBe(true);
   return { ...desk, clock };
 }
@@ -276,15 +277,15 @@ describe("Booking.com on the Other path", () => {
   });
 });
 
-describe("with BOOKING_PLATFORMS off", () => {
+describe("with the account's booking platforms off", () => {
   it("refuses a non-Airbnb email exactly as before, and ignores the new fields", async () => {
-    const { desk } = await opened(undefined, "");
+    const { desk } = await opened(undefined, false);
     const reply = ok(await read(desk, DIRECT, { extracted: DIRECT_FIELDS }));
     expect(reply).toMatchObject({ outcome: "refused", reason: "not-airbnb" });
   });
 
   it("ignores the sender check on an Airbnb email", async () => {
-    const { desk } = await opened(undefined, "");
+    const { desk } = await opened(undefined, false);
     const reply = ok(await read(desk, { ...sampleEmail("confirmed-stacked"), authentication: GMAIL_FAIL("airbnb.com") }, { thisListing: true }));
     expect(reply.outcome).toBe("applied");
   });

@@ -1,4 +1,4 @@
-import { camerasOn, packageArrivalsOn } from "../cleaner-core/flag";
+import { featureOn } from "../features/features";
 import { propertyFolder, type Property } from "../cleaner-core/hosted/properties";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner, HostedRequest } from "../cleaner-core/hosted/router";
@@ -16,7 +16,7 @@ import { PackageDesk } from "../package-arrivals/desk";
 import type { FrontReply } from "./serviceTools";
 
 /**
- * The camera connection (#239) on the shared service, behind CAMERAS=1. The host signs in on Ring's own page from a
+ * The camera connection (#239) on the shared service, behind each account's "cameras" switch and Ring's credentials. The host signs in on Ring's own page from a
  * one-time link; their tokens are sealed in the account's secrets with CAMERA_TOKEN_KEY. Ring's webhooks land on
  * POST /webhooks/ring, are verified, and are stored in the property's shared event log. The clock counts the night's
  * events and turns a camera offline for 30 minutes into one note for the host. Nothing here texts anyone.
@@ -92,9 +92,9 @@ function deskFor(h: HostedCleaner, tenant: Tenant, property: Property): CameraDe
   return new CameraDesk(root, { log: sharedCameraLog(root, () => h.now()), ...(provider ? { provider } : {}), ...(ref ? { account: ref } : {}), now: () => h.now(), label: property.label, ...(counter ? { counter: counter.name } : {}) });
 }
 
-/** The camera tools as tools/list shows them: while the flag is on and any property runs a flow. */
+/** The camera tools as tools/list shows them: while the account's cameras are on and any property runs a flow. */
 export function listedCameraFront(h: HostedCleaner, tenant: Tenant): Record<string, unknown>[] {
-  if (!camerasOn(h.baseEnv()) || !tenant.properties.some(anyFlowOn)) return [];
+  if (!featureOn(tenant, "cameras", h.baseEnv()) || !tenant.properties.some(anyFlowOn)) return [];
   return [...CAMERA_TOOLS];
 }
 
@@ -104,7 +104,7 @@ const plain = (error: unknown) => (error instanceof CameraProviderError ? error.
 
 /** Answers one camera tool for the property it names. */
 export async function camerasCall(h: HostedCleaner, tenant: Tenant, property: Property, name: string, args: Record<string, unknown>): Promise<FrontReply> {
-  if (!camerasOn(h.baseEnv())) return fail("The camera connection isn't available yet.");
+  if (!featureOn(tenant, "cameras", h.baseEnv())) return fail("The camera connection isn't available yet.");
   if (!anyFlowOn(property)) return fail(`Nothing runs at ${property.label} yet, so it has no cameras.`);
   const provider = providerFor(h);
   const ref = account(h, tenant.id);
@@ -164,7 +164,8 @@ function places(h: HostedCleaner): CameraPlace[] {
   const out: CameraPlace[] = [];
   for (const listed of h.registry.list()) {
     const tenant = h.registry.get(listed.id);
-    if (!tenant || tenant.disabled) continue;
+    // An account with cameras off gets no events and no clock, whatever its cameras.json says.
+    if (!tenant || tenant.disabled || !featureOn(tenant, "cameras", h.baseEnv())) continue;
     for (const property of tenant.properties) {
       try {
         const cameras = readCameras(propertyFolder(h.dataRoot, tenant.id, property)).cameras;
@@ -198,7 +199,8 @@ export async function handleCameraRoutes(h: HostedCleaner, r: HostedRequest): Pr
   const isCamera = path === CAMERA_WEBHOOK_PATH || path === CAMERA_LINKED_PATH || path.startsWith(CONNECT_PREFIX);
   if (!isCamera) return false;
   const provider = providerFor(h);
-  if (!camerasOn(h.baseEnv()) || !provider) {
+  // Not found until some account has cameras on; each link and event is then checked against its own account.
+  if (!provider || !anyAccountOn(h)) {
     r.send(404, "text/plain", "Not found");
     return true;
   }
@@ -245,10 +247,15 @@ export async function handleCameraRoutes(h: HostedCleaner, r: HostedRequest): Pr
   return true;
 }
 
+/** Some account on the service has cameras on. */
+function anyAccountOn(h: HostedCleaner): boolean {
+  return h.registry.list().some((tenant) => !tenant.disabled && featureOn(tenant, "cameras", h.baseEnv()));
+}
+
 function placeOf(h: HostedCleaner, tenantId: string, propertyId: string): { tenant: Tenant; property: Property } | undefined {
   const tenant = h.registry.get(tenantId);
   const property = tenant?.properties.find((p) => p.id === propertyId);
-  return tenant && !tenant.disabled && property ? { tenant, property } : undefined;
+  return tenant && !tenant.disabled && property && featureOn(tenant, "cameras", h.baseEnv()) ? { tenant, property } : undefined;
 }
 
 function logOf(h: HostedCleaner, tenantId: string, propertyId: string) {
@@ -261,7 +268,7 @@ function logOf(h: HostedCleaner, tenantId: string, propertyId: string) {
 async function afterStored(h: HostedCleaner, stored: { tenantId: string; propertyId: string; line: { label?: string; at: string; kind: string } }): Promise<void> {
   const place = placeOf(h, stored.tenantId, stored.propertyId);
   if (!place) return;
-  if (stored.line.kind === "motion" && stored.line.label === "package_delivery" && packageArrivalsOn(h.baseEnv()) && place.property.flows.supplies.on) {
+  if (stored.line.kind === "motion" && stored.line.label === "package_delivery" && featureOn(place.tenant, "packages", h.baseEnv()) && place.property.flows.supplies.on) {
     // Its own desk, not packageDeskFor's cached one, which keeps the deps it was first made with: check_packages' desk
     // needs its door, sender and host-alert clock (#250).
     new PackageDesk(propertyFolder(h.dataRoot, place.tenant.id, place.property), { now: () => h.now() }).cameraSighting({ at: stored.line.at });
@@ -294,7 +301,7 @@ let round = false;
  * One property's failure never stops the rest.
  */
 export async function tickAllCameras(h: HostedCleaner): Promise<void> {
-  if (round || !camerasOn(h.baseEnv())) return;
+  if (round || !anyAccountOn(h)) return;
   round = true;
   try {
     for (const place of places(h)) {

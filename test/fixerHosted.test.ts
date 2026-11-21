@@ -17,7 +17,7 @@ import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 
 /**
- * Fixer Core on the shared service, per property, behind FIXER_CORE=1, for Grok Bot and Muse only.
+ * Fixer Core on the shared service, per property, offered on every account, for Grok Bot and Muse only.
  * Only 555 numbers, example.com addresses and made-up pros; nobody is texted or called.
  */
 
@@ -43,7 +43,7 @@ afterEach(() => {
   clock = new Date(NOW);
 });
 
-async function start(env: NodeJS.ProcessEnv = { FIXER_CORE: "1" }) {
+async function start(env: NodeJS.ProcessEnv = {}) {
   open = await multiTenantApp({ env, now: () => clock });
   return open;
 }
@@ -91,16 +91,14 @@ async function bookedJob(m: MultiTenantApp, token: string, property: Property, a
 }
 
 describe("set_flows fixer", () => {
-  it("is refused without FIXER_CORE=1, and nothing changes", SLOW, async () => {
-    const m = await start({});
-    const { tenant, property, token } = await account(m);
-    const refused = await m.toolAt(PATH, token, "set_flows", { property: property.id, fixer: true });
-    expect(refused).toMatchObject({ isError: true, text: "Fixer Core isn't available yet." });
+  it("starts off for a new property, with no Fixer Core record", SLOW, async () => {
+    const m = await start();
+    const { tenant, property } = await account(m);
     expect(flows(m, tenant).fixer.on).toBe(false);
     expect(existsSync(join(folder(m, tenant, property), "fixer.json"))).toBe(false);
   });
 
-  it("turns on for Grok Bot and Muse with FIXER_CORE=1, and contacts nobody", SLOW, async () => {
+  it("turns on for Grok Bot and Muse with no service flag, and contacts nobody", SLOW, async () => {
     const m = await start();
     for (const [assistant, number] of [["grok", LANE], ["muse", COURT]] as const) {
       const { tenant, property, token } = await account(m, assistant, number);
@@ -173,7 +171,7 @@ describe("get_state with Fixer Core on", () => {
   });
 
   it("carries the repairs line beside Cleaner Core's and Supply Core's state", SLOW, async () => {
-    const m = await start({ FIXER_CORE: "1", SUPPLY_CORE: "1" });
+    const m = await start({ SUPPLY_CORE: "1" });
     const { tenant, property, token } = await account(m);
     const court = m.registry.addProperty(tenant.id, "8 Scratch Court");
     for (const flow of ["cleaning", "fixer"]) await m.toolAt(PATH, token, "set_flows", { property: property.id, [flow]: true });

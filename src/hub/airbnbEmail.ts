@@ -17,7 +17,7 @@ export interface BookingEmailInput {
   messageId?: string;
   /** When the email arrived, as an ISO instant. */
   receivedAt?: string;
-  /** The email's Authentication-Results header(s), topmost first, exactly as received (#263). Read only with BOOKING_PLATFORMS on, and never kept. */
+  /** The email's Authentication-Results header(s), topmost first, exactly as received (#263). Read only with the account's booking platforms on, and never kept. */
   authentication?: string;
 }
 

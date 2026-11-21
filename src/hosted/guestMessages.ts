@@ -1,4 +1,4 @@
-import { guestMessagesOn } from "../cleaner-core/flag";
+import { featureOn } from "../features/features";
 import { propertyFolder, type Property } from "../cleaner-core/hosted/properties";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
@@ -11,28 +11,28 @@ import { readHubFile } from "../hub/store";
 import type { FrontReply } from "./serviceTools";
 
 /**
- * Guest messages (#242) on the shared service, behind GUEST_MESSAGES=1, answered in this process. It writes
+ * Guest messages (#242) on the shared service, behind the account's "guest-messages" switch, answered in this process. It writes
  * only the property's guest-facts.json, guest-messages.jsonl and guest-approvals.json, and sends nothing to a
  * guest: the host pastes each approved reply into Airbnb. Sending through booking software waits on #239.
  */
 
 export const GUEST_FRONT_NAMES: ReadonlySet<string> = GUEST_TOOL_NAMES;
 
-/** Said on initialize after Property Core's own line, while the flag is on. */
+/** Said on initialize after Property Core's own line, while the account's switch is on. */
 export const GUEST_MESSAGES_INSTRUCTION =
   "When the host's email is connected, pass each Airbnb guest-message email to read_guest_message as it arrives, exactly as received, and follow its next. Never pass a reservation email there. Nothing reaches a guest from Property Core: the host pastes each approved reply into Airbnb.";
 
 const anyFlowOn = (property: Property) => property.flows.cleaning.on || property.flows.supplies.on || property.flows.fixer.on;
 
-/** The guest tools as tools/list shows them: while the flag is on and any property runs a flow. */
+/** The guest tools as tools/list shows them: while the account's switch is on and any property runs a flow. */
 export function listedGuestFront(h: HostedCleaner, tenant: Tenant): Record<string, unknown>[] {
-  if (!guestMessagesOn(h.baseEnv()) || !tenant.properties.some(anyFlowOn)) return [];
+  if (!featureOn(tenant, "guest-messages", h.baseEnv()) || !tenant.properties.some(anyFlowOn)) return [];
   return [...GUEST_TOOLS];
 }
 
 /** Answers one guest tool for the property it names. */
 export function guestCall(h: HostedCleaner, tenant: Tenant, property: Property, name: string, args: Record<string, unknown>): FrontReply {
-  if (!guestMessagesOn(h.baseEnv())) return { text: "Guest messages aren't available yet.", isError: true };
+  if (!featureOn(tenant, "guest-messages", h.baseEnv())) return { text: "Guest messages aren't available yet.", isError: true };
   if (!anyFlowOn(property)) return { text: `Nothing runs at ${property.label} yet, so it has no guest messages.`, isError: true };
   const desk = guestDeskFor(propertyFolder(h.dataRoot, tenant.id, property), { now: () => h.now() });
   return handleGuestTool(desk, name, args) ?? { text: "Guest messages couldn't answer that.", isError: true };

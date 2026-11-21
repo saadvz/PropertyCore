@@ -67,7 +67,7 @@ describe("Fixer Core agent instructions", () => {
       for (const key of CHECK_FIXES_KEYS) expect(text, key).toContain(key);
       expect(text).toContain("googleEvents");
       expect(text).toContain("No Core moves money.");
-      expect(text).toContain("FIXER_CORE=1");
+      expect(text).toContain("turns on only with the host's yes");
       expect(text).toContain("there is no partner network");
       expect(text).toContain("A locksmith job on the door-code lock defaults to the host letting them in.");
       expect(text).toContain("Reschedule, extend and cancel end the old link");
@@ -125,8 +125,8 @@ describe("Fixer Core agent instructions", () => {
     expect(read(SKILL)).toMatch(/^---\nname: fixer-core\n/);
   });
 
-  it("the environment, README, matrix and hosting docs mention Fixer Core and its flag", () => {
-    expect(read("docs/environment-variables.md")).toContain("`FIXER_CORE`");
+  it("the environment, README, matrix and hosting docs mention Fixer Core, and that it needs no flag or switch", () => {
+    expect(read("docs/environment-variables.md")).toContain("Fixer Core needs no switch");
     expect(read("README.md")).toContain("FIXER_CORE_BOOTSTRAP.md");
     expect(read("docs/client-matrix.md")).toContain("FIXER_CORE_BOOTSTRAP.md");
     expect(read("docs/hosted-multitenancy.md")).toContain("Fixer Core");

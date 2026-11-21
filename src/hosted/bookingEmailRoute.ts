@@ -15,7 +15,7 @@ import type { Tenant } from "../cleaner-core/hosted/registry";
 export function bookingEmailProperty(dataRoot: string, tenant: Tenant, args: unknown, now: () => Date, platforms = false): { property: Property } | { refusal: string } {
   const email = (args && typeof args === "object" ? (args as { email?: unknown }).email : undefined) as BookingEmailInput | undefined;
   const cleaning = tenant.properties.filter((p) => p.flows.cleaning.on);
-  // With BOOKING_PLATFORMS on (#263), an email from any platform but Airbnb goes to the property that saved its sender.
+  // With the account's booking platforms on (#263), an email from any platform but Airbnb goes to the property that saved its sender.
   if (platforms && email && typeof email.from === "string" && !fromAirbnb(email.from)) return otherPlatformProperty(dataRoot, tenant, cleaning, email, args, now);
   const which = `Which property is this Airbnb email for? Ask the host, then pass property as one of: ${cleaning.map((p) => `${p.id} (${p.label})`).join(", ")}.`;
   if (!email || typeof email.from !== "string" || typeof email.subject !== "string" || typeof email.body !== "string") return { refusal: "Pass the email as from, subject and body (plain text)." };
