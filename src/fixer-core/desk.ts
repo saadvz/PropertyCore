@@ -2139,7 +2139,7 @@ export class FixerDesk {
         last: full[full.length - 1],
         span: plan.span,
         conflicts: plan.conflicts,
-        next: plan.conflicts.length > 0 ? "A guest stay touches some workdays, so the crew can't be booked yet. Tell the host which days, and save a schedule that avoids them." : `Book the crew for the whole schedule: record_contact with booked from ${plan.span.from} until ${plan.span.until}. The host lets the crew in until crew codes exist.`,
+        next: plan.conflicts.length > 0 ? "A guest stay touches some workdays, so the crew can't be booked yet. Tell the host which days, and save a schedule that avoids them." : `Book the crew for the whole schedule: record_contact with booked from ${plan.span.from} until ${plan.span.until}. On connected locks, access code gives the crew lead one code for the workdays; otherwise book access host, and the host lets the crew in.`,
       });
     });
   }
