@@ -126,6 +126,6 @@ and a change taking effect without a restart. Each feature's own tests turn its 
 
 ## Coordination
 
-The alerts work (#250) that reads `STAY_CHECK`, `CAMERAS`, `PACKAGE_ARRIVALS` and `REMOTE_OVERSIGHT` had no branch
-or pull request on 21 Nov, so this builds on master. When it lands, it checks `featureOn(tenant, …)` for each
-feature it alerts on. The wording pass merged as #274 before this; no Muse guest-code branch was pushed.
+The alerts work (#250) merged as #277 while this was open. Its host-alert clock now checks the account's own
+`oversight`, `stay-check`, `packages` and `cameras` switches with `featureOn`, instead of `REMOTE_OVERSIGHT`,
+`STAY_CHECK`, `PACKAGE_ARRIVALS` and `CAMERAS`. The wording pass merged as #274 before this; no Muse guest-code branch was pushed.

@@ -35,6 +35,7 @@ import { migrateRegistry, MigrationError } from "../cleaner-core/hosted/migrate"
 import { migrateHubs } from "../hosted/hubStartup";
 import { drainAllTenants, handleHostedCleaner, tickAllFixers, hostedCleaner, splitTenantPath, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { tickAllCameras } from "../hosted/cameras";
+import { tickAllHostAlerts } from "../hosted/hostAlerts";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import { TenantSecrets } from "../cleaner-core/hosted/tenantSecrets";
 import { handleAdmin } from "../cleaner-core/hosted/admin";
@@ -1133,7 +1134,9 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
             .catch(() => undefined)
             .then(() => tickAllFixers(hostedCleanerService))
             .then(() => tickAllLocks(hostedCleanerService).catch(() => undefined))
-            .then(() => tickAllCameras(hostedCleanerService).catch(() => undefined));
+            .then(() => tickAllCameras(hostedCleanerService).catch(() => undefined))
+            // Host alerts (#250): missed visits, the night's check, packages not seen and camera health, each behind its flag.
+            .then(() => tickAllHostAlerts(hostedCleanerService).catch(() => undefined));
         return drainCleanerAlerts(installation.root, () => installation.env(), clock);
       })
       .catch(() => undefined);

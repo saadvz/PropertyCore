@@ -9,7 +9,7 @@ import { whoMatches, type ExpectedVisit } from "./visits";
  * no entry is flagged the same day: 1 hour after its window, or at 8 PM for an all-day visit. A property with no
  * connected lock can't tell, and isn't flagged; a lock that couldn't report during the window is "can't tell", told
  * like a miss but never as one. A camera sighting is support only: it never makes a visit "came". It texts nobody:
- * it returns the result and the alert text, and sending is #250's.
+ * it returns the result and the alert text, and the host-alert clock (src/hosted/hostAlerts.ts, #250) sends it.
  */
 
 export interface VisitResult {

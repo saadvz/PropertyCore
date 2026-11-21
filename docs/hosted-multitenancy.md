@@ -190,7 +190,9 @@ Behind each account's switch:
 - **Nightly stay check (`stay-check`).** `get_house_rules`, `save_house_rules`, `allow_for_stay` and
   `mark_flag_false`, listed when any property runs a flow. The agent saves a check only for a rule it read back and
   the host agreed to. `stay-check.json` keeps the rules, the check time, per-stay allowances and the sightings each
-  kind needs after false flags. It texts nobody; sending the alert waits on #250.
+  kind needs after false flags. With Cameras on too, and Cleaner Core or Fixer Core at the property, the host-alert
+  clock (#250) checks each night once, 30 minutes after its window closes (up to an hour while events are still
+  being counted), and sends a flagged night through the account's Alerts routine; a clean night sends nothing.
 - **Guest messages (`guest-messages`).** `get_guest_facts`, `save_guest_facts`, `read_guest_message` and
   `save_guest_reply`, listed when any property runs a flow, the guest-message instruction on connect, and Cleaner
   Core's `set_late_checkout`. Property Core returns the guest's words, the stay and the house facts that answer
@@ -200,7 +202,9 @@ Behind each account's switch:
 - **Package arrivals (`packages`).** `check_packages`, `mark_package_seen`, `plan_bring_in`, `mark_brought_in` and
   `save_package_settings`, listed when any property runs Supply Core. Expected deliveries are read from Supply
   Core's placed orders; `packages.json` keeps when each was seen and how, the bring-in visit and the host's
-  bring-in settings. A package expected and not seen by 9 PM local on its day is flagged once. Without connected
+  bring-in settings. A package expected and not seen by 9 PM local on its day is flagged once: where Cleaner Core or
+  Fixer Core runs at the property, the host-alert clock (#250) sends it through the account's Alerts routine.
+  Without connected
   locks it texts nobody. With Connected locks on and the property on them, `approve_bring_in_code` is listed too,
   and the picked person (the cleaner, a co-host or an assistant who said YES) gets their own bring-in code for the
   window, by one text under the host's `release.packages` choice (ask by default).
@@ -209,7 +213,8 @@ Behind each account's switch:
   `oversight.json` keeps the visits and when each was flagged. A visit with no entry is flagged the same day: 1 hour
   after its window, or at 8 PM for an all-day visit. It reads the visit log: unlocks and lock status only with
   Connected locks on and the property on them, camera sightings only with Cameras on; otherwise a visit is "can't
-  tell". It texts nobody; sending the flag waits on #250.
+  tell". Where Cleaner Core or Fixer Core runs at the property, the host-alert clock (#250) runs the check every
+  15 minutes from 7 AM local and sends a new flag through the account's Alerts routine, once.
 - **Booking platforms (`booking-platforms`).** `save_sources` takes `bookingEmails` (Airbnb, Vrbo, Booking.com,
   the host's own site or Other, with each sender) and `shareSamples`; `get_state` and `check_now` return
   `bookingEmails` and `waitingBookings`; `read_booking_email` takes `extracted` and `email.authentication`; and the
@@ -235,7 +240,8 @@ Behind each account's switch:
   `/cameras/connect/<link>` and `/cameras/ring/linked` answer once some account has Cameras on, and each event or
   link is checked against its own account. The host signs in on Ring's own page; only the outdoor cameras they
   pick are read. `cameras.json` keeps the picks, the consent time and notes waiting for the host. No image is
-  kept; a clip is copied to `evidence/` only when the host pins it. It texts nobody.
+  kept; a clip is copied to `evidence/` only when the host pins it. Camera offline and back-online notes go out on the
+  host-alert clock (#250) through the account's Alerts routine, else wait for `list_cameras`. It texts nobody.
 
 ## Touring (parked)
 

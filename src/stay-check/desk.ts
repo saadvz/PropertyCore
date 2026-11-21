@@ -8,7 +8,7 @@ import { readStayCheck, StayCheckFileError, writeStayCheck, type StayCheckFile }
 
 /**
  * The nightly stay check's desk for one property (#239): the host's house rules, per-stay allowances, and one
- * night's check against given events. It texts nobody: the result goes back to the caller, and sending is #250's.
+ * night's check against given events. It texts nobody: the result goes back to the caller, and the host-alert clock (src/hosted/hostAlerts.ts, #250) sends it.
  */
 
 export interface StayCheckReply {

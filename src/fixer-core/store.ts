@@ -300,6 +300,8 @@ export interface FileNews {
   jobId?: string;
   urgent?: true;
   toldAt?: string;
+  /** A host alert's id (#250), so the same alert is kept once. */
+  noteId?: string;
 }
 
 export function emptyFixer(): FixerFile {

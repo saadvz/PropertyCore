@@ -3,7 +3,7 @@ import type { Flag } from "./check";
 
 /**
  * The night's alert text (#239): one message, every flag in it, in the property's time zone. Plain words, counts
- * only: no door code and no guest's name. Sending it is #250's.
+ * only: no door code and no guest's name. The host-alert clock (src/hosted/hostAlerts.ts, #250) sends it.
  */
 
 function sentence(flag: Flag, timeZone: string): string {

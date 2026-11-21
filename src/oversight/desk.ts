@@ -11,7 +11,7 @@ import { cleanVisit, isDate, MAX_OPEN_VISITS, newVisitId, sameVisit, visitProble
 /**
  * Expected visits for one property (#240): save one from what the host says or a calendar invite, list and cancel
  * them, and run one day against the property's visit log: its unlocks, when a lock couldn't report, and people seen
- * on a camera. It texts nobody: the result goes back to the caller, and sending is #250's.
+ * on a camera. It texts nobody: the result goes back to the caller, and the host-alert clock (src/hosted/hostAlerts.ts, #250) sends it.
  */
 
 export interface OversightReply {
@@ -172,6 +172,26 @@ export class OversightDesk {
    * nothing.
    */
   runDay(date: string, label: string): DayResult {
+    const checked = this.checkedDay(date, label);
+    if (!("file" in checked)) return checked;
+    const { file, result, now } = checked;
+    if (result.status === "flags") {
+      const fresh = new Set([...result.missed, ...result.unsure].filter((v) => !v.alreadyFlagged).map((v) => v.id));
+      if (fresh.size) writeOversight(this.root, { ...file, visits: file.visits.map((v) => (fresh.has(v.id) ? { ...v, flaggedAt: now.toISOString() } : v)) });
+    }
+    return result;
+  }
+
+  /**
+   * The same day's result without recording anything (#250): what runDay would return now. The host-alert clock
+   * keeps the alert first and calls runDay after, so a restart in between can't lose it.
+   */
+  peekDay(date: string, label: string): DayResult {
+    const checked = this.checkedDay(date, label);
+    return "file" in checked ? checked.result : checked;
+  }
+
+  private checkedDay(date: string, label: string): DayResult | { file: OversightFile; result: DayResult; now: Date } {
     if (!isDate(date)) return { status: "none", reason: "Give the day as YYYY-MM-DD." };
     let file: OversightFile;
     try {
@@ -183,12 +203,7 @@ export class OversightDesk {
     const timeZone = this.timeZone();
     if (!timeZone) return { status: "none", reason: "The property has no time zone, so its days can't be told apart." };
     const now = this.deps.now();
-    const result = checkDay({ label, visits: file.visits, date, timeZone, now, ...this.evidence() });
-    if (result.status === "flags") {
-      const fresh = new Set([...result.missed, ...result.unsure].filter((v) => !v.alreadyFlagged).map((v) => v.id));
-      if (fresh.size) writeOversight(this.root, { ...file, visits: file.visits.map((v) => (fresh.has(v.id) ? { ...v, flaggedAt: now.toISOString() } : v)) });
-    }
-    return result;
+    return { file, result: checkDay({ label, visits: file.visits, date, timeZone, now, ...this.evidence() }), now };
   }
 }
 
