@@ -189,7 +189,7 @@ describe("the expected visits desk", () => {
     const first = new Date(zonedInstant("2026-11-19", "18:30", NY));
     setNow(first);
     const day = desk.runDay("2026-11-19", "Lake House");
-    expect(day).toMatchObject({ status: "flags", unsure: [{ why: "lock-quiet" }], alert: expect.stringContaining("couldn't report since 12:40 PM") });
+    expect(day).toMatchObject({ status: "flags", unsure: [{ why: "lock-quiet" }], alert: expect.stringContaining("has been offline since 12:40 PM") });
     expect(readOversight(root).visits[0]?.flaggedAt).toBe(first.toISOString());
     setNow(new Date(zonedInstant("2026-11-19", "19:30", NY)));
     const again = desk.runDay("2026-11-19", "Lake House");

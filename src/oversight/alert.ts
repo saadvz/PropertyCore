@@ -20,10 +20,14 @@ function onDay(iso: string, date: string, timeZone: string): string {
 
 function quietSentence(visit: VisitResult, timeZone: string): string {
   const spans = (visit.quiet ?? []).map((span) => {
-    const when = span.until ? `from ${onDay(span.from, visit.date, timeZone)} to ${onDay(span.until, visit.date, timeZone)}` : `since ${onDay(span.from, visit.date, timeZone)}`;
-    return span.device ? `The ${span.device} lock couldn't report ${when}` : `The lock connection was off ${when}`;
+    const from = onDay(span.from, visit.date, timeZone);
+    if (span.until) {
+      const when = `from ${from} to ${onDay(span.until, visit.date, timeZone)}`;
+      return span.device ? `The ${span.device} lock was offline ${when}` : `The locks here weren't connected ${when}`;
+    }
+    return span.device ? `The ${span.device} lock has been offline since ${from}` : `The locks here haven't been connected since ${from}`;
   });
-  return `${spans.join(", and ")}, so I can't tell if anyone came in.`;
+  return `${spans.join(", and ")}, so I can't tell whether anyone came in.`;
 }
 
 function sentences(visit: VisitResult, timeZone: string): string {
@@ -33,7 +37,7 @@ function sentences(visit: VisitResult, timeZone: string): string {
   parts.push(visit.why === "lock-quiet" ? quietSentence(visit, timeZone) : `No one came in by ${at(visit.flagAt, timeZone)}.`);
   for (const seen of visit.sightings) parts.push(`The ${seen.device} camera saw someone at ${at(seen.at, timeZone)}.`);
   for (const other of visit.others) {
-    const by = other.party === "host" ? "with the host's code" : other.party === "guest" ? "with a guest's code" : `by ${other.person}`;
+    const by = other.party === "host" ? "with your own code" : other.party === "guest" ? "with a guest's code" : `by ${other.person}`;
     parts.push(`The door was opened at ${at(other.at, timeZone)} ${by}.`);
   }
   return parts.join(" ");

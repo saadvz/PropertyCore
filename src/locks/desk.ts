@@ -210,7 +210,7 @@ export class LockDesk {
       next.cleaners === "automatic" ? "the cleaner's code goes out at checkout without waiting for you" : "the cleaner's code waits for your \"guests have left\"",
       next.pros === "automatic" ? "a pro's code shows when they reach the door in their window" : "each pro's code waits for your OK",
       next.extend === "automatic" ? "a pro still inside gets 30 more minutes" : "I'll ask before giving a pro more time",
-      ...(packages === undefined ? [] : [packages === "automatic" ? "the person bringing a package in gets their code by text once the drop is seen" : "the code for the person bringing a package in waits for your OK"]),
+      ...(packages === undefined ? [] : [packages === "automatic" ? "whoever brings in a package gets their code by text once it's at the door" : "the code for whoever brings in a package waits for your OK"]),
     ];
     const question = `Just to check: ${words.join("; ")}. Okay?`;
     const gate = this.confirm("locks-settings", JSON.stringify({ ...next, ...(packages ? { packages } : {}) }), typeof input.confirmation === "string" ? input.confirmation : undefined, question);

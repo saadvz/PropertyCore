@@ -125,8 +125,8 @@ describe("bring-in codes on connected locks", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]!.to).toBe(ANA);
     expect(sent[0]!.body).toContain(codes[0]!.code);
-    expect(sent[0]!.body).toMatch(/Ana/);
-    expect(notes.join(" ")).toMatch(/Ana got the bring-in code by text/);
+    expect(sent[0]!.body).toMatch(/^Hi Ana, a package is waiting at the door at .+\. To bring it inside, the door code is \d+.*\. It works until .+, and stops once the package is in\.$/);
+    expect(notes.join(" ")).toMatch(/I texted Ana the door code to bring the package in\./);
     expect(notes.join(" ")).not.toContain(codes[0]!.code);
     expect(s(desk.check()).visits[0]).toMatchObject({ code: "texted" });
 

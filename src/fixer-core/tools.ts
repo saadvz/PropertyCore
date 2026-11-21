@@ -364,7 +364,7 @@ export const FIXER_TOOLS: FixerTool[] = [
   {
     name: "save_crew_schedule",
     title: "Save a crew's schedule",
-    description: `For a job a crew works over several days: the days (firstDay to lastDay, local dates, at most 92 days), the workdays (MON to SUN), the hours (start and end, 24-hour, same day), and days off (skipDays). It answers each workday's window, any day a guest stay touches, and the span to book: record_contact with booked from the first window's start until the last window's end. Only before the job is booked. The host lets the crew in until crew codes exist. It takes the host's yes: ${TWO_CALL}`,
+    description: `For a job a crew works over several days: the days (firstDay to lastDay, local dates, at most 92 days), the workdays (MON to SUN), the hours (start and end, 24-hour, same day), and days off (skipDays). It answers each workday's window, any day a guest stay touches, and the span to book: record_contact with booked from the first window's start until the last window's end. Only before the job is booked. It takes the host's yes: ${TWO_CALL}`,
     input: z.object({ jobId: Id, firstDay: Ymd, lastDay: Ymd, workdays: z.array(Workday).min(1).max(7), start: Clock, end: Clock, skipDays: z.array(Ymd).max(31).optional(), confirmation: Confirmation }).strict(),
   },
 ];
