@@ -33,7 +33,7 @@ export function dueCameraNotes(lines: readonly StoredLine[], cameras: readonly P
     }
     if (offline && now.getTime() - Date.parse(offline.at) >= OFFLINE_WAIT_MS && !told.has(`camera-offline:${offline.id}`)) {
       const since = opts.timeZone ? formatWhen(offline.at, opts.timeZone).time : new Date(offline.at).toISOString().slice(11, 16) + " UTC";
-      notes.push({ id: `camera-offline:${offline.id}`, text: `The ${camera.name} camera at ${opts.label} has been offline since ${since}.` });
+      notes.push({ id: `camera-offline:${offline.id}`, text: `The ${camera.name} camera at ${opts.label} has been offline since ${since}. Check its power and Wi-Fi.` });
     }
   }
   return notes;

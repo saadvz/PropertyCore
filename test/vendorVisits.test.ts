@@ -281,7 +281,7 @@ describe("the vendor's reply", () => {
     const live = w.fake.liveCodes("dev-front");
     expect(live).toHaveLength(1);
     expect(live[0]!.window).toEqual({ from: new Date(Date.parse(DUE_VISIT.from) - 30 * MIN).toISOString(), until: DUE_VISIT.until });
-    expect(w.toBugs().at(-1)).toBe("Thanks, see you Sun, Jan 10, 9 to 11 AM. Your door code comes by text when the visit starts.");
+    expect(w.toBugs().at(-1)).toBe("Thanks, see you Sun, Jan 10, 9 to 11 AM. You'll get your door code by text when the visit starts.");
     expect(w.news().filter((t) => t.startsWith("Bug Busters confirmed pest control for Sun, Jan 10"))).toHaveLength(1);
     await w.desk().tick();
     const windows = w.log().read().filter((e) => e.type === "visit-window");
@@ -300,7 +300,7 @@ describe("the vendor's reply", () => {
     const booking = w.job()!.booking!;
     expect({ from: booking.from, until: booking.until }).toEqual({ from: "2027-01-12T18:00:00.000Z", until: "2027-01-12T20:00:00.000Z" });
     expect(booking.vendor!.confirmedAt).toBeDefined();
-    expect(w.toBugs().at(-1)).toBe("Moved to Tue, Jan 12, 1 to 3 PM. Your door code comes by text when the visit starts.");
+    expect(w.toBugs().at(-1)).toBe("Done, you're moved to Tue, Jan 12, 1 to 3 PM. You'll get your door code by text when the visit starts.");
     expect(w.news().filter((t) => t === "Bug Busters moved pest control to Tue, Jan 12, 1 to 3 PM.")).toHaveLength(1);
     expect(w.fake.liveCodes("dev-front")[0]!.window.until).toBe("2027-01-12T20:00:00.000Z");
   });
@@ -380,7 +380,7 @@ describe("the vendor's reply", () => {
     await w.text("Tuesday 1 to 3", "same");
     await w.text("Tuesday 1 to 3", "same");
     expect(w.job()!.booking!.vendor!.moves).toHaveLength(1);
-    expect(w.toBugs().filter((b) => b.startsWith("Moved to"))).toHaveLength(1);
+    expect(w.toBugs().filter((b) => b.startsWith("Done, you're moved to"))).toHaveLength(1);
   });
 });
 
@@ -389,7 +389,7 @@ describe("review fixes", () => {
     const w = await proposed();
     await w.text("9 to 11 works");
     expect(w.job()!.booking!.vendor!.confirmedAt).toBeDefined();
-    expect(w.toBugs().at(-1)).toBe("Thanks, see you Sun, Jan 10, 9 to 11 AM. Your door code comes by text when the visit starts.");
+    expect(w.toBugs().at(-1)).toBe("Thanks, see you Sun, Jan 10, 9 to 11 AM. You'll get your door code by text when the visit starts.");
     expect(w.news().filter((t) => t.startsWith("Bug Busters confirmed pest control"))).toHaveLength(1);
   });
 
@@ -397,7 +397,7 @@ describe("review fixes", () => {
     const w = await proposed({ stays: [["2027-01-13", "2027-01-16"]] });
     await w.text("Thursday 9-11?");
     expect(w.job()!.booking!.vendor!.held).toBeUndefined();
-    expect(w.toBugs().at(-1)).toBe("Sorry, that time isn't free at 12 Scratch Lane. Can you send another day and time?");
+    expect(w.toBugs().at(-1)).toBe("Sorry, 12 Scratch Lane isn't free then. Could you send another day and time?");
     expect(w.news().some((t) => t.includes("Move it anyway"))).toBe(false);
     expect(w.news().filter((t) => t.includes("asked for Thu, Jan 14") && t.includes("guest stay"))).toHaveLength(1);
   });
@@ -405,7 +405,7 @@ describe("review fixes", () => {
   it("a fourth move that fits is held with its own question", async () => {
     const w = await proposed();
     for (const day of ["Monday", "Tuesday", "Wednesday", "Thursday"]) await w.text(`${day} 9 to 11`);
-    expect(w.news().filter((t) => t === "Bug Busters asked to move pest control again, to Thu, Jan 14, 9 to 11 AM, after 3 moves. Move it?")).toHaveLength(1);
+    expect(w.news().filter((t) => t === "Bug Busters wants to move pest control again, to Thu, Jan 14, 9 to 11 AM. That would be move 4. Okay?")).toHaveLength(1);
   });
 
   it("an unanswered visit is called off at its end, once, and the next date comes due", async () => {
@@ -461,7 +461,7 @@ describe("move_vendor_visit", () => {
     expect(reply.isError).toBe(false);
     expect(w.job()!.booking!.from).toBe("2027-01-12T18:00:00.000Z");
     expect(w.job()!.booking!.vendor!.moves!.at(-1)!.by).toBe("agent");
-    expect(w.toBugs().at(-1)).toBe("Moved to Tue, Jan 12, 1 to 3 PM. Your door code comes by text when the visit starts.");
+    expect(w.toBugs().at(-1)).toBe("Done, you're moved to Tue, Jan 12, 1 to 3 PM. You'll get your door code by text when the visit starts.");
   });
 
   it("outside the open times takes the host's two-call yes", async () => {

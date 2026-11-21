@@ -182,7 +182,7 @@ const CONSENT = (label: string, counter: string) => `<h1>Connect Ring to Propert
 <p>For <strong>${escapeHtml(label)}</strong>, Property Core will read:</p>
 <ul>
 <li>motion, doorbell and online/offline events from the outdoor cameras you pick next;</li>
-<li>a still image from each motion event during a guest's stay, which is counted (people, vehicles, pets) by ${counter} and then thrown away;</li>
+<li>a still image from each motion event during a guest's stay. ${counter} counts the people, vehicles and pets in it, then deletes it. The image is never sent to anyone else;</li>
 <li>a video clip only when you ask to keep one as evidence.</li>
 </ul>
 <p>No one is identified. Indoor cameras are never used. You sign in on Ring's own page; Property Core never sees your password. You can disconnect at any time.</p>
@@ -214,7 +214,7 @@ export async function handleCameraRoutes(h: HostedCleaner, r: HostedRequest): Pr
     const link = /^[A-Za-z0-9_-]{32,100}$/.test(state) ? linksFor(h).peek(state) : undefined;
     const place = link && placeOf(h, link.tenantId, link.propertyId);
     if (!link || !place || !redirectUri) return (r.send(404, "text/html; charset=utf-8", html("Link expired", "<p>This link has expired or was already used. Ask your assistant for a new one.</p>"), PAGE_HEADERS), true);
-    if (r.method === "GET") return (r.send(200, "text/html; charset=utf-8", html("Connect Ring", CONSENT(place.property.label, "an open-source detector on Property Core's own server, never sent to anyone else")), PAGE_HEADERS), true);
+    if (r.method === "GET") return (r.send(200, "text/html; charset=utf-8", html("Connect Ring", CONSENT(place.property.label, "Property Core's own server")), PAGE_HEADERS), true);
     if (r.method !== "POST") return (r.send(405, "text/plain", "Method not allowed"), true);
     const form = new URLSearchParams(((await r.readCapped(1024)) ?? Buffer.alloc(0)).toString("utf8"));
     if (form.get("agree") !== "yes") return (r.send(400, "text/html; charset=utf-8", html("Connect Ring", "<p>Nothing was connected.</p>"), PAGE_HEADERS), true);

@@ -120,7 +120,7 @@ describe("the host's choice", () => {
     email(root, booked("HMSCRATCHAA", "2026-12-12", "2026-12-15"));
     email(root, booked("HMSCRATCHBB", "2026-12-24", "2026-12-26"));
     const asked = await desk.setMode({ mode: "automatic" });
-    expect(asked.structured?.question).toMatch(/door codes/);
+    expect(asked.structured?.question).toMatch(/door code for each booking/);
     expect(codes()).toHaveLength(0);
     expect((await approved((confirmation) => desk.setMode({ mode: "automatic", ...(confirmation ? { confirmation } : {}) }))).isError).toBe(false);
     const notes = await desk.sync();
@@ -139,7 +139,7 @@ describe("the host's choice", () => {
     await approved((confirmation) => desk.setMode({ mode: "ask", ...(confirmation ? { confirmation } : {}) }));
     const first = await desk.sync();
     expect(first.map((note) => note.id)).toEqual(["guest:ask:HMSCRATCHAA"]);
-    expect(first[0]!.text).toMatch(/make_guest_code/);
+    expect(first[0]!.text).not.toMatch(/make_guest_code/);
     expect(await desk.sync()).toEqual([]);
     expect(codes()).toHaveLength(0);
     expect((await approved((confirmation) => desk.makeCode({ stay: "HMSCRATCHAA", ...(confirmation ? { confirmation } : {}) }))).isError).toBe(false);
@@ -156,7 +156,8 @@ describe("the host's choice", () => {
     await approved((confirmation) => desk.setMode({ mode: "ask", ...(confirmation ? { confirmation } : {}) }));
     const first = await desk.sync();
     expect(first.map((note) => note.id)).toEqual(["guest:ask:vrbo:HA-1A2B3C"]);
-    expect(first[0]!.text).toContain("stay vrbo:HA-1A2B3C");
+    expect(first[0]!.text).not.toContain("vrbo:HA-1A2B3C");
+    expect(desk.status().structured?.stays).toEqual([expect.objectContaining({ stay: "vrbo:HA-1A2B3C", status: "waiting-for-host" })]);
     expect((await approved((confirmation) => desk.makeCode({ stay: "VRBO:ha-1a2b3c", ...(confirmation ? { confirmation } : {}) }))).isError).toBe(false);
     await desk.sync();
     expect(codes()).toHaveLength(1);
@@ -197,7 +198,7 @@ describe("a stay's code follows its booking", () => {
     appendGuestMessage(root, { id: "lc_scratch", at: NOW.toISOString(), event: "late-checkout", lateCheckout: { checkout: "2026-12-15", time: "13:00" } });
     const moved = await desk.sync();
     expect(moved.map((note) => note.id)).toEqual(["guest:moved:HMSCRATCHAA:2026-12-15T18:00:00.000Z"]);
-    expect(moved[0]!.text).toMatch(/Same door code/);
+    expect(moved[0]!.text).toMatch(/The door code stays the same/);
     expect(codes()[0]!.code).toBe(code);
     expect(codes()[0]!.window.until).toBe("2026-12-15T18:00:00.000Z");
     email(root, { kind: "cancelled", confirmationCode: "HMSCRATCHAA", checkIn: { date: "2026-12-12" }, checkout: { date: "2026-12-15" } }, "applied");

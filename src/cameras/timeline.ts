@@ -43,8 +43,8 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 function describe(entry: TimelineEntry): string {
   if (entry.source === "lock") return `${entry.device} ${entry.what === "unlock" ? "unlocked" : "locked"}${entry.codeName ? ` (${entry.codeName})` : ""}`;
   const seen = entry.counts
-    ? [entry.counts.people ? plural(entry.counts.people, "person").replace("persons", "people") : "", entry.counts.vehicles ? plural(entry.counts.vehicles, "vehicle") : "", entry.counts.animals ? plural(entry.counts.animals, "animal") : ""].filter(Boolean).join(", ") || "nothing counted"
-    : "not counted";
+    ? [entry.counts.people ? plural(entry.counts.people, "person").replace("persons", "people") : "", entry.counts.vehicles ? plural(entry.counts.vehicles, "vehicle") : "", entry.counts.animals ? plural(entry.counts.animals, "animal") : ""].filter(Boolean).join(", ") || "no one seen"
+    : "not counted yet";
   return `${entry.device} camera, ${entry.what.replace(/_/g, " ")}: ${seen}`;
 }
 

@@ -175,7 +175,7 @@ try {
   writeFileSync(outPath, `${JSON.stringify(evidence, null, 2)}\n`);
   const expectedLate = [
     { to: LANE.cleanerPhone, kind: "late-ask", body: `Hi Ana, checking in on today's clean at ${LANE.property.address}. Are you on your way?` },
-    { to: LANE.ownerPhone, kind: "visit-note", body: `Ana hasn't arrived at ${LANE.property.address}. The next guests check in at 4 PM.` },
+    { to: LANE.ownerPhone, kind: "visit-note", body: `Ana hasn't arrived at ${LANE.property.address} yet. The next guests check in at 4 PM.` },
   ];
   const text = JSON.stringify(evidence);
   const failures = [

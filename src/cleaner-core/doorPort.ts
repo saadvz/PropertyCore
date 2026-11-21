@@ -18,7 +18,7 @@ export type AccessRefusedLines = Partial<Record<AccessRefusal, string>>;
 
 export const DOOR_WINDOW_OVER = "The cleaning's window has passed, so the door code didn't go out.";
 export const DOOR_NOT_OPENED = "The door code didn't go out. Save it again through the private box.";
-export const DOOR_LOCK_FAILED = "The cleaner's code didn't go out: the lock didn't take it, it had no backup code, and no door code is saved. Let the cleaner in yourself, or save a door code.";
+export const DOOR_LOCK_FAILED = "The cleaner's code didn't go out. The lock didn't take it, there's no backup code, and no door code is saved. Let the cleaner in yourself, or save a door code.";
 
 /**
  * A port that grants this made-up code for any window: the CLI, scratch, and tests. With no code it

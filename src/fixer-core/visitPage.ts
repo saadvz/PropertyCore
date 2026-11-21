@@ -61,7 +61,7 @@ const COPY = {
   codeOver: "The visit's time is up, so the door code no longer shows.",
   hostLetsIn: "The host will let you in.",
   codeRefused: "The door code can't be shown. Ask the host to let you in.",
-  codeWaiting: "Waiting for the host to okay your code. Try again in a minute.",
+  codeWaiting: "Your code is waiting for the host's OK. Try again in a few minutes.",
   guestsHere: "The guests haven't left yet. Try again in a few minutes.",
   notSaved: "That couldn't be saved. Tell the host.",
   amount: "An amount is $0 to $20,000, in cents.",

@@ -62,7 +62,7 @@ describe("the cleaner's code at checkout time", () => {
     w.at(CHECKOUT - 60 * MIN);
     await w.desk.lockClock();
     expect(w.codeTexts()).toEqual([]);
-    expect(await w.notes()).toContain("The cleaner's code goes out at 11:00 AM. Any late checkout?");
+    expect(await w.notes()).toContain("The cleaner's code goes out at checkout, 11:00 AM. If the guests are staying late, say pause.");
     w.at(CHECKOUT);
     await w.desk.lockClock();
     const code = w.fake.liveCodes("dev-front")[0]!.code;
@@ -126,14 +126,14 @@ describe("the cleaner's code at checkout time", () => {
     await w.desk.lockClock();
     const early = (await w.notes()).filter((note) => note.includes("is still paused"));
     expect(early).toEqual([
-      "The turnover at 12 Practice Lane, Teaneck, NJ 07666 is still paused. When the guests have left, resume it and say they've left, and I'll send Ana a new code.",
-      "The turnover at 12 Practice Lane, Teaneck, NJ 07666 is still paused. When the guests have left, resume it and say they've left, and I'll send Ana a new code.",
+      "The turnover at 12 Practice Lane, Teaneck, NJ 07666 is still paused. Once the guests have left, tell me and I'll send Ana a new code.",
+      "The turnover at 12 Practice Lane, Teaneck, NJ 07666 is still paused. Once the guests have left, tell me and I'll send Ana a new code.",
     ]);
     // Less than three hours before the 4:00 PM check-in, the reminder says time is short.
     w.at(CHECKOUT + 185 * MIN);
     await w.desk.lockClock();
     const late = (await w.notes()).filter((note) => note.includes("is still paused"));
-    expect(late).toEqual([expect.stringContaining("The next guests check in at 4:00 PM, so the cleaning is running short on time.")]);
+    expect(late).toEqual([expect.stringContaining("The next guests check in at 4:00 PM, so time for the cleaning is getting short.")]);
     ok(await resumeApproved(w.desk));
     await w.desk.lockClock();
     expect(w.codeTexts().length).toBe(1);

@@ -100,7 +100,7 @@ describe("camera offline notes", () => {
     const lines = [off("x1", "2026-11-22T19:10:00.000Z")];
     expect(dueCameraNotes(lines, [CAM], new Date("2026-11-22T19:39:00.000Z"), { label: "Lake House", timeZone: TZ, told: [] })).toEqual([]);
     const notes = dueCameraNotes(lines, [CAM], new Date("2026-11-22T19:40:00.000Z"), { label: "Lake House", timeZone: TZ, told: [] });
-    expect(notes).toEqual([{ id: "camera-offline:x1", text: "The Front door camera at Lake House has been offline since 2:10 PM." }]);
+    expect(notes).toEqual([{ id: "camera-offline:x1", text: "The Front door camera at Lake House has been offline since 2:10 PM. Check its power and Wi-Fi." }]);
     expect(dueCameraNotes(lines, [CAM], new Date("2026-11-22T20:00:00.000Z"), { label: "Lake House", timeZone: TZ, told: ["camera-offline:x1"] })).toEqual([]);
     const back = [...lines, on("x2", "2026-11-22T20:30:00.000Z")];
     expect(dueCameraNotes(back, [CAM], new Date("2026-11-22T20:31:00.000Z"), { label: "Lake House", timeZone: TZ, told: ["camera-offline:x1"] })).toEqual([{ id: "camera-online:x2", text: "The Front door camera at Lake House is back online." }]);

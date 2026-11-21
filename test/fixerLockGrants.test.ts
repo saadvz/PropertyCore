@@ -172,7 +172,7 @@ describe("how a pro's code goes out on connected locks", () => {
     expect(page.ok ? "opened" : page.reason).toBe("waiting-for-host");
     w.at(TUE.from);
     await w.desk().tick();
-    expect(w.news()).toContain("Joe's Plumbing's visit has started, and their code is still waiting for your OK.");
+    expect(w.news()).toContain("Joe's Plumbing's visit has started, and they're waiting for your OK on their code.");
     expect((await approved((confirmation) => w.desk().approveCode({ jobId: w.job().id, ...(confirmation ? { confirmation } : {}) }))).isError).toBe(false);
     await w.desk().tick();
     expect(w.sent.length).toBe(1);
@@ -228,7 +228,7 @@ describe("more time for a pro still inside", () => {
     await w.desk().tick();
     expect(w.job().booking!.extendedUntil).toBeUndefined();
     expect(w.fake.liveCodes("dev-front")[0]!.window.until).toBe(TUE.until);
-    expect(w.news()).toContain("Joe's Plumbing hasn't said done, and their code stops at 12:00. I can't give them more time: the next check-in is too close.");
+    expect(w.news()).toContain("Joe's Plumbing hasn't said done, and their code stops at 12:00. The next check-in is too close to give them more time.");
   });
 
   it("gives no more time once the pro said done", async () => {

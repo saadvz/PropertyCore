@@ -139,7 +139,7 @@ describe("the lock webhook", () => {
     await send({ id: "evt-6", kind: "code-failed", partnerType: "access_code.failed_to_set_on_device", at: NOW.toISOString(), deviceId: "dev-a", codeId });
     await send({ id: "evt-6", kind: "code-failed", partnerType: "access_code.failed_to_set_on_device", at: NOW.toISOString(), deviceId: "dev-a", codeId });
     expect(fake.liveCodes("dev-a").filter((code) => code.backup).length).toBe(1);
-    expect(lockNews(a.root)).toEqual(["The Front door didn't take Joe's code. A backup code for that door is ready, and Joe gets it with their code."]);
+    expect(lockNews(a.root)).toEqual(["The Front door couldn't save Joe's code, so Joe will get a backup code for that door."]);
   });
 
   it("tells the host once about a low battery, and about a lock offline for 30 minutes and back", async () => {
@@ -161,7 +161,7 @@ describe("the lock webhook", () => {
       ["online", undefined],
     ]);
     expect(lockNews(a.root)).toEqual([
-      "The Front door's battery is low. Change it soon, so no code stops working.",
+      "The Front door's battery is low. Please change it soon so codes keep working.",
       "The Front door has been offline for 30 minutes, so codes can't change on it. Check its power and Wi-Fi.",
       "The Front door is back online.",
     ]);
@@ -207,7 +207,7 @@ describe("the lock webhook", () => {
     door.saveLocks({ ...door.locks(), release: { cleaners: "automatic", pros: "ask" } });
     await send({ id: "evt-25", kind: "account-disconnected", partnerType: "connected_account.disconnected", at: NOW.toISOString(), accountId: `acct-${a.tenant.id}`, customerKey: a.tenant.id });
     expect(door.locks().release.cleaners).toBe("ask");
-    expect(lockNews(a.root)[0]).toBe('Checkout-time codes are off while the lock account is disconnected: the cleaner\'s code waits for your "guests have left" again.');
+    expect(lockNews(a.root)[0]).toBe("While your lock account is disconnected, the cleaner's code won't go out at checkout. Tell me when the guests have left, like before.");
   });
 
   it("serves a standing code's page only on its property's path: no code on GET, the code once on POST", async () => {
