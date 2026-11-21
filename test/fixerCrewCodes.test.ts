@@ -109,6 +109,7 @@ describe("crew-day codes", () => {
     const refused = await w.desk().approveBooking({ jobId: w.job().id, access: "code" });
     expect(refused.isError).toBe(true);
     expect(refused.text).toBe(CREW_HOST_ACCESS);
+    expect(CREW_HOST_ACCESS).toBe("A crew can get a door code only where the locks are connected, and they aren't here. The host lets the crew in: book it with access host.");
     expect((await w.book()).structured).toMatchObject({ booked: true, access: "host" });
     expect(live(w.fake)).toEqual([]);
   });
@@ -180,7 +181,7 @@ describe("crew-day codes", () => {
     expect(auto.sent).toHaveLength(1);
     expect(auto.sent[0]!.to).toBe(JOE);
     expect(auto.sent[0]!.body).toContain(code);
-    expect(auto.sent[0]!.body).toMatch(/Mon, Tue, Wed, 08:00 to 17:00/);
+    expect(auto.sent[0]!.body).toMatch(/It works only on the crew's workdays, Mon, Tue, Wed, from 8 AM to 5 PM\./);
     auto.at("2026-11-17T13:00:00.000Z");
     await auto.desk().tick();
     expect(auto.sent).toHaveLength(1);

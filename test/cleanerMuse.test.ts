@@ -8,6 +8,7 @@ import { CHOOSE } from "../src/hosted/supplies";
 import { SUPPLY_TOOL_NAMES } from "../src/supply-core/tools";
 import { FIXER_TOOL_NAMES } from "../src/fixer-core/tools";
 import { LOCK_TOOL_NAMES } from "../src/locks/tools";
+import { GUEST_TOOL_NAMES } from "../src/locks/guestTools";
 import { filesUnder, REPO_ROOT } from "./files";
 
 /** The Muse template draft: pinned, consistent with the tools and the other templates, and free of secrets. */
@@ -87,6 +88,17 @@ describe("Muse template", () => {
     expect(skill).toMatch(/Never write the link in chat, in a tool argument, in your\s+memory, or in a skill\./);
   });
 
+  it("gives Muse the same guests' door codes step as the Grok guide (#262, #270, #272)", () => {
+    for (const file of [SKILL, join(REPO_ROOT, "CLEANER_CORE_BOOTSTRAP.md")]) {
+      const text = read(file).replace(/\s+/g, " ");
+      expect(text, file).toContain("only once the lock is connected");
+      expect(text, file).toContain("Automatic, ask you before each booking, or off (you keep making them)?");
+      for (const tool of ["get_guest_codes", "guest_codes", "make_guest_code", "guest_code_link", "add_lease"]) expect(text, `${file}: ${tool}`).toContain(`\`${tool}\``);
+      expect(text, file).toContain("You never see, ask for, type or repeat a code.");
+      expect(text, file).toContain("You never message a guest");
+    }
+  });
+
   it("never lets the browser stand in for the host", () => {
     const skill = read(SKILL);
     expect(skill).toMatch(/Never click \*\*Allow\*\* on the Cleaner Core sign-in page, and never type the\s+invite code\./);
@@ -135,7 +147,7 @@ describe("Muse template", () => {
   });
 
   it("names only real Cleaner Core, Supply Core or Fixer Core tools, or the account's own", async () => {
-    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name)), ...SUPPLY_TOOL_NAMES, CHOOSE, ...FIXER_TOOL_NAMES, ...LOCK_TOOL_NAMES];
+    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name)), ...SUPPLY_TOOL_NAMES, CHOOSE, ...FIXER_TOOL_NAMES, ...LOCK_TOOL_NAMES, ...GUEST_TOOL_NAMES];
     for (const file of filesUnder(TEMPLATE)) {
       for (const m of read(file).matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) expect(tools, `${file}: ${m[1]}`).toContain(m[1]);
     }

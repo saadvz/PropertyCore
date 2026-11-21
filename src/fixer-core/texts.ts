@@ -1,4 +1,4 @@
-import { formatWeekday, zonedParts } from "../core/timezone";
+import { formatClockTime, formatWeekday, zonedParts } from "../core/timezone";
 import type { BookingHold } from "./gate";
 import type { Trade } from "./store";
 
@@ -217,8 +217,8 @@ export function rotationQuestion(f: { proName: string }): string {
 
 /** The only text that holds the code. It goes to the pro's own phone. */
 export function codeText(f: { proName: string; street: string; code: string; lockLocation?: string; doors?: { door: string; code: string }[]; crewHours?: string }): string {
-  // Crew-day codes (#243): the crew's hours line is new wording, flagged for the wording pass.
-  const crew = f.crewHours ? ` It works only on the crew's schedule: ${f.crewHours}.` : "";
+  // Crew-day codes (#243): the crew's workdays and hours, worded in the #273/#275 wording pass.
+  const crew = f.crewHours ? ` It works only on the crew's workdays, ${f.crewHours}.` : "";
   if (f.doors && f.doors.length > 1) return `Hi ${firstName(f.proName)}, the door codes for ${f.street} are ${doorList(f.doors)}.${crew} Reply DONE with photos when you finish.`;
   const at = f.lockLocation ? `, at ${f.lockLocation}` : "";
   return `Hi ${firstName(f.proName)}, the door code for ${f.street} is ${f.code}${at}.${crew} Reply DONE with photos when you finish.`;
@@ -385,20 +385,29 @@ export function urgentStayChangedNews(f: { proName: string; from: string; timeZo
 /** A visit inside a calendar block: Fixer Core can't tell a repair block from a booking a calendar labels "Not available". */
 export const BLOCK_HOST_ACCESS = "That visit is inside a block on the booking calendar, and a calendar can label a real booking as a block, so the door code never goes out there. The host lets the pro in: book it with access host.";
 
-/** The extra sentence on a crew booking's question. */
-/** "Mon, Tue, Wed, 08:00 to 17:00", for the crew's code text (#243). */
-export function crewHoursOf(f: { workdays: readonly string[]; start: string; end: string }): string {
-  return `${f.workdays.map((d) => d.charAt(0) + d.slice(1).toLowerCase()).join(", ")}, ${f.start} to ${f.end}`;
+/** "Mon, Tue, Wed" from the saved workdays. */
+function crewDays(workdays: readonly string[]): string {
+  return workdays.map((d) => d.charAt(0) + d.slice(1).toLowerCase()).join(", ");
 }
 
+/** A saved 24-hour time ("08:00", "17:30") in 12-hour words ("8 AM", "5:30 PM"). */
+function crewClock(hhmm: string): string {
+  return formatClockTime(hhmm).replace(":00 ", " ");
+}
+
+/** "Mon, Tue, Wed, from 8 AM to 5 PM", for the crew's code text (#243). */
+export function crewHoursOf(f: { workdays: readonly string[]; start: string; end: string }): string {
+  return `${crewDays(f.workdays)}, from ${crewClock(f.start)} to ${crewClock(f.end)}`;
+}
+
+/** The extra sentence on a crew booking's question. */
 export function crewScheduleSentence(f: { workdays: readonly string[]; start: string; end: string }): string {
-  return `That's the crew's schedule: ${f.workdays.map((d) => d.charAt(0) + d.slice(1).toLowerCase()).join(", ")}, ${f.start} to ${f.end}. `;
+  return `That's the crew's schedule: ${crewDays(f.workdays)}, ${crewClock(f.start)} to ${crewClock(f.end)}. `;
 }
 
 /** save_crew_schedule: the host's yes. */
 export function crewScheduleQuestion(f: { firstDay: string; lastDay: string; workdays: readonly string[]; start: string; end: string; windows: number }): string {
-  const days = f.workdays.map((d) => d.charAt(0) + d.slice(1).toLowerCase()).join(", ");
-  return `Save the crew's schedule: ${days}, ${f.start} to ${f.end}, ${daysLabel(f.firstDay, f.lastDay)} (${f.windows} workdays)? You'll let the crew in until crew codes exist.`;
+  return `Save the crew's schedule: ${crewDays(f.workdays)}, ${crewClock(f.start)} to ${crewClock(f.end)}, ${daysLabel(f.firstDay, f.lastDay)} (${f.windows} workdays)?`;
 }
 
 /** A crew job's booking must cover its saved schedule. */
@@ -406,8 +415,8 @@ export function crewSpanRefusal(f: { from: string; until: string }): string {
   return `A crew job books its saved schedule: from ${f.from} until ${f.until}. Record the booking with those times, or save a new schedule first.`;
 }
 
-/** A crew's door code waits for crew codes (#180). */
-export const CREW_HOST_ACCESS = "A crew's door code needs connected locks at this property. Until then the host lets the crew in: book it with access host.";
+/** A crew's door code needs connected locks (#243). */
+export const CREW_HOST_ACCESS = "A crew can get a door code only where the locks are connected, and they aren't here. The host lets the crew in: book it with access host.";
 
 // Routine vendor visits (#237). New vendor-facing and host-facing wording, flagged for a design pass.
 

@@ -142,7 +142,7 @@ describe("the same-day check on real evidence (#240)", () => {
       { at: at("14:10"), party: "host" },
       { at: at("15:20"), party: "guest" },
     ]);
-    expect(result.alert).toContain("The door was opened at 2:10 PM with the host's code.");
+    expect(result.alert).toContain("The door was opened at 2:10 PM with your own code.");
     expect(result.alert).toContain("The door was opened at 3:20 PM with a guest's code.");
   });
 
@@ -163,16 +163,19 @@ describe("the same-day check on real evidence (#240)", () => {
     expect(result.missed).toEqual([]);
     expect(result.unsure).toHaveLength(1);
     expect(result.unsure[0]).toMatchObject({ outcome: "unknown", why: "lock-quiet", quiet: [{ from: at("12:40"), until: at("15:00"), device: "Front door" }] });
-    expect(result.alert).toBe("Today at Lake House: Mike Doyle was expected between 1 PM and 5 PM (walk-through). The Front door lock couldn't report from 12:40 PM to 3 PM, so I can't tell if anyone came in.");
+    expect(result.alert).toBe("Today at Lake House: Mike Doyle was expected between 1 PM and 5 PM (walk-through). The Front door lock was offline from 12:40 PM to 3 PM, so I can't tell whether anyone came in.");
   });
 
   it("a quiet span still open reads 'since', and a disconnected account names the connection", () => {
     const offline = runWith([MIKE], now("18:01"), { quiet: [quiet("16:30")] });
     if (offline.status !== "flags") throw new Error("expected flags");
-    expect(offline.alert).toContain("The Front door lock couldn't report since 4:30 PM");
+    expect(offline.alert).toContain("The Front door lock has been offline since 4:30 PM");
     const off = runWith([MIKE], now("18:01"), { quiet: [quiet("11:00", "14:00", null)] });
     if (off.status !== "flags") throw new Error("expected flags");
-    expect(off.alert).toContain("The lock connection was off from 11 AM to 2 PM");
+    expect(off.alert).toContain("The locks here weren't connected from 11 AM to 2 PM");
+    const stillOff = runWith([MIKE], now("18:01"), { quiet: [quiet("16:30", undefined, null)] });
+    if (stillOff.status !== "flags") throw new Error("expected flags");
+    expect(stillOff.alert).toContain("The locks here haven't been connected since 4:30 PM, so I can't tell whether anyone came in.");
   });
 
   it("a quiet span outside the counting window doesn't matter", () => {
@@ -210,7 +213,7 @@ describe("the same-day check on real evidence (#240)", () => {
   it("a sighting with a quiet lock is in the alert too", () => {
     const result = runWith([MIKE], now("18:01"), { quiet: [quiet("12:40")], sightings: [seen("14:08")] });
     if (result.status !== "flags") throw new Error("expected flags");
-    expect(result.alert).toContain("so I can't tell if anyone came in. The Front porch camera saw someone at 2:08 PM.");
+    expect(result.alert).toContain("so I can't tell whether anyone came in. The Front porch camera saw someone at 2:08 PM.");
   });
 
   it("sightings outside the counting window are left off", () => {
@@ -231,7 +234,7 @@ describe("the same-day check on real evidence (#240)", () => {
     it("a window the switch-on falls inside is can't tell for the part before it", () => {
       const result = runSwitched([{ from: at("14:00") }]);
       expect(result).toMatchObject({ status: "flags", unsure: [{ why: "lock-quiet", quiet: [{ from: at("12:30"), until: at("14:00"), why: "disconnected" }] }] });
-      if (result.status === "flags") expect(result.alert).toContain("The lock connection was off from 12:30 PM to 2 PM");
+      if (result.status === "flags") expect(result.alert).toContain("The locks here weren't connected from 12:30 PM to 2 PM");
     });
 
     it("a window fully inside an on-period is checked as usual", () => {
@@ -242,6 +245,6 @@ describe("the same-day check on real evidence (#240)", () => {
   it("a quiet span from an earlier day gives its day in the alert (review)", () => {
     const result = checkDay({ label: LABEL, visits: [MIKE], entries: [], quiet: [{ from: at("12:40", "2026-11-17"), device: "Front door", why: "offline" }], date: DATE, timeZone: NY, now: now("18:01") });
     if (result.status !== "flags") throw new Error("expected flags");
-    expect(result.alert).toContain("The Front door lock couldn't report since 12:40 PM on Tuesday, Nov 17,");
+    expect(result.alert).toContain("The Front door lock has been offline since 12:40 PM on Tuesday, Nov 17,");
   });
 });
