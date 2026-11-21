@@ -232,7 +232,7 @@ export const jobOfVisit = (visit: string): string => visit.split(":")[1] ?? "";
 export interface EntryNames {
   cleaner?: string;
   pros?: Record<string, string>;
-  /** A standing code's person, keyed by the code's name as `codeKey` gives it. */
+  /** A standing or bring-in code's person, keyed by the code's name as `codeKey` gives it. */
   codes?: Record<string, string>;
 }
 
@@ -251,7 +251,7 @@ export function entryEventsFrom(events: readonly VisitEvent[], codeNames: CodeNa
         ? (names.cleaner ?? "Cleaner")
         : person?.role === "pro"
           ? names.pros?.[person.proId]
-          : person?.role === "shared" && event.codeName
+          : (person?.role === "shared" || person?.role === "package") && event.codeName
             ? names.codes?.[codeKey(event.codeName)]
             : undefined;
     const party = person?.role === "host" || person?.role === "guest" ? person.role : undefined;

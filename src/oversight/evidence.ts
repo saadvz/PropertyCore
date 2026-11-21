@@ -158,7 +158,7 @@ export function entryNamesFrom(events: readonly VisitEvent[], codes: Record<stri
 }
 
 /**
- * Each standing code's person, by the code's name, from `door-grants.json`. Only a grant's flow, code name and
+ * Each standing or bring-in code's person (#241's package helper), by the code's name, from `door-grants.json`. Only a grant's flow, code name and
  * label are read; its sealed code never is. A label holding a run of 4 or more digits is left out. A missing or
  * unreadable file is no names.
  */
@@ -171,7 +171,7 @@ export function standingNames(root: string): Record<string, string> {
     for (const grant of Array.isArray(raw.grants) ? raw.grants : []) {
       if (!grant || typeof grant !== "object") continue;
       const { flow, codeName, label } = grant as { flow?: unknown; codeName?: unknown; label?: unknown };
-      if (flow !== "standing" || typeof codeName !== "string" || typeof label !== "string") continue;
+      if ((flow !== "standing" && flow !== "bring-in") || typeof codeName !== "string" || typeof label !== "string") continue;
       const name = label.trim();
       if (!name || name.length > 80 || /\d(?:[\s.\-_/]*\d){3,}/.test(name)) continue;
       out[codeKey(codeName)] = name;

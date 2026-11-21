@@ -179,6 +179,13 @@ describe("entry events for remote oversight", () => {
     ]);
   });
 
+  it("names a bring-in code by its helper, like a standing code (#240, #241)", () => {
+    const events: VisitEvent[] = [unlock("lk-1", "2027-01-04T16:00:00.000Z", "Package abcdefgh"), unlock("lk-2", "2027-01-04T16:10:00.000Z", "Package hgfedcba")];
+    const codes = { "Package abcdefgh": { role: "package" as const }, "Package hgfedcba": { role: "package" as const } };
+    const entries = entryEventsFrom(events, codes, { codes: { "package abcdefgh": "Sam Ortiz" } });
+    expect(entries.map((e) => e.person ?? "unnamed")).toEqual(["Sam Ortiz", "unnamed"]);
+  });
+
   it("names each entry by its code's role for #240: standing codes by name, host and guest codes as a party (#240)", () => {
     const events: VisitEvent[] = [
       unlock("lk-1", "2027-01-04T16:00:00.000Z", "Standing abcdefgh"),

@@ -154,9 +154,9 @@ describe("names for entries", () => {
     const grant = (flow: string, codeName: string, label?: string) => ({ id: "x", flow, jobId: "std_x", person: "+15555550123", ...(label ? { label } : {}), codeName, window: {}, devices: [], seal: { iv: "a", tag: "b", data: "c" } });
     writeFileSync(
       join(root, "door-grants.json"),
-      JSON.stringify({ schemaVersion: 1, grants: [grant("standing", "Standing bbbb", "Mike Doyle"), grant("cleaning", "Cleaning aaaa", "Maria"), grant("standing", "Standing dddd", "Unit 5555 key"), grant("standing", "Standing eeee")] }),
+      JSON.stringify({ schemaVersion: 1, grants: [grant("standing", "Standing bbbb", "Mike Doyle"), grant("cleaning", "Cleaning aaaa", "Maria"), grant("standing", "Standing dddd", "Unit 5555 key"), grant("standing", "Standing eeee"), grant("bring-in", "Package ffff", "Sam Ortiz")] }),
     );
-    expect(standingNames(root)).toEqual({ "standing bbbb": "Mike Doyle" });
+    expect(standingNames(root)).toEqual({ "standing bbbb": "Mike Doyle", "package ffff": "Sam Ortiz" });
   });
 
   it("an unreadable or missing door-grants.json is no names", () => {

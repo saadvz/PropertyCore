@@ -197,3 +197,7 @@ each with tests:
 - `OversightDeps` is now `locks` (SMART_LOCKS on with a lock connection: the
   lines can be read), `lockedNow` (switched on now, the fallback above),
   `doors` and `cameras`.
+- **Bring-in and crew-day codes (#241, #243, merged 21 Nov).** A bring-in
+  code (`package` role) is named by its helper from the grant's label, like
+  a standing code, else unnamed. A crew-day code is a pro's code, so it's
+  named by the pro's window line.
