@@ -259,7 +259,9 @@ describe("a crew's schedule", () => {
   it("saves in two calls and answers each workday's window", async () => {
     const w = await setup();
     const first = await w.desk().saveCrewSchedule({ jobId: w.job().id, ...WEEK });
-    expect(first.structured!.question).toContain("Mon, Tue, Wed, Thu, Fri, 08:00 to 17:00");
+    expect(first.structured!.question).toContain("Mon, Tue, Wed, Thu, Fri, 8 AM to 5 PM");
+    // Crew-day codes (#243) exist now, so the question no longer says the host lets the crew in until they do.
+    expect(first.structured!.question).not.toMatch(/crew codes exist/);
     const reply = await w.desk().saveCrewSchedule({ jobId: w.job().id, ...WEEK, confirmation: codeOf(first) });
     expect(reply.structured).toMatchObject({ saved: true, workdays: 5, first: { day: "2026-11-16", from: SPAN.from, until: "2026-11-16T22:00:00.000Z" }, span: SPAN, conflicts: [] });
     expect(w.job().crew).toEqual(WEEK);
@@ -323,7 +325,7 @@ describe("review fixes", () => {
     const w = await setup();
     await twice((input) => w.desk().saveCrewSchedule(input), { jobId: w.job().id, ...WEEK });
     const reply = await w.desk().recordContact({ contactToken: await w.contact(), outcome: "booked", ...SPAN, estimateCents: 400000 });
-    expect(reply.structured!.question).toBe("Joe's Plumbing can come Monday 8 to Friday 5, about $4,000. That's the crew's schedule: Mon, Tue, Wed, Thu, Fri, 08:00 to 17:00. Book it and you'll let them in?");
+    expect(reply.structured!.question).toBe("Joe's Plumbing can come Monday 8 to Friday 5, about $4,000. That's the crew's schedule: Mon, Tue, Wed, Thu, Fri, 8 AM to 5 PM. Book it and you'll let them in?");
   });
 });
 

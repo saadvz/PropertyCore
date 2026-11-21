@@ -56,8 +56,8 @@ const COPY = {
   photoUnreadable: "That photo couldn't be read. Try another one.",
   codeSoon: "The door code shows here from 30 minutes before the visit.",
   codeNotYet: "The door code shows from 30 minutes before the visit.",
-  // Crew-day codes (#243): new wording, flagged for the wording pass.
-  crewHours: "The crew's door code works only on the crew's workdays, during its hours. Come back then.",
+  // Crew-day codes (#243).
+  crewHours: "The door code shows only during the crew's workday hours. Come back then.",
   codeOver: "The visit's time is up, so the door code no longer shows.",
   hostLetsIn: "The host will let you in.",
   codeRefused: "The door code can't be shown. Ask the host to let you in.",
