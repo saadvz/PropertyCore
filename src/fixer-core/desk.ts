@@ -2360,6 +2360,23 @@ export class FixerDesk {
     });
   }
 
+  /**
+   * A host alert from Property Core's clock (#250): a missed visit, the night's check, a package not seen, a camera
+   * offline. Only on a property where Cleaner Core is off, which would carry it otherwise. Kept once per id in
+   * check_fixes' news, and the account's Alerts routine is woken. True once it's kept; texts nobody.
+   */
+  hostAlert(id: string, text: string): Promise<boolean> {
+    return this.serial(async () => {
+      if (!id || !text) return false;
+      const file = this.read();
+      if ((file.news ?? []).some((item) => item.noteId === id)) return true;
+      (file.news ??= []).push({ kind: "alert", at: this.deps.now().toISOString(), text, noteId: id });
+      this.write(file);
+      this.wake();
+      return true;
+    });
+  }
+
   /** Sends the host notes. A note that fails to go is still in check_fixes' news. */
   private async tell(notes: readonly HostNote[]): Promise<boolean> {
     // Without Cleaner Core here, nothing takes the note: it waits in check_fixes' news, and the routine is woken.

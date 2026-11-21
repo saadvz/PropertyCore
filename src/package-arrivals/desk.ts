@@ -36,6 +36,11 @@ export interface PackageDeps {
   send?(to: string, body: string): Promise<boolean>;
   /** True when texts can go out from this property now (the host's phone confirmed). */
   textsAllowed?(): Promise<boolean>;
+  /**
+   * True when the host-alert clock (#250) tells the host about packages not seen by 9 PM at this property. Then
+   * check_packages never marks one told: it lists a due one read only, under notSeenPending.
+   */
+  alertsByClock?(): boolean;
 }
 
 /** Where the bring-in code stands, as a visit shows it on connected locks. Never the code. */
@@ -64,6 +69,9 @@ const NO_PEOPLE =
 const NO_TIME_ZONE = "The property's time zone isn't saved yet, so a package not seen by the end of its day can't be flagged. Save the property's address to turn that on.";
 const NO_SUPPLY = "Supply Core's record (supply.json) can't be read, so I can't see the orders. Nothing was changed. Tell the host it needs a look.";
 const UNKNOWN_ORDER = "There's no placed Supply Core order with that id at this property.";
+/** check_packages' next step for packages the host-alert clock (#250) tells the host about. */
+export const NOT_SEEN_PENDING = "Property Core tells the host about each package in notSeenPending through their alerts. Don't tell them again.";
+const MAX_ALERT_ITEMS = 3;
 
 export interface Visit {
   orderId: string;
@@ -240,6 +248,45 @@ export class PackageDesk {
     return today > expectedBy || (today === expectedBy && clock >= END_OF_DAY);
   }
 
+  /**
+   * Packages expected on a day, not seen by 9 PM local that day, and not told to the host yet, each with the host's
+   * alert text (#250). Read only: the host-alert clock keeps each alert first, then calls markNotSeenTold.
+   */
+  dueNotSeen(label: string): { key: string; text: string }[] {
+    const timeZone = this.timeZone();
+    if (!timeZone) return [];
+    const supply = this.supply();
+    const file = readPackages(this.root);
+    const today = (() => {
+      const { year, month, day } = zonedParts(this.deps.now(), timeZone);
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    })();
+    const due: { key: string; text: string }[] = [];
+    for (const order of this.orders(supply, file)) {
+      const key = supplyKey(order.id);
+      const arrival = file.arrivals[key];
+      if (arrival?.broughtIn || arrival?.notSeenTold) continue;
+      const delivery = this.delivery(supply, order, arrival);
+      if (delivery.seen || !order.expectedBy || !this.pastEndOfDay(order.expectedBy, timeZone)) continue;
+      due.push({ key, text: notSeenText(label, delivery, order.expectedBy === today ? "today" : `on ${dayWords(order.expectedBy)}`) });
+    }
+    return due;
+  }
+
+  /** Records packages as told not seen, by key, so neither the clock nor check_packages tells them again. */
+  markNotSeenTold(keys: readonly string[]): void {
+    if (!keys.length) return;
+    const file = readPackages(this.root);
+    let changed = false;
+    for (const key of keys) {
+      const arrival = file.arrivals[key] ?? {};
+      if (arrival.notSeenTold) continue;
+      file.arrivals[key] = { ...arrival, notSeenTold: true };
+      changed = true;
+    }
+    if (changed) writePackages(this.root, file);
+  }
+
   /** Every expected delivery in its place, with the flags the host hasn't been told yet. */
   check(): PackageReply {
     return this.guarded(() => {
@@ -249,6 +296,7 @@ export class PackageDesk {
       const file = readPackages(this.root);
       const expected: Delivery[] = [];
       const notSeen: Delivery[] = [];
+      const notSeenPending: Delivery[] = [];
       const waiting: Delivery[] = [];
       const toBringIn: Delivery[] = [];
       const visits: Visit[] = [];
@@ -292,6 +340,8 @@ export class PackageDesk {
           expected.push(delivery);
         } else if (arrival?.notSeenTold) {
           waiting.push(delivery);
+        } else if (this.deps.alertsByClock?.() === true) {
+          notSeenPending.push(delivery);
         } else {
           notSeen.push(delivery);
           file.arrivals[key] = { ...arrival, notSeenTold: true };
@@ -304,6 +354,7 @@ export class PackageDesk {
       const next: string[] = [];
       if (cameraSightings.length) next.push("A package was seen on camera at each time in cameraSightings, and it isn't clear which delivery it was. Ask the host, then call mark_package_seen with how camera and that time.");
       if (notSeen.length) next.push("Tell the host once about each package in notSeen: it was expected and nothing confirmed it arrived by the end of the day. Check its tracking.");
+      if (notSeenPending.length) next.push(NOT_SEEN_PENDING);
       if (toBringIn.length) {
         next.push(
           fallback && !fallback.problem
@@ -317,6 +368,7 @@ export class PackageDesk {
       return ok({
         expected,
         notSeen,
+        ...(notSeenPending.length ? { notSeenPending } : {}),
         waiting,
         toBringIn,
         visits,
@@ -696,4 +748,17 @@ export function packageDeskFor(root: string, deps: PackageDeps): PackageDesk {
 /** Forgets every desk, as a restart would. Tests use it. */
 export function resetPackageDesks(): void {
   desks.clear();
+}
+
+/** "Friday, November 20" for a YYYY-MM-DD date. */
+function dayWords(date: string): string {
+  return new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" }).format(new Date(`${date}T12:00:00Z`));
+}
+
+/** The host's alert for a package not seen by 9 PM (#250). The store and items only: no code, no phone, no tracking number. */
+function notSeenText(label: string, delivery: Delivery, when: string): string {
+  const shown = delivery.items.slice(0, MAX_ALERT_ITEMS);
+  const more = delivery.items.length - shown.length;
+  const items = shown.length ? ` (${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""})` : "";
+  return `A package from ${delivery.store}${items} was expected at ${label} ${when}, and nothing confirmed it arrived by 9 PM. Check its tracking.`;
 }

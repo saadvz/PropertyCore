@@ -3,7 +3,7 @@ import type { VisitResult } from "./check";
 
 /**
  * The day's alert text (#240): one message, every newly missed or can't-tell visit in it, in the property's time zone. Plain
- * words, no door code, and no guessed pronouns. Sending it is #250's.
+ * words, no door code, and no guessed pronouns. The host-alert clock (src/hosted/hostAlerts.ts, #250) sends it.
  */
 
 const clock = (hhmm: string) => formatClockTime(hhmm).replace(":00", "");
