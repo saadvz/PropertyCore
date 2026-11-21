@@ -123,3 +123,125 @@ describe("the same-day check", () => {
     });
   });
 });
+
+describe("the same-day check on real evidence (#240)", () => {
+  const quiet = (from: string, until?: string, door: string | null = "Front door", device = door ?? undefined) => ({ from: at(from), ...(until ? { until: at(until) } : {}), ...(device ? { device } : {}), why: device ? ("offline" as const) : ("disconnected" as const) });
+  const seen = (hm: string) => ({ at: at(hm), device: "Front porch" });
+  const runWith = (visits: ExpectedVisit[], when: Date, evidence: { entries?: EntryEvent[]; lock?: boolean; quiet?: ReturnType<typeof quiet>[]; sightings?: ReturnType<typeof seen>[] }) =>
+    checkDay({ label: LABEL, visits, entries: evidence.entries ?? [], ...(evidence.lock !== undefined ? { lock: evidence.lock } : {}), ...(evidence.quiet ? { quiet: evidence.quiet } : {}), ...(evidence.sightings ? { sightings: evidence.sightings } : {}), date: DATE, timeZone: NY, now: when });
+
+  it("a host's or guest's code never counts as the visit, and the alert names it", () => {
+    const entries: EntryEvent[] = [
+      { id: "h-1", at: at("14:10"), device: "Front door", party: "host" },
+      { id: "g-1", at: at("15:20"), device: "Front door", party: "guest" },
+    ];
+    const result = runWith([MIKE], now("18:01"), { entries });
+    expect(result.status).toBe("flags");
+    if (result.status !== "flags") return;
+    expect(result.missed[0]?.others).toEqual([
+      { at: at("14:10"), party: "host" },
+      { at: at("15:20"), party: "guest" },
+    ]);
+    expect(result.alert).toContain("The door was opened at 2:10 PM with the host's code.");
+    expect(result.alert).toContain("The door was opened at 3:20 PM with a guest's code.");
+  });
+
+  it("no connected lock: can't tell, never missed, and no alert", () => {
+    const result = runWith([MIKE], now("18:01"), { lock: false });
+    expect(result).toMatchObject({ status: "ok", visits: [{ outcome: "unknown", why: "no-lock" }] });
+    expect("alert" in result).toBe(false);
+  });
+
+  it("no connected lock and still early: can't tell, not waiting", () => {
+    expect(runWith([MIKE], now("12:00"), { lock: false })).toMatchObject({ status: "ok", visits: [{ outcome: "unknown", why: "no-lock" }] });
+  });
+
+  it("a lock offline during the window: can't tell, in the alert, not a miss", () => {
+    const result = runWith([MIKE], now("18:01"), { quiet: [quiet("12:40", "15:00")] });
+    expect(result.status).toBe("flags");
+    if (result.status !== "flags") return;
+    expect(result.missed).toEqual([]);
+    expect(result.unsure).toHaveLength(1);
+    expect(result.unsure[0]).toMatchObject({ outcome: "unknown", why: "lock-quiet", quiet: [{ from: at("12:40"), until: at("15:00"), device: "Front door" }] });
+    expect(result.alert).toBe("Today at Lake House: Mike Doyle was expected between 1 PM and 5 PM (walk-through). The Front door lock couldn't report from 12:40 PM to 3 PM, so I can't tell if anyone came in.");
+  });
+
+  it("a quiet span still open reads 'since', and a disconnected account names the connection", () => {
+    const offline = runWith([MIKE], now("18:01"), { quiet: [quiet("16:30")] });
+    if (offline.status !== "flags") throw new Error("expected flags");
+    expect(offline.alert).toContain("The Front door lock couldn't report since 4:30 PM");
+    const off = runWith([MIKE], now("18:01"), { quiet: [quiet("11:00", "14:00", null)] });
+    if (off.status !== "flags") throw new Error("expected flags");
+    expect(off.alert).toContain("The lock connection was off from 11 AM to 2 PM");
+  });
+
+  it("a quiet span outside the counting window doesn't matter", () => {
+    const result = runWith([MIKE], now("18:01"), { quiet: [quiet("09:00", "12:29"), quiet("18:01")] });
+    expect(result).toMatchObject({ status: "flags", missed: [{ outcome: "missed" }], unsure: [] });
+  });
+
+  it("a quiet span touching the counting window's edge counts", () => {
+    expect(runWith([MIKE], now("18:01"), { quiet: [quiet("09:00", "12:30")] })).toMatchObject({ status: "flags", unsure: [{ why: "lock-quiet" }] });
+  });
+
+  it("an entry wins over a quiet lock", () => {
+    const result = runWith([MIKE], now("18:01"), { entries: [entry("14:10", "Mike Doyle")], quiet: [quiet("12:40", "15:00")] });
+    expect(result).toMatchObject({ status: "ok", visits: [{ outcome: "came" }] });
+  });
+
+  it("before the flag time a quiet lock is still waiting", () => {
+    expect(runWith([MIKE], now("17:00"), { quiet: [quiet("12:40")] })).toMatchObject({ status: "ok", visits: [{ outcome: "waiting" }] });
+  });
+
+  it("an already flagged quiet visit is left out of the alert", () => {
+    const result = runWith([{ ...MIKE, flaggedAt: at("18:01") }], now("19:00"), { quiet: [quiet("12:40")] });
+    expect(result).toMatchObject({ status: "flags", unsure: [{ alreadyFlagged: true }] });
+    if (result.status === "flags") expect(result.alert).toBeUndefined();
+  });
+
+  it("a camera sighting supports an entry but never makes a visit came on its own", () => {
+    const came = runWith([MIKE], now("18:01"), { entries: [entry("14:10", "Mike Doyle")], sightings: [seen("14:08"), seen("19:00")] });
+    expect(came).toMatchObject({ status: "ok", visits: [{ outcome: "came", sightings: [{ at: at("14:08"), device: "Front porch" }] }] });
+    const missed = runWith([MIKE], now("18:01"), { sightings: [seen("14:08")] });
+    expect(missed).toMatchObject({ status: "flags", missed: [{ outcome: "missed", sightings: [{ at: at("14:08") }] }] });
+    if (missed.status === "flags") expect(missed.alert).toBe("Today at Lake House: Mike Doyle was expected between 1 PM and 5 PM (walk-through). No one came in by 6 PM. The Front porch camera saw someone at 2:08 PM.");
+  });
+
+  it("a sighting with a quiet lock is in the alert too", () => {
+    const result = runWith([MIKE], now("18:01"), { quiet: [quiet("12:40")], sightings: [seen("14:08")] });
+    if (result.status !== "flags") throw new Error("expected flags");
+    expect(result.alert).toContain("so I can't tell if anyone came in. The Front porch camera saw someone at 2:08 PM.");
+  });
+
+  it("sightings outside the counting window are left off", () => {
+    expect(runWith([MIKE], now("18:01"), { sightings: [seen("12:29"), seen("18:01")] })).toMatchObject({ status: "flags", missed: [{ sightings: [] }] });
+  });
+
+  describe("the host's switch to connected locks, per window (review)", () => {
+    const runSwitched = (switched: { from: string; until?: string }[], when = now("18:01")) => checkDay({ label: LABEL, visits: [MIKE], entries: [], switched, date: DATE, timeZone: NY, now: when });
+
+    it("a window entirely before the switch is no lock, with no alert", () => {
+      expect(runSwitched([{ from: at("19:00") }])).toMatchObject({ status: "ok", visits: [{ outcome: "unknown", why: "no-lock" }] });
+    });
+
+    it("a window entirely after a switch-off is no lock", () => {
+      expect(runSwitched([{ from: at("08:00", "2026-11-10"), until: at("09:00") }])).toMatchObject({ status: "ok", visits: [{ outcome: "unknown", why: "no-lock" }] });
+    });
+
+    it("a window the switch-on falls inside is can't tell for the part before it", () => {
+      const result = runSwitched([{ from: at("14:00") }]);
+      expect(result).toMatchObject({ status: "flags", unsure: [{ why: "lock-quiet", quiet: [{ from: at("12:30"), until: at("14:00"), why: "disconnected" }] }] });
+      if (result.status === "flags") expect(result.alert).toContain("The lock connection was off from 12:30 PM to 2 PM");
+    });
+
+    it("a window fully inside an on-period is checked as usual", () => {
+      expect(runSwitched([{ from: at("08:00", "2026-11-10") }])).toMatchObject({ status: "flags", missed: [{ outcome: "missed" }] });
+    });
+  });
+
+  it("a quiet span from an earlier day gives its day in the alert (review)", () => {
+    const result = checkDay({ label: LABEL, visits: [MIKE], entries: [], quiet: [{ from: at("12:40", "2026-11-17"), device: "Front door", why: "offline" }], date: DATE, timeZone: NY, now: now("18:01") });
+    if (result.status !== "flags") throw new Error("expected flags");
+    expect(result.alert).toContain("The Front door lock couldn't report since 12:40 PM on Tuesday, Nov 17,");
+  });
+});

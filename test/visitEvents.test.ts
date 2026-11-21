@@ -178,4 +178,35 @@ describe("entry events for remote oversight", () => {
       { id: "lk-4", at: "2027-01-04T20:00:00.000Z", device: "Front door" },
     ]);
   });
+
+  it("names a bring-in code by its helper, like a standing code (#240, #241)", () => {
+    const events: VisitEvent[] = [unlock("lk-1", "2027-01-04T16:00:00.000Z", "Package abcdefgh"), unlock("lk-2", "2027-01-04T16:10:00.000Z", "Package hgfedcba")];
+    const codes = { "Package abcdefgh": { role: "package" as const }, "Package hgfedcba": { role: "package" as const } };
+    const entries = entryEventsFrom(events, codes, { codes: { "package abcdefgh": "Sam Ortiz" } });
+    expect(entries.map((e) => e.person ?? "unnamed")).toEqual(["Sam Ortiz", "unnamed"]);
+  });
+
+  it("names each entry by its code's role for #240: standing codes by name, host and guest codes as a party (#240)", () => {
+    const events: VisitEvent[] = [
+      unlock("lk-1", "2027-01-04T16:00:00.000Z", "Standing abcdefgh"),
+      unlock("lk-2", "2027-01-04T16:10:00.000Z", "Standing hgfedcba"),
+      unlock("lk-3", "2027-01-04T16:20:00.000Z", "Standing ownerown"),
+      unlock("lk-4", "2027-01-04T16:30:00.000Z", "Guest qwertyui"),
+      unlock("lk-5", "2027-01-04T16:40:00.000Z", "Bring-in zxcvbnma"),
+    ];
+    const codes = {
+      "Standing abcdefgh": { role: "shared" as const },
+      "Standing hgfedcba": { role: "shared" as const },
+      "Standing ownerown": { role: "host" as const },
+      "Guest qwertyui": { role: "guest" as const },
+    };
+    const entries = entryEventsFrom(events, codes, { codes: { "standing abcdefgh": "Mike Doyle" } });
+    expect(entries.map(({ id, person, party }) => ({ id, ...(person ? { person } : {}), ...(party ? { party } : {}) }))).toEqual([
+      { id: "lk-1", person: "Mike Doyle" },
+      { id: "lk-2" },
+      { id: "lk-3", party: "host" },
+      { id: "lk-4", party: "guest" },
+      { id: "lk-5" },
+    ]);
+  });
 });

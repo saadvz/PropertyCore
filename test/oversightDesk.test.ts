@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { zonedInstant } from "../src/hub/calendar";
 import { oversightDeskFor } from "../src/oversight/desk";
-import type { EntryEvent } from "../src/oversight/events";
 import { OVERSIGHT_FILE, readOversight, writeOversight } from "../src/oversight/store";
 import type { ExpectedVisit } from "../src/oversight/visits";
+import { resetVisitLogCache, VisitLog } from "../src/visits/store";
 
 /** #240: one property's desk saves, lists and cancels expected visits, and runs one day. Made-up property only. */
 
@@ -15,17 +15,18 @@ const NOW = new Date("2026-11-17T15:00:00.000Z");
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  resetVisitLogCache();
 });
 
 const invite = (name: string) => readFileSync(join(__dirname, "fixtures", "oversight", `${name}.ics`), "utf8");
 
-function property(opts: { timeZone?: string | null; now?: () => Date } = {}) {
+function property(opts: { timeZone?: string | null; now?: () => Date; locks?: boolean; lockedNow?: boolean; doors?: string[]; cameras?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), "oversight-desk-"));
   roots.push(root);
   const timeZone = opts.timeZone === null ? {} : { timeZone: opts.timeZone ?? NY };
   writeFileSync(join(root, "hub.json"), JSON.stringify({ schemaVersion: 1, property: { nickname: "Lake House", ...timeZone }, calendars: [], stays: [] }));
   let clock = NOW;
-  const desk = oversightDeskFor(root, { now: opts.now ?? (() => clock) });
+  const desk = oversightDeskFor(root, { now: opts.now ?? (() => clock), locks: () => opts.locks ?? true, ...(opts.lockedNow !== undefined ? { lockedNow: () => opts.lockedNow! } : {}), ...(opts.doors ? { doors: () => opts.doors! } : {}), cameras: () => opts.cameras ?? false });
   return { root, desk, setNow: (date: Date) => (clock = date) };
 }
 
@@ -140,7 +141,7 @@ describe("the expected visits desk", () => {
     expect(desk.addVisit(MIKE).isError).toBe(true);
     expect(desk.listVisits().isError).toBe(true);
     expect(desk.cancelVisit({ id: "v-00000001" }).isError).toBe(true);
-    const day = desk.runDay("2026-11-19", [], "Lake House");
+    const day = desk.runDay("2026-11-19", "Lake House");
     expect(day.status).toBe("none");
     if (day.status === "none") expect(day.reason).toContain(OVERSIGHT_FILE);
     expect(readFileSync(join(root, OVERSIGHT_FILE), "utf8")).toBe("{nope");
@@ -158,16 +159,96 @@ describe("the expected visits desk", () => {
     expect(desk.addVisit(MIKE).isError).toBe(true);
     expect(desk.listVisits().isError).toBe(true);
     expect(desk.cancelVisit({ id: "v-00000001" }).isError).toBe(true);
-    expect(desk.runDay("2026-11-19", [], "Lake House").status).toBe("none");
+    expect(desk.runDay("2026-11-19", "Lake House").status).toBe("none");
     expect(readFileSync(join(root, OVERSIGHT_FILE), "utf8")).toBe(JSON.stringify({ visits: [null] }));
   });
 
-  it("runDay counts a sample entry", () => {
-    const { desk, setNow } = property();
+  it("runDay counts a real unlock from the visit log by the code's person", () => {
+    const { desk, root, setNow } = property({ locks: true });
+    desk.addVisit(MIKE);
+    writeFileSync(join(root, "door-grants.json"), JSON.stringify({ schemaVersion: 1, grants: [{ flow: "standing", codeName: "Standing bbbb", label: "Mike Doyle" }] }));
+    new VisitLog(root, () => NOW).nameCode("Standing bbbb", { role: "shared" });
+    new VisitLog(root, () => NOW).append({ type: "lock", id: "lk-1", at: zonedInstant("2026-11-19", "14:10", NY), device: "Front door", action: "unlock", side: "outside", codeName: "Standing bbbb" });
+    setNow(new Date(zonedInstant("2026-11-19", "18:30", NY)));
+    expect(desk.runDay("2026-11-19", "Lake House")).toMatchObject({ status: "ok", visits: [{ outcome: "came", entry: { person: "Mike Doyle" } }] });
+  });
+
+  it("runDay without connected locks can't tell, flags nothing and records nothing", () => {
+    const { desk, root, setNow } = property({ locks: false });
+    desk.addVisit(MIKE);
+    new VisitLog(root, () => NOW).append({ type: "lock", id: "lk-1", at: zonedInstant("2026-11-19", "14:10", NY), device: "Front door", action: "unlock", side: "outside" });
+    setNow(new Date(zonedInstant("2026-11-19", "18:30", NY)));
+    expect(desk.runDay("2026-11-19", "Lake House")).toMatchObject({ status: "ok", visits: [{ outcome: "unknown", why: "no-lock" }] });
+    expect(readOversight(root).visits[0]?.flaggedAt).toBeUndefined();
+  });
+
+  it("runDay with a lock offline in the window says it can't tell, once", () => {
+    const { desk, root, setNow } = property({ locks: true });
+    desk.addVisit(MIKE);
+    new VisitLog(root, () => NOW).append({ type: "lock-status", id: "st-1", at: zonedInstant("2026-11-19", "12:40", NY), kind: "offline", device: "Front door" });
+    const first = new Date(zonedInstant("2026-11-19", "18:30", NY));
+    setNow(first);
+    const day = desk.runDay("2026-11-19", "Lake House");
+    expect(day).toMatchObject({ status: "flags", unsure: [{ why: "lock-quiet" }], alert: expect.stringContaining("couldn't report since 12:40 PM") });
+    expect(readOversight(root).visits[0]?.flaggedAt).toBe(first.toISOString());
+    setNow(new Date(zonedInstant("2026-11-19", "19:30", NY)));
+    const again = desk.runDay("2026-11-19", "Lake House");
+    if (again.status === "flags") expect(again.alert).toBeUndefined();
+  });
+
+  it("runDay reads camera sightings only with cameras on", () => {
+    const withCams = property({ locks: true, cameras: true });
+    const without = property({ locks: true, cameras: false });
+    for (const { desk, root, setNow } of [withCams, without]) {
+      desk.addVisit(MIKE);
+      new VisitLog(root, () => NOW).append({ type: "camera", id: "cam-ev-1", at: zonedInstant("2026-11-19", "14:08", NY), kind: "ding", deviceId: "cam-1", provider: "ring", device: "Front porch" });
+      setNow(new Date(zonedInstant("2026-11-19", "18:30", NY)));
+    }
+    expect(withCams.desk.runDay("2026-11-19", "Lake House")).toMatchObject({ status: "flags", missed: [{ sightings: [{ device: "Front porch" }] }] });
+    expect(without.desk.runDay("2026-11-19", "Lake House")).toMatchObject({ status: "flags", missed: [{ sightings: [] }] });
+  });
+
+  it("runDay reads the host's switch per window: before the switch is no lock, even while switched on now (review)", () => {
+    const { desk, root, setNow } = property({ locks: true, lockedNow: true });
+    desk.addVisit(MIKE);
+    new VisitLog(root, () => NOW).append({ type: "lock-connection", id: `pc-locks:on:${zonedInstant("2026-11-19", "20:00", NY)}`, at: zonedInstant("2026-11-19", "20:00", NY), connected: true });
+    setNow(new Date(zonedInstant("2026-11-19", "20:30", NY)));
+    expect(desk.runDay("2026-11-19", "Lake House")).toMatchObject({ status: "ok", visits: [{ outcome: "unknown", why: "no-lock" }] });
+  });
+
+  it("a past day on connected locks is still checked after the host switched off (review)", () => {
+    const { desk, root, setNow } = property({ locks: true, lockedNow: false });
+    desk.addVisit(MIKE);
+    const log = new VisitLog(root, () => NOW);
+    log.append({ type: "lock-connection", id: "pc-locks:on:2026-11-10T12:00:00.000Z", at: "2026-11-10T12:00:00.000Z", connected: true });
+    log.append({ type: "lock", id: "lk-1", at: zonedInstant("2026-11-19", "14:10", NY), device: "Front door", action: "unlock", side: "outside" });
+    log.append({ type: "lock-connection", id: "pc-locks:off:2026-11-20T12:00:00.000Z", at: "2026-11-20T12:00:00.000Z", connected: false });
+    setNow(new Date(zonedInstant("2026-11-21", "09:00", NY)));
+    expect(desk.listVisits().structured?.results).toEqual([expect.objectContaining({ outcome: "came" })]);
+  });
+
+  it("no switch lines and not switched on now: no lock (review)", () => {
+    const { desk, setNow } = property({ locks: true, lockedNow: false });
     desk.addVisit(MIKE);
     setNow(new Date(zonedInstant("2026-11-19", "18:30", NY)));
-    const entries: EntryEvent[] = [{ id: "e-1", at: zonedInstant("2026-11-19", "14:10", NY), device: "Front door", person: "Mike Doyle" }];
-    expect(desk.runDay("2026-11-19", entries, "Lake House")).toMatchObject({ status: "ok", visits: [{ outcome: "came" }] });
+    expect(desk.runDay("2026-11-19", "Lake House")).toMatchObject({ status: "ok", visits: [{ outcome: "unknown", why: "no-lock" }] });
+  });
+
+  it("a sensor going offline is not a lock that couldn't report (review)", () => {
+    const { desk, root, setNow } = property({ locks: true, doors: ["Front door"] });
+    desk.addVisit(MIKE);
+    new VisitLog(root, () => NOW).append({ type: "lock-status", id: "st-1", at: zonedInstant("2026-11-19", "14:00", NY), kind: "offline", device: "Hall thermostat" });
+    setNow(new Date(zonedInstant("2026-11-19", "18:30", NY)));
+    expect(desk.runDay("2026-11-19", "Lake House")).toMatchObject({ status: "flags", missed: [{ outcome: "missed" }], unsure: [] });
+  });
+
+  it("list_expected_visits gives today's and last week's results, and records nothing", () => {
+    const { desk, root, setNow } = property({ locks: true });
+    desk.addVisit(MIKE);
+    setNow(new Date(zonedInstant("2026-11-19", "18:30", NY)));
+    const listed = desk.listVisits().structured;
+    expect(listed?.results).toEqual([expect.objectContaining({ id: readOversight(root).visits[0]!.id, outcome: "missed" })]);
+    expect(readOversight(root).visits[0]?.flaggedAt).toBeUndefined();
   });
 
   it("runDay records flaggedAt once", () => {
@@ -175,7 +256,7 @@ describe("the expected visits desk", () => {
     desk.addVisit(MIKE);
     const flagTime = new Date(zonedInstant("2026-11-19", "18:30", NY));
     setNow(flagTime);
-    const day = desk.runDay("2026-11-19", [], "Lake House");
+    const day = desk.runDay("2026-11-19", "Lake House");
     expect(day).toMatchObject({ status: "flags", alert: expect.stringContaining("Mike Doyle was expected") });
     expect(readOversight(root).visits[0]?.flaggedAt).toBe(flagTime.toISOString());
   });
@@ -185,9 +266,9 @@ describe("the expected visits desk", () => {
     desk.addVisit(MIKE);
     const first = new Date(zonedInstant("2026-11-19", "18:30", NY));
     setNow(first);
-    desk.runDay("2026-11-19", [], "Lake House");
+    desk.runDay("2026-11-19", "Lake House");
     setNow(new Date(zonedInstant("2026-11-19", "19:30", NY)));
-    const again = desk.runDay("2026-11-19", [], "Lake House");
+    const again = desk.runDay("2026-11-19", "Lake House");
     expect(again.status).toBe("flags");
     if (again.status === "flags") expect(again.alert).toBeUndefined();
     expect(readOversight(root).visits[0]?.flaggedAt).toBe(first.toISOString());
