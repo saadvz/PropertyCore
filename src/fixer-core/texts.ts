@@ -216,10 +216,12 @@ export function rotationQuestion(f: { proName: string }): string {
 }
 
 /** The only text that holds the code. It goes to the pro's own phone. */
-export function codeText(f: { proName: string; street: string; code: string; lockLocation?: string; doors?: { door: string; code: string }[] }): string {
-  if (f.doors && f.doors.length > 1) return `Hi ${firstName(f.proName)}, the door codes for ${f.street} are ${doorList(f.doors)}. Reply DONE with photos when you finish.`;
+export function codeText(f: { proName: string; street: string; code: string; lockLocation?: string; doors?: { door: string; code: string }[]; crewHours?: string }): string {
+  // Crew-day codes (#243): the crew's hours line is new wording, flagged for the wording pass.
+  const crew = f.crewHours ? ` It works only on the crew's schedule: ${f.crewHours}.` : "";
+  if (f.doors && f.doors.length > 1) return `Hi ${firstName(f.proName)}, the door codes for ${f.street} are ${doorList(f.doors)}.${crew} Reply DONE with photos when you finish.`;
   const at = f.lockLocation ? `, at ${f.lockLocation}` : "";
-  return `Hi ${firstName(f.proName)}, the door code for ${f.street} is ${f.code}${at}. Reply DONE with photos when you finish.`;
+  return `Hi ${firstName(f.proName)}, the door code for ${f.street} is ${f.code}${at}.${crew} Reply DONE with photos when you finish.`;
 }
 
 /** "Front door: 1, Side gate: 2" when one door fell back to a backup code. */
@@ -384,6 +386,11 @@ export function urgentStayChangedNews(f: { proName: string; from: string; timeZo
 export const BLOCK_HOST_ACCESS = "That visit is inside a block on the booking calendar, and a calendar can label a real booking as a block, so the door code never goes out there. The host lets the pro in: book it with access host.";
 
 /** The extra sentence on a crew booking's question. */
+/** "Mon, Tue, Wed, 08:00 to 17:00", for the crew's code text (#243). */
+export function crewHoursOf(f: { workdays: readonly string[]; start: string; end: string }): string {
+  return `${f.workdays.map((d) => d.charAt(0) + d.slice(1).toLowerCase()).join(", ")}, ${f.start} to ${f.end}`;
+}
+
 export function crewScheduleSentence(f: { workdays: readonly string[]; start: string; end: string }): string {
   return `That's the crew's schedule: ${f.workdays.map((d) => d.charAt(0) + d.slice(1).toLowerCase()).join(", ")}, ${f.start} to ${f.end}. `;
 }
@@ -400,7 +407,7 @@ export function crewSpanRefusal(f: { from: string; until: string }): string {
 }
 
 /** A crew's door code waits for crew codes (#180). */
-export const CREW_HOST_ACCESS = "A crew's door code waits for crew codes. For now the host lets the crew in: book it with access host.";
+export const CREW_HOST_ACCESS = "A crew's door code needs connected locks at this property. Until then the host lets the crew in: book it with access host.";
 
 // Routine vendor visits (#237). New vendor-facing and host-facing wording, flagged for a design pass.
 

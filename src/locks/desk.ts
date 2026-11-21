@@ -6,7 +6,7 @@ import { sameHash } from "../hub/uploadCode";
 import { ConfirmationBook } from "../operator/confirmations";
 import { recordLockConnection } from "./eventLog";
 import { lockAdapter, smartLocksOn } from "./registry";
-import { allDoorsConnected, readDoorLocks, storedDevice, type DoorLocksFile, type ReleaseMode, type StandingPerson, type StandingRole } from "./settings";
+import { allDoorsConnected, packagesRelease, readDoorLocks, storedDevice, type DoorLocksFile, type ReleaseMode, type StandingPerson, type StandingRole } from "./settings";
 
 export type { StandingPerson, StandingRole };
 
@@ -147,7 +147,7 @@ export class LockDesk {
       const gate = this.confirm("locks-off", "off", confirmation, "Switch this property back to your saved door code? I'll remove every per-visit code here.");
       if (gate !== "go") return gate;
       const file = door.locks();
-      for (const flow of ["cleaning", "repair", "standing"] as const) await door.syncGrants(flow, []);
+      for (const flow of ["cleaning", "repair", "standing", "bring-in"] as const) await door.syncGrants(flow, []);
       const { activeAt: _off, ...rest } = file;
       door.saveLocks({ ...rest, release: { ...file.release, cleaners: "ask" } });
       if (file.activeAt) recordLockConnection(this.root, false, () => this.deps.now());
@@ -196,23 +196,26 @@ export class LockDesk {
   }
 
   /** How codes go out, cleaners and pros apart, and how a pro who runs late gets more time. Two calls. */
-  async settings(input: { cleaners?: unknown; pros?: unknown; extend?: unknown; confirmation?: unknown }): Promise<LockReply> {
+  async settings(input: { cleaners?: unknown; pros?: unknown; packages?: unknown; extend?: unknown; confirmation?: unknown }): Promise<LockReply> {
     if (!this.available()) return fail(LOCKS_OFF);
     const door = this.door();
     const file = door.locks();
     const mode = (value: unknown, current: ReleaseMode): ReleaseMode => (value === "automatic" ? "automatic" : value === "ask" ? "ask" : current);
     const next = { cleaners: mode(input.cleaners, file.release.cleaners), pros: mode(input.pros, file.release.pros), extend: mode(input.extend, file.extend) };
+    // A package helper's bring-in code (#241): asked about only when the host names it or already chose automatic.
+    const packages = input.packages === undefined && file.release.packages === undefined ? undefined : mode(input.packages, packagesRelease(file));
     if (next.cleaners === "automatic" && (!door.connected() || !this.deps.cleaningOn())) return fail("The cleaner's code can go at checkout time only on a property with connected locks and Cleaner Core on.");
     const words = [
       next.cleaners === "automatic" ? "the cleaner's code goes out at checkout without waiting for you" : "the cleaner's code waits for your \"guests have left\"",
       next.pros === "automatic" ? "a pro's code shows when they reach the door in their window" : "each pro's code waits for your OK",
       next.extend === "automatic" ? "a pro still inside gets 30 more minutes" : "I'll ask before giving a pro more time",
+      ...(packages === undefined ? [] : [packages === "automatic" ? "the person bringing a package in gets their code by text once the drop is seen" : "the code for the person bringing a package in waits for your OK"]),
     ];
     const question = `Just to check: ${words.join("; ")}. Okay?`;
-    const gate = this.confirm("locks-settings", JSON.stringify(next), typeof input.confirmation === "string" ? input.confirmation : undefined, question);
+    const gate = this.confirm("locks-settings", JSON.stringify({ ...next, ...(packages ? { packages } : {}) }), typeof input.confirmation === "string" ? input.confirmation : undefined, question);
     if (gate !== "go") return gate;
-    door.saveLocks({ ...file, release: { cleaners: next.cleaners, pros: next.pros }, extend: next.extend });
-    return ok({ ...next, next: "Saved." });
+    door.saveLocks({ ...file, release: { cleaners: next.cleaners, pros: next.pros, ...(packages ? { packages } : {}) }, extend: next.extend });
+    return ok({ ...next, ...(packages ? { packages } : {}), next: "Saved." });
   }
 
   private standing(file: DoorLocksFile): StandingPerson[] {

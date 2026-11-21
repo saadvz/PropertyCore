@@ -8,7 +8,7 @@ import { hubFor, resetHubs } from "../src/hub/hub";
 import { LockDesk, STANDING_LINK_HOURS, STANDING_PAGE_PREFIX, type LockDeskDeps, type LockReply } from "../src/locks/desk";
 import { FakeLockAdapter } from "../src/locks/fake";
 import { setLockAdapter } from "../src/locks/registry";
-import { emptyLocks, storedDevice } from "../src/locks/settings";
+import { emptyLocks, packagesRelease, storedDevice } from "../src/locks/settings";
 import { handleLockTool, LOCK_TOOLS } from "../src/locks/tools";
 import { entryEventsFrom } from "../src/visits/events";
 import { visitLogFor } from "../src/visits/store";
@@ -122,6 +122,20 @@ describe("setting up connected locks", () => {
     expect(done.isError).toBe(false);
     expect(on.door.locks().release).toEqual({ cleaners: "automatic", pros: "automatic" });
     expect(on.door.locks().extend).toBe("automatic");
+  });
+
+  it("a package helper's bring-in code defaults to ask, and goes automatic only with the host's two calls (#241)", async () => {
+    const { desk, door } = world();
+    expect(packagesRelease(door.locks())).toBe("ask");
+    const asked = await desk.settings({ packages: "automatic" });
+    expect(asked.structured?.question).toMatch(/package/);
+    expect(packagesRelease(door.locks())).toBe("ask");
+    await approved((confirmation) => desk.settings({ packages: "automatic", ...(confirmation ? { confirmation } : {}) }));
+    expect(packagesRelease(door.locks())).toBe("automatic");
+    expect(door.locks().release).toMatchObject({ cleaners: "ask", pros: "ask" });
+    // A later change to the pros' setting keeps the package helpers' choice.
+    await approved((confirmation) => desk.settings({ pros: "automatic", ...(confirmation ? { confirmation } : {}) }));
+    expect(packagesRelease(door.locks())).toBe("automatic");
   });
 
   it("switching off removes every per-visit code and goes back to the saved code", async () => {
