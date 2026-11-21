@@ -21,7 +21,7 @@ The flows:
   once, the agent shops and checks out with its own tools, and Supply Core
   decides go or hold on every cart.
 - **Fixer Core:** repairs and upkeep. The agent finds, calls and books the host's pros, and Fixer Core holds the
-  rules and the door access. It is offered only on a service with `FIXER_CORE=1`.
+  rules and the door access. It starts off on each property, until the host says yes.
 
 ```
 Host ─► Grok Bot or Muse ─► hosted service (hostedPropertyCoreUrl/mcp) ─┬─► Cleaner Core ─► the cleaner's phone

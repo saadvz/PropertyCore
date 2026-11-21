@@ -5,9 +5,11 @@ import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { readStayCheck } from "../src/stay-check/store";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { hub, supply } from "./hoursFixture";
+import { switchOn } from "./featureEnv";
+import type { Feature } from "../src/features/features";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 
-/** #239 on the shared service: the host's house rules, behind STAY_CHECK=1, for the property a call names. */
+/** #239 on the shared service: the host's house rules, behind the account's "stay-check" switch, for the property a call names. */
 
 const LANE = "+15555550151";
 const PATH = "/mcp";
@@ -23,10 +25,11 @@ afterEach(() => {
   closeHostedApps();
 });
 
-async function account(env: NodeJS.ProcessEnv) {
-  open = await multiTenantApp({ env: { SUPPLY_CORE: "1", ...env }, now: () => NOW });
+async function account(features: Feature[]) {
+  open = await multiTenantApp({ env: { SUPPLY_CORE: "1" }, now: () => NOW });
   const m = open;
   const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+  switchOn(m.registry, tenant.id, ...features);
   const property = m.registry.addProperty(tenant.id, "12 Scratch Lane");
   m.registry.setFlow(tenant.id, property.id, "supplies", true);
   const root = propertyFolder(m.app.root, tenant.id, property);
@@ -38,16 +41,16 @@ async function account(env: NodeJS.ProcessEnv) {
 }
 
 describe("house rules on the shared service", () => {
-  it("isn't listed or answered without STAY_CHECK", SLOW, async () => {
-    const { m, token, property } = await account({});
+  it("isn't listed or answered without the account's stay-check switch", SLOW, async () => {
+    const { m, token, property } = await account([]);
     const names = await m.toolNames(PATH, token);
     expect(names.filter((name) => TOOLS.includes(name))).toEqual([]);
     const reply = await m.toolAt(PATH, token, "get_house_rules", { property: property.id });
     expect(reply.isError).toBe(true);
   });
 
-  it("is listed with STAY_CHECK=1, saves and reads the host's rules", SLOW, async () => {
-    const { m, token, property, root } = await account({ STAY_CHECK: "1" });
+  it("is listed with the account's stay-check switch on, saves and reads the host's rules", SLOW, async () => {
+    const { m, token, property, root } = await account(["stay-check"]);
     const names = await m.toolNames(PATH, token);
     expect(names.filter((name) => TOOLS.includes(name)).sort()).toEqual([...TOOLS].sort());
     const asked = await m.toolAt(PATH, token, "get_house_rules", { property: property.id });
@@ -61,7 +64,7 @@ describe("house rules on the shared service", () => {
   });
 
   it("refuses a rule with a door code, and keeps the saved rules", SLOW, async () => {
-    const { m, token, property, root } = await account({ STAY_CHECK: "true" });
+    const { m, token, property, root } = await account(["stay-check"]);
     await m.toolAt(PATH, token, "save_house_rules", { property: property.id, rules: RULES });
     const refused = await m.toolAt(PATH, token, "save_house_rules", { property: property.id, rules: [{ text: `Lockbox ${["4", "8", "2", "1"].join("")} by the side door` }] });
     expect(refused.isError).toBe(true);
@@ -69,7 +72,7 @@ describe("house rules on the shared service", () => {
   });
 
   it("an empty list clears the rules", SLOW, async () => {
-    const { m, token, property, root } = await account({ STAY_CHECK: "1" });
+    const { m, token, property, root } = await account(["stay-check"]);
     await m.toolAt(PATH, token, "save_house_rules", { property: property.id, rules: RULES });
     const cleared = await m.toolAt(PATH, token, "save_house_rules", { property: property.id, rules: [] });
     expect(cleared.isError).toBe(false);
@@ -79,7 +82,7 @@ describe("house rules on the shared service", () => {
   });
 
   it("allow_for_stay takes a check-in date and kinds", SLOW, async () => {
-    const { m, token, property, root } = await account({ STAY_CHECK: "1" });
+    const { m, token, property, root } = await account(["stay-check"]);
     const allowed = await m.toolAt(PATH, token, "allow_for_stay", { property: property.id, checkIn: "2026-11-20", allow: ["pets"] });
     expect(allowed.isError).toBe(false);
     expect(readStayCheck(root).allowances).toEqual([{ checkIn: "2026-11-20", allow: ["pets"] }]);

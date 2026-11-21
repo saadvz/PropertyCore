@@ -60,7 +60,7 @@ is gone, the oldest live connection stands in.
 the pool or a typed Twilio number (the page points the number's webhook at this
 service), keep the number pool topped up, hand out invite codes
 with the one connector address (`/mcp`), pick the primary, disconnect a chat,
-turn a tenant off, or delete it. The page lists each account's properties and
+turn a tenant off, or delete it, and turn each feature on or off for an account (see Feature switches). The page lists each account's properties and
 flows, with a health line per property, and can turn a flow off with force,
 which sends nothing. It can make an account with no properties a touring
 account. The host's chat adds properties and turns flows on. The page never
@@ -82,8 +82,7 @@ bought and registered ahead of time and kept in a pool,
   account with the ready number that has waited longest, records it, and
   points its SMS webhook at `/webhooks/twilio/cleaner-core` and its voice
   webhook at `/webhooks/twilio/voice` in one call, clearing any TwiML App.
-  A line pointed before voice gets its voice webhook once at startup, only
-  while `FIXER_CORE` is on. Two sign-ups never get
+  A line pointed before voice gets its voice webhook once at startup. Two sign-ups never get
   the same number. With no ready number, sign-up is refused and the log says
   so. `/admin`'s "Add a host" with a blank number makes the same call. A typed
   number is recorded in the pool too, unless it is resting.
@@ -109,8 +108,8 @@ Each tenant is an **account** with one text line and one or more
 **properties**. Each property has its own folder,
 `/data/tenants/<id>/properties/<pid>/`, which is the root of an ordinary
 Cleaner Core and Supply Core desk, and switches each flow on or off on its own:
-Cleaner Core (`cleaning`), Supply Core (`supplies`), and Fixer Core (`fixer`,
-refused without `FIXER_CORE=1`). The account keeps the line, the secrets, the chats, and
+Cleaner Core (`cleaning`), Supply Core (`supplies`), and Fixer Core (`fixer`).
+The account keeps the line, the secrets, the chats, and
 their alert routines.
 
 - **Migration.** At startup, a `tenants.json` older than version 3 moves each
@@ -141,8 +140,7 @@ their alert routines.
 ## Fixer Core
 
 Fixer Core (`fixer`) gets a property's repairs and upkeep done. It turns on for
-a property only with `FIXER_CORE=1` on the service, and only for Grok Bot and
-Muse; Claude and ChatGPT get one plain line saying so. A property with it off
+a property only with the host's yes, and only for Grok Bot and Muse; Claude and ChatGPT get one plain line saying so. A property with it off
 behaves exactly as before, and the host can turn it off, which cancels open
 jobs after their yes. Each property keeps its pros, jobs, costs and visit
 pages in its own folder, and the visit page answers only on its own property's
@@ -152,6 +150,92 @@ for the account. The agent finds pros with its own search, since there's no
 partner network in v1. Fixer Core never pays or takes a card, and the door
 code reaches only the pro's own phone for the visit.
 **Gates.** `docs/fixer-core-safety-gates.md`.
+
+## Feature switches
+
+The design is
+`docs/superpowers/specs/2026-11-21-per-account-feature-switches-design.md`.
+Each roadmap feature (#236) has its own switch per account on Saad's admin page, under Features on the
+account's page. Every switch starts off. Only `/admin` changes one, behind its password; no agent tool can. Each
+change is kept on the account with who changed it and when (`features` and `featureChanges` in `tenants.json`),
+takes effect on the next request, and needs no redeploy. One account's switch never reaches another account.
+
+Every check goes through `featureOn(account, feature)` in `src/features/features.ts`: the account's switch, then
+`FEATURES_OFF` on the service, which shuts a feature off for everyone, then the service's credentials for locks
+and cameras. A desk gets its own account's switches in its environment (`PROPERTY_CORE_ACCOUNT_FEATURES`, set per
+request; the process's value is ignored) and asks the same rule with `deskFeatureOn`. The host's own
+per-property yes still applies on top.
+
+Always on, because it only records and sends nothing: the visit log. Cleaner Core and Fixer Core write each
+property's `visit-events/<YYYY-MM>.jsonl` (append-only: each text to and from the cleaner, the host and pros, with
+digit runs and the door code taken out and no phone number, and each visit window as it was set or moved). Lock
+events reach it only with Connected locks on, and camera events only with Cameras on.
+
+Behind each account's switch:
+
+- **Visit records (`visits`).** `list_visits`, `visit_health` and `name_lock_code`, listed for every agent on the
+  account when any property runs Cleaner Core or Fixer Core. Visit records are rebuilt from the log on every read.
+  Only with a connected lock: a cleaner not in 30 minutes after the expected time (15 on a same-day turnover) gets
+  one text, and the host one note when the next check-in is at risk, on a no-show, on a failed arrival-day check,
+  or when the cleaner's code opens the door outside a cleaning; a pro or crew not in by the start plus 30 minutes
+  is one Fixer Core news line. Routine vendor visits (a standing yes) and service notices need it too. Without a
+  lock, nothing new is sent. The hours log uses measured visit times when a record has both ends. No tool writes a
+  lock event: they come from the lock connection (#180).
+- **Hours log (`hours`).** `review_hours`, `export_hours` and `save_hours_settings`, listed when any property runs
+  a flow. The rows are rebuilt from the property's own records on every call; `hours.json` keeps only the host's
+  settings and each month's confirmation, with the owner's actions it confirmed. Each flow keeps its own record of
+  the host's approvals whatever the switch says, so an approval replaced before its month is confirmed still shows.
+  It texts nobody and holds no Google or Microsoft token: the agent writes the host's own spreadsheet with its own
+  connector. Owner rows come from the host's own standing lock code, on connected locks (#180).
+- **Nightly stay check (`stay-check`).** `get_house_rules`, `save_house_rules`, `allow_for_stay` and
+  `mark_flag_false`, listed when any property runs a flow. The agent saves a check only for a rule it read back and
+  the host agreed to. `stay-check.json` keeps the rules, the check time, per-stay allowances and the sightings each
+  kind needs after false flags. It texts nobody; sending the alert waits on #250.
+- **Guest messages (`guest-messages`).** `get_guest_facts`, `save_guest_facts`, `read_guest_message` and
+  `save_guest_reply`, listed when any property runs a flow, the guest-message instruction on connect, and Cleaner
+  Core's `set_late_checkout`. Property Core returns the guest's words, the stay and the house facts that answer
+  them, and the agent drafts a reply from only those. `guest-facts.json`, `guest-messages.jsonl` (append-only,
+  door codes removed) and `guest-approvals.json` are in the property's folder. Nothing reaches a guest from
+  Property Core: the host pastes each approved reply into Airbnb.
+- **Package arrivals (`packages`).** `check_packages`, `mark_package_seen`, `plan_bring_in`, `mark_brought_in` and
+  `save_package_settings`, listed when any property runs Supply Core. Expected deliveries are read from Supply
+  Core's placed orders; `packages.json` keeps when each was seen and how, the bring-in visit and the host's
+  bring-in settings. A package expected and not seen by 9 PM local on its day is flagged once. Without connected
+  locks it texts nobody. With Connected locks on and the property on them, `approve_bring_in_code` is listed too,
+  and the picked person (the cleaner, a co-host or an assistant who said YES) gets their own bring-in code for the
+  window, by one text under the host's `release.packages` choice (ask by default).
+- **Expected visits (`oversight`).** `add_expected_visit`, `list_expected_visits` and `cancel_expected_visit`,
+  listed when any property runs a flow. The agent saves a visit only after reading it back and the host agreeing.
+  `oversight.json` keeps the visits and when each was flagged. A visit with no entry is flagged the same day: 1 hour
+  after its window, or at 8 PM for an all-day visit. It reads the visit log: unlocks and lock status only with
+  Connected locks on and the property on them, camera sightings only with Cameras on; otherwise a visit is "can't
+  tell". It texts nobody; sending the flag waits on #250.
+- **Booking platforms (`booking-platforms`).** `save_sources` takes `bookingEmails` (Airbnb, Vrbo, Booking.com,
+  the host's own site or Other, with each sender) and `shareSamples`; `get_state` and `check_now` return
+  `bookingEmails` and `waitingBookings`; `read_booking_email` takes `extracted` and `email.authentication`; and the
+  setup asks where the host takes bookings. An email from any platform but Airbnb is read only from its saved
+  sender, and changes nothing until the host says yes to that booking. An email whose sender check fails changes
+  nothing. Off, every property reads Airbnb's emails only, exactly as before.
+- **Connected locks (`locks`).** Needs `SEAM_API_KEY` and `SEAM_WEBHOOK_SECRET` on the service. `get_locks`,
+  `connect_lock`, `save_locks`, `lock_settings` and the standing code tools, listed when a property runs Cleaner
+  Core or Fixer Core, and `POST /webhooks/seam` takes the partner's events for the account. A property switches to
+  connected locks only with the host's yes, every door the cleaner and pros use connected, and a working alerts
+  routine. Each cleaner and pro then gets their own code per visit, sealed in `door-grants.json` with the account's
+  own server key. With the switch off, or a property not switched on, every door code works exactly as before and
+  an event for the account is dropped. Turned on for an account only after the gates in
+  `docs/cleaner-core-safety-gates.md` and `docs/fixer-core-safety-gates.md` are green and Saad okays it.
+- **Guest codes (`guest-codes`).** Needs Connected locks on for the same account. `get_guest_codes`,
+  `guest_codes`, `make_guest_code`, `guest_code_link` and the lease tools; the lock clock keeps each stay's code in
+  step with `booking-emails.jsonl` and late checkouts, and `/locks/guest/<token>` serves the single-use page. Only
+  a property on connected locks whose host chose automatic or ask gets guest codes; leases each take the host's
+  yes. With it off, nothing changes.
+- **Cameras (`cameras`).** Needs `CAMERA_TOKEN_KEY` and the three `RING_*` secrets on the service; counting also
+  needs `CAMERA_DETECTOR_MODEL`. `connect_cameras`, `list_cameras`, `pick_cameras`, `disconnect_cameras`,
+  `check_night`, `stay_timeline` and `pin_clip`, listed when any property runs a flow. `POST /webhooks/ring`,
+  `/cameras/connect/<link>` and `/cameras/ring/linked` answer once some account has Cameras on, and each event or
+  link is checked against its own account. The host signs in on Ring's own page; only the outdoor cameras they
+  pick are read. `cameras.json` keeps the picks, the consent time and notes waiting for the host. No image is
+  kept; a clip is copied to `evidence/` only when the host pins it. It texts nobody.
 
 ## Touring (parked)
 

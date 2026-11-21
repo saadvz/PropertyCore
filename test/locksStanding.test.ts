@@ -12,6 +12,7 @@ import { emptyLocks, packagesRelease, storedDevice } from "../src/locks/settings
 import { handleLockTool, LOCK_TOOLS } from "../src/locks/tools";
 import { entryEventsFrom } from "../src/visits/events";
 import { visitLogFor } from "../src/visits/store";
+import { deskFeatures } from "./featureEnv";
 
 /**
  * Lock setup and standing codes (#180) on the fake lock adapter: the host's yes for each change, all
@@ -35,7 +36,7 @@ function world(options: { alerts?: boolean; textsAllowed?: boolean; connected?: 
   const root = mkdtempSync(join(tmpdir(), "lock-desk-"));
   roots.push(root);
   let clock = new Date(NOW);
-  const env: NodeJS.ProcessEnv = { SMART_LOCKS: "1", CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64") };
+  const env: NodeJS.ProcessEnv = { ...deskFeatures("locks"), CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64") };
   const fake = new FakeLockAdapter();
   setLockAdapter(fake);
   fake.addDevice("acct", { id: "dev-front", name: "Front door" });

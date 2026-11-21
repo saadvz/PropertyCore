@@ -5,6 +5,8 @@ import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { BOOKING_EMAILS_FILE, readBookingEmails } from "../src/hub/bookingEmails";
 import { sampleEmail } from "./airbnbEmails";
 import { closeHostedApps } from "./cleanerOauthHarness";
+import { switchOn } from "./featureEnv";
+import type { Feature } from "../src/features/features";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 import { BUSINESS } from "./wiringProof";
 
@@ -21,10 +23,11 @@ afterEach(() => {
   closeHostedApps();
 });
 
-async function twoProperties(courtName = "Harbor Cottage by the Water", laneName = "Lane House", env?: NodeJS.ProcessEnv) {
-  open = await multiTenantApp(env ? { env } : {});
+async function twoProperties(courtName = "Harbor Cottage by the Water", laneName = "Lane House", features: Feature[] = []) {
+  open = await multiTenantApp({});
   const m = open;
   const account = m.registry.create({ label: "Lane", twilioNumber: "+15555550150" }).tenant;
+  switchOn(m.registry, account.id, ...features);
   const token = await m.join(account.id, "grok");
   const lane = m.registry.addProperty(account.id, "12 Scratch Lane");
   m.registry.setFlow(account.id, lane.id, "cleaning", true);
@@ -74,7 +77,7 @@ describe("an Airbnb email on an account with two properties", () => {
   });
 });
 
-/** A booking from the host's own site (#263), with BOOKING_PLATFORMS on. Made-up reference. */
+/** A booking from the host's own site (#263), with the account's booking platforms on. Made-up reference. */
 const DIRECT = {
   from: "Court Stays <bookings@example.test>",
   subject: "New Booking DB-4417",
@@ -83,7 +86,7 @@ const DIRECT = {
   receivedAt: "2026-10-14T15:00:00.000Z",
 };
 const DIRECT_FIELDS = { kind: "confirmed", reference: "DB-4417", listing: "Court Flat", checkIn: { date: "2026-10-18" }, checkout: { date: "2026-10-22" }, guests: { adults: 2 } };
-const ON = { BOOKING_PLATFORMS: "1" };
+const ON: Feature[] = ["booking-platforms"];
 
 describe("a booking email from another platform on an account with two properties (#263)", () => {
   it("goes to the one property that saved its sender, and waits there for the host's yes", SLOW, async () => {

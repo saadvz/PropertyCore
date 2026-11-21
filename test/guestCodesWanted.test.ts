@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ParsedBookingEmail } from "../src/hub/airbnbEmail";
 import { appendBookingEmail, type BookingEmailOutcome } from "../src/hub/bookingEmails";
 import { appendGuestMessage } from "../src/guest-messages/store";
-import { emptyGuestCodes, guestCodesOn, guestStays, stayLabel, wantedGuestCodes, type GuestCodesFile } from "../src/locks/guestCodes";
+import { emptyGuestCodes, guestStays, stayLabel, wantedGuestCodes, type GuestCodesFile } from "../src/locks/guestCodes";
 
 /**
  * Which guest codes a property wants (#262): bookings from the booking-email log, 7 days ahead, for
@@ -42,15 +42,6 @@ const booked = (code: string, checkIn: string, checkout: string, times: { in?: s
 
 const mode = (value: GuestCodesFile["mode"], extra: Partial<GuestCodesFile> = {}): GuestCodesFile => ({ ...emptyGuestCodes(), mode: value, ...extra });
 const input = { now: NOW, timeZone: TZ };
-
-describe("the flag", () => {
-  it("is off unless GUEST_CODES is 1 or true", () => {
-    expect(guestCodesOn({})).toBe(false);
-    expect(guestCodesOn({ GUEST_CODES: "0" })).toBe(false);
-    expect(guestCodesOn({ GUEST_CODES: "1" })).toBe(true);
-    expect(guestCodesOn({ GUEST_CODES: "true" })).toBe(true);
-  });
-});
 
 describe("stays from the booking-email log", () => {
   it("wants a code for each booking within 7 days, for exactly its check-in to checkout", () => {

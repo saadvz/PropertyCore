@@ -11,6 +11,7 @@ import { hubFor, resetHubs } from "../src/hub/hub";
 import { peopleFor, resetPeople } from "../src/hub/people";
 import { buildVisits } from "../src/visits/derive";
 import { resetVisitLogCache, visitLogFor } from "../src/visits/store";
+import { deskFeatures } from "./featureEnv";
 
 /**
  * Completed-service notices (#237): the host's agent passes a vendor's email as received; it is kept append-only as
@@ -47,7 +48,7 @@ async function setup(options: { notices?: boolean; visitRecords?: boolean } = {}
   const account = mkdtempSync(join(tmpdir(), "notice-acct-"));
   dirs.push(root, account);
   const clock = new Date(NOW);
-  const env: NodeJS.ProcessEnv = { CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64"), FIXER_CORE: "1", ...(options.visitRecords === false ? {} : { VISIT_RECORDS: "1" }) };
+  const env: NodeJS.ProcessEnv = { CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64"), ...(options.visitRecords === false ? {} : deskFeatures("visits")) };
   const now = () => clock;
   const hub = hubFor(root, { now });
   hub.saveProperty(PROPERTY);
@@ -123,10 +124,10 @@ describe("completed-service notices", () => {
     expect(w.log().read().filter((e) => e.type === "service-notice")).toHaveLength(0);
   });
 
-  it("is refused until the host turned notices on, and with visit records off", async () => {
+  it("is refused until the host turned notices on, and with the account's visits switch off", async () => {
     const off = await setup({ notices: false });
     expect((await off.desk().saveServiceNotice({ email: off.email() })).isError).toBe(true);
-    const noRecords = await setup({ notices: false, visitRecords: false });
+    const noRecords = await setup({ visitRecords: false });
     expect((await noRecords.desk().saveServiceNotice({ email: noRecords.email() })).isError).toBe(true);
   });
 });

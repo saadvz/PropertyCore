@@ -5,7 +5,8 @@ import type { DoorAccess, GrantNote } from "../hub/doorAccess";
 import { sameHash } from "../hub/uploadCode";
 import { ConfirmationBook } from "../operator/confirmations";
 import { recordLockConnection } from "./eventLog";
-import { lockAdapter, smartLocksOn } from "./registry";
+import { lockAdapter } from "./registry";
+import { deskFeatureOn } from "../features/features";
 import { allDoorsConnected, packagesRelease, readDoorLocks, storedDevice, type DoorLocksFile, type ReleaseMode, type StandingPerson, type StandingRole } from "./settings";
 
 export type { StandingPerson, StandingRole };
@@ -87,7 +88,7 @@ export class LockDesk {
   }
 
   private available(): boolean {
-    return smartLocksOn(this.deps.env()) && Boolean(lockAdapter());
+    return deskFeatureOn(this.deps.env(), "locks") && Boolean(lockAdapter());
   }
 
   private confirm(action: string, fingerprint: string, code: string | undefined, question: string): LockReply | "go" {

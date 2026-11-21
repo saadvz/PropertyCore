@@ -319,7 +319,7 @@ const SCRATCH_TOOL_LIST = [
 const BASE_EMAIL = TOOLS.find((tool) => tool.name === "read_booking_email")!;
 const BASE_SOURCES = TOOLS.find((tool) => tool.name === "save_sources")!;
 
-/** With BOOKING_PLATFORMS on (#263), these replace read_booking_email and save_sources. Off, TOOLS lists exactly as before. */
+/** With the account's booking platforms on (#263), these replace read_booking_email and save_sources. Off, TOOLS lists exactly as before. */
 const PLATFORM_TOOLS: Record<string, (typeof TOOLS)[number]> = {
   read_booking_email: {
     ...BASE_EMAIL,
@@ -380,7 +380,7 @@ function platformsListed(desk: LiveDesk): boolean {
   return typeof desk.bookingPlatformsOn === "function" && desk.bookingPlatformsOn();
 }
 
-/** set_late_checkout is listed only with guest messages (#242) on; the booking platform variants only with BOOKING_PLATFORMS on. */
+/** set_late_checkout is listed only with guest messages (#242) on; the booking platform variants only with booking platforms on. */
 function listedTools(scratchTools: boolean, guestMessages = false, platforms = false) {
   const tools = TOOLS.filter((tool) => guestMessages || tool.name !== "set_late_checkout").map((tool) => (platforms && PLATFORM_TOOLS[tool.name]) || tool);
   return scratchTools ? [...tools, ...SCRATCH_TOOL_LIST] : tools;

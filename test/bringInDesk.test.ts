@@ -10,6 +10,7 @@ import { emptyLocks, storedDevice } from "../src/locks/settings";
 import { CODE_WAITING, packageDeskFor, resetPackageDesks } from "../src/package-arrivals/desk";
 import { visitLogFor } from "../src/visits/store";
 import { cleanupFolders, order, propertyFolder, PROPERTY_ID, writeOrders } from "./packageFixture";
+import { deskFeatures } from "./featureEnv";
 
 /**
  * #241: the bring-in person's own code on connected locks. The fake lock adapter, 555 numbers, made-up orders
@@ -50,7 +51,7 @@ function setup(opts: { connected?: boolean; packages?: "ask" | "automatic"; text
   const fake = new FakeLockAdapter();
   setLockAdapter(fake);
   const front = fake.addDevice("acct-1", { id: "dev-front", name: "Front door" });
-  const env = { SMART_LOCKS: opts.connected === false ? "0" : "1", CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64") };
+  const env = { ...(opts.connected === false ? {} : deskFeatures("locks")), CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64") };
   const door = hubFor(root, { now }).doorAccess(() => env);
   door.useSleep(async () => undefined);
   door.save(SAVED, "back door", undefined);

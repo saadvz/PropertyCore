@@ -14,6 +14,7 @@ import { handleGuestTool, GUEST_TOOLS } from "../src/locks/guestTools";
 import { setLockAdapter } from "../src/locks/registry";
 import { emptyLocks, storedDevice } from "../src/locks/settings";
 import type { LockReply } from "../src/locks/desk";
+import { deskFeatures } from "./featureEnv";
 
 /**
  * The guest-code desk (#262) on the fake lock adapter: the host's choice, a code for each stay 7 days
@@ -50,7 +51,7 @@ function world(options: { env?: NodeJS.ProcessEnv; connected?: boolean; textsAll
   const root = mkdtempSync(join(tmpdir(), "guest-desk-"));
   roots.push(root);
   let clock = new Date(NOW);
-  const env: NodeJS.ProcessEnv = options.env ?? { SMART_LOCKS: "1", GUEST_CODES: "1", CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64") };
+  const env: NodeJS.ProcessEnv = options.env ?? { ...deskFeatures("guest-codes"), CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64") };
   const fake = new FakeLockAdapter();
   setLockAdapter(fake);
   const front = fake.addDevice("acct", { id: "dev-front", name: "Front door" });
@@ -95,7 +96,7 @@ function files(root: string): string {
 
 describe("off means unchanged", () => {
   it("does nothing without the flag, without connected locks, or before the host chooses", async () => {
-    for (const options of [{ env: { SMART_LOCKS: "1" } }, { connected: false }, {}]) {
+    for (const options of [{ env: deskFeatures("locks") }, { connected: false }, {}]) {
       const { root, desk, fake } = world(options);
       email(root, booked("HMSCRATCHAA", "2026-12-12", "2026-12-15"));
       expect(await desk.sync()).toEqual([]);

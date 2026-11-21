@@ -9,7 +9,7 @@ import { codeKey } from "./events";
  * file per month written. A line is written once and never edited or removed. A line that won't parse is skipped and
  * counted, never repaired. An id already in the log is not written again, so a resent webhook or a replay adds
  * nothing. No line holds a door code, a run of 4 or more digits in a name or body, or a phone number. The store has
- * no flag: each writer checks its own (VISIT_RECORDS for texts and windows, #180's for locks, CAMERAS for cameras).
+ * no flag: each writer checks its own (texts and windows always, locks with the account's locks on, cameras with its cameras on).
  */
 
 export const VISIT_EVENTS_DIR = "visit-events";

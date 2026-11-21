@@ -1,3 +1,4 @@
+import { FEATURE_INFO, FEATURES, type Feature, type FeatureState } from "../../features/features";
 import { POOL_LOW_AT, type PoolState, type PoolSummary } from "./numberPool";
 import type { Tenant } from "./registry";
 
@@ -83,12 +84,18 @@ function poolLines(pool: PoolSummary, link = true): string {
   return `${alert}<p>Number pool: ${pool.ready} ready, ${pool.resting} resting, ${pool.inUse} in use.${link ? ' <a href="/admin/pool">Manage the pool</a>' : ""}</p>`;
 }
 
+/** The account's own switches that are on, by title, or "none". */
+function switchedOn(t: Tenant): string {
+  const on = FEATURES.filter((feature) => t.features?.[feature]?.on === true).map((feature) => FEATURE_INFO[feature].title);
+  return on.length > 0 ? on.join(", ") : "none";
+}
+
 export function tenantsPage(tenants: Tenant[], csrf: string, error: string | undefined, healthOf: (t: Tenant) => TenantHealth = () => NO_HEALTH, pool: PoolSummary): string {
   const rows = tenants
     .map((t) => {
       const primary = t.connections.find((c) => c.grantId === t.primaryGrantId);
       const health = healthOf(t);
-      return `<tr><td><a href="/admin/tenants/${escape(t.id)}">${escape(t.label)}</a></td><td>${escape(t.twilioNumber)}</td><td>${escape(health.service)}</td><td>${escape(health.process)}</td><td>${escape(health.alerts)}</td><td>${escape(primary?.assistant ?? "none")}</td><td>${t.connections.length}</td><td>${escape(t.lastActivityAt ?? "never")}</td><td>${t.disabled ? "off" : "on"}</td></tr>`;
+      return `<tr><td><a href="/admin/tenants/${escape(t.id)}">${escape(t.label)}</a></td><td>${escape(t.twilioNumber)}</td><td>${escape(health.service)}</td><td>${escape(health.process)}</td><td>${escape(health.alerts)}</td><td>${escape(switchedOn(t))}</td><td>${escape(primary?.assistant ?? "none")}</td><td>${t.connections.length}</td><td>${escape(t.lastActivityAt ?? "never")}</td><td>${t.disabled ? "off" : "on"}</td></tr>`;
     })
     .join("\n");
   return shell(
@@ -97,8 +104,8 @@ export function tenantsPage(tenants: Tenant[], csrf: string, error: string | und
       ${errorLine(error)}
       ${poolLines(pool)}
       <table>
-        <tr><th>Host</th><th>Number</th><th>Properties</th><th>Touring process</th><th>Alerts</th><th>Primary</th><th>Connections</th><th>Last activity</th><th>Status</th></tr>
-        ${rows || '<tr><td colspan="9">No tenants yet.</td></tr>'}
+        <tr><th>Host</th><th>Number</th><th>Properties</th><th>Touring process</th><th>Alerts</th><th>Features on</th><th>Primary</th><th>Connections</th><th>Last activity</th><th>Status</th></tr>
+        ${rows || '<tr><td colspan="10">No tenants yet.</td></tr>'}
       </table>
       <h2>Add a host</h2>
       <form method="post" action="/admin/tenants">
@@ -140,7 +147,47 @@ function propertiesSection(t: Tenant, base: string, csrf: string, health: Tenant
       </table>`;
 }
 
-export function tenantPage(t: Tenant, csrf: string, error: string | undefined, health: TenantHealth, touringOffered: boolean): string {
+/** One feature switch as the account page shows it: the account's own switch, and what featureOn makes of it. */
+export interface FeatureRow {
+  feature: Feature;
+  /** The account's own switch. */
+  switchOn: boolean;
+  state: FeatureState;
+  changedAt?: string;
+  changedBy?: string;
+}
+
+const NOT_ON: Record<Exclude<FeatureState, { on: true }>["why"], string> = {
+  "no-account": "off",
+  "switch-off": "off",
+  "emergency-off": "off for every account: FEATURES_OFF names it",
+  "no-credentials": "off: the service doesn't have its credentials",
+  "needs-locks": "off until Connected locks is on for this account",
+};
+
+/**
+ * Each feature's switch for this account. Off by default. Only this page changes a switch, and each change is kept
+ * with who made it and when. An agent's tools can't reach it.
+ */
+function featuresSection(t: Tenant, base: string, csrf: string, rows: FeatureRow[]): string {
+  if (t.service === "touring") return "<p>Touring accounts have no feature switches.</p>";
+  const body = rows
+    .map((row) => {
+      const info = FEATURE_INFO[row.feature];
+      const now = row.state.on ? "on" : NOT_ON[row.state.why];
+      const changed = row.changedAt ? `${row.changedBy ?? "admin"}, ${row.changedAt}` : "never";
+      const fields = `<input type="hidden" name="feature" value="${escape(row.feature)}" /><input type="hidden" name="on" value="${row.switchOn ? "0" : "1"}" />`;
+      return `<tr data-feature="${escape(row.feature)}"><td>${escape(info.title)}<br /><small>${escape(info.covers)}</small></td><td>${row.switchOn ? "on" : "off"}</td><td>${escape(now)}</td><td>${escape(changed)}</td><td>${action(`${base}/features`, csrf, row.switchOn ? "Turn off" : "Turn on", fields)}</td></tr>`;
+    })
+    .join("\n");
+  return `<p>Each feature is off for an account until you turn it on here. A switch changes only this account, takes effect on the next request, and needs no redeploy.</p>
+      <table>
+        <tr><th>Feature</th><th>Switch</th><th>Now</th><th>Last changed</th><th></th></tr>
+        ${body}
+      </table>`;
+}
+
+export function tenantPage(t: Tenant, csrf: string, error: string | undefined, health: TenantHealth, touringOffered: boolean, features: FeatureRow[] = []): string {
   const base = `/admin/tenants/${t.id}`;
   const connections = t.connections
     .map((c) => {
@@ -157,6 +204,8 @@ export function tenantPage(t: Tenant, csrf: string, error: string | undefined, h
       <p>Service: ${escape(health.service)}. Touring process: ${escape(health.process)}. Restarts in the last day: ${health.restartsLastDay}. Texts waiting: ${health.queuedTexts}. Alerts: ${escape(health.alerts)}.</p>
       <h2>Properties</h2>
       ${propertiesSection(t, base, csrf, health, touringOffered)}
+      <h2>Features</h2>
+      ${featuresSection(t, base, csrf, features)}
       <h2>Connections</h2>
       <table>
         <tr><th>Chat</th><th>Connected</th><th></th><th></th></tr>

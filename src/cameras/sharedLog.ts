@@ -4,7 +4,7 @@ import type { EventLog, StoredLine } from "./lines";
 
 /**
  * The property's shared event log (#237's `visit-events/<YYYY-MM>.jsonl`) as the camera code sees it. Camera lines
- * are written under CAMERAS, whatever VISIT_RECORDS says: the store itself checks no flag (Saad, 19 Nov).
+ * are written for an account with cameras on (featureOn): the store itself checks no flag (Saad, 19 Nov).
  */
 export function sharedCameraLog(root: string, now?: () => Date): EventLog {
   const log = visitLogFor(root, now);

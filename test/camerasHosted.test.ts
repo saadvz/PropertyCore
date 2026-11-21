@@ -10,9 +10,11 @@ import { setCameraProviderForTests, tickAllCameras } from "../src/hosted/cameras
 import { resetVisitLogCache } from "../src/visits/store";
 import { writeStayCheck } from "../src/stay-check/store";
 import { closeHostedApps } from "./cleanerOauthHarness";
+import { credentialsFor, switchOn } from "./featureEnv";
+import type { Feature } from "../src/features/features";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 
-/** #239 on the shared service, behind CAMERAS=1: connecting, picking, webhooks, the night's check, notes. Fake provider only; nothing reaches Ring. */
+/** #239 on the shared service, behind each account's "cameras" switch: connecting, picking, webhooks, the night's check, notes. Fake provider only; nothing reaches Ring. */
 
 const LANE = "+15555550152";
 const PATH = "/mcp";
@@ -30,10 +32,12 @@ afterEach(() => {
   resetVisitLogCache();
 });
 
-async function account(env: NodeJS.ProcessEnv, clock: { now: Date }) {
-  open = await multiTenantApp({ env: { SUPPLY_CORE: "1", ...env }, now: () => clock.now });
+/** Ring's made-up credentials and the token key are always on the service here: the account's switch is what decides. */
+async function account(features: Feature[], clock: { now: Date }) {
+  open = await multiTenantApp({ env: { SUPPLY_CORE: "1", CAMERA_TOKEN_KEY: KEY, ...credentialsFor(["cameras"]) }, now: () => clock.now });
   const m = open;
   const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
+  switchOn(m.registry, tenant.id, ...features);
   const property = m.registry.addProperty(tenant.id, "12 Scratch Lane");
   m.registry.setFlow(tenant.id, property.id, "supplies", true);
   const root = propertyFolder(m.app.root, tenant.id, property);
@@ -75,9 +79,9 @@ async function connect(m: MultiTenantApp, token: string, propertyId: string) {
 }
 
 describe("cameras on the shared service", () => {
-  it("isn't listed or answered without CAMERAS, and Ring's webhook is not found", SLOW, async () => {
+  it("isn't listed or answered without the account's cameras switch, and Ring's webhook is not found", SLOW, async () => {
     withFake();
-    const { m, token, property } = await account({ CAMERA_TOKEN_KEY: KEY }, { now: new Date("2026-11-21T15:00:00.000Z") });
+    const { m, token, property } = await account([], { now: new Date("2026-11-21T15:00:00.000Z") });
     expect((await m.toolNames(PATH, token)).filter((name) => TOOLS.includes(name))).toEqual([]);
     expect((await m.toolAt(PATH, token, "list_cameras", { property: property.id })).isError).toBe(true);
     expect((await m.app.http("/webhooks/ring", { method: "POST", body: "{}" })).status).toBe(404);
@@ -86,7 +90,7 @@ describe("cameras on the shared service", () => {
   it("connects on Ring's own page, seals the tokens, picks only outdoor cameras, and stores signed events in the shared log", SLOW, async () => {
     const { provider } = withFake();
     const clock = { now: new Date("2026-11-21T15:00:00.000Z") };
-    const { m, tenant, token, property, root } = await account({ CAMERAS: "1", CAMERA_TOKEN_KEY: KEY }, clock);
+    const { m, tenant, token, property, root } = await account(["cameras"], clock);
     expect((await m.toolNames(PATH, token)).filter((name) => TOOLS.includes(name)).sort()).toEqual([...TOOLS].sort());
 
     const { linkPath, state } = await connect(m, token, property.id);
@@ -116,7 +120,7 @@ describe("cameras on the shared service", () => {
   it("counts the night's events, flags the night, lays out the stay and pins one clip", SLOW, async () => {
     const { provider, counter } = withFake();
     const clock = { now: new Date("2026-11-21T15:00:00.000Z") };
-    const { m, token, property, root } = await account({ CAMERAS: "1", CAMERA_TOKEN_KEY: KEY }, clock);
+    const { m, token, property, root } = await account(["cameras"], clock);
     writeStayCheck(root, { rules: [{ text: "No more than 6 guests", check: { kind: "people", max: 6 } }], sightings: {}, allowances: [] });
     await connect(m, token, property.id);
     await m.toolAt(PATH, token, "pick_cameras", { property: property.id, cameras: [{ deviceId: "dev-aaa", outdoor: true }] });
@@ -139,7 +143,7 @@ describe("cameras on the shared service", () => {
   it("a camera offline for 30 minutes is one note for the host, and one when it's back", SLOW, async () => {
     const { provider } = withFake();
     const clock = { now: new Date("2026-11-21T19:00:00.000Z") };
-    const { m, token, property } = await account({ CAMERAS: "1", CAMERA_TOKEN_KEY: KEY }, clock);
+    const { m, token, property } = await account(["cameras"], clock);
     await connect(m, token, property.id);
     await m.toolAt(PATH, token, "pick_cameras", { property: property.id, cameras: [{ deviceId: "dev-aaa", outdoor: true }] });
     const off = provider.webhook({ id: "off-1", at: "2026-11-21T19:10:00.000Z", deviceId: "dev-aaa", kind: "offline" });
@@ -159,5 +163,32 @@ describe("cameras on the shared service", () => {
     await tickAllCameras(m.hosted());
     await tickAllCameras(m.hosted());
     expect((await m.toolAt(PATH, token, "list_cameras", { property: property.id })).structured?.notes).toEqual([{ id: "camera-online:on-1", text: "The Front door camera at 12 Scratch Lane is back online." }]);
+  });
+
+  it("an account whose cameras are switched off gets no tools, no link and no events, while another account's stay on", SLOW, async () => {
+    const { provider } = withFake();
+    const clock = { now: new Date("2026-11-21T15:00:00.000Z") };
+    const { m, tenant, token, property, root } = await account(["cameras"], clock);
+    const started = await m.toolAt(PATH, token, "connect_cameras", { property: property.id });
+    const linkPath = new URL(String(started.structured?.link)).pathname;
+    // A second account on the same service keeps cameras on, so Ring's webhook still answers.
+    const other = m.registry.create({ label: "Court", twilioNumber: "+15555550153" }).tenant;
+    switchOn(m.registry, other.id, "cameras");
+    m.registry.setFeature(tenant.id, "cameras", false, "admin");
+    expect((await m.toolNames(PATH, token)).filter((name) => TOOLS.includes(name))).toEqual([]);
+    expect((await m.toolAt(PATH, token, "list_cameras", { property: property.id })).isError).toBe(true);
+    expect((await m.app.http(linkPath)).status).toBe(404);
+    const delivery = provider.webhook({ id: "req-off", at: "2026-11-21T02:14:00.000Z", deviceId: "dev-aaa", kind: "motion", label: "human" });
+    expect((await m.app.http("/webhooks/ring", { method: "POST", headers: delivery.headers, body: delivery.body.toString() })).status).toBe(200);
+    let log = "";
+    try {
+      log = readFileSync(join(root, "visit-events", "2026-11.jsonl"), "utf8");
+    } catch {
+      log = "";
+    }
+    expect(log).not.toContain("req-off");
+    // With no account on, the routes are not found again.
+    m.registry.setFeature(other.id, "cameras", false, "admin");
+    expect((await m.app.http("/webhooks/ring", { method: "POST", headers: delivery.headers, body: delivery.body.toString() })).status).toBe(404);
   });
 });

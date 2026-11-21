@@ -8,7 +8,6 @@ import { ConfirmationBook } from "../operator/confirmations";
 import type { CodeWindow } from "./adapter";
 import { normalizePhone, type LockReply } from "./desk";
 import {
-  guestCodesOn,
   guestStays,
   leaseJob,
   leaseWindow,
@@ -27,7 +26,8 @@ import {
   type StayCodeState,
   type WantedInput,
 } from "./guestCodes";
-import { lockAdapter, smartLocksOn } from "./registry";
+import { lockAdapter } from "./registry";
+import { deskFeatureOn } from "../features/features";
 
 /**
  * Guest codes for one property (#262): the host's choice of how they work, a code for each stay in the
@@ -105,10 +105,9 @@ export class GuestCodeDesk {
     this.approvals = new ConfirmationBook(APPROVAL_MS, () => this.deps.now().getTime(), { file: join(root, "guest-code-approvals.json") });
   }
 
-  /** Guest codes on the service: GUEST_CODES and SMART_LOCKS with a lock adapter. */
+  /** Guest codes for this account: its "guest-codes" switch (which needs its locks on), with a lock adapter. */
   available(): boolean {
-    const env = this.deps.env();
-    return guestCodesOn(env) && smartLocksOn(env) && Boolean(lockAdapter());
+    return deskFeatureOn(this.deps.env(), "guest-codes") && Boolean(lockAdapter());
   }
 
   private door(): DoorAccess {

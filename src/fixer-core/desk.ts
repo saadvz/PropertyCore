@@ -35,7 +35,7 @@ import { crewScheduleProblem, crewWindowAt, crewWindows, type CrewSchedule, type
 import { MAX_VENDOR_HOURS, parseVendorTime } from "./vendorTime";
 import { appendServiceNotice, cleanNoticeText, MAX_NOTICE_BODY, noticeDates, noticeHash, readServiceNotices, senderAddress, type ServiceNoticeInput } from "./serviceNotices";
 import { scheduleWords, vendorCalledOffNews, vendorTakenNews, vendorTimeTaken, vendorTooManyQuestion, standingOffQuestion, standingQuestion, vendorConfirmed, vendorConfirmedNews, vendorHeldQuestion, vendorMoved, vendorMovedNews, vendorNoAnswerNews, vendorNoDayNews, vendorProposal, visitWhen, VENDOR_ASKING_HOST } from "./texts";
-import { visitRecordsOn } from "../cleaner-core/flag";
+import { deskFeatureOn } from "../features/features";
 import { buildVisits } from "../visits/derive";
 import { fixerDue } from "../visits/due";
 import { crewVisit, repairVisit, type WindowEvent } from "../visits/events";
@@ -1029,13 +1029,12 @@ export class FixerDesk {
   }
 
   /**
-   * A standing yes as asked (#237), checked: visit records on, a saved pro with a phone who texts on the line, and
+   * A standing yes as asked (#237), checked: the account's visit records on, a saved pro with a phone who texts on the line, and
    * usual hours "HH:MM" to "HH:MM" the same day, at most 4 hours. Null takes one back. A string is the refusal.
    */
   private standingOf(file: FixerFile, raw: NonNullable<UpkeepInput["standing"]> | null, what: string, existing: Upkeep | undefined): Omit<StandingYes, "yesAt"> | null | string {
     if (raw === null) return existing?.standing ? null : "That upkeep item has no standing yes to take back.";
-    const env = this.deps.env?.();
-    if (!env || !visitRecordsOn(env)) return "Routine vendor visits aren't on for this service yet. Save the upkeep without standing, and you'll be asked each time.";
+    if (!this.visitsOn()) return "Routine vendor visits aren't on for this account yet. Save the upkeep without standing, and you'll be asked each time.";
     if (!what) return "Say what it is.";
     const pro = file.pros.find((entry) => entry.id === raw.proId && entry.status === "saved");
     if (!pro) return "Pick a pro from your saved list for the standing yes.";
@@ -2649,10 +2648,15 @@ export class FixerDesk {
     });
   }
 
-  /** The property's visit log (#237), only while VISIT_RECORDS is on. */
-  private visitLog(): VisitLog | undefined {
+  /** The property's visit log (#237). Always written: it only records and sends nothing. */
+  private visitLog(): VisitLog {
+    return visitLogFor(this.root, () => this.deps.now());
+  }
+
+  /** The account's "visits" switch: the news lines, routine vendor visits and service notices (#237). Off by default. */
+  private visitsOn(): boolean {
     const env = this.deps.env?.();
-    return env && visitRecordsOn(env) ? visitLogFor(this.root, () => this.deps.now()) : undefined;
+    return Boolean(env && deskFeatureOn(env, "visits"));
   }
 
   /** The last window written per visit, read once from the log. */
@@ -2660,7 +2664,7 @@ export class FixerDesk {
 
   /**
    * Visit records' pass (#237): writes each booked visit's window (one per workday for a crew) when it's set or
-   * moved, and a cancel when it's called off; then, with a connected lock, one news line each for a pro or crew not
+   * moved, and a cancel when it's called off; then, with the account's "visits" switch and a connected lock, one news line each for a pro or crew not
    * in by the start plus 30 minutes, and for a pro's code used outside their visit. Pros are never texted about it.
    * A failure here never stops the clock pass.
    */
@@ -2698,6 +2702,7 @@ export class FixerDesk {
         if (job?.state === "done") continue;
         if (log.append({ type: "visit-cancelled", id: `cancel:${visit}:${at}`, at, visit })) this.visitSigs.set(visit, "cancelled");
       }
+      if (!this.visitsOn()) return;
       const derived = buildVisits(log.read(), { timeZone: this.timeZone(), codeNames: log.codeNames(), now: this.deps.now() });
       const proName = (proId: string | undefined) => file.pros.find((pro) => pro.id === proId)?.name ?? "A pro";
       for (const item of fixerDue(derived, { now: this.deps.now(), timeZone: this.timeZone(), proName })) {
@@ -2718,14 +2723,13 @@ export class FixerDesk {
   private static readonly VENDOR_DAYS = 7;
 
   /**
-   * Routine vendor visits (#237), on the clock pass with visit records on: for each upkeep item with a standing yes
+   * Routine vendor visits (#237), on the clock pass with the account's visit records on: for each upkeep item with a standing yes
    * whose lead time has opened, the vendor's usual hours on the first day from the due date that fits between stays
    * (up to 7 days later) become a booked visit under that yes, and the vendor is texted the proposal once. No code is
    * made until they confirm. When no day fits, the host hears once and the item is left to today's upkeep flow.
    */
   private async vendorPass(file: FixerFile, notes: HostNote[]): Promise<void> {
-    const env = this.deps.env?.();
-    if (!env || !visitRecordsOn(env) || this.staysUnknown()) return;
+    if (!this.visitsOn() || this.staysUnknown()) return;
     const people = this.deps.people?.();
     const here = this.deps.propertyId;
     if (!people || !here) return;
@@ -2787,8 +2791,7 @@ export class FixerDesk {
 
   /** The vendor's own routine visit a text is about: proposed and waiting, or confirmed and not over. The earliest first. */
   private vendorJobOf(file: FixerFile, proId: string): Job | undefined {
-    const env = this.deps.env?.();
-    if (!env || !visitRecordsOn(env)) return undefined;
+    if (!this.visitsOn()) return undefined;
     const now = this.deps.now().getTime();
     return file.jobs
       .filter((job) => job.booking?.vendor && job.booking.proId === proId && job.booking.hostYes && liveBooking(job) && !job.done && now < this.endOf(job.booking))
@@ -2997,7 +3000,7 @@ export class FixerDesk {
       const off = this.inactive(file);
       if (off) return off;
       const log = this.visitLog();
-      if (!log || !file.settings.serviceNotices) return fail("Service notices aren't on for this property. The host turns them on with save_fixer_settings.");
+      if (!this.visitsOn() || !file.settings.serviceNotices) return fail("Service notices aren't on for this property. The host turns them on with save_fixer_settings.");
       const email = input.email;
       if (!email || typeof email.from !== "string" || typeof email.subject !== "string" || typeof email.body !== "string" || !email.body.trim()) return fail("Pass the email as received: from, subject and body.");
       if (email.body.length > MAX_NOTICE_BODY || email.subject.length > 500 || email.from.length > 300) return fail("That email is too long to keep.");

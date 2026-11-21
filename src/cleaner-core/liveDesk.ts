@@ -17,7 +17,8 @@ import { dollarsText, MAX_PAY_REMINDERS, nextReminderAt, payCents, venmoPayLink,
 import { joinSplitDigits } from "../hub/digits";
 import { sameHash, uploadHash } from "../hub/uploadCode";
 import { isDeparture, openCleanerCore, redactDigitRuns, SAFETY, storedConsent, type CleanerCore, type CleanerText, type JobStatus, type MessageHandled, type ReceiveResult, type TextKind } from "./core";
-import { bookingPlatformsOn, cleanerMultiTenant, groupChatEnabled, guestMessagesOn, visitRecordsOn } from "./flag";
+import { cleanerMultiTenant, groupChatEnabled } from "./flag";
+import { deskFeatureOn } from "../features/features";
 import { visitLogFor } from "../visits/store";
 import { LATE_CHECKOUT_ACTION, setLateCheckout } from "./lateCheckout";
 import { GROUP_RECIPIENT, draftStatus, earlierThan, replyStateAt, type ReplyState, type StoredDraft } from "./replies";
@@ -363,7 +364,7 @@ interface SourcesInput {
   uploadLink?: { name?: string };
   /** The host has no more booking calendars to add. */
   done?: boolean;
-  /** The platforms the host takes bookings on (#263), with BOOKING_PLATFORMS on. Saved alone, the calendars stay as they are. */
+  /** The platforms the host takes bookings on (#263), with the account's booking platforms on. Saved alone, the calendars stay as they are. */
   bookingEmails?: Partial<EmailSource>[];
   /** The host agreed that redacted copies of their Vrbo and Booking.com emails may be kept as samples (#263). */
   shareSamples?: boolean;
@@ -2285,7 +2286,7 @@ export class LiveDesk {
       cleanerName: () => this.file.cleanerName ?? "your cleaner",
       issueApproval: (target, fingerprint, next, action = CANCEL_ACTION) => this.approvals.issue(action, target, fingerprint, next),
       redeem: (code, target, fingerprint, action = CANCEL_ACTION) => this.redeemed(this.approvals, code, action, target, fingerprint),
-      platformsOn: () => bookingPlatformsOn(this.env()),
+      platformsOn: () => this.bookingPlatformsOn(),
       sources: () => this.hub.bookingSources(),
     };
   }
@@ -2616,12 +2617,12 @@ export class LiveDesk {
     });
   }
 
-  /** Booking emails from more platforms (#263) are on for this deployment. */
+  /** Booking emails from more platforms (#263) are on for this account. */
   bookingPlatformsOn(): boolean {
-    return bookingPlatformsOn(this.env());
+    return deskFeatureOn(this.env(), "booking-platforms");
   }
 
-  /** With BOOKING_PLATFORMS on (#263): which senders the agent passes, and the bookings waiting on the host. */
+  /** With the account's booking platforms on (#263): which senders the agent passes, and the bookings waiting on the host. */
   private bookingEmailsReply(): { bookingEmails?: string; waitingBookings?: number } {
     if (!this.bookingPlatformsOn()) return {};
     const saved = this.hub.bookingSourcesSaved();
@@ -2630,9 +2631,9 @@ export class LiveDesk {
     return { bookingEmails: `${bookingEmailsLine(this.hub.bookingSources())}${ask}`, ...(waiting > 0 ? { waitingBookings: waiting } : {}) };
   }
 
-  /** Guest messages (#242) are on for this deployment: set_late_checkout is listed and answered. */
+  /** Guest messages (#242) are on for this account: set_late_checkout is listed and answered. */
   guestMessagesOn(): boolean {
-    return guestMessagesOn(this.env());
+    return deskFeatureOn(this.env(), "guest-messages");
   }
 
   /**
@@ -3689,7 +3690,7 @@ export class LiveDesk {
     return { fill, confirm: DRAFT_CONFIRM, needsYou: needsYou.map(shown) };
   }
 
-  /** The platforms question (#263) is asked with BOOKING_PLATFORMS on, until the host saves an answer. */
+  /** The platforms question (#263) is asked with the account's booking platforms on, until the host saves an answer. */
   private asksPlatforms(): boolean {
     return this.bookingPlatformsOn() && !this.hub.bookingSourcesSaved();
   }
@@ -3977,8 +3978,9 @@ export class LiveDesk {
       updateSettleMs: updateSettle ?? UPDATE_SETTLE_MS,
       ...(this.primaryAssistant() !== "grok" ? { helperName: this.hostWords().helper } : {}),
       ...this.preferenceOptions(),
-      // Visit records (#237): only while VISIT_RECORDS is on. Without a connected lock, nothing new is sent.
-      ...(visitRecordsOn(this.env()) ? { visits: { log: visitLogFor(this.root), ...(this.file.cleanerName ? { cleanerName: this.file.cleanerName } : {}) } } : {}),
+      // Visit records (#237): the log is always written, since it only records. The late text and the host's notes
+      // need the account's "visits" switch, and without a connected lock nothing new is sent.
+      visits: { log: visitLogFor(this.root), notify: deskFeatureOn(this.env(), "visits"), ...(this.file.cleanerName ? { cleanerName: this.file.cleanerName } : {}) },
       ownerPhone: file.host,
       cleaner: { phone: file.cleaner, approved: true },
       access: this.doorPort(),

@@ -95,12 +95,6 @@ export function writeGuestCodes(root: string, file: GuestCodesFile): void {
   writeFileAtomic(join(root, GUEST_CODES_FILE), `${JSON.stringify(file)}\n`);
 }
 
-/** Guest codes on the service. Off unless GUEST_CODES is exactly "1" or "true". Needs SMART_LOCKS too. */
-export function guestCodesOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env.GUEST_CODES?.trim().toLowerCase();
-  return raw === "1" || raw === "true";
-}
-
 /**
  * True when a booking still needs the host's yes before it moves anything. A booking from a platform
  * without its own reader (#263) waiting on that yes is already left out of rebuildBookings, so none

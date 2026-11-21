@@ -18,8 +18,8 @@ record and the rules.
   call or message them, ask the host, and report every outcome back.
 
 Only Muse and Grok Bot run Fixer Core in v1. You use your own search to find
-pros; there is no partner network. Fixer Core turns on only on a service with
-`FIXER_CORE=1`, and the host can turn it off. No Core moves money: the host
+pros; there is no partner network. Fixer Core starts off on each property and
+turns on only with the host's yes, and the host can turn it off. No Core moves money: the host
 pays the pro, and Fixer Core only logs what a job cost.
 
 ## Connect

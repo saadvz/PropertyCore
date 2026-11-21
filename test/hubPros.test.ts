@@ -5,7 +5,6 @@ import { closeHostedApps } from "./cleanerOauthHarness";
 import { CLEANER, LANE, sharedAccount, type SharedAccount } from "./sharedHarness";
 import { afterEach, describe, expect, it } from "vitest";
 import { copyPhotos, MAX_JOB_PHOTOS, photoCount, storePhotos } from "../src/cleaner-core/photos";
-import { fixerCoreOn } from "../src/cleaner-core/flag";
 import { peopleFor, resetPeople } from "../src/hub/people";
 
 /** Pros in the account people list (Fixer Core, Decision 10). Only 555 numbers. */
@@ -103,13 +102,6 @@ describe("copyPhotos and the flag", () => {
     expect(copyPhotos(root, "from", "big")).toBe(2);
     expect(photoCount(root, "big")).toBe(MAX_JOB_PHOTOS);
     expect(copyPhotos(root, "none", "to")).toBe(0);
-  });
-
-  it("fixerCoreOn follows FIXER_CORE", () => {
-    expect(fixerCoreOn({})).toBe(false);
-    expect(fixerCoreOn({ FIXER_CORE: "1" })).toBe(true);
-    expect(fixerCoreOn({ FIXER_CORE: " TRUE " })).toBe(true);
-    expect(fixerCoreOn({ FIXER_CORE: "0" })).toBe(false);
   });
 });
 

@@ -1,5 +1,4 @@
 import { VOICE_TRANSCRIPT_PATH } from "./voicePaths";
-import { fixerCoreOn } from "../cleaner-core/flag";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -98,11 +97,6 @@ export async function handleVoiceCall(h: HostedCleaner, r: HostedRequest, tenant
   }
   // Kept deletes are retried after the caller is answered, so a slow Twilio API never holds up the call.
   const retry = () => void new VoiceDeletes(tenantFolder(h.dataRoot, tenant.id)).retry(h.baseEnv(), (line) => h.log(line)).catch(() => undefined);
-  // Voicemail is part of Fixer Core: while FIXER_CORE is off, nobody is recorded.
-  if (!fixerCoreOn(h.baseEnv())) {
-    r.send(200, "text/xml", noCallsTwiml());
-    return retry();
-  }
   const from = parsePhone(fields.From ?? "") ?? "";
   const who = knownCaller(tenant, await accountPeople(h, tenant), from);
   h.registry.touch(tenant.id);

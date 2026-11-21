@@ -2,7 +2,7 @@ import type { LockReply } from "./desk";
 import type { GuestCodeDesk } from "./guestDesk";
 
 /**
- * Guest-code tools (#262), as tools/list shows them, behind GUEST_CODES and SMART_LOCKS. Each takes
+ * Guest-code tools (#262), as tools/list shows them, behind the account's "guest-codes" and "locks" switches. Each takes
  * `property` on the shared service. No tool returns or takes a door code, and no text here names the
  * lock partner.
  */

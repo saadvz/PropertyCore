@@ -5,6 +5,7 @@ import { parsePhone } from "../../core/phone";
 import { hashSecret } from "../../mcp/oauth/store";
 import { writeJsonAtomic } from "../../storage/atomicWrite";
 import type { CleanerAssistant } from "../assistant";
+import type { Feature, FeatureSwitches } from "../../features/features";
 import { newPropertyId, type FlowName, type Property } from "./properties";
 
 /**
@@ -51,7 +52,20 @@ export interface Tenant {
   lastActivityAt?: string;
   /** The landlord who signed up, set only after their phone code checked out (saadvz/PropertyCore#162). */
   owner?: TenantOwner;
+  /** This account's feature switches, each off until /admin turns it on. Read only through featureOn. */
+  features?: FeatureSwitches;
+  /** Every switch change on this account, oldest first, the last FEATURE_CHANGES_KEPT of them. */
+  featureChanges?: FeatureChange[];
 }
+
+export interface FeatureChange {
+  feature: Feature;
+  on: boolean;
+  at: string;
+  by: string;
+}
+
+export const FEATURE_CHANGES_KEPT = 100;
 
 export type InviteRefusal = "invalid" | "expired" | "used" | "disabled";
 
@@ -287,13 +301,25 @@ export class TenantRegistry {
     });
   }
 
-  /** Switches one flow on one property. Whether a flow may turn on (FIXER_CORE, the chat) is set_flows' check. */
+  /** Switches one flow on one property. Whether a flow may turn on (the chat) is set_flows' check. */
   setFlow(tenantId: string, propertyId: string, flow: FlowName, on: boolean): Property {
     return this.update(tenantId, (tenant) => {
       const property = tenant.properties.find((p) => p.id === propertyId);
       if (!property) throw new RegistryError("unknown-property");
       property.flows[flow] = { on, changedAt: this.stamp() };
       return property;
+    });
+  }
+
+  /**
+   * Turns one feature on or off for one account, recording who and when. Only /admin calls this: no agent tool
+   * reaches it. No other account's switches are read or written.
+   */
+  setFeature(id: string, feature: Feature, on: boolean, by: string): void {
+    this.update(id, (tenant) => {
+      const at = this.stamp();
+      tenant.features = { ...(tenant.features ?? {}), [feature]: { on, changedAt: at, changedBy: by } };
+      tenant.featureChanges = [...(tenant.featureChanges ?? []), { feature, on, at, by }].slice(-FEATURE_CHANGES_KEPT);
     });
   }
 

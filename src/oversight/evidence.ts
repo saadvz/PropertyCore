@@ -32,7 +32,7 @@ export interface SwitchedOn {
 }
 
 export interface Evidence {
-  /** Whether lock lines are read at all (SMART_LOCKS on, property on connected locks or once was). */
+  /** Whether lock lines are read at all (the account's locks on, property on connected locks or once was). */
   lock: boolean;
   /** The host's switch to connected locks over time, from its own `pc-locks:` lines. Unset when there are none. */
   switched?: SwitchedOn[];
@@ -44,9 +44,9 @@ export interface Evidence {
 export interface EvidenceInput {
   codeNames: CodeNames;
   names: EntryNames;
-  /** The property is switched to connected locks (and SMART_LOCKS is on). */
+  /** The property is switched to connected locks (and the account has connected locks on). */
   locks: boolean;
-  /** CAMERAS is on. */
+  /** The account has cameras on. */
   cameras: boolean;
   /** The property's door locks, by name. Only these open quiet spans: a thermostat or noise sensor isn't a door. Unset: every device. */
   doors?: readonly string[];

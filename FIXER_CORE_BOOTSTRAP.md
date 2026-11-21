@@ -12,7 +12,7 @@ Fixer Core gets a rental property's repairs and regular upkeep done. The host sa
 
 Only Grok Bot and Muse run Fixer Core in v1. Each uses its own search to find pros; there is no partner network. In a plain chat (Claude or ChatGPT), Fixer Core is not offered.
 
-Fixer Core turns on only on a service with `FIXER_CORE=1`, and the host can turn it off. No Core moves money: the host pays the pro, and Fixer Core only logs what a job cost.
+Fixer Core starts off on each property and turns on only with the host's yes, and the host can turn it off. No Core moves money: the host pays the pro, and Fixer Core only logs what a job cost.
 
 ## Connect
 

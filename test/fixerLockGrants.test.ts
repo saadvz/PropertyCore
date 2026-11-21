@@ -11,6 +11,7 @@ import { peopleFor, resetPeople } from "../src/hub/people";
 import { FakeLockAdapter } from "../src/locks/fake";
 import { setLockAdapter } from "../src/locks/registry";
 import { emptyLocks, storedDevice, type ReleaseMode } from "../src/locks/settings";
+import { deskFeatures } from "./featureEnv";
 
 /**
  * Fixer Core on connected locks (#180): the pro's own code for each booked visit, made at the host's
@@ -47,12 +48,12 @@ async function approved(call: (confirmation?: string) => Promise<FixerReply>): P
   return code ? call(code) : first;
 }
 
-async function setup(options: { smartLocks?: boolean; pros?: ReleaseMode; extend?: ReleaseMode; stays?: [string, string][] } = {}) {
+async function setup(options: { locks?: boolean; pros?: ReleaseMode; extend?: ReleaseMode; stays?: [string, string][] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "fixer-lock-"));
   const account = mkdtempSync(join(tmpdir(), "fixer-lock-acct-"));
   dirs.push(root, account);
   let clock = new Date(NOW);
-  const env: NodeJS.ProcessEnv = { CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64"), ...(options.smartLocks === false ? {} : { SMART_LOCKS: "1" }) };
+  const env: NodeJS.ProcessEnv = { CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64"), ...(options.locks === false ? {} : deskFeatures("locks")) };
   const now = () => clock;
   const hub = hubFor(root, { now });
   hub.saveProperty(options.stays ? { ...PROPERTY, checkInTime: "13:00" } : PROPERTY);
@@ -150,8 +151,8 @@ describe("Fixer Core on connected locks", () => {
     expect(w.fake.liveCodes("dev-front")).toEqual([]);
   });
 
-  it("with SMART_LOCKS off, nothing reaches the lock and the saved code goes as before", async () => {
-    const w = await setup({ smartLocks: false });
+  it("with the account's locks switch off, nothing reaches the lock and the saved code goes as before", async () => {
+    const w = await setup({ locks: false });
     await w.book();
     w.at(Date.parse(TUE.from) - 30 * MIN);
     await w.desk().tick();

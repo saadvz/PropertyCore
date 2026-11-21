@@ -13,6 +13,7 @@ import { FakeLockAdapter } from "../src/locks/fake";
 import { setLockAdapter } from "../src/locks/registry";
 import { emptyLocks, storedDevice, type ReleaseMode } from "../src/locks/settings";
 import { visitLogFor } from "../src/visits/store";
+import { deskFeatures } from "./featureEnv";
 
 /**
  * Crew-day codes (#243): one code for the crew's booked pro, live only in each workday's window, moved to the
@@ -48,12 +49,12 @@ async function approved(call: (confirmation?: string) => Promise<FixerReply>): P
   return code ? call(code) : first;
 }
 
-async function setup(options: { smartLocks?: boolean; pros?: ReleaseMode } = {}) {
+async function setup(options: { locks?: boolean; pros?: ReleaseMode } = {}) {
   const root = mkdtempSync(join(tmpdir(), "fixer-crew-"));
   const account = mkdtempSync(join(tmpdir(), "fixer-crew-acct-"));
   dirs.push(root, account);
   let clock = new Date(NOW);
-  const env: NodeJS.ProcessEnv = { CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64"), ...(options.smartLocks === false ? {} : { SMART_LOCKS: "1" }) };
+  const env: NodeJS.ProcessEnv = { CLEANER_CORE_PIN_KEY: randomBytes(32).toString("base64"), ...(options.locks === false ? {} : deskFeatures("locks")) };
   const now = () => clock;
   const hub = hubFor(root, { now });
   hub.saveProperty(PROPERTY);
@@ -104,7 +105,7 @@ const live = (fake: FakeLockAdapter) => fake.liveCodes("dev-front").filter((code
 
 describe("crew-day codes", () => {
   it("off connected locks, a crew still can't be booked with a code: the host lets them in", async () => {
-    const w = await setup({ smartLocks: false });
+    const w = await setup({ locks: false });
     await w.offer();
     const refused = await w.desk().approveBooking({ jobId: w.job().id, access: "code" });
     expect(refused.isError).toBe(true);

@@ -22,13 +22,13 @@ export interface OversightReply {
 
 export interface OversightDeps {
   now: () => Date;
-  /** SMART_LOCKS is on with a lock connection, so the property's lock lines can be read. Off by default. */
+  /** The account has connected locks on with a lock connection, so the property's lock lines can be read. Off by default. */
   locks?: () => boolean;
   /** The property is switched to connected locks now. Used only for a log with no switch lines of the host's. Defaults to `locks`. */
   lockedNow?: () => boolean;
   /** The property's door locks, by name as the log writes them. Only these can be a lock that couldn't report. */
   doors?: () => readonly string[];
-  /** CAMERAS is on, so camera sightings can be read. Off by default. */
+  /** The account has cameras on, so camera sightings can be read. Off by default. */
   cameras?: () => boolean;
 }
 

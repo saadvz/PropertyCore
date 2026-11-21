@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { bookingPlatformsOn } from "../src/cleaner-core/flag";
 import { bookingEmailsLine, normalizeSources, PRESET_SENDERS, senderAddress, sourceFor, type BookingSource } from "../src/hub/bookingSources";
 import { hubFor, resetHubs } from "../src/hub/hub";
 import { DOOR_CODE } from "./wiringProof";
@@ -13,15 +12,6 @@ const noCode = () => false;
 const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-});
-
-describe("the BOOKING_PLATFORMS flag", () => {
-  it("is off unless exactly 1 or true", () => {
-    expect(bookingPlatformsOn({})).toBe(false);
-    expect(bookingPlatformsOn({ BOOKING_PLATFORMS: "yes" })).toBe(false);
-    expect(bookingPlatformsOn({ BOOKING_PLATFORMS: "1" })).toBe(true);
-    expect(bookingPlatformsOn({ BOOKING_PLATFORMS: " TRUE " })).toBe(true);
-  });
 });
 
 describe("normalizeSources", () => {
