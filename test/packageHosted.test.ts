@@ -2,6 +2,14 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { propertyFolder } from "../src/cleaner-core/hosted/properties";
+import { tenantFolder } from "../src/cleaner-core/hosted/registry";
+import { propertyContext } from "../src/cleaner-core/hosted/router";
+import { hubFor, resetHubs } from "../src/hub/hub";
+import { peopleFor, resetPeople } from "../src/hub/people";
+import { FakeLockAdapter } from "../src/locks/fake";
+import { setLockAdapter } from "../src/locks/registry";
+import { emptyLocks, storedDevice } from "../src/locks/settings";
+import { resetPackageDesks } from "../src/package-arrivals/desk";
 import { readPackages, supplyKey } from "../src/package-arrivals/store";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { hub } from "./hoursFixture";
@@ -36,7 +44,7 @@ async function account(env: NodeJS.ProcessEnv, supplies = true) {
   writeFileSync(join(root, "hub.json"), JSON.stringify(hub));
   writeOrders(root, [order("ord_a", { expectedBy: "2026-11-17" })]);
   const token = await m.joinAt(tenant.id, "grok", PATH);
-  return { m, property, other, token, root };
+  return { m, tenant, property, other, token, root };
 }
 
 describe("package arrivals on the shared service", () => {
@@ -75,5 +83,57 @@ describe("package arrivals on the shared service", () => {
     const { m, token, property } = await account({ PACKAGE_ARRIVALS: "1" });
     const reply = await m.toolAt(PATH, token, "check_packages", { property: property.id, extra: true });
     expect(reply.isError).toBe(true);
+  });
+});
+
+describe("bring-in codes on the shared service (#241)", () => {
+  afterEach(() => {
+    resetPackageDesks();
+    resetPeople();
+    resetHubs();
+    setLockAdapter(undefined);
+  });
+
+  async function locked(env: NodeJS.ProcessEnv) {
+    const fake = new FakeLockAdapter();
+    setLockAdapter(fake);
+    const world = await account({ PACKAGE_ARRIVALS: "1", ...env });
+    const { m, property, tenant } = world;
+    const fresh = m.registry.get(tenant.id)!;
+    const prop = fresh.properties.find((item) => item.id === property.id)!;
+    const ctx = propertyContext(m.hosted(), fresh, prop);
+    const device = fake.addDevice(tenant.id, { id: "dev-front", name: "Front door" });
+    hubFor(ctx.root, { now: () => NOW }).doorAccess(ctx.env).saveLocks({ ...emptyLocks(), customerKey: tenant.id, devices: [storedDevice(device)], doors: [device.id], activeAt: NOW.toISOString(), release: { cleaners: "ask", pros: "ask", packages: "automatic" } });
+    const people = peopleFor(tenantFolder(m.app.root, tenant.id), { now: () => NOW });
+    people.savePropertyPeople(prop.id, "+15555550100", [{ phone: "+15555550111", role: "cleaner", name: "Ana" }]);
+    people.optIn("+15555550111", prop.id);
+    return { ...world, fake };
+  }
+
+  it("lists approve_bring_in_code only with SMART_LOCKS and a lock adapter", SLOW, async () => {
+    const off = await account({ PACKAGE_ARRIVALS: "1" });
+    expect(await off.m.toolNames(PATH, off.token)).not.toContain("approve_bring_in_code");
+    open?.close();
+    open = undefined;
+    closeHostedApps();
+    const on = await locked({ SMART_LOCKS: "1" });
+    expect(await on.m.toolNames(PATH, on.token)).toContain("approve_bring_in_code");
+  });
+
+  it("on connected locks, puts the person's code on the lock, and tells the host when texts can't go out here", SLOW, async () => {
+    const { m, token, property, fake, root } = await locked({ SMART_LOCKS: "1" });
+    await m.toolAt(PATH, token, "save_package_settings", { property: property.id, bringInHours: 4 });
+    await m.toolAt(PATH, token, "plan_bring_in", { property: property.id, orderId: "ord_a", person: "+15555550111" });
+    const seen = await m.toolAt(PATH, token, "mark_package_seen", { property: property.id, orderId: "ord_a", how: "host" });
+    expect(seen.isError).toBe(false);
+    const codes = fake.liveCodes("dev-front");
+    expect(codes).toHaveLength(1);
+    expect(codes[0]!.name).toMatch(/^Package /);
+    // Cleaner Core isn't on here, so texts can't go out: no send is tried, and the host hears it once.
+    expect((seen.structured?.lockNotes as string[]).join(" ")).toMatch(/Texts can't go out/);
+    expect(seen.text).not.toContain(codes[0]!.code);
+    expect(JSON.stringify(readPackages(root))).not.toContain(codes[0]!.code);
+    await m.toolAt(PATH, token, "mark_brought_in", { property: property.id, orderId: "ord_a" });
+    expect(fake.liveCodes("dev-front")).toEqual([]);
   });
 });

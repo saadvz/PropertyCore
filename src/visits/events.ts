@@ -206,7 +206,7 @@ export function cameraCounts(events: readonly VisitEvent[]): Map<string, CameraC
 export type StoredEvent = VisitEvent & { loggedAt: string };
 
 /** Whose a lock code is, in Property Core's own terms. "shared" is a code more than one person uses. */
-export type CodePerson = { role: "cleaner" } | { role: "pro"; proId: string } | { role: "host" } | { role: "guest" } | { role: "shared" };
+export type CodePerson = { role: "cleaner" } | { role: "pro"; proId: string } | { role: "host" } | { role: "guest" } | { role: "shared" } | { role: "package" };
 
 /** The lock's name for a code, mapped to its person. Keys are compared with case and spacing ignored. */
 export type CodeNames = Record<string, CodePerson>;

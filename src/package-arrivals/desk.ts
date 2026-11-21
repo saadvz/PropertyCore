@@ -1,15 +1,25 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { zonedParts } from "../core/timezone";
-import { accountOf, peopleFor } from "../hub/people";
-import { readHubFile } from "../hub/store";
+import { readFixer, FIXER_FILE } from "../fixer-core/store";
+import type { OccupyInput } from "../fixer-core/window";
+import type { DoorAccess } from "../hub/doorAccess";
+import { accountOf, peopleFor, streetOf } from "../hub/people";
+import { readHubFile, type Stay } from "../hub/store";
+import { packagesRelease } from "../locks/settings";
+import { ConfirmationBook } from "../operator/confirmations";
+import { bringInWindow, wantedBringInCodes } from "./codes";
+import { approveQuestion, BRING_IN_ASK, BRING_IN_AUTO, bringInCodeText, duringStayNote, refusedNote, textedNote, textsOffNote, unsureNote } from "./texts";
 import { readSupply, type Order, type SupplyFile } from "../supply-core/store";
 import { effectiveSeen, PackagesFileError, readPackages, supplyKey, writePackages, type Arrival, type BringInRole, type BringInVisit, type PackagesFile, type SeenHow } from "./store";
 
 /**
  * Package arrivals' desk for one property (#241). Expected deliveries are Supply Core's placed orders, read from
  * `supply.json` on every call and never written there. This desk keeps when each was seen and how, the
- * bring-it-in visit, and the flags the host was told. It texts nobody, the bring-in person included: the
- * result goes back to the host's agent, and the per-visit code waits on the lock connection (#180).
+ * bring-it-in visit, and the flags the host was told. Off connected locks it texts nobody, the bring-in person
+ * included: the result goes back to the host's agent. On connected locks (#180), `syncCodes` puts the person's
+ * own bring-in code on the locks and texts it to them once, under the host's `release.packages` choice.
  */
 
 export interface PackageReply {
@@ -20,7 +30,19 @@ export interface PackageReply {
 
 export interface PackageDeps {
   now(): Date;
+  /** The property's door access. A bring-in code is made only when it says the property is on connected locks. */
+  door?(): DoorAccess | undefined;
+  /** Sends one text through the consent-checked live path. True when it went. The body is never kept. */
+  send?(to: string, body: string): Promise<boolean>;
+  /** True when texts can go out from this property now (the host's phone confirmed). */
+  textsAllowed?(): Promise<boolean>;
 }
+
+/** Where the bring-in code stands, as a visit shows it on connected locks. Never the code. */
+export type BringInCodeState = "after-drop" | "waiting-for-ok" | "goes-by-text" | "texted" | "none-during-stay";
+
+/** Fixer Core's default time kept free before a check-in, used when Fixer Core has none saved here. */
+const DEFAULT_BUFFER_MINUTES = 60;
 
 /** Local time at the property after which a package expected that day and not seen is flagged. */
 export const END_OF_DAY = "21:00";
@@ -50,6 +72,8 @@ export interface Visit {
   by?: string;
   /** Why the person can't bring it in any more, like a STOP since it was planned. */
   problem?: string;
+  /** On connected locks only: where their own bring-in code stands. */
+  code?: BringInCodeState;
 }
 
 /** supply.json is there but can't be read. A refusal, never a crash. */
@@ -74,10 +98,64 @@ function instant(value: unknown): Date | undefined {
 }
 
 export class PackageDesk {
+  private approvals: ConfirmationBook | undefined;
+
   constructor(
     protected readonly root: string,
     protected readonly deps: PackageDeps,
   ) {}
+
+  /** The door, when this property is on connected locks; undefined otherwise, and everything stays as before. */
+  protected lockDoor(): DoorAccess | undefined {
+    try {
+      const door = this.deps.door?.();
+      return door?.connected() ? door : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  protected stays(): Stay[] {
+    try {
+      return readHubFile(this.root)?.stays ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  protected occupy(): OccupyInput {
+    const property = readHubFile(this.root)?.property;
+    let buffer = DEFAULT_BUFFER_MINUTES;
+    try {
+      if (existsSync(join(this.root, FIXER_FILE))) buffer = readFixer(this.root).settings.checkInBufferMinutes ?? DEFAULT_BUFFER_MINUTES;
+    } catch {
+      // A damaged Fixer Core record keeps the default buffer.
+    }
+    return {
+      timeZone: this.timeZone() ?? "UTC",
+      ...(property?.checkoutTime ? { checkoutTime: property.checkoutTime } : {}),
+      ...(property?.checkInTime ? { checkInTime: property.checkInTime } : {}),
+      checkInBufferMinutes: buffer,
+    };
+  }
+
+  /** Where this visit's code stands on connected locks. Undefined off them. */
+  protected codeState(door: DoorAccess | undefined, order: Order, arrival: Arrival, hours: number | undefined): BringInCodeState | undefined {
+    const visit = arrival.visit;
+    if (!door || !visit) return undefined;
+    if (visit.codeTextSent) return "texted";
+    const seen = this.seenOf(order, arrival);
+    const planned = visit.hours ?? hours;
+    if (!seen || planned === undefined) return "after-drop";
+    if (bringInWindow({ seenAt: seen.at, plannedAt: visit.plannedAt, hours: planned }, this.stays(), this.occupy()) === "during-stay") return "none-during-stay";
+    return packagesRelease(door.locks()) === "automatic" || visit.codeYesAt ? "goes-by-text" : "waiting-for-ok";
+  }
+
+  /** The next step for the host's agent once a visit is planned: as before off connected locks. */
+  protected codeNext(door: DoorAccess | undefined): string {
+    if (!door) return CODE_WAITING;
+    return packagesRelease(door.locks()) === "automatic" ? BRING_IN_AUTO : BRING_IN_ASK;
+  }
 
   /** A broken packages.json is a plain refusal, and nothing is written over it. */
   protected guarded(run: () => PackageReply): PackageReply {
@@ -178,6 +256,7 @@ export class PackageDesk {
       let blocked = false;
       const now = this.deps.now().getTime();
       let changed = false;
+      const door = this.lockDoor();
       for (const order of this.orders(supply, file)) {
         const key = supplyKey(order.id);
         // Registered once listed, so the hours log logs its drop. An order never listed adds no row, so a
@@ -191,6 +270,8 @@ export class PackageDesk {
         const delivery = this.delivery(supply, order, arrival);
         if (arrival?.visit) {
           const visit = this.visitOf(order.id, arrival.visit, delivery.seen, file.settings.bringInHours);
+          const code = this.codeState(door, order, arrival, file.settings.bringInHours);
+          if (code) visit.code = code;
           const picked = this.pick(arrival.visit.person);
           if ("problem" in picked) {
             visit.problem = picked.problem;
@@ -335,8 +416,9 @@ export class PackageDesk {
       file.arrivals[key] = arrival;
       writePackages(this.root, file);
       const seen = this.seenOf(order, arrival);
-      const visit = arrival.visit ? { ...this.visitOf(order.id, arrival.visit, seen, hours), code: "waiting" } : undefined;
-      if (visit) return ok({ seen, orderId: order.id, visit, next: CODE_WAITING });
+      const door = this.lockDoor();
+      const visit = arrival.visit ? { ...this.visitOf(order.id, arrival.visit, seen, hours), code: this.codeState(door, order, arrival, hours) ?? "waiting" } : undefined;
+      if (visit) return ok({ seen, orderId: order.id, visit, next: this.codeNext(door) });
       if (skipped) {
         const next = `The host's default bring-in person, ${skipped.name ?? "the saved person"}, wasn't asked: ${skipped.problem} Ask the host who should bring it in, then call plan_bring_in.`;
         return ok({ seen, orderId: order.id, defaultSkipped: skipped, next });
@@ -404,7 +486,8 @@ export class PackageDesk {
       this.salted(file);
       writePackages(this.root, file);
       const visit = this.visitOf(order.id, arrival.visit, this.seenOf(order, arrival), file.settings.bringInHours);
-      return ok({ ...visit, code: "waiting", next: CODE_WAITING });
+      const door = this.lockDoor();
+      return ok({ ...visit, code: this.codeState(door, order, arrival, file.settings.bringInHours) ?? "waiting", next: this.codeNext(door) });
     });
   }
 
@@ -447,6 +530,136 @@ export class PackageDesk {
         ...(visit.by ? { onTime: end.getTime() <= Date.parse(visit.by) } : {}),
       });
     });
+  }
+
+  /**
+   * approve_bring_in_code: the host's OK to text the bring-in person their own code, on connected locks with
+   * `release.packages` on ask. Two calls: the question and an approval code, then the code. Never returns a code.
+   */
+  approveCode(input: { orderId?: unknown; confirmation?: unknown }): PackageReply {
+    return this.guarded(() => {
+      const door = this.lockDoor();
+      if (!door) return fail("The bring-in code needs connected locks at this property. Until then, the host lets the person in their usual way.");
+      if (packagesRelease(door.locks()) === "automatic") return fail("Bring-in codes go out on their own here (automatic), so there's nothing to OK.");
+      const supply = this.supply();
+      const order = this.order(supply, input.orderId);
+      if (!order) return fail(UNKNOWN_ORDER);
+      const file = readPackages(this.root);
+      const arrival = file.arrivals[supplyKey(order.id)];
+      const visit = arrival?.visit;
+      if (!arrival || !visit) return fail("No one is set to bring that package in. Call plan_bring_in with the person the host picked first.");
+      if (arrival.broughtIn) return fail("That package is already marked inside.");
+      if (visit.codeYesAt) return ok({ orderId: order.id, okayed: true, next: "Already OK'd." });
+      const seen = this.seenOf(order, arrival);
+      const hours = visit.hours ?? file.settings.bringInHours ?? 0;
+      const until = seen ? new Date(Date.parse(seen.at) + hours * 3_600_000).toISOString() : undefined;
+      const question = approveQuestion({ ...(visit.name ? { name: visit.name } : {}), until: until ?? new Date(Date.parse(visit.plannedAt) + hours * 3_600_000).toISOString(), timeZone: this.timeZone() ?? "UTC" });
+      const fingerprint = createHash("sha256").update(JSON.stringify([order.id, visit.person, visit.plannedAt])).digest("hex");
+      const approvals = (this.approvals ??= new ConfirmationBook(10 * 60_000, () => this.deps.now().getTime(), { file: join(this.root, "packages-approvals.json") }));
+      if (typeof input.confirmation !== "string") return ok({ question, confirmation: approvals.issue("bring-in-code", order.id, fingerprint, question).code });
+      try {
+        approvals.redeem(input.confirmation, "bring-in-code", order.id, fingerprint);
+      } catch {
+        return fail("That approval code has ended or doesn't match. Ask the host again.");
+      }
+      this.patchVisit(order.id, visit, (current) => {
+        current.codeYesAt = this.deps.now().toISOString();
+      });
+      return ok({ orderId: order.id, okayed: true, next: `${visit.name ?? "They"} get the bring-in code by text once the drop is seen.` });
+    });
+  }
+
+  /**
+   * Changes one visit in a fresh read of packages.json, only while it's still the same visit (same person, same
+   * planning), so a tool call that ran in between is never written over.
+   */
+  protected patchVisit(orderId: string, visit: BringInVisit, change: (current: BringInVisit) => void): void {
+    const file = readPackages(this.root);
+    const current = file.arrivals[supplyKey(orderId)]?.visit;
+    if (!current || current.person !== visit.person || current.plannedAt !== visit.plannedAt) return;
+    change(current);
+    writePackages(this.root, file);
+  }
+
+  /**
+   * On connected locks: puts the bring-in codes the property wants on the locks (and takes the rest off), then
+   * texts each person their own code once, when the host chose automatic or OK'd it. Returns notes for the host,
+   * never a code. Off connected locks, does nothing.
+   */
+  async syncCodes(): Promise<{ notes: string[] }> {
+    const door = this.lockDoor();
+    if (!door) return { notes: [] };
+    let file: PackagesFile;
+    let orders: Order[];
+    try {
+      file = readPackages(this.root);
+      orders = this.placed(this.supply());
+    } catch {
+      return { notes: [] };
+    }
+    const { wanted, duringStay } = wantedBringInCodes(file, orders, { now: this.deps.now(), stays: this.stays(), occupy: this.occupy(), canPick: (phone) => "role" in this.pick(phone) });
+    const notes: string[] = [];
+    try {
+      for (const note of await door.syncGrants("bring-in", wanted)) notes.push(note.text);
+    } catch {
+      return { notes };
+    }
+    for (const orderId of duringStay) {
+      const visit = file.arrivals[supplyKey(orderId)]?.visit;
+      if (!visit || visit.codeTold?.includes("during-stay")) continue;
+      this.patchVisit(orderId, visit, (current) => (current.codeTold ??= []).push("during-stay"));
+      notes.push(duringStayNote({ ...(visit.name ? { name: visit.name } : {}) }));
+    }
+    const automatic = packagesRelease(door.locks()) === "automatic";
+    for (const want of wanted) {
+      const orderId = want.jobId.slice("supply:".length);
+      const visit = file.arrivals[want.jobId]?.visit;
+      if (!visit || visit.person !== want.person) continue;
+      notes.push(...(await this.releaseCode(door, orderId, visit, want.window, automatic)));
+    }
+    return { notes };
+  }
+
+  /** One visit's code text: at most once, the mark saved before the send. */
+  private async releaseCode(door: DoorAccess, orderId: string, visit: BringInVisit, window: { from: string; until: string }, automatic: boolean): Promise<string[]> {
+    const name = visit.name ? { name: visit.name } : {};
+    const told = (kind: string) => visit.codeTold?.includes(kind) === true;
+    const tell = (kind: string, text: string): string[] => {
+      if (told(kind)) return [];
+      this.patchVisit(orderId, visit, (current) => (current.codeTold ??= []).push(kind));
+      (visit.codeTold ??= []).push(kind);
+      return [text];
+    };
+    if (visit.codeTextAt) return visit.codeTextSent ? [] : tell("unsure", unsureNote(name));
+    if (!automatic && !visit.codeYesAt) return [];
+    let allowed = false;
+    try {
+      allowed = Boolean(this.deps.send) && (await this.deps.textsAllowed?.()) === true;
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) return tell("texts-off", textsOffNote(name));
+    const at = this.deps.now().toISOString();
+    this.patchVisit(orderId, visit, (current) => {
+      current.codeTextAt = at;
+    });
+    visit.codeTextAt = at;
+    const grant = await door.request({ person: visit.person, window, purpose: "bring-in", jobId: `supply:${orderId}`, ...(visit.name ? { label: visit.name } : {}) });
+    const notes = (grant.notes ?? []).map((note) => note.text);
+    if (!grant.ok || !/^\d{4,8}$/.test(grant.code)) return [...notes, ...tell("refused", refusedNote(name))];
+    const street = streetOf(readHubFile(this.root)?.property?.address ?? "");
+    let sent = false;
+    try {
+      sent = (await this.deps.send!(visit.person, bringInCodeText({ ...name, street, code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}), ...(grant.doors ? { doors: grant.doors } : {}), until: window.until, timeZone: this.timeZone() ?? "UTC" }))) === true;
+    } catch {
+      // Whether it went is unknown, so it is never sent again.
+    }
+    if (!sent) return [...notes, ...tell("unsure", unsureNote(name))];
+    this.patchVisit(orderId, visit, (current) => {
+      current.codeTextSent = true;
+    });
+    visit.codeTextSent = true;
+    return [...notes, textedNote(name)];
   }
 
   /** The host's own settings, only as the host says. */

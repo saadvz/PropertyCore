@@ -13,7 +13,7 @@ import type { DoorLocksFile } from "./settings";
 export const OFFLINE_ALERT_MS = 30 * 60_000;
 
 function who(label: string | undefined, flow: GrantRef["flow"]): string {
-  return label?.trim() || (flow === "cleaning" ? "the cleaner" : flow === "repair" ? "the pro" : flow === "guest" ? "the guest" : "they");
+  return label?.trim() || (flow === "cleaning" ? "the cleaner" : flow === "repair" ? "the pro" : flow === "guest" ? "the guest" : flow === "bring-in" ? "the person bringing the package in" : "they");
 }
 
 /** Marks an alert told. False when it was already. */

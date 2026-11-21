@@ -23,10 +23,10 @@ const POLL_MS = 15_000;
 export const KEEP_AFTER_MS = 24 * 60 * 60_000;
 const CODE_SHAPE = /^\d{4,8}$/;
 
-export type GrantFlow = "cleaning" | "repair" | "standing" | "guest";
+export type GrantFlow = "cleaning" | "repair" | "standing" | "guest" | "bring-in";
 
 /** How a flow's codes are named on the lock. The name never holds the person, a phone or a digit. */
-const CODE_NAME_PREFIX: Record<GrantFlow, string> = { cleaning: "Cleaning", repair: "Repair", standing: "Standing", guest: "Guest" };
+const CODE_NAME_PREFIX: Record<GrantFlow, string> = { cleaning: "Cleaning", repair: "Repair", standing: "Standing", guest: "Guest", "bring-in": "Package" };
 
 /** A code a flow wants on the locks now. */
 export interface WantedCode {
@@ -117,7 +117,7 @@ function sameWindow(a: CodeWindow, b: CodeWindow): boolean {
 }
 
 function whoOf(flow: GrantFlow, label: string | undefined): string {
-  return label?.trim() || (flow === "cleaning" ? "the cleaner" : flow === "repair" ? "the pro" : flow === "guest" ? "the guest" : "they");
+  return label?.trim() || (flow === "cleaning" ? "the cleaner" : flow === "repair" ? "the pro" : flow === "guest" ? "the guest" : flow === "bring-in" ? "the person bringing the package in" : "they");
 }
 
 export class GrantBook {
@@ -384,7 +384,7 @@ export class GrantBook {
         continue;
       }
       this.file.grants.push(grant);
-      const who: CodePerson | undefined = want.who ?? (flow === "cleaning" ? { role: "cleaner" } : flow === "standing" ? { role: "shared" } : flow === "guest" ? { role: "guest" } : undefined);
+      const who: CodePerson | undefined = want.who ?? (flow === "cleaning" ? { role: "cleaner" } : flow === "standing" ? { role: "shared" } : flow === "guest" ? { role: "guest" } : flow === "bring-in" ? { role: "package" } : undefined);
       try {
         if (who) this.deps.named?.(codeName, who);
       } catch {
