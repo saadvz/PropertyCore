@@ -1,8 +1,7 @@
 import { camerasOn, packageArrivalsOn } from "../cleaner-core/flag";
-import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { propertyFolder, type Property } from "../cleaner-core/hosted/properties";
 import type { Tenant } from "../cleaner-core/hosted/registry";
-import { propertyContext, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
+import type { HostedCleaner, HostedRequest } from "../cleaner-core/hosted/router";
 import { CameraLinks, cameraTokenKey, readCameras, sealedTokenStore, writeCameras, type CameraPlace } from "../cameras/accounts";
 import { CameraProviderError, type AccountRef, type CameraProvider } from "../cameras/adapter";
 import { CameraCounting } from "../cameras/count";
@@ -13,7 +12,7 @@ import { ringProvider } from "../cameras/ring";
 import { sharedCameraLog } from "../cameras/sharedLog";
 import { CAMERA_TOOL_NAMES, CAMERA_TOOLS } from "../cameras/tools";
 import { ingestWebhook } from "../cameras/webhook";
-import { packageDeskFor } from "../package-arrivals/desk";
+import { PackageDesk } from "../package-arrivals/desk";
 import type { FrontReply } from "./serviceTools";
 
 /**
@@ -78,6 +77,11 @@ function account(h: HostedCleaner, tenantId: string): (AccountRef & { tokens: Re
     clear: () => h.secrets.deleteConnection(tenantId, SECRET_SLOT),
   };
   return { tokens: sealedTokenStore(slot, key) };
+}
+
+/** The property's camera desk on the service. */
+export function cameraDeskFor(h: HostedCleaner, tenant: Tenant, property: Property): CameraDesk {
+  return deskFor(h, tenant, property);
 }
 
 function deskFor(h: HostedCleaner, tenant: Tenant, property: Property): CameraDesk {
@@ -258,7 +262,9 @@ async function afterStored(h: HostedCleaner, stored: { tenantId: string; propert
   const place = placeOf(h, stored.tenantId, stored.propertyId);
   if (!place) return;
   if (stored.line.kind === "motion" && stored.line.label === "package_delivery" && packageArrivalsOn(h.baseEnv()) && place.property.flows.supplies.on) {
-    packageDeskFor(propertyFolder(h.dataRoot, place.tenant.id, place.property), { now: () => h.now() }).cameraSighting({ at: stored.line.at });
+    // Its own desk, not packageDeskFor's cached one, which keeps the deps it was first made with: check_packages' desk
+    // needs its door, sender and host-alert clock (#250).
+    new PackageDesk(propertyFolder(h.dataRoot, place.tenant.id, place.property), { now: () => h.now() }).cameraSighting({ at: stored.line.at });
   }
   await countingFor(h, place.tenant, place.property)?.run();
 }
@@ -283,9 +289,9 @@ function countingFor(h: HostedCleaner, tenant: Tenant, property: Property): Came
 let round = false;
 
 /**
- * The cameras' clock, on the same tick as Fixer Core's: count what's waiting, and turn a camera offline for 30
- * minutes into one note. A note goes to the host through Cleaner Core's alert path when it runs at the property;
- * otherwise it waits for list_cameras. One property's failure never stops the rest.
+ * The cameras' clock, on the same tick as Fixer Core's: count what's waiting. Camera offline and back-online notes
+ * are the host-alert clock's since #250 (src/hosted/hostAlerts.ts), so the host is told once, through one path.
+ * One property's failure never stops the rest.
  */
 export async function tickAllCameras(h: HostedCleaner): Promise<void> {
   if (round || !camerasOn(h.baseEnv())) return;
@@ -296,16 +302,6 @@ export async function tickAllCameras(h: HostedCleaner): Promise<void> {
       if (!found) continue;
       try {
         await countingFor(h, found.tenant, found.property)?.run();
-        const desk = deskFor(h, found.tenant, found.property);
-        const notes = desk.takeNotes();
-        if (!notes.length) continue;
-        const waiting = [];
-        for (const note of notes) {
-          // A note already marked told is kept for list_cameras whenever it couldn't be handed over, even on a throw.
-          const delivered = found.property.flows.cleaning.on ? await cleaningNote(h, found.tenant, found.property, note.id, note.text).catch(() => false) : false;
-          if (!delivered) waiting.push(note);
-        }
-        desk.queueNotes(waiting);
       } catch {
         h.log(`The cameras couldn't run ${place.tenantId}/${place.propertyId}'s clock this round.`);
       }
@@ -313,9 +309,4 @@ export async function tickAllCameras(h: HostedCleaner): Promise<void> {
   } finally {
     round = false;
   }
-}
-
-async function cleaningNote(h: HostedCleaner, tenant: Tenant, property: Property, id: string, text: string): Promise<boolean> {
-  const ctx = propertyContext(h, tenant, property);
-  return (await liveDeskFor(ctx.root, ctx.env, () => h.now()).noteForHost(id, text)) === true;
 }

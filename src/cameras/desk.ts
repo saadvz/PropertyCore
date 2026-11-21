@@ -141,11 +141,35 @@ export class CameraDesk {
 
   /** Offline and back-online notes due now, each given once. */
   takeNotes(): CameraNote[] {
+    const notes = this.dueNotes();
+    this.markTold(notes.map((note) => note.id));
+    return notes;
+  }
+
+  /** Offline and back-online notes due now and not yet told. Read only (#250 keeps them before marking). */
+  dueNotes(): CameraNote[] {
     const file = this.cameras();
     const timeZone = this.hub()?.property.timeZone;
-    const notes = dueCameraNotes(this.deps.log.read(), file.cameras, this.deps.now(), { label: this.deps.label, ...(timeZone ? { timeZone } : {}), told: file.told ?? [] });
-    if (notes.length) writeCameras(this.root, { ...file, told: [...(file.told ?? []), ...notes.map((note) => note.id)].slice(-MAX_TOLD) });
-    return notes;
+    return dueCameraNotes(this.deps.log.read(), file.cameras, this.deps.now(), { label: this.deps.label, ...(timeZone ? { timeZone } : {}), told: file.told ?? [] });
+  }
+
+  /** Records notes as told, by id, so they're never due again. */
+  markTold(ids: readonly string[]): void {
+    if (!ids.length) return;
+    const file = this.cameras();
+    const told = file.told ?? [];
+    const fresh = ids.filter((id) => !told.includes(id));
+    if (fresh.length) writeCameras(this.root, { ...file, told: [...told, ...fresh].slice(-MAX_TOLD) });
+  }
+
+  /** The window of one stay night, ending at the host's check time (or checkout on the last night). Undefined with no stay. */
+  nightWindow(date: string): { from: string; to: string } | undefined {
+    return this.stays.nightWindow(date);
+  }
+
+  /** The property's time zone, when it's saved. */
+  timeZone(): string | undefined {
+    return this.hub()?.property.timeZone || undefined;
   }
 
   /** The stay that checks in on `checkIn`, from its check-in time to its checkout time, as a timeline. */

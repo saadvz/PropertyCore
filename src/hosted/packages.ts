@@ -8,6 +8,7 @@ import { hubFor } from "../hub/hub";
 import { lockAdapter, smartLocksOn } from "../locks/registry";
 import { packageDeskFor } from "../package-arrivals/desk";
 import { BRING_IN_CODE_TOOLS, handlePackageTool, PACKAGE_TOOL_NAMES, PACKAGE_TOOLS } from "../package-arrivals/tools";
+import { hostNotePath } from "./hostAlerts";
 import type { FrontReply } from "./serviceTools";
 
 /**
@@ -47,6 +48,8 @@ export async function packageCall(h: HostedCleaner, tenant: Tenant, property: Pr
     },
     // The body is never logged or kept: sendLiveSms hands it to Twilio and keeps only the message id.
     send: async (to, body) => (await sendLiveSms(ctx().env(), { to, body })) !== undefined,
+    // The host-alert clock (#250) tells the host about packages not seen where Cleaner Core or Fixer Core runs.
+    alertsByClock: () => hostNotePath(fresh().property),
   });
   const reply = handlePackageTool(desk, name, args);
   if (!reply) return { text: "Package arrivals couldn't answer that.", isError: true };

@@ -7,6 +7,7 @@ import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { fakeCounter } from "../src/cameras/counter";
 import { fakeCameraProvider, type FakeCameraProvider } from "../src/cameras/fake";
 import { setCameraProviderForTests, tickAllCameras } from "../src/hosted/cameras";
+import { resetHostAlertClock, tickAllHostAlerts } from "../src/hosted/hostAlerts";
 import { resetVisitLogCache } from "../src/visits/store";
 import { writeStayCheck } from "../src/stay-check/store";
 import { closeHostedApps } from "./cleanerOauthHarness";
@@ -28,7 +29,14 @@ afterEach(() => {
   closeHostedApps();
   setCameraProviderForTests(undefined);
   resetVisitLogCache();
+  resetHostAlertClock();
 });
+
+/** The service's tick: the camera clock counts, and since #250 the host-alert clock tells camera notes. */
+async function tickBoth(m: MultiTenantApp) {
+  await tickAllCameras(m.hosted());
+  await tickAllHostAlerts(m.hosted());
+}
 
 async function account(env: NodeJS.ProcessEnv, clock: { now: Date }) {
   open = await multiTenantApp({ env: { SUPPLY_CORE: "1", ...env }, now: () => clock.now });
@@ -136,7 +144,7 @@ describe("cameras on the shared service", () => {
     expect(provider.calls.filter((call) => call.call === "clip")).toHaveLength(1);
   });
 
-  it("a camera offline for 30 minutes is one note for the host, and one when it's back", SLOW, async () => {
+  it("a camera offline for 30 minutes is one note for the host, and one when it's back; with no Cleaner Core or Fixer Core it waits for list_cameras", SLOW, async () => {
     const { provider } = withFake();
     const clock = { now: new Date("2026-11-21T19:00:00.000Z") };
     const { m, token, property } = await account({ CAMERAS: "1", CAMERA_TOKEN_KEY: KEY }, clock);
@@ -145,19 +153,19 @@ describe("cameras on the shared service", () => {
     const off = provider.webhook({ id: "off-1", at: "2026-11-21T19:10:00.000Z", deviceId: "dev-aaa", kind: "offline" });
     await m.app.http("/webhooks/ring", { method: "POST", headers: off.headers, body: off.body.toString() });
     clock.now = new Date("2026-11-21T19:20:00.000Z");
-    await tickAllCameras(m.hosted());
+    await tickBoth(m);
     expect((await m.toolAt(PATH, token, "list_cameras", { property: property.id })).structured?.notes).toBeUndefined();
     clock.now = new Date("2026-11-21T19:45:00.000Z");
-    await tickAllCameras(m.hosted());
-    await tickAllCameras(m.hosted());
+    await tickBoth(m);
+    await tickBoth(m);
     const listed = await m.toolAt(PATH, token, "list_cameras", { property: property.id });
     expect(listed.structured?.notes).toEqual([{ id: "camera-offline:off-1", text: "The Front door camera at 12 Scratch Lane has been offline since 2:10 PM. Check its power and Wi-Fi." }]);
     expect((await m.toolAt(PATH, token, "list_cameras", { property: property.id })).structured?.notes).toBeUndefined();
     const on = provider.webhook({ id: "on-1", at: "2026-11-21T20:30:00.000Z", deviceId: "dev-aaa", kind: "online" });
     await m.app.http("/webhooks/ring", { method: "POST", headers: on.headers, body: on.body.toString() });
     clock.now = new Date("2026-11-21T20:31:00.000Z");
-    await tickAllCameras(m.hosted());
-    await tickAllCameras(m.hosted());
+    await tickBoth(m);
+    await tickBoth(m);
     expect((await m.toolAt(PATH, token, "list_cameras", { property: property.id })).structured?.notes).toEqual([{ id: "camera-online:on-1", text: "The Front door camera at 12 Scratch Lane is back online." }]);
   });
 });
