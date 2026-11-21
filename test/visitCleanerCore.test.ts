@@ -107,7 +107,7 @@ describe("visit records in Cleaner Core", () => {
     await job.runReminders();
     at("2026-10-18T17:00:00.000Z");
     await job.runReminders();
-    expect(notes(sent)).toEqual([{ to: OWNER, kind: "visit-note", body: "Maria Lopez hasn't arrived at 12 Scratch Lane, Teaneck, NJ 07666. The next guests check in at 4 PM." }]);
+    expect(notes(sent)).toEqual([{ to: OWNER, kind: "visit-note", body: "Maria Lopez hasn't arrived at 12 Scratch Lane, Teaneck, NJ 07666 yet. The next guests check in at 4 PM." }]);
     // The window's end brings no second note: the at-risk note already went.
     at("2026-10-18T20:05:00.000Z");
     await job.runReminders();

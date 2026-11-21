@@ -76,10 +76,10 @@ export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, eve
         jobId: ref.jobId,
         urgent: true,
         text: ready
-          ? `The ${door_} didn't take ${person}'s code. A backup code for that door is ready, and ${person} gets it with their code.`
+          ? `The ${door_} couldn't save ${person}'s code, so ${person} will get a backup code for that door.`
           : ownOnly
-            ? `The ${door_} didn't take ${person}'s code, and it has no backup code left. Let them in another way.`
-            : `The ${door_} didn't take ${person}'s code, and it has no backup code left. If you saved your own door code, ${person} gets that; otherwise let them in yourself.`,
+            ? `The ${door_} couldn't save ${person}'s code, and it has no backup code left. Let them in another way.`
+            : `The ${door_} couldn't save ${person}'s code and has no backup codes left. ${person} will get your saved door code if you have one. If not, you'll need to let them in.`,
       });
       break;
     }
@@ -90,7 +90,7 @@ export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, eve
     case "battery-low": {
       if (device) {
         if (typeof event.battery === "number") device.battery = event.battery;
-        if (once(file, `battery-low:${device.id}`)) notes.push({ id: `lock:battery-low:${device.id}:${event.id}`, text: `The ${door_}'s battery is low. Change it soon, so no code stops working.` });
+        if (once(file, `battery-low:${device.id}`)) notes.push({ id: `lock:battery-low:${device.id}:${event.id}`, text: `The ${door_}'s battery is low. Please change it soon so codes keep working.` });
       }
       break;
     }
@@ -130,7 +130,7 @@ export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, eve
     case "account-disconnected": {
       if (file.release.cleaners === "automatic") {
         file.release.cleaners = "ask";
-        notes.push({ id: `lock:auto-off:${event.id}`, text: "Checkout-time codes are off while the lock account is disconnected: the cleaner's code waits for your \"guests have left\" again." });
+        notes.push({ id: `lock:auto-off:${event.id}`, text: "While your lock account is disconnected, the cleaner's code won't go out at checkout. Tell me when the guests have left, like before." });
       }
       if (once(file, `disconnected:${event.id}`)) {
         let link = "";

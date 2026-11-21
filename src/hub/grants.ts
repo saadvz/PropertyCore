@@ -58,6 +58,8 @@ export interface StoredGrant {
   devices: DeviceCode[];
   seal: PinSeal;
   backups?: StoredBackup[];
+  /** Doors whose failed code the host already heard about from the lock's event, so release doesn't repeat it. */
+  failTold?: string[];
   createdAt: string;
   movedAt?: string;
   revokedAt?: string;
@@ -245,6 +247,8 @@ export class GrantBook {
       const device = grant?.devices.find((item) => item.codeId === codeId);
       if (!adapter || !key || !grant || !device) return false;
       device.status = "failed";
+      // The caller tells the host now, so the release doesn't repeat it.
+      if (!grant.failTold?.includes(device.deviceId)) (grant.failTold ??= []).push(device.deviceId);
       const got = await this.backupFor(adapter, grant, device.deviceId, key);
       this.write();
       return got !== undefined;
@@ -303,31 +307,40 @@ export class GrantBook {
       const names = new Map(this.deps.doors().map((device) => [device.id, device.name]));
       const doors: { door: string; code: string }[] = [];
       const notes: GrantNote[] = [];
+      let usedBackup = false;
       for (const device of grant.devices) {
         const door = names.get(device.deviceId) ?? "the door";
         if (device.status === "set") {
           doors.push({ door, code });
           continue;
         }
+        // Already told from the lock's event: one note per failed code, not two.
+        const told = grant.failTold?.includes(device.deviceId) === true;
+        const toldBackup = told && (grant.backups ?? []).some((kept) => kept.deviceId === device.deviceId);
         const backup = await this.backupFor(adapter, grant, device.deviceId, key);
         if (!backup) {
           this.write();
-          return this.fallback(input, saved, who, [{ id: `lock:no-backup:${grant.id}:${device.deviceId}`, text: `The ${door} didn't take ${who}'s code and has no backup code left.`, urgent: true }]);
+          const usable = saved !== undefined && CODE_SHAPE.test(saved);
+          const noBackup = `The ${door} couldn't save ${who}'s code and has no backup codes left.${usable ? "" : " You'll need to let them in."}`;
+          return this.fallback(input, saved, who, told ? [] : [{ id: `lock:no-backup:${grant.id}:${device.deviceId}`, text: noBackup, urgent: true }], told);
         }
         doors.push({ door, code: backup });
-        notes.push({ id: `lock:backup:${grant.id}:${device.deviceId}`, text: `The ${door} didn't take ${who}'s code, so ${who} got a backup code for it.`, urgent: true });
+        usedBackup = true;
+        if (!toldBackup) notes.push({ id: `lock:backup:${grant.id}:${device.deviceId}`, text: `The ${door} couldn't save ${who}'s code, so ${who} got a backup code for it.`, urgent: true });
       }
       grant.releasedAt = this.deps.now().toISOString();
       this.write();
       const values = new Set(doors.map((item) => item.code));
-      if (values.size <= 1) return { ok: true, code: doors[0]?.code ?? code, source: notes.length > 0 ? "backup" : "grant", notes };
+      if (values.size <= 1) return { ok: true, code: doors[0]?.code ?? code, source: usedBackup ? "backup" : "grant", notes };
       return { ok: true, code: doors[0]!.code, doors, source: "backup", notes };
     });
   }
 
-  private fallback(input: { flow: GrantFlow; jobId: string }, saved: string | undefined, who: string, notes: GrantNote[]): GrantRelease {
+  private fallback(input: { flow: GrantFlow; jobId: string }, saved: string | undefined, who: string, notes: GrantNote[], told = false): GrantRelease {
     if (saved && CODE_SHAPE.test(saved)) {
-      return { ok: true, code: saved, source: "saved", notes: [...notes, { id: `lock:saved:${input.flow}:${input.jobId}`, text: `The lock didn't take ${who}'s own code, so ${who} got your saved door code.`, urgent: true }] };
+      // When the lock's event already told the host this code falls back to the saved one, don't say it twice.
+      const savedNote: GrantNote[] = told ? [] : [{ id: `lock:saved:${input.flow}:${input.jobId}`, text: `The lock couldn't save ${who}'s own code, so ${who} got your saved door code.`, urgent: true }];
+      return { ok: true, code: saved, source: "saved", notes: [...notes, ...savedNote] };
     }
     return { ok: false, reason: "lock-failed", notes };
   }

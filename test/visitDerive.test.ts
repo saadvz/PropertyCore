@@ -168,7 +168,7 @@ describe("what's due from visit records", () => {
     expect(due([connected, cleaning("j1")], "2027-01-04T17:29:00.000Z").map((item) => item.id)).toEqual(["late-ask:j1"]);
     const atRisk = due([connected, cleaning("j1")], "2027-01-04T17:30:00.000Z");
     expect(atRisk.map((item) => item.id)).toEqual(["late-ask:j1", "at-risk:j1"]);
-    expect(atRisk[1]).toMatchObject({ to: "host", body: "Maria Lopez hasn't arrived at 12 Scratch Lane. The next guests check in at 4 PM." });
+    expect(atRisk[1]).toMatchObject({ to: "host", body: "Maria Lopez hasn't arrived at 12 Scratch Lane yet. The next guests check in at 4 PM." });
   });
 
   it("uses the median of the last five measured cleans for the at-risk time", () => {
@@ -188,7 +188,7 @@ describe("what's due from visit records", () => {
     const window = cleaning("j1", { sameDay: false, checkIn: undefined, until: "2027-01-05T01:00:00.000Z" });
     const items = due([connected, window], "2027-01-05T01:00:00.000Z");
     expect(items.map((item) => item.id)).toEqual(["no-show:j1"]);
-    expect(items[0]?.body).toBe("No one came in for the clean at 12 Scratch Lane by 8 PM. Maria Lopez hasn't checked in.");
+    expect(items[0]?.body).toBe("Maria Lopez didn't arrive for the clean at 12 Scratch Lane. No one had come in by 8 PM.");
     expect(due([connected, cleaning("j1")], "2027-01-04T21:00:00.000Z", (id) => id === "at-risk:j1").map((item) => item.id)).toEqual([]);
     // A no-show isn't told days later, after a restart.
     expect(due([connected, window], "2027-01-05T13:00:00.000Z")).toEqual([]);
@@ -200,7 +200,7 @@ describe("what's due from visit records", () => {
     expect(due([...base, done("d1", "2027-01-04T18:00:00.000Z"), lockOut("l1", "2027-01-04T18:05:00.000Z")], "2027-01-04T20:00:00.000Z")).toEqual([]);
     const open = due([...base, done("d1", "2027-01-04T18:00:00.000Z"), lockOut("l1", "2027-01-04T18:05:00.000Z"), unlock("u2", "2027-01-04T19:00:00.000Z", "Cleaner"), repair("r1", "2027-01-04T20:30:00.000Z", "2027-01-04T21:30:00.000Z")], "2027-01-04T20:00:00.000Z");
     expect(open).toEqual([
-      { id: "not-ready:j1", to: "host", kind: "not-ready", jobId: "j1", body: "Before the 4 PM check-in at 12 Scratch Lane: a repair visit runs into check-in and the door wasn't locked from outside after the cleaning." },
+      { id: "not-ready:j1", to: "host", kind: "not-ready", jobId: "j1", body: "Before the 4 PM check-in at 12 Scratch Lane: a repair visit runs into check-in, and the door wasn't locked after the cleaning." },
     ]);
     const undone = due(base, "2027-01-04T20:00:00.000Z");
     expect(undone.find((item) => item.kind === "not-ready")?.body).toBe("Before the 4 PM check-in at 12 Scratch Lane: the cleaning isn't marked done.");
@@ -209,7 +209,7 @@ describe("what's due from visit records", () => {
   it("tells the host once a day when the cleaner's code opens the door outside any cleaning", () => {
     const events = [connected, cleaning("j1"), unlock("u1", "2027-01-06T03:00:00.000Z", "Cleaner"), unlock("u2", "2027-01-06T03:30:00.000Z", "Cleaner")];
     expect(due(events, "2027-01-06T04:00:00.000Z")).toEqual([
-      { id: "stray:cleaner:2027-01-05", to: "host", kind: "stray", body: "The cleaner's code opened the front door at 12 Scratch Lane at 10 PM, outside any cleaning." },
+      { id: "stray:cleaner:2027-01-05", to: "host", kind: "stray", body: "The cleaner's code opened the front door at 12 Scratch Lane at 10 PM, when no cleaning was booked." },
     ]);
   });
 
@@ -226,7 +226,7 @@ describe("what's due from visit records", () => {
     const items = (now: string) => fixerDue(buildVisits(events, ctx(now)), { now: new Date(now), timeZone: NY, proName: () => "Ace Plumbing" });
     expect(items("2027-01-07T13:29:00.000Z")).toEqual([]);
     expect(items("2027-01-07T15:30:00.000Z")).toEqual([
-      { kind: "crew-no-arrival:2027-01-07", jobId: "c1", text: "No one from Ace Plumbing's crew has come in today. Work was set to start at 8 AM." },
+      { kind: "crew-no-arrival:2027-01-07", jobId: "c1", text: "No one from Ace Plumbing's crew has come in yet. Work was due to start at 8 AM." },
       { kind: "visit-no-arrival", jobId: "r1", text: "Ace Plumbing hasn't arrived for the visit that started at 10 AM." },
     ]);
     expect(items("2027-01-08T04:00:00.000Z")).toEqual([{ kind: "visit-stray:p-1:2027-01-07", text: "Ace Plumbing's code opened the front door at 10 PM, outside their visit." }]);

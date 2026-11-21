@@ -185,7 +185,7 @@ describe("standing codes", () => {
     const code = w.fake.liveCodes("dev-front")[0]!.code;
     const link = w.sent[1]!;
     expect(link.to).toBe(COHOST);
-    expect(link.body).toMatch(new RegExp(`^Here's your private link to your door code at 12 Scratch Lane\\. It opens once, within 24 hours: ${BASE.replace(/\//g, "\\/")}\\/locks\\/code\\/[a-z]{40}$`));
+    expect(link.body).toMatch(new RegExp(`^Here's your private link to your door code at 12 Scratch Lane\\. It works once, in the next 24 hours: ${BASE.replace(/\//g, "\\/")}\\/locks\\/code\\/[a-z]{40}$`));
     expect(link.body.includes(code)).toBe(false);
     expect(await w.desk.standingText(COHOST, "YES")).toBe(false);
     expect(w.sent.length).toBe(2);

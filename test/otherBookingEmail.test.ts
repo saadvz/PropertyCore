@@ -142,7 +142,7 @@ describe("a booking from the host's own site", () => {
     const { desk } = await opened();
     const asked = ok(await read(desk, { ...DIRECT, authentication: GMAIL_FAIL("example.test") }, { extracted: DIRECT_FIELDS }));
     expect(asked.outcome).toBe("awaiting-host");
-    expect(String(asked.warning)).toContain("didn't pass its sender check");
+    expect(String(asked.warning)).toContain("This email failed its sender check, so it may not be from your booking site.");
     expect(ok(await read(desk, { ...DIRECT, authentication: GMAIL_FAIL("example.test") }, { extracted: DIRECT_FIELDS, confirmation: codeOf(asked) })).outcome).toBe("applied");
   });
 
