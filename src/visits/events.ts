@@ -206,7 +206,7 @@ export function cameraCounts(events: readonly VisitEvent[]): Map<string, CameraC
 export type StoredEvent = VisitEvent & { loggedAt: string };
 
 /** Whose a lock code is, in Property Core's own terms. "shared" is a code more than one person uses. */
-export type CodePerson = { role: "cleaner" } | { role: "pro"; proId: string } | { role: "host" } | { role: "guest" } | { role: "shared" } | { role: "package" };
+export type CodePerson = { role: "cleaner" } | { role: "pro"; proId: string } | { role: "host" } | { role: "guest" } | { role: "shared" } | { role: "package" } | { role: "visitor" };
 
 /** The lock's name for a code, mapped to its person. Keys are compared with case and spacing ignored. */
 export type CodeNames = Record<string, CodePerson>;
@@ -232,7 +232,7 @@ export const jobOfVisit = (visit: string): string => visit.split(":")[1] ?? "";
 export interface EntryNames {
   cleaner?: string;
   pros?: Record<string, string>;
-  /** A standing or bring-in code's person, keyed by the code's name as `codeKey` gives it. */
+  /** A standing, bring-in or visit code's person, keyed by the code's name as `codeKey` gives it. */
   codes?: Record<string, string>;
 }
 
@@ -251,7 +251,7 @@ export function entryEventsFrom(events: readonly VisitEvent[], codeNames: CodeNa
         ? (names.cleaner ?? "Cleaner")
         : person?.role === "pro"
           ? names.pros?.[person.proId]
-          : (person?.role === "shared" || person?.role === "package") && event.codeName
+          : (person?.role === "shared" || person?.role === "package" || person?.role === "visitor") && event.codeName
             ? names.codes?.[codeKey(event.codeName)]
             : undefined;
     const party = person?.role === "host" || person?.role === "guest" ? person.role : undefined;

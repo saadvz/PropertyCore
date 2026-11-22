@@ -2,6 +2,10 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { FIXER_FILE, readFixer } from "../fixer-core/store";
 import { readHubFile } from "../hub/store";
+import { localDateOf } from "../core/timezone";
+import { zonedInstant } from "../hub/calendar";
+import { entryNamesFrom, standingNames } from "../oversight/evidence";
+import { activitySentence, doorActivity } from "./activity";
 import { buildVisits, type VisitRecord } from "./derive";
 import type { CodePerson } from "./events";
 import { visitLogFor } from "./store";
@@ -20,6 +24,11 @@ export interface VisitReply {
 
 const DAY = 86_400_000;
 export const MAX_LIST_DAYS = 31;
+/** door_activity reads at most this many days at a time. */
+export const MAX_ACTIVITY_DAYS = 7;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const dayMonth = (ymd: string) => `${Number(ymd.slice(8, 10))} ${MONTHS[Number(ymd.slice(5, 7)) - 1]}`;
+const addDays = (ymd: string, days: number) => new Date(Date.parse(`${ymd}T12:00:00Z`) + days * DAY).toISOString().slice(0, 10);
 const ok = (structured: Record<string, unknown>): VisitReply => ({ text: JSON.stringify(structured), structured, isError: false });
 const fail = (text: string): VisitReply => ({ text, isError: true });
 const isDate = (value: unknown): value is string => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`));
@@ -83,7 +92,33 @@ export class VisitDesk {
   /** How the log reads: lines, skipped lines, and the last lock event, so a quiet lock can be noticed. */
   health(): VisitReply {
     const log = visitLogFor(this.root, this.deps.now);
-    return ok({ ...log.health(), codes: Object.keys(log.codeNames()).length, sends: false });
+    return ok({ ...log.health(), codes: Object.keys(log.codeNames()).length, sends: false, next: "This is how the log reads, not who came in. For who came in and when, call door_activity." });
+  }
+
+  /**
+   * Who came in (#280 item 20): every unlock and lock between `from` and `to` (local dates, inclusive, at most 7
+   * days; default today), with whose code it was or how the door was opened without one. Read-only.
+   */
+  doorActivity(input: { from?: unknown; to?: unknown }): VisitReply {
+    const timeZone = this.timeZone();
+    if (!timeZone) return fail("The property has no time zone yet, so its days can't be placed. Set the property's time zone first.");
+    if (input.from !== undefined && !isDate(input.from)) return fail("Give from as a date, like 2027-01-04.");
+    if (input.to !== undefined && !isDate(input.to)) return fail("Give to as a date, like 2027-01-04.");
+    const d = localDateOf(this.deps.now(), timeZone);
+    const today = `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
+    const to = isDate(input.to) ? input.to : isDate(input.from) ? input.from : today;
+    const from = isDate(input.from) ? input.from : to;
+    if (to < from) return fail("from must be on or before to.");
+    if (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`) >= MAX_ACTIVITY_DAYS * DAY) return fail(`Ask for at most ${MAX_ACTIVITY_DAYS} days at a time.`);
+    const log = visitLogFor(this.root, this.deps.now);
+    const events = log.read();
+    const span = { from: Date.parse(zonedInstant(from, "00:00", timeZone)), until: Date.parse(zonedInstant(addDays(to, 1), "00:00", timeZone)) };
+    const entries = doorActivity(events, log.codeNames(), entryNamesFrom(events, standingNames(this.root)), span);
+    const sentences = entries.map((entry) => activitySentence(entry, timeZone));
+    const next = sentences.length
+      ? `Tell the host, one line each: ${sentences.join(" ")}`
+      : `No door at the property was unlocked or locked between ${dayMonth(from)} and ${dayMonth(to)}.`;
+    return ok({ from, to, entries: entries.map((entry, i) => ({ ...entry, local: clockText(entry.at, timeZone), sentence: sentences[i] })), sentences, next, sends: false });
   }
 
   /** Saves whose a lock code is, by the lock's own name for it, after the host says so. `none` forgets it. */
