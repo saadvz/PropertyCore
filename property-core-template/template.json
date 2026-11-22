@@ -45,15 +45,8 @@
       "parked": "Not offered to new accounts. Only Saad makes an account a touring account, on /admin."
     }
   ],
-  "skills": [
-    "../.grok/skills/install-tour-core/SKILL.md",
-    "../.grok/skills/setup-property/SKILL.md",
-    "../.grok/skills/map-route/SKILL.md",
-    "../.grok/skills/run-readiness-check/SKILL.md",
-    "../.grok/skills/work-exception/SKILL.md",
-    "../.grok/skills/export-audit/SKILL.md",
-    "../.grok/skills/backup-tour-core/SKILL.md"
-  ],
+  "skills": [],
+  "skillsNote": "The team template carries no skills. Tour Core's seven skills stay in .grok/skills/ for a parked touring account, which reads them from the clone; shipped in this template they put self-guided tours in front of every new host.",
   "integrations": [
     {
       "name": "Property Core",
@@ -213,11 +206,11 @@
   ],
   "marketplace": {
     "ships": [
-      "the bot profile and standing instructions, which name the repository and the hosted address",
-      "the seven Tour Core skills, kept for touring accounts while touring is parked"
+      "the bot profile and standing instructions, which name the repository and the hosted address"
     ],
     "neverShips": [
       "memories from a real setup",
+    "Tour Core's skills: touring is parked, and a touring account reads them from the clone",
       "any routine's webhook address or key",
       "OAuth tokens",
       "Google OAuth tokens",

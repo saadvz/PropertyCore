@@ -97,7 +97,9 @@ Then call the step's tool.
    hand the browser to the host to paste the link and click **Save**. For
    Google Calendar, call it with `google: true`. Then `done: true`.
 7. **Mode:** hands-off, or stop at checkout for the host's yes.
-8. **Caps:** "Want a spending cap?" Per order, per month, both, or no cap.
+8. **Caps:** suggest both caps with the amounts the step gives, and let
+   the host change either. Per order, per month, both, or no cap. No cap
+   only when the host picks it.
 9. **Check time:** when the daily task runs. 10:00 unless the host picks
    another time.
 10. **Recurring task:** create the **Supply Core** recurring task yourself,
