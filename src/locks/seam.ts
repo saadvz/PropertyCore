@@ -157,9 +157,12 @@ export class SeamLockAdapter implements LockAdapter {
     }));
   }
 
+  private ongoing(window: CodeWindow): boolean {
+    return Date.parse(window.until) - this.now().getTime() >= ONGOING_MS;
+  }
+
   private timing(window: CodeWindow): Record<string, string> {
-    const ongoing = Date.parse(window.until) - this.now().getTime() >= ONGOING_MS;
-    return ongoing ? {} : { starts_at: window.from, ends_at: window.until };
+    return this.ongoing(window) ? {} : { starts_at: window.from, ends_at: window.until };
   }
 
   async createCode(input: { deviceId: string; code: string; name: string; window: CodeWindow }): Promise<CodeOnDevice> {
@@ -169,7 +172,8 @@ export class SeamLockAdapter implements LockAdapter {
         code: input.code,
         name: input.name,
         ...this.timing(input.window),
-        use_backup_access_code_pool: true,
+        // The partner's backup codes are for time-bound codes only: a standing (ongoing) code asks for none (#180 sandbox run).
+        ...(this.ongoing(input.window) ? {} : { use_backup_access_code_pool: true }),
       });
       return { codeId: reply.access_code.access_code_id, status: codeStatusOf(reply.access_code) };
     } catch (error) {

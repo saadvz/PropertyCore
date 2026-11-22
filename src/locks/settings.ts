@@ -35,7 +35,13 @@ export interface StandingPerson {
   phone: string;
   role: StandingRole;
   addedAt: string;
+  /** When the one invite text went out. Set only once it was sent, so a failed send is tried again. */
   invitedAt?: string;
+  /** The last try at the invite that didn't go out, and how many tries so far. */
+  inviteTriedAt?: string;
+  inviteTries?: number;
+  /** When the host last had the invite sent again (standing_code_link before the YES). */
+  reinvitedAt?: string;
   yesAt?: string;
   stoppedAt?: string;
   removedAt?: string;

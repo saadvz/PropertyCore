@@ -122,6 +122,16 @@ function whoOf(flow: GrantFlow, label: string | undefined): string {
   return label?.trim() || (flow === "cleaning" ? "the cleaner" : flow === "repair" ? "the pro" : flow === "guest" ? "the guest" : flow === "bring-in" ? "the person bringing the package in" : "they");
 }
 
+/** The host's one note when a code couldn't go on a lock. Stable id, so it's told once. Never a code. */
+export function issueFailedNote(flow: GrantFlow, want: Pick<WantedCode, "jobId" | "label">): GrantNote {
+  const who = whoOf(flow, want.label);
+  const text =
+    flow === "standing"
+      ? `I couldn't put ${who}'s standing code on the lock yet. I'll keep trying; their private link shows the code once it's there.`
+      : `I couldn't put ${who}'s code on the lock yet. I'll keep trying, and I'll tell you if it isn't there when they arrive.`;
+  return { id: `lock:issue-failed:${flow}:${want.jobId}`, jobId: want.jobId, text };
+}
+
 export class GrantBook {
   private file: GrantsFile;
   private queue: Promise<unknown> = Promise.resolve();
@@ -203,10 +213,13 @@ export class GrantBook {
         const live = this.liveOf(flow).find((grant) => grant.jobId === want.jobId);
         if (live) {
           await this.retryDoors(adapter, live);
+          if (live.devices.some((device) => !device.codeId)) notes.push(issueFailedNote(flow, want));
           continue;
         }
         const made = await this.issue(adapter, flow, want);
         if (!made.ok) notes.push(made.note);
+        // A door that didn't take the code at all (the partner refused the request) is kept for a retry, and the host hears it once (#180 sandbox run).
+        else if (made.grant.devices.some((device) => !device.codeId)) notes.push(issueFailedNote(flow, want));
       }
       this.write();
       return notes;
@@ -362,9 +375,28 @@ export class GrantBook {
     return pulled.code;
   }
 
+  /**
+   * Where a live grant's code is now, asked of the partner without waiting: `set` when every door
+   * holds it (or a backup), `programming` while one is still on its way, `failed` when a door
+   * refused it, `none` with no live grant. For a code page, so it never hangs or uses a link up early.
+   */
+  check(flow: GrantFlow, jobId: string): Promise<"set" | "programming" | "failed" | "none"> {
+    return this.serial(async () => {
+      const grant = this.liveOf(flow).find((item) => item.jobId === jobId);
+      if (!grant) return "none";
+      const adapter = this.deps.adapter();
+      if (adapter) {
+        await this.refresh(adapter, grant);
+        this.write();
+      }
+      const doors = grant.devices.map((device) => (grant.backups?.some((backup) => backup.deviceId === device.deviceId) ? "set" : device.codeId ? device.status : "failed"));
+      if (doors.length === 0 || doors.some((status) => status === "failed" || status === "removed")) return "failed";
+      return doors.every((status) => status === "set") ? "set" : "programming";
+    });
+  }
+
   private async issue(adapter: LockAdapter, flow: GrantFlow, want: WantedCode): Promise<{ ok: true; grant: StoredGrant } | { ok: false; note: GrantNote }> {
-    const who = whoOf(flow, want.label);
-    const failed: GrantNote = { id: `lock:issue-failed:${flow}:${want.jobId}`, jobId: want.jobId, text: `I couldn't put ${who}'s code on the lock yet. I'll keep trying, and I'll tell you if it isn't there when they arrive.` };
+    const failed = issueFailedNote(flow, want);
     const key = this.deps.key();
     const doors = this.deps.doors();
     if (!key || doors.length === 0) return { ok: false, note: failed };

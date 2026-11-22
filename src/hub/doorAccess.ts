@@ -210,6 +210,12 @@ export class DoorAccess {
     return this.grants().sync(flow, wanted);
   }
 
+  /** Where one job's code is on the locks now, without waiting (GrantBook.check). `none` off connected locks. */
+  async checkGrant(flow: GrantFlow, jobId: string): Promise<"set" | "programming" | "failed" | "none"> {
+    if (!this.connected()) return "none";
+    return this.grants().check(flow, jobId);
+  }
+
   /** Revokes one job's code now. Does nothing off connected locks. */
   async revokeGrant(flow: GrantFlow, jobId: string): Promise<void> {
     if (!this.connected()) return;

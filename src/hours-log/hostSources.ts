@@ -129,6 +129,8 @@ function stepFact(step: HostStep): RowFact | undefined {
       return owner("lock-setup", step.at, "Approved how door codes go out", "Connected locks, settings");
     case "standing-add":
       return owner("standing-code", step.at, `Approved a standing code for ${about ?? "a person"}`, `Standing code ${ref ?? "added"}`);
+    case "standing-invite":
+      return owner("standing-code", step.at, `Approved sending ${about ?? "a person"} the invite again`, `Standing code ${ref ?? "invite"}, invite`);
     case "standing-link":
       return owner("standing-code", step.at, `Approved a new code link for ${about ?? "a person"}`, `Standing code ${ref ?? "link"}, link`);
     case "standing-remove":

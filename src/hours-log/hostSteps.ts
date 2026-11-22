@@ -23,6 +23,7 @@ export const HOST_STEP_KINDS = [
   "locks-off",
   "lock-settings",
   "standing-add",
+  "standing-invite",
   "standing-link",
   "standing-remove",
   // Guest codes (#262)

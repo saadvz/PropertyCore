@@ -240,8 +240,8 @@ describe("standing codes", () => {
     const token = tokenOf(w.sent[1]!.body);
     const code = w.fake.liveCodes("dev-front")[0]!.code;
     expect(w.desk.pageOpen(token)).toEqual({ name: "Pat Lee", street: "12 Scratch Lane" });
-    expect((await w.desk.showCode(token))?.code).toBe(code);
-    expect(await w.desk.showCode(token)).toBeUndefined();
+    expect(await w.desk.showCode(token)).toEqual({ ok: true, code });
+    expect(await w.desk.showCode(token)).toEqual({ ok: false, reason: "gone" });
     expect(w.desk.pageOpen(token)).toBeUndefined();
   });
 
@@ -251,19 +251,25 @@ describe("standing codes", () => {
     await w.desk.standingText(COHOST, "YES");
     const first = tokenOf(w.sent[1]!.body);
     w.at(NOW.getTime() + STANDING_LINK_HOURS * 3600_000);
-    expect(await w.desk.showCode(first)).toBeUndefined();
+    expect(await w.desk.showCode(first)).toEqual({ ok: false, reason: "gone" });
     const asked = await w.desk.newLink({ id });
     expect(asked.structured?.question).toBe("Text Pat Lee a new private link to their door code?");
     await approved((confirmation) => w.desk.newLink({ id, ...(confirmation ? { confirmation } : {}) }));
     const second = tokenOf(w.sent[2]!.body);
     expect(second).not.toBe(first);
-    expect(await w.desk.showCode(first)).toBeUndefined();
-    expect((await w.desk.showCode(second))?.code).toBe(w.fake.liveCodes("dev-front")[0]!.code);
+    expect(await w.desk.showCode(first)).toEqual({ ok: false, reason: "gone" });
+    expect(await w.desk.showCode(second)).toEqual({ ok: true, code: w.fake.liveCodes("dev-front")[0]!.code });
   });
 
-  it("never gives a link before the person's YES", async () => {
+  it("never gives a link before the person's YES: the tool re-sends the invite instead, with the host's yes", async () => {
     const w = world();
     const id = await named(w);
+    const asked = await w.desk.newLink({ id });
+    expect(asked.structured?.question).toBe("Text Pat Lee the invite again, asking them to reply YES for their door code?");
+    await approved((confirmation) => w.desk.newLink({ id, ...(confirmation ? { confirmation } : {}) }));
+    expect(w.sent.map((text) => text.body.startsWith("This is the text line for 12 Scratch Lane."))).toEqual([true, true]);
+    expect(w.sent.some((text) => text.body.includes(STANDING_PAGE_PREFIX))).toBe(false);
+    // At most once an hour.
     expect((await w.desk.newLink({ id })).isError).toBe(true);
   });
 

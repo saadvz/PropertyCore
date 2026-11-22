@@ -4,7 +4,7 @@ import { sendLiveSms } from "../cleaner-core/liveSms";
 import { propertyBasePath, propertyFolder, type Property } from "../cleaner-core/hosted/properties";
 import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import { peopleFor } from "../hub/people";
-import { LockDesk, STANDING_PAGE_PREFIX } from "../locks/desk";
+import { LockDesk, STANDING_PAGE_PREFIX, type CodeShown } from "../locks/desk";
 import { handleLockTool, LOCK_TOOL_NAMES, LOCK_TOOLS } from "../locks/tools";
 import { GUEST_PAGE_PREFIX, GuestCodeDesk } from "../locks/guestDesk";
 import { GUEST_TOOL_NAMES, GUEST_TOOLS, handleGuestTool } from "../locks/guestTools";
@@ -129,6 +129,8 @@ export async function tickAllLocks(h: HostedCleaner): Promise<void> {
         const door = hubFor(ctx.root, { now: () => h.now() }).doorAccess(ctx.env);
         if (!door.locks().activeAt) continue;
         for (const note of lockHealthNotes(door, h.now())) await tellLockNote(h, { tenant, property }, note);
+        // Standing codes (#180): an invite that couldn't go yet goes once it can, and a code a door refused is tried again. The desk tells the host.
+        if (anyDoorFlow(property) && (door.locks().standing ?? []).some((person) => !person.removedAt)) await lockDesk(h, tenant, property).standingClock();
         // Guest codes (#262): each stay's code follows the booking log on this clock, so a booking email or late checkout reaches the lock within a tick.
         if (guestCodesAvailable(h, tenant) && anyDoorFlow(property)) for (const note of await guestDesk(h, tenant, property).sync()) await tellLockNote(h, { tenant, property }, note);
         // The checkout-time release and a paused turnover's reminders run on this clock.
@@ -232,6 +234,12 @@ export function lockDesk(h: HostedCleaner, tenant: Tenant, property: Property): 
       return origin ? `${origin}${propertyBasePath(tenant.id, fresh().property)}` : undefined;
     },
     cleaningOn: () => fresh().property.flows.cleaning.on,
+    hostPhone: async () => (await cleaningDesk(h, fresh().account, fresh().property)?.confirmedHostPhone()) ?? undefined,
+    // A standing code that couldn't go on the lock is one host note, through the same alerts path as every lock note (#277).
+    tell: async (notes) => {
+      const now = fresh();
+      for (const note of notes) await tellLockNote(h, { tenant: now.account, property: now.property }, note);
+    },
   });
   desks.set(root, desk);
   return desk;
@@ -327,21 +335,62 @@ interface CodePage {
   shownAs: string;
 }
 
+/** What the page says when no code shows: every tap ends in the code or one of these, never silence. */
+export interface CodePageWords {
+  /** The link is used, ended or wrong. */
+  gone: string;
+  /** The code is still going on the lock: the link keeps working. */
+  pending: string;
+  /** The lock refused the code and nothing else can show: the host has been told. */
+  failed: string;
+  /** The page couldn't reach the server. */
+  offline: string;
+}
+
+export const CODE_PENDING = "Your code is still being added to the lock. Try again in a minute.";
+const CODE_OFFLINE = "That didn't reach us. Check your connection and tap again.";
+
+/**
+ * The page's one script. Kept out of a template literal on purpose: a backslash in one is eaten, and
+ * `/\/$/` once became `//$/`, a comment that ended the script, so the button did nothing (#180 live
+ * run). It reads its words from the page's data attributes and ends every tap in a visible line.
+ */
+export const CODE_PAGE_SCRIPT = [
+  'var b=document.getElementById("show"),o=document.getElementById("out"),w=document.getElementById("words").dataset;',
+  'b.addEventListener("click",function(){',
+  'b.disabled=true;o.textContent="";',
+  'var p=location.pathname;if(p.charAt(p.length-1)==="/")p=p.slice(0,-1);',
+  'fetch(p+"/show",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}",cache:"no-store",credentials:"omit"})',
+  '.then(function(r){return r.json().then(function(d){return{s:r.status,d:d||{}};},function(){return{s:r.status,d:{}};});})',
+  '.then(function(x){',
+  'if(x.d.code){o.textContent=w.shownas+x.d.code;b.hidden=true;return;}',
+  'o.textContent=x.d.error||(x.s===409?w.pending:x.s===404?w.gone:w.failed);',
+  'if(x.s===409||x.s>=500)b.disabled=false;',
+  '},function(){o.textContent=w.offline;b.disabled=false;});',
+  "});",
+].join("");
+
 /**
  * A code page: GET shows a button and nothing else, so a link preview never uses it up; POST .../show
- * (JSON) shows the code once and ends the link. The token, the path and the body are never logged.
+ * (JSON) shows the code once and ends the link. A code still going on the lock answers 409 and keeps
+ * the link; a lock that refused it answers 503. The token, the path and the body are never logged.
  */
-async function serveCodePage(r: HostedRequest, sub: string, page: CodePage | undefined, show: () => Promise<{ code: string; doors?: { door: string; code: string }[] } | undefined>, gone: string): Promise<void> {
+async function serveCodePage(r: HostedRequest, sub: string, page: CodePage | undefined, show: () => Promise<CodeShown>, words: Omit<CodePageWords, "offline">): Promise<void> {
   if (r.method === "GET" && sub === "") {
-    if (!page) return r.send(404, "text/html; charset=utf-8", `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Door code</title><p>${escape(gone)}</p>`, PAGE_HEADERS);
+    if (!page) return r.send(404, "text/html; charset=utf-8", `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Door code</title><p>${escape(words.gone)}</p>`, PAGE_HEADERS);
     const nonce = randomBytes(16).toString("base64");
-    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Door code</title></head><body><main><h1>${escape(page.heading)}</h1><p>${escape(page.intro)}</p><button id="show">${escape(page.button)}</button><p id="out" aria-live="polite"></p></main><script nonce="${nonce}">document.getElementById("show").addEventListener("click",async()=>{const b=document.getElementById("show");b.disabled=true;let d={};try{const r=await fetch(location.pathname.replace(/\/$/,"")+"/show",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}",cache:"no-store",credentials:"omit"});d=await r.json();}catch(e){}document.getElementById("out").textContent=d.code?(${JSON.stringify(page.shownAs)}+d.code):(d.error||${JSON.stringify(gone)});});</script></body></html>`;
+    const data = { "data-shownas": page.shownAs, "data-gone": words.gone, "data-pending": words.pending, "data-failed": words.failed, "data-offline": CODE_OFFLINE };
+    const attrs = Object.entries(data).map(([key, value]) => `${key}="${escape(value)}"`).join(" ");
+    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Door code</title></head><body><main><h1>${escape(page.heading)}</h1><p>${escape(page.intro)}</p><button id="show" type="button">${escape(page.button)}</button><p id="out" aria-live="polite"></p><div id="words" hidden ${attrs}></div></main><script nonce="${nonce}">${CODE_PAGE_SCRIPT}</script></body></html>`;
     return r.send(200, "text/html; charset=utf-8", html, { ...PAGE_HEADERS, "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'` });
   }
   if (r.method === "POST" && sub === "show") {
     if (!String(r.req.headers["content-type"] ?? "").startsWith("application/json")) return r.send(415, "application/json; charset=utf-8", JSON.stringify({ error: "Send JSON." }), { ...PAGE_HEADERS, Connection: "close" });
     const shown = await show();
-    if (!shown) return r.send(404, "application/json; charset=utf-8", JSON.stringify({ error: gone }), PAGE_HEADERS);
+    if (!shown.ok) {
+      const status = shown.reason === "pending" ? 409 : shown.reason === "failed" ? 503 : 404;
+      return r.send(status, "application/json; charset=utf-8", JSON.stringify({ error: words[shown.reason] }), PAGE_HEADERS);
+    }
     const code = shown.doors && shown.doors.length > 1 ? shown.doors.map((item) => `${item.door}: ${item.code}`).join(", ") : shown.code;
     return r.send(200, "application/json; charset=utf-8", JSON.stringify({ code }), PAGE_HEADERS);
   }
@@ -355,7 +404,11 @@ export async function serveStandingPage(h: HostedCleaner, r: HostedRequest, tena
   const desk = lockDesk(h, tenant, property);
   const open = r.method === "GET" && sub === "" ? desk.pageOpen(token) : undefined;
   const page = open ? { heading: `Your door code at ${open.street}`, intro: `Hi ${open.name}. Tap to see your code. It shows once, so note it somewhere safe.`, button: "Show my code", shownAs: "Your code: " } : undefined;
-  return serveCodePage(r, sub, page, () => desk.showCode(token), "This link has ended. Ask the host for a new one.");
+  return serveCodePage(r, sub, page, () => desk.showCode(token), {
+    gone: "This link has ended. Ask the host for a new one.",
+    pending: CODE_PENDING,
+    failed: "Your code couldn't be added to the lock yet. The host has been told, and this link still works once it's there.",
+  });
 }
 
 /** A guest code's page (#262): the host's for a stay, or a tenant's for a lease. Shows the code once. */
@@ -369,5 +422,9 @@ export async function serveGuestPage(h: HostedCleaner, r: HostedRequest, tenant:
     : open.kind === "stay"
       ? { heading: `${open.title} at ${open.street}`, intro: "Tap to see the code. It shows only once, so copy it into your arrival message right away.", button: "Show the code", shownAs: "Door code: " }
       : { heading: open.title, intro: `Hi ${open.name}. Tap to see your code. It shows once, so note it somewhere safe.`, button: "Show my code", shownAs: "Your code: " };
-  return serveCodePage(r, sub, page, () => desk.showCode(token), "This link has ended. Ask for a new one.");
+  return serveCodePage(r, sub, page, () => desk.showCode(token), {
+    gone: "This link has ended. Ask for a new one.",
+    pending: open?.kind === "stay" ? "The code is still being added to the lock. Try again in a minute." : CODE_PENDING,
+    failed: "The code couldn't be added to the lock yet. This link still works once it's there.",
+  });
 }
