@@ -49,6 +49,7 @@ describe("the lock partner's adapter", () => {
 
   it("lists devices with their kind, health and code lengths", async () => {
     const { adapter } = stub({
+      "/connected_accounts/list": { body: { connected_accounts: [{ connected_account_id: "ca1", customer_key: "acct-1" }] } },
       "/devices/list": {
         body: {
           devices: [
@@ -64,6 +65,40 @@ describe("the lock partner's adapter", () => {
       { id: "d2", accountId: "ca1", name: "Hall", kind: "thermostat", online: false },
       { id: "d3", accountId: "ca1", name: "Den", kind: "noise-sensor", online: true },
     ]);
+  });
+
+  it("finds devices the documented way: the account's connected accounts by customer key, then their devices by account id", async () => {
+    // The sandbox run (#180): the sign-in tags the connected account with the customer key, so devices are found through it.
+    const { adapter, calls } = stub({
+      "/connected_accounts/list": { body: { connected_accounts: [{ connected_account_id: "ca1", customer_key: "acct-1" }, { connected_account_id: "ca2", customer_key: "acct-1" }] } },
+      "/devices/list": {
+        body: {
+          devices: [
+            { device_id: "d1", connected_account_id: "ca1", device_type: "yale_lock", display_name: "Front door", can_program_online_access_codes: true, properties: { locked: true, online: true } },
+            { device_id: "d4", connected_account_id: "ca2", device_type: "august_lock", display_name: "Back door", properties: { locked: false, online: true } },
+            // Another account's device, if the partner ever ignored the filter, is never shown.
+            { device_id: "dx", connected_account_id: "ca-other", device_type: "yale_lock", display_name: "Someone else's door", properties: { online: true } },
+          ],
+        },
+      },
+    });
+    expect(await adapter.accounts({ customerKey: "acct-1" })).toEqual([{ id: "ca1" }, { id: "ca2" }]);
+    const devices = await adapter.devices({ customerKey: "acct-1" });
+    expect(devices.map((device) => [device.id, device.kind])).toEqual([
+      ["d1", "lock"],
+      ["d4", "lock"],
+    ]);
+    const lists = calls.filter((call) => call.url.endsWith("/connected_accounts/list"));
+    expect(lists.at(-1)!.body).toEqual({ customer_key: "acct-1" });
+    expect(calls.find((call) => call.url.endsWith("/devices/list"))!.body).toEqual({ connected_account_ids: ["ca1", "ca2"] });
+  });
+
+  it("asks for no devices when no account carries the customer key, and lets a partner error through", async () => {
+    const none = stub({ "/connected_accounts/list": { body: { connected_accounts: [] } } });
+    expect(await none.adapter.devices({ customerKey: "acct-1" })).toEqual([]);
+    expect(none.calls.some((call) => call.url.endsWith("/devices/list"))).toBe(false);
+    const refused = stub({ "/connected_accounts/list": { status: 400, body: { error: { type: "invalid_input" } } } });
+    await expect(refused.adapter.devices({ customerKey: "acct-1" })).rejects.toBeInstanceOf(SeamError);
   });
 
   it("makes a time-bound code with the backup pool on, and a standing one with no end", async () => {

@@ -136,12 +136,37 @@ building, for review:
 - **Paused reminders** turn urgent within three hours of the next check-in.
 - **An automatic extension keeps the visit link** (the pro is still inside); the Fixer gates say so.
 - **Crews.** A crew's access stays the host's, as today. Codes per crew day are a follow-up.
-- **The partner.** Access codes, with the backup pool on. The event names, the `customer_key` filter on
-  devices, and Access Grants are to confirm in the sandbox run.
+- **The partner.** Access codes, with the backup pool on. Devices are found the documented way:
+  `connected_accounts/list` by `customer_key` (the account id), then `devices/list` by those
+  `connected_account_ids`. An account or device the partner returns for any other key is dropped. The
+  event names and Access Grants are still to confirm in the sandbox run.
+
+Sandbox run (Saad, 21 Nov, with Grok and the partner's sandbox Yale login):
+
+- **What showed.** The sign-in finished and the partner's console listed the connected account
+  (Yale Access, 3 devices, healthy). `get_locks` still showed no lock after waits, repeat calls and
+  several fresh links, and the agent told the host the sign-in hadn't finished.
+- **Root cause.** `get_locks` read only the devices `save_locks` had saved, and never asked the
+  partner. `save_locks` needs device ids "from get_locks", so a property that wasn't connected yet
+  could never see its devices: setup dead-ended after every sign-in. With no saved device, its `next`
+  said "No lock is connected here. connect_lock gives the host a sign-in link.", which the agent read
+  as a failed sign-in and answered with another link. Its tests passed because they called
+  `save_locks` with the fake's known ids.
+- **Fix (`claude/locks-get-locks-lists-account-180`).** `get_locks` also asks the partner now:
+  `account` (`connected`, `none`, or `unknown` on a partner error, which is said and never shown as
+  an empty account) and `available` (the account's devices not yet on this or another property, with
+  the ids `save_locks` takes). Its `next` tells a connected account with devices, one with none, no
+  sign-in yet, and a partner error apart. A new link is offered only when no account is connected.
+- **The other leads.** `devices/list` does take `customer_key` per the docs, but the documented path
+  above is used and checked device by device for tenant isolation. Reusing one `customer_key` across
+  links is allowed. Sandbox Yale devices are `*_lock` types, which read as locks. `get_locks` doesn't
+  wait for a `connected_account.connected` webhook. Before `save_locks` that webhook matches no saved
+  device, so it's logged as dropped. That's harmless.
 
 Still open:
 
 - **Sensor health** is stored at `save_locks` and from events; no periodic device refresh yet.
 - **Setup order.** `get_state` shows the lock status and offers the lock step as a line, but the step
   isn't in Cleaner Core's numbered setup order.
-- **Manual sandbox run** waits until Saad opens a sandbox workspace.
+- **Manual sandbox run** found the `get_locks` dead end above. A retest after the fix, then a code on a
+  sandbox lock, are next.

@@ -92,6 +92,47 @@ describe("setting up connected locks", () => {
     expect(reply.text).toContain("never in chat");
   });
 
+  it("after the sign-in, get_locks lists the host's devices to pick from, and only this account's (#180 sandbox run)", async () => {
+    const { desk, fake } = world({ connected: false, other: ["dev-side"] });
+    fake.addDevice("someone-else", { id: "dev-theirs", name: "Their front door" });
+    await desk.connectLink({});
+    const reply = (await handleLockTool(desk, "get_locks", {}))!;
+    expect(reply.isError).toBe(false);
+    expect(reply.structured?.connected).toBe(false);
+    expect(reply.structured?.account).toBe("connected");
+    const ids = (reply.structured?.available as { id: string }[]).map((device) => device.id);
+    expect(ids).toEqual(["dev-front", "dev-noise"]);
+    expect(ids).not.toContain("dev-theirs");
+    // A device already on another property isn't offered here.
+    expect(ids).not.toContain("dev-side");
+    expect(reply.text).toMatch(/connected/);
+    expect(reply.text).toContain("Front door");
+    expect(reply.text).toMatch(/save_locks/);
+    expect(reply.text).not.toMatch(/didn't finish|No lock is connected/);
+    // The ids it gives are the ones save_locks takes.
+    expect((await approved((confirmation) => desk.saveLocks({ doors: ["dev-front"], ...(confirmation ? { confirmation } : {}) }))).structured?.connected).toBe(true);
+  });
+
+  it("get_locks tells a connected account with no devices apart from no sign-in, and shows a partner error", async () => {
+    const empty = world({ connected: false });
+    const noAccount = new FakeLockAdapter();
+    setLockAdapter(noAccount);
+    const none = (await handleLockTool(empty.desk, "get_locks", {}))!;
+    expect(none.structured?.account).toBe("none");
+    expect(none.text).toMatch(/connect_lock/);
+    noAccount.addAccount("acct");
+    const bare = (await handleLockTool(empty.desk, "get_locks", {}))!;
+    expect(bare.structured?.account).toBe("connected");
+    expect(bare.structured?.available).toEqual([]);
+    expect(bare.text).toMatch(/no lock/i);
+    expect(bare.text).not.toMatch(/connect_lock/);
+    noAccount.breakAccounts();
+    const broken = (await handleLockTool(empty.desk, "get_locks", {}))!;
+    expect(broken.isError).toBe(false);
+    expect(broken.structured?.account).toBe("unknown");
+    expect(broken.text).toMatch(/couldn't reach/);
+  });
+
   it("switches on only with the host's yes, every door connected, and a working alerts routine", async () => {
     const mixed = world({ connected: false });
     expect((await approved((confirmation) => mixed.desk.saveLocks({ doors: ["dev-front"], otherDoors: true, ...(confirmation ? { confirmation } : {}) }))).structured?.connected).toBe(false);
