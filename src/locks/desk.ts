@@ -1,5 +1,6 @@
 import { createHash, randomInt } from "node:crypto";
 import { join } from "node:path";
+import { recordHostStep } from "../hours-log/hostSteps";
 import { hubFor } from "../hub/hub";
 import type { DoorAccess, GrantNote } from "../hub/doorAccess";
 import { sameHash } from "../hub/uploadCode";
@@ -197,6 +198,7 @@ export class LockDesk {
       const { activeAt: _off, ...rest } = file;
       door.saveLocks({ ...rest, release: { ...file.release, cleaners: "ask" } });
       if (file.activeAt) recordLockConnection(this.root, false, () => this.deps.now());
+      recordHostStep(this.root, { at: this.deps.now().toISOString(), kind: "locks-off" });
       return ok({ connected: false, next: "This property uses the saved door code again." });
     }
     const doors = Array.isArray(input.doors) ? input.doors.filter((id): id is string => typeof id === "string") : [];
@@ -234,10 +236,12 @@ export class LockDesk {
       return ok({ connected: false, next: "The locks are saved, but they switch on only once the alerts routine works, so a lock problem reaches the host in chat. Set up the alerts routine, then call save_locks again." });
     }
     const switchedOn = !file.activeAt;
-    file.activeAt ??= this.deps.now().toISOString();
+    const at = this.deps.now().toISOString();
+    file.activeAt ??= at;
     door.saveLocks(file);
     // Visit records count a lock as connected from the latest connection line.
     if (switchedOn) recordLockConnection(this.root, true, () => this.deps.now());
+    recordHostStep(this.root, { at, kind: "locks-on", about: names });
     return ok({ connected: true, next: "Connected. From the next booked visit, each cleaner and pro gets their own code. Ask the host how codes should go out, and call lock_settings." });
   }
 
@@ -261,6 +265,7 @@ export class LockDesk {
     const gate = this.confirm("locks-settings", JSON.stringify({ ...next, ...(packages ? { packages } : {}) }), typeof input.confirmation === "string" ? input.confirmation : undefined, question);
     if (gate !== "go") return gate;
     door.saveLocks({ ...file, release: { cleaners: next.cleaners, pros: next.pros, ...(packages ? { packages } : {}) }, extend: next.extend });
+    recordHostStep(this.root, { at: this.deps.now().toISOString(), kind: "lock-settings" });
     return ok({ ...next, ...(packages ? { packages } : {}), next: "Saved." });
   }
 
@@ -297,6 +302,7 @@ export class LockDesk {
     const person: StandingPerson = { id: `std_${letters(10)}`, name, phone, role, addedAt: this.deps.now().toISOString() };
     const all = [...this.allStanding(file), person];
     this.saveStanding(file, all);
+    recordHostStep(this.root, { at: person.addedAt, kind: "standing-add", about: name, ref: person.id });
     const invited = await this.invite(person);
     return ok({ id: person.id, invited, next: invited ? `${name} got one text asking them to reply YES. Their code link goes once they do.` : `${name} can't be texted yet (the host's phone isn't confirmed, or they opted out). Their code waits.` });
   }
@@ -379,6 +385,7 @@ export class LockDesk {
     const gate = this.confirm("locks-standing-link", person.id, typeof input.confirmation === "string" ? input.confirmation : undefined, `Text ${person.name} a new private link to their door code?`);
     if (gate !== "go") return gate;
     const sent = await this.sendLink(person.id);
+    if (sent) recordHostStep(this.root, { at: this.deps.now().toISOString(), kind: "standing-link", about: person.name, ref: person.id });
     return sent ? ok({ sent: true, next: `${person.name} got a new link. The old one no longer works.` }) : fail(`The link couldn't go to ${person.name} now.`);
   }
 
@@ -394,6 +401,7 @@ export class LockDesk {
     person.removedAt = this.deps.now().toISOString();
     delete person.link;
     this.saveStanding(file, all);
+    recordHostStep(this.root, { at: person.removedAt, kind: "standing-remove", about: person.name, ref: person.id });
     await this.syncStanding();
     return ok({ removed: true, next: `${person.name}'s code is removed from the locks.` });
   }

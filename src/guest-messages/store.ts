@@ -15,10 +15,22 @@ export const GUEST_FACTS_FILE = "guest-facts.json";
 export const GUEST_MESSAGES_FILE = "guest-messages.jsonl";
 export const GUEST_APPROVALS_FILE = "guest-approvals.json";
 
+/** One house fact the host saved: kept when the fact is replaced or removed, so the hours log keeps the host's entry (#18). */
+export interface FactSave {
+  at: string;
+  topic: GuestFactTopic;
+  /** The guest message whose question the host answered (#16), when the fact was learned from one. */
+  learnedFrom?: string;
+}
+
+export const MAX_FACT_HISTORY = 200;
+
 export interface GuestFactsFile {
   facts: GuestFact[];
   /** Topics the host passed on, so they aren't asked again. */
   skipped: GuestFactTopic[];
+  /** Each save of the host's, oldest first, at most 200. Absent on a file from before #18. */
+  history?: FactSave[];
 }
 
 /** guest-facts.json is there but isn't a readable record. Nothing is written over it. */
@@ -41,11 +53,15 @@ export function readGuestFacts(root: string): GuestFactsFile {
     (fact): fact is GuestFact => !!fact && typeof fact === "object" && isFactTopic((fact as GuestFact).topic) && typeof (fact as GuestFact).text === "string",
   );
   const skipped = (Array.isArray(file.skipped) ? file.skipped : []).filter(isFactTopic);
-  return { facts, skipped: FACT_TOPICS.filter((topic) => skipped.includes(topic)) };
+  const history = (Array.isArray(file.history) ? file.history : []).filter(
+    (entry): entry is FactSave => !!entry && typeof entry === "object" && typeof (entry as FactSave).at === "string" && isFactTopic((entry as FactSave).topic),
+  );
+  return { facts, skipped: FACT_TOPICS.filter((topic) => skipped.includes(topic)), ...(history.length ? { history } : {}) };
 }
 
 export function writeGuestFacts(root: string, file: GuestFactsFile): void {
-  writeJsonAtomic(join(root, GUEST_FACTS_FILE), file);
+  const history = file.history?.slice(-MAX_FACT_HISTORY);
+  writeJsonAtomic(join(root, GUEST_FACTS_FILE), { facts: file.facts, skipped: file.skipped, ...(history?.length ? { history } : {}) });
 }
 
 export type GuestMessageEvent = "taken" | "refused" | "reply-approved" | "reply-skipped" | "late-checkout";

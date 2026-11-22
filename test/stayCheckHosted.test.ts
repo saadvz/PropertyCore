@@ -90,3 +90,21 @@ describe("house rules on the shared service", () => {
     expect(bad.isError).toBe(true);
   });
 });
+
+describe("one house rules list with guest messages (#15)", () => {
+  it("is listed with only the guest-messages switch, keeps every rule as text, and leaves the nightly check's own tools off", SLOW, async () => {
+    const { m, token, property, root } = await account(["guest-messages"]);
+    const names = await m.toolNames(PATH, token);
+    expect(names.filter((name) => TOOLS.includes(name)).sort()).toEqual(["get_house_rules", "save_house_rules"]);
+    const asked = await m.toolAt(PATH, token, "get_house_rules", { property: property.id });
+    expect(String(asked.structured?.ask)).toMatch(/Save each one as text/);
+    const refused = await m.toolAt(PATH, token, "save_house_rules", { property: property.id, rules: RULES });
+    expect(refused.isError).toBe(true);
+    const saved = await m.toolAt(PATH, token, "save_house_rules", { property: property.id, add: { text: "No parties" } });
+    expect(saved.isError).toBe(false);
+    expect(readStayCheck(root).rules).toEqual([{ text: "No parties" }]);
+    expect((await m.toolAt(PATH, token, "allow_for_stay", { property: property.id, checkIn: "2026-11-20", allow: ["pets"] })).isError).toBe(true);
+    const facts = await m.toolAt(PATH, token, "get_guest_facts", { property: property.id });
+    expect(facts.structured?.houseRules).toEqual(["No parties"]);
+  });
+});

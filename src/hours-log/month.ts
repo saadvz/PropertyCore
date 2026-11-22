@@ -69,6 +69,8 @@ export interface BuildOptions {
   sources?: readonly RowSource[];
   /** Owner facts kept with the month when the host confirmed it. */
   kept?: readonly RowFact[];
+  /** The row kinds to build with: a month confirmed before #18 has only the kinds it was confirmed with. Unset is every kind. */
+  kinds?: ReadonlySet<RowKind>;
 }
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -101,7 +103,7 @@ export function buildMonth(records: PropertyRecords, month: string, settings: Ho
   const needs: string[] = [];
   const unset = new Map<string, { code: ActivityCode; count: number }>();
   const rows: HoursRow[] = [];
-  const raw = rawFacts(records, options.sources ?? DEFAULT_SOURCES, options.kept ?? []);
+  const raw = rawFacts(records, options.sources ?? DEFAULT_SOURCES, options.kept ?? [], options.kinds);
   const inMonth = (fact: RowFact) => local(fact.at, timeZone).date.startsWith(`${month}-`);
   const ownerFacts = raw.filter((fact) => fact.log === "owner" && inMonth(fact));
   for (const fact of mergeMoments(raw)) {

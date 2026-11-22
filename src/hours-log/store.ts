@@ -40,6 +40,8 @@ export interface MonthMark {
   ownerFacts?: RowFact[];
   /** When export_hours last gave the rows out, and which rows: stored: true must follow it. */
   handedOut?: { at: string; fingerprint: string };
+  /** The set of row kinds it was confirmed with (codes.ts ROW_KIND_SET). Unset: before #18, so it's built with those kinds only. */
+  kindSet?: number;
 }
 
 export interface HoursFile {

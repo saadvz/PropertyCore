@@ -9,8 +9,10 @@ import { readSupply, SUPPLY_FILE, type SupplyFile } from "../supply-core/store";
 import { buildVisits, type VisitRecord } from "../visits/derive";
 import { codePerson } from "../visits/events";
 import { VISIT_EVENTS_DIR, VisitLog } from "../visits/store";
+import type { RowKind } from "./codes";
 import type { RowFact } from "./fact";
-import { routeFact } from "./ownerRules";
+import { hostRecordRows, hostStepRows, readHostRecords, type HostRecords } from "./hostSources";
+import { KINDS_OFF, routeFact } from "./ownerRules";
 
 export type { RowFact } from "./fact";
 
@@ -60,6 +62,8 @@ export interface PropertyRecords {
   ownerEntries?: { eventId: string; at: string; until?: string; device: string }[];
   /** Visit records (#237), when the property has a visit log. Absent keeps every row as it was. */
   visits?: VisitRecord[];
+  /** The host's own steps in the newer features (#18). Absent gives none of their rows. */
+  host?: HostRecords;
 }
 
 export type RowSource = (records: PropertyRecords) => RowFact[];
@@ -130,6 +134,7 @@ export function readRecords(root: string): PropertyRecords {
     ...(packages ? { packages } : {}),
     ...(visits ? { visits } : {}),
     ...ownerEntriesOf(root, safe),
+    host: readHostRecords(root),
   };
 }
 
@@ -457,7 +462,10 @@ export const ownerLockEntries: RowSource = (records) =>
     ...(entry.until ? {} : { needs: "The lock didn't record when you left. What time was it?" }),
   }));
 
-export const DEFAULT_SOURCES: readonly RowSource[] = [cleanerRows, fixerRows, supplyRows, packageRows, ownerLockEntries];
+/** The host's own steps in the newer features (#18): approvals, choices and saves, each from that feature's own record. */
+export const hostRows: RowSource = (records) => (records.host ? [...hostStepRows(records.host), ...hostRecordRows(records.host)] : []);
+
+export const DEFAULT_SOURCES: readonly RowSource[] = [cleanerRows, fixerRows, supplyRows, packageRows, ownerLockEntries, hostRows];
 
 const factKey = (fact: RowFact) => `${fact.kind}|${fact.reference}|${fact.at}`;
 
@@ -466,10 +474,12 @@ const factKey = (fact: RowFact) => `${fact.kind}|${fact.reference}|${fact.at}`;
  * `kept` are owner facts saved with a confirmed month, so a host's approval stays in that month after its
  * record was replaced (a rescheduled booking, a second price, a cleaning's moved dates).
  */
-export function rawFacts(records: PropertyRecords, sources: readonly RowSource[] = DEFAULT_SOURCES, kept: readonly RowFact[] = []): RowFact[] {
+export function rawFacts(records: PropertyRecords, sources: readonly RowSource[] = DEFAULT_SOURCES, kept: readonly RowFact[] = [], kinds?: ReadonlySet<RowKind>): RowFact[] {
   const seen = new Set<string>();
   const out: RowFact[] = [];
   for (const fact of [...sources.flatMap((source) => source(records)), ...kept].map(routeFact)) {
+    // A kind the owner rules leave out, or one a month confirmed before it existed doesn't have, gives no row.
+    if (KINDS_OFF.has(fact.kind) || (kinds && !kinds.has(fact.kind))) continue;
     const key = factKey(fact);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -504,6 +514,6 @@ export function mergeMoments(facts: readonly RowFact[]): RowFact[] {
 }
 
 /** Every row's fact: the sources' and the kept ones, routed, once each, with one owner row per action. */
-export function factsFrom(records: PropertyRecords, sources: readonly RowSource[] = DEFAULT_SOURCES, kept: readonly RowFact[] = []): RowFact[] {
-  return mergeMoments(rawFacts(records, sources, kept));
+export function factsFrom(records: PropertyRecords, sources: readonly RowSource[] = DEFAULT_SOURCES, kept: readonly RowFact[] = [], kinds?: ReadonlySet<RowKind>): RowFact[] {
+  return mergeMoments(rawFacts(records, sources, kept, kinds));
 }

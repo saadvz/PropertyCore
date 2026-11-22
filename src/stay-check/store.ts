@@ -21,6 +21,8 @@ export interface StayCheckFile {
   /** "HH:MM", the host's pick. Unset is 23:00. */
   checkTime?: string;
   rulesSavedAt?: string;
+  /** When a house facts rules text was moved onto this list (#15). Property Core's move, never the host's. */
+  rulesMergedAt?: string;
   /** Sightings needed per kind before it flags. Unset is 1. */
   sightings: Partial<Record<CheckKind, number>>;
   allowances: StayAllowance[];
@@ -47,6 +49,7 @@ export function readStayCheck(root: string): StayCheckFile {
     rules: Array.isArray(file.rules) ? file.rules : [],
     ...(typeof file.checkTime === "string" ? { checkTime: file.checkTime } : {}),
     ...(typeof file.rulesSavedAt === "string" ? { rulesSavedAt: file.rulesSavedAt } : {}),
+    ...(typeof file.rulesMergedAt === "string" ? { rulesMergedAt: file.rulesMergedAt } : {}),
     sightings: object(file.sightings) as StayCheckFile["sightings"],
     allowances: Array.isArray(file.allowances) ? file.allowances : [],
   };
