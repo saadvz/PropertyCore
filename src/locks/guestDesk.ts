@@ -6,7 +6,7 @@ import { hubFor } from "../hub/hub";
 import { sameHash } from "../hub/uploadCode";
 import { ConfirmationBook } from "../operator/confirmations";
 import type { CodeWindow } from "./adapter";
-import { normalizePhone, type LockReply } from "./desk";
+import { normalizePhone, type CodeShown, type LockReply } from "./desk";
 import {
   guestStays,
   leaseJob,
@@ -97,6 +97,8 @@ export class GuestCodeDesk {
   private last: { signature: string; at: number } | undefined;
   /** Notes from a sync a tool or text ran, handed over on the next pass. */
   private pending: GrantNote[] = [];
+  /** When each lease's invite was last tried and didn't go, so the clock tries again at most every 10 minutes. */
+  private readonly inviteTried = new Map<string, number>();
 
   constructor(
     readonly root: string,
@@ -307,6 +309,14 @@ export class GuestCodeDesk {
     }
     const input = this.input();
     if (!input) return notes;
+    // A lease whose invite couldn't go yet (texts not on, or a failed send) gets it once it can (#180 sandbox run).
+    for (const lease of liveLeases(readGuestCodes(this.root), input)) {
+      if (lease.invitedAt || lease.yesAt || lease.stoppedAt) continue;
+      const tried = this.inviteTried.get(lease.id);
+      if (tried !== undefined && input.now.getTime() - tried < 10 * 60_000) continue;
+      if (!(await this.invite(lease.id))) this.inviteTried.set(lease.id, input.now.getTime());
+      else this.inviteTried.delete(lease.id);
+    }
     const file = readGuestCodes(this.root);
     const before = JSON.stringify(file);
     const wanted = wantedGuestCodes(this.root, file, input);
@@ -409,33 +419,46 @@ export class GuestCodeDesk {
   }
 
   /**
-   * The page's "show the code": the stay's or lease's code, once. The link is used up when it's shown.
-   * Undefined when the link is used, ended or wrong, or the code isn't on the lock. The caller never logs it.
+   * The page's "show the code": the stay's or lease's code, once. The link is used up only when the
+   * code is shown: while it's still going on the lock the link keeps working ("pending"), and a lock
+   * that refused it with no backup is "failed". The caller never logs the code.
    */
-  async showCode(token: string): Promise<{ code: string; doors?: { door: string; code: string }[] } | undefined> {
+  async showCode(token: string): Promise<CodeShown> {
     const found = this.byToken(token);
     const input = this.input();
-    if (!found || !input) return undefined;
+    if (!found || !input) return { ok: false, reason: "gone" };
+    const request =
+      found.kind === "stay"
+        ? { person: `guest:${found.stay.key}`, window: found.stay.window, jobId: stayJob(found.stay.key), label: found.stay.label }
+        : { person: found.lease.phone, window: leaseWindow(found.lease, input.timeZone), jobId: leaseJob(found.lease.id), label: found.lease.name };
+    const door = this.door();
+    const state = await door.checkGrant("guest", request.jobId);
+    // Not on the lock yet: the clock's next pass makes or finishes it, and the link keeps working.
+    if (state === "none" || state === "programming") return { ok: false, reason: "pending" };
+    // Claimed before the release, so two taps can't both show it; given back when nothing shows.
+    if (!this.useLink(found, input.now.toISOString())) return { ok: false, reason: "gone" };
+    const grant = await door.request({ ...request, purpose: "guest" });
+    if (grant.notes) this.pending.push(...grant.notes);
+    if (!grant.ok) {
+      this.useLink(found, undefined);
+      return { ok: false, reason: "failed" };
+    }
+    return { ok: true, code: grant.code, ...(grant.doors ? { doors: grant.doors } : {}) };
+  }
+
+  /** Marks the found link used at `at`, or gives it back (undefined). False when it was used in the meantime. */
+  private useLink(found: { kind: "stay"; stay: GuestStay } | { kind: "lease"; lease: Lease }, at: string | undefined): boolean {
     const file = readGuestCodes(this.root);
-    const at = input.now.toISOString();
-    let request: { person: string; window: CodeWindow; jobId: string; label: string };
-    if (found.kind === "stay") {
-      const state = file.stays[found.stay.key]!;
-      state.link = { ...state.link!, usedAt: at };
-      request = { person: `guest:${found.stay.key}`, window: found.stay.window, jobId: stayJob(found.stay.key), label: found.stay.label };
-    } else {
-      const lease = file.leases.find((item) => item.id === found.lease.id)!;
-      lease.link = { ...lease.link!, usedAt: at };
-      request = { person: lease.phone, window: leaseWindow(lease, input.timeZone), jobId: leaseJob(lease.id), label: lease.name };
+    const holder = found.kind === "stay" ? file.stays[found.stay.key] : file.leases.find((item) => item.id === found.lease.id);
+    const link = holder?.link;
+    if (!holder || !link || (at && link.usedAt)) return false;
+    if (at) holder.link = { ...link, usedAt: at };
+    else {
+      const { usedAt: _given, ...rest } = link;
+      holder.link = rest;
     }
     writeGuestCodes(this.root, file);
-    const grant = await this.door().request({ ...request, purpose: "guest" });
-    if (!grant.ok) {
-      if (grant.notes) this.pending.push(...grant.notes);
-      return undefined;
-    }
-    if (grant.notes) this.pending.push(...grant.notes);
-    return { code: grant.code, ...(grant.doors ? { doors: grant.doors } : {}) };
+    return true;
   }
 
   // ---- Leases ----
@@ -471,13 +494,22 @@ export class GuestCodeDesk {
     const file = readGuestCodes(this.root);
     const lease = file.leases.find((item) => item.id === id);
     if (!lease || lease.invitedAt || lease.removedAt || lease.stoppedAt || this.deps.stopped(lease.phone)) return false;
-    lease.invitedAt = this.deps.now().toISOString();
-    writeGuestCodes(this.root, file);
+    let sent = false;
     try {
-      return await this.deps.send(lease.phone, `This is the text line for ${this.street()}. The host wants to give you your own door code there, from ${longDate(lease.start)} until move-out on ${longDate(lease.moveOut)}. Reply YES to get a private link to it, or STOP to opt out.`);
+      sent = await this.deps.send(lease.phone, `This is the text line for ${this.street()}. The host wants to give you your own door code there, from ${longDate(lease.start)} until move-out on ${longDate(lease.moveOut)}. Reply YES to get a private link to it, or STOP to opt out.`);
     } catch {
-      return false;
+      sent = false;
     }
+    // Marked only once it went (#180 sandbox run): a failed send is tried again on the clock, not lost as "waiting for YES".
+    if (sent) {
+      const fresh = readGuestCodes(this.root);
+      const mine = fresh.leases.find((item) => item.id === id);
+      if (mine) {
+        mine.invitedAt = this.deps.now().toISOString();
+        writeGuestCodes(this.root, fresh);
+      }
+    }
+    return sent;
   }
 
   private async sendLeaseLink(id: string): Promise<boolean> {

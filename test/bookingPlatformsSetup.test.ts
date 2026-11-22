@@ -3,7 +3,8 @@ import type { LiveDesk } from "../src/cleaner-core/liveDesk";
 import { cleanerInstructions, handleCleanerMcpMessage } from "../src/cleaner-core/mcp";
 import { platformsQuestion, sourcesAsk } from "../src/cleaner-core/setupAsk";
 import { deskFeatures } from "./featureEnv";
-import { PIN_KEY, cleanupDesks, liveOneToOne, ok, refused } from "./cleanerDeskHarness";
+import { ADDRESS, BUSINESS, CALENDAR_URL, CLEANER, DOOR_CODE, HOST } from "./wiringProof";
+import { LOCK, PIN_KEY, ROUTINE, ZONE, cleanupDesks, liveOneToOne, ok, openDesk, refused } from "./cleanerDeskHarness";
 
 /** Setting up the host's booking platforms (#263): the question, save_sources, and what the agent is told. Made-up addresses only. */
 
@@ -117,5 +118,40 @@ describe("the setup question", () => {
     expect(question.how).toContain("sender");
     expect(sourcesAsk("Scratch Lane", true).questions.map((item) => item.field)).toContain("bookingEmails");
     expect(sourcesAsk("Scratch Lane").questions.map((item) => item.field)).not.toContain("bookingEmails");
+  });
+});
+
+describe("the review before Activate", () => {
+  /** A setup at its review, with the account's booking platforms on or off. */
+  async function atReview(on: boolean, platforms?: { platform: "airbnb" | "vrbo" | "direct"; sender?: string }[]) {
+    const opened = openDesk([HOST, CLEANER], "0");
+    if (on) Object.assign(opened.env, deskFeatures("booking-platforms"));
+    const live = opened.desk;
+    ok(await live.getState("cleaners", true));
+    ok(await live.saveProperty({ business: BUSINESS, address: ADDRESS, timeZone: ZONE, checkoutTime: "11:00", checkInTime: "16:00" }));
+    ok(await live.saveSources({ calendars: [{ name: "Guesty Lite", url: CALENDAR_URL }], ...(platforms ? { bookingEmails: platforms } : {}) }, PIN_KEY));
+    ok(await live.savePeople({ host: HOST, cleaner: CLEANER, cleanerName: "Maria", groupChat: "cleaner-only" }));
+    ok(await live.saveSchedule({ firstText: "when-confirmed" }));
+    ok(await live.saveDoorCode({ code: DOOR_CODE, lockLocation: LOCK }, PIN_KEY));
+    ok(await live.savePreferences({}));
+    ok(await live.savePayments({ on: false }));
+    ok(await live.saveAlertRoutine(ROUTINE, () => undefined));
+    const state = ok(await live.getState());
+    return (state.setup as { sources: Record<string, unknown> }).sources;
+  }
+
+  it("says which platforms' bookings wait for the host's yes", async () => {
+    const sources = await atReview(true, [{ platform: "airbnb" }, { platform: "vrbo" }, { platform: "direct", sender: "bookings@example.test" }]);
+    expect(sources.bookingEmails).toEqual({
+      platforms: ["Airbnb", "Vrbo", "your booking site"],
+      waitForYes: ["Vrbo", "your booking site"],
+      tellHost: "Each booking from Vrbo and your booking site waits for your yes in chat before it changes a cleaning. Airbnb's are read as they come.",
+    });
+  });
+
+  it("has nothing to add for Airbnb alone, or with booking platforms off", async () => {
+    expect(await atReview(true, [{ platform: "airbnb" }])).toEqual({ calendars: ["Guesty Lite"], google: false, bookingEmails: { platforms: ["Airbnb"] } });
+    cleanupDesks();
+    expect(await atReview(false)).toEqual({ calendars: ["Guesty Lite"], google: false });
   });
 });

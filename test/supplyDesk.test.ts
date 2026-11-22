@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hubFor, resetHubs } from "../src/hub/hub";
 import { resetSupplyDesks, supplyDeskFor, type SupplyDeps } from "../src/supply-core/desk";
-import { emptySupply, monthSpentCents, readSupply, writeSupply, type Order } from "../src/supply-core/store";
+import { emptySupply, monthSpentCents, readSupply, writeSupply, type Item, type Order } from "../src/supply-core/store";
+import { suggestedCaps } from "../src/supply-core/setupAsk";
 
 /** Supply Core setup on a made-up property. Made-up stores and links only; nothing reaches a store. */
 
@@ -95,6 +96,12 @@ describe("setup", () => {
     expect(await step(desk)).toBe("mode");
     await desk.saveSettings({ mode: "checkout" });
     expect(await step(desk)).toBe("caps");
+    // Two packs of $24 towels: $48, plus a fifth for tax and shipping, rounded up to $75; two restocks a month.
+    const caps = ((await desk.state()).structured?.ask as { questions: { field: string; ask: string; default?: string; options?: { value: string }[] }[] }).questions;
+    expect(caps[0]!.default).toBe("both");
+    expect(caps[0]!.ask).toContain("$75 per order and $150 a month");
+    expect(caps[0]!.options!.map((option) => option.value)).toEqual(["both", "order", "month", "none"]);
+    expect(caps.slice(1).map((question) => question.default)).toEqual(["7500", "15000"]);
     await desk.saveSettings({ perMonthCapCents: 30000 });
     expect(await step(desk)).toBe("check-time");
     await desk.saveSettings({ checkTime: "09:30" });
@@ -452,5 +459,19 @@ describe("address first, the whole list, then where to buy", () => {
     await made.desk.saveStores({ ...plan, confirmation: (ask.structured!.confirmation as { code: string }).code });
     const check = await made.desk.checkSupplies({});
     expect(check.structured!.stores).toEqual(plan);
+  });
+});
+
+describe("the suggested spending caps", () => {
+  const item = (priceCents: number, qtyPerOrder = 1): Item => ({ id: "i", name: towels.name, qtyPerOrder, preferred: { ...towels.preferred, priceCents, pickedAt: "2026-11-01T00:00:00Z" }, storeNote: "", schedule: towels.schedule, savedAt: "2026-11-01T00:00:00Z" });
+  it("starts at $50 an order and $100 a month", () => {
+    expect(suggestedCaps({ items: [] })).toEqual({ perOrderCents: 5000, perMonthCents: 10000 });
+    expect(suggestedCaps({ items: [item(1000)] })).toEqual({ perOrderCents: 5000, perMonthCents: 10000 });
+  });
+  it("covers the whole list once with room for tax and shipping, rounded up to $25", () => {
+    expect(suggestedCaps({ items: [item(4000), item(3000, 2)] })).toEqual({ perOrderCents: 12500, perMonthCents: 25000 });
+  });
+  it("stays within what save_supply_settings accepts", () => {
+    expect(suggestedCaps({ items: [item(900_000)] })).toEqual({ perOrderCents: 500_000, perMonthCents: 1_000_000 });
   });
 });

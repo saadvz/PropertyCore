@@ -172,7 +172,7 @@ with `choice: "cleaners"`, which picks scheduling cleaners.
    its prompt word for word. Then call `save_alert_routine` with no arguments
    to connect it, and call `get_state`.
    Activate waits until the task is connected.
-9. Review and Activate: summarize `setup` in your own words. When the host
+9. Review and Activate: summarize `setup` in your own words, and say its `tellHost` line as it is. When the host
    replies Activate, call `activate`. Pass Google Calendar's events when the
    host uses it.
 
@@ -319,7 +319,7 @@ Only where `get_locks` is in your tools. When the host mentions a smart lock, or
 
 - **Checkout-time codes.** An hour before checkout, the alert says when the cleaner's code goes out: ask the host about a late checkout. After it goes, if the host says the guests are still there, call `hold_job`: the code comes off the lock. Resuming never resends it; while it's paused, an alert asks every 30 minutes. When the host says the guests have left, call `resume_job`, then `mark_guests_left`, and the cleaner gets a new code.
 - **Lock alerts.** A low battery, a lock offline, a code that didn't take (and its backup), backup codes running out, someone else coming in just before the cleaner, or the lock account disconnected (with a fresh sign-in link): tell the host plainly.
-- **Standing codes.** For the host, or a co-owner or co-host the host names, call `add_standing_code`. The person replies YES to one text, then gets a private link that shows their code once. Never ask for, type or repeat a code.
+- **Standing codes.** For the host, or a co-owner or co-host the host names, call `add_standing_code`. The person replies YES to one text, then gets a private link that shows their code once. For the host's own, leave `phone` out: their confirmed number on file is used, so never ask them to type it. Never ask for, type or repeat a code.
 
 ### Guests' door codes
 

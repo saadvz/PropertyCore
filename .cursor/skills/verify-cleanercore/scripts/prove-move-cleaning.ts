@@ -169,7 +169,7 @@ try {
   const checks: Record<string, boolean> = {
     "the offer promises a post here": String(timed.next).endsWith("I'll post here when the cleaner replies."),
     "the opt-in is told once": optInAlerts.filter((line) => line === `Ana said YES to cleaning texts for ${ADDRESS}.`).length === 1,
-    "the NO is told once, with the move as its next step": noAlerts.some((line) => line.startsWith(`Ana said NO to the Sunday, Oct 18 cleaning at ${ADDRESS}. It can move`)),
+    "the NO is told once, with the move as its next step": noAlerts.some((line) => line.startsWith("Ana said no to the Sunday, Oct 18 cleaning, so nobody is booked for it yet.") && line.endsWith("It can also move to another day or time before then, if Ana can do it.")),
     "one wake-up per event": wakesForProgress === 2,
     "the preview shows the cleaner's exact text": JSON.stringify(preview.texts) === JSON.stringify([{ to: "cleaner", body: `Update: the cleaning at ${ADDRESS} is now Monday, Oct 19 at 10:00 AM. Reply YES to take it, or NO if you can't.` }]),
     "the move sends only the update": movedText.length === 1 && movedText[0]!.startsWith("Update: the cleaning"),

@@ -93,7 +93,7 @@ describe("move_cleaning (#8)", () => {
     const { desk, sms } = await opened();
     await desk.inbound({ id: "no", from: CLEANER, text: "NO" });
     const noted = await alerts(desk);
-    expect(noted).toContain("Ana said NO to the Sunday, Oct 18 cleaning at 12 Practice Lane, Teaneck, NJ 07666. It can move to another day or time before the next check-in, Thursday, Oct 22 at 4:00 PM, if Ana can do it then.");
+    expect(noted).toContain("Ana said no to the Sunday, Oct 18 cleaning, so nobody is booked for it yet. The next guests check in Thursday, Oct 22 at 4:00 PM, so whoever cleans has until then. It can also move to another day or time before then, if Ana can do it.");
 
     const preview = ok(await desk.moveCleaning({ checkout: "2026-10-18", date: "2026-10-19", time: "10:00" }, PIN_KEY));
     expect(preview.next).toContain("moves from checkout, Sunday, Oct 18 at 11:00 AM to Monday, Oct 19 at 10:00 AM");

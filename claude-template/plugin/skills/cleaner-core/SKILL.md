@@ -99,7 +99,7 @@ with `choice: "cleaners"`, which picks scheduling cleaners.
    Cleaner Core's test wake-up has reached it, so no reply from the cleaner
    goes unheard. If `get_state` or Activate says the task refused the test,
    ask the host to make a new token and save both again from a fresh link.
-9. Review and Activate: summarize `setup` in your own words. When the host
+9. Review and Activate: summarize `setup` in your own words, and say its `tellHost` line as it is. When the host
    replies Activate, call `activate`. Pass Google Calendar's events when the
    host uses it.
 

@@ -16,7 +16,7 @@ npx tsx .cursor/skills/verify-cleanercore/scripts/prove-move-cleaning.ts .cursor
 ## Expected
 
 - `timed` ends with `I'll post here when the cleaner replies.` The routine is connected, so the promise holds.
-- `optInAlerts` holds `Ana said YES to cleaning texts for 12 Scratch Lane, Teaneck, NJ 07666.` once. `noAlerts` starts `Ana said NO to the Sunday, Oct 18 cleaning at 12 Scratch Lane, Teaneck, NJ 07666. It can move to another day or time before the next check-in, Thursday, Oct 22 at 4:00 PM`. `wakesForProgress` is 2: one wake-up per event.
+- `optInAlerts` holds `Ana said YES to cleaning texts for 12 Scratch Lane, Teaneck, NJ 07666.` once. `noAlerts` holds `Ana said no to the Sunday, Oct 18 cleaning, so nobody is booked for it yet. The next guests check in Thursday, Oct 22 at 4:00 PM, so whoever cleans has until then. It can also move to another day or time before then, if Ana can do it.` `wakesForProgress` is 2: one wake-up per event.
 - `previewTexts` is the cleaner's exact update: `Update: the cleaning at 12 Scratch Lane, Teaneck, NJ 07666 is now Monday, Oct 19 at 10:00 AM. Reply YES to take it, or NO if you can't.` Only the second call, with the code, sends it (`movedText`).
 - `codesBeforeYes` is 0. After the cleaner's YES, `yesAlerts` holds `Ana said YES to the Monday, Oct 19 at 10:00 AM cleaning at 12 Scratch Lane, Teaneck, NJ 07666.`, and the cleaner's own lock code (`lockWindow`) runs from `2026-10-19T14:00:00.000Z`, the moved start.
 - On checkout day, `left` says the code waits for Monday 10:00 AM, and `codeBeforeStart` is false.

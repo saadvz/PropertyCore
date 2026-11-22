@@ -28,7 +28,7 @@ import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, ME
 import { calendarUrlAllowed, type CalendarFetch } from "../hub/fetchLimits";
 import { setCalendarFetch } from "../hub/calendarFetch";
 import { waitingStays } from "../hub/bookingEmails";
-import { bookingEmailsLine, type BookingSource as EmailSource } from "../hub/bookingSources";
+import { bookingEmailsLine, platformLabel, type BookingSource as EmailSource } from "../hub/bookingSources";
 import { forgetHub, hubFor, resetHubs, type Hub, type HubSave, type UploadResult } from "../hub/hub";
 import type { HubProperty } from "../hub/store";
 import { DOOR_CODE_IN_CHAT, LEGACY_CALENDAR, MAX_CALENDARS, maskedLink, setAsideLine, type StoredCalendar } from "../hub/calendars";
@@ -628,6 +628,18 @@ function hourMinute(text: string | undefined): string | undefined {
 function minutesOfDay(hm: string): number {
   const [hour = 0, minute = 0] = hm.split(":").map(Number);
   return hour * 60 + minute;
+}
+
+/**
+ * The host's note when the cleaner declines a cleaning: who said no to which day, that nobody is booked for it,
+ * and, when the next guests are known, that whoever cleans has until they check in.
+ */
+export function declinedLine(name: string, job: Pick<JobView, "checkoutDate" | "nextCheckInAt">, timeZone: string): string {
+  const day = formatWhen(zonedInstant(job.checkoutDate, "12:00", timeZone), timeZone).day;
+  const said = `${name} said no to the ${day} cleaning, so nobody is booked for it yet.`;
+  if (!job.nextCheckInAt) return said;
+  const next = formatWhen(job.nextCheckInAt, timeZone);
+  return `${said} The next guests check in ${next.day} at ${next.time}, so whoever cleans has until then.`;
 }
 
 /** "HH:MM" as "10:30 AM". */
@@ -1328,6 +1340,7 @@ export class LiveDesk {
     const escalateTo = input.escalateTo === undefined ? saved.escalateTo : input.escalateTo.trim() || undefined;
     if (escalateTo && escalateTo.length > MAX_NAME) return this.fail(`Keep who hears about problems under ${MAX_NAME} characters.`);
     if (escalateTo && this.carriesCode(escalateTo)) return this.fail(DOOR_CODE_IN_CHAT);
+    const offerTimingChanged = Boolean(this.file.texting) && (saved.firstText !== firstText || saved.firstTextDays !== firstTextDays);
     this.file.schedule = {
       firstText,
       ...(firstTextDays !== undefined ? { firstTextDays } : {}),
@@ -1337,10 +1350,35 @@ export class LiveDesk {
       ...(quiet ? { quietFrom: quiet.from, quietUntil: quiet.until } : {}),
       ...(escalateTo ? { escalateTo } : {}),
     };
+    // On a live setup, read the open offer before the engine reopens with the new schedule.
+    const changed = offerTimingChanged ? this.offerTimingLine(firstText, firstTextDays) : undefined;
     this.persist();
     // The engine reads the schedule when it opens.
     this.stale = true;
-    return this.setupReply();
+    if (!changed) return this.setupReply();
+    return this.reply({ changed, next: `Tell the host plainly, in one or two short lines: "${changed}" Nothing else changed.` });
+  }
+
+  /**
+   * What a live change to the first text's timing means right now: when offers go from here on, and the offer
+   * the cleaner already has, if any. The cleaner gets one offer at a time, so the next goes once they answer.
+   */
+  private offerTimingLine(firstText: Schedule["firstText"], days: number | undefined): string {
+    const name = this.file.cleanerName ?? "The cleaner";
+    const plural = (n: number | undefined) => `${n} ${n === 1 ? "day" : "days"}`;
+    const when =
+      firstText === "when-confirmed"
+        ? "as soon as its times are confirmed"
+        : firstText === "days-after-check-in"
+          ? `${plural(days)} after the guests check in`
+          : `${plural(days)} before checkout`;
+    const done = `Done. Each cleaning offer now goes to ${name === "The cleaner" ? "the cleaner" : name} ${when}.`;
+    this.resume();
+    const open = this.engine?.jobs().find((job) => job.status === "offered");
+    if (!open) return `${done} The next one goes out at the next check.`;
+    const zone = this.place.timeZone ?? "UTC";
+    const day = formatWhen(zonedInstant(open.checkoutDate, "12:00", zone), zone).day;
+    return `${done} ${name} already has the offer for ${day}. The next one goes out as soon as ${name === "The cleaner" ? "they answer" : `${name} answers`} it.`;
   }
 
   saveCalendarLink(input: { url?: string; google?: boolean }, pinKey?: Buffer): Promise<ToolReply> {
@@ -2535,6 +2573,11 @@ export class LiveDesk {
     return this.serial(async () => this.hostConfirmed());
   }
 
+  /** The saved host's phone, only when it's the account's confirmed landlord phone. For the host's own standing code (#180). Sends nothing. */
+  confirmedHostPhone(): Promise<string | undefined> {
+    return this.serial(async () => (this.hostConfirmed() ? parsePhone(this.file.host ?? "") : undefined));
+  }
+
   /** The business name saved for this property. */
   businessName(): Promise<string | undefined> {
     return this.serial(async () => this.file.business);
@@ -3418,6 +3461,7 @@ export class LiveDesk {
       throw err;
     }
     this.noteCleanerYes(engine, offered);
+    this.noteCleanerNo(engine, offered);
     this.noteCleanerOptIn(engine, cleanerBefore, input.id);
     this.flushGroupNote(engine);
     this.noteSeen(input.id);
@@ -3525,9 +3569,8 @@ export class LiveDesk {
   private recentInbound: { from: string; words: string; media: number; group: boolean; at: number }[] = [];
 
   /**
-   * The engine tells the host nothing when the cleaner takes or turns down a cleaning. One note per
-   * offer the cleaner answers (a moved cleaning is a new offer), naming the cleaner and the day. A NO
-   * says the cleaning can move to another time before the next check-in (move_cleaning).
+   * The engine tells the host nothing when the cleaner takes a cleaning. One note per offer the cleaner
+   * says YES to (a moved cleaning is a new offer), naming the cleaner and the day. A NO is noteCleanerNo's.
    */
   private noteCleanerYes(engine: CleanerCore, offered: Set<string>): void {
     const address = this.place.address ?? "the property";
@@ -3538,10 +3581,6 @@ export class LiveDesk {
       const day = job.movedTo ? `${job.movedTo.day} at ${job.movedTo.time}` : this.checkoutDay(job.checkoutDate);
       if (job.status === "confirmed" || job.status === "awaiting_departure") {
         engine.keepHostNote(`cleaner-yes:${job.id}${round}`, `${who} said YES to the ${day} cleaning at ${address}.`);
-      } else if (job.status === "declined") {
-        const next = job.nextCheckInAt ? formatWhen(job.nextCheckInAt, this.place.timeZone ?? "UTC") : undefined;
-        const gap = next ? ` It can move to another day or time before the next check-in, ${next.day} at ${next.time}, if ${who === "The cleaner" ? "the cleaner" : who} can do it then.` : "";
-        engine.keepHostNote(`cleaner-no:${job.id}${round}`, `${who} said NO to the ${day} cleaning at ${address}.${gap}`);
       }
     }
   }
@@ -3578,6 +3617,23 @@ export class LiveDesk {
 
   private groupMadeLine(): string {
     return `The group text for ${this.place.address ?? "the property"} is set up.`;
+  }
+
+  /**
+   * The cleaner said no to an offer: one note per job, in Cleaner Core's words, so the host hears that nobody is
+   * booked for it. The deadline belongs to whoever cleans, never to the cleaner who just said no.
+   */
+  private noteCleanerNo(engine: CleanerCore, offered: Set<string>): void {
+    const name = this.file.cleanerName?.trim() || "The cleaner";
+    for (const job of engine.jobs()) {
+      if (!offered.has(job.id) || job.status !== "declined") continue;
+      // A moved cleaning (move_cleaning) is a new offer: its NO is a new note, on its moved day.
+      const round = job.movedTo ? `:m${job.movedTo.round}` : "";
+      const line = declinedLine(name, job.movedTo ? { checkoutDate: job.movedTo.date, nextCheckInAt: job.nextCheckInAt } : job, this.place.timeZone ?? "UTC");
+      // With a next check-in, the cleaning can move to another time before it (finding #8).
+      const move = job.nextCheckInAt ? ` It can also move to another day or time before then, if ${name === "The cleaner" ? "the cleaner" : name} can do it.` : "";
+      engine.keepHostNote(`cleaner-no:${job.id}${round}`, `${line}${move}`);
+    }
   }
 
   private async inboundBeforeJob(id: string, from: string, keyword: ReturnType<typeof messagingKeyword>): Promise<CleanerText[]> {
@@ -3870,7 +3926,7 @@ export class LiveDesk {
         ...(place.checkoutTime ? { checkoutTime: clockText(place.checkoutTime) } : {}),
         ...(place.checkInTime ? { checkInTime: clockText(place.checkInTime) } : {}),
       },
-      sources: { calendars: this.hub.calendars().map((calendar) => calendar.name), google: this.hub.google() },
+      sources: { calendars: this.hub.calendars().map((calendar) => calendar.name), google: this.hub.google(), ...this.reviewBookingEmails() },
       people: {
         host: { ...(file.hostName ? { name: file.hostName } : {}), ...last4(file.host) },
         cleaner: { ...(file.cleanerName ? { name: file.cleanerName } : {}), ...last4(file.cleaner) },
@@ -3882,6 +3938,25 @@ export class LiveDesk {
       access: this.door().lockLocation() ? { lockLocation: this.door().lockLocation() } : {},
       preferences: file.preferences,
       payments: this.reviewPayments(),
+    };
+  }
+
+  /**
+   * The booking emails for the review, with the account's booking platforms on (#263, #269): every platform the
+   * host saved, and the ones whose bookings wait for the host's yes (all but Airbnb), with the line the summary says.
+   */
+  private reviewBookingEmails(): { bookingEmails?: Record<string, unknown> } {
+    if (!this.bookingPlatformsOn()) return {};
+    const sources = this.hub.bookingSources();
+    const waitForYes = sources.filter((source) => source.platform !== "airbnb").map((source) => platformLabel(source));
+    const listed = waitForYes.length > 1 ? `${waitForYes.slice(0, -1).join(", ")} and ${waitForYes.at(-1)}` : waitForYes[0];
+    return {
+      bookingEmails: {
+        platforms: sources.map((source) => platformLabel(source)),
+        ...(waitForYes.length > 0
+          ? { waitForYes, tellHost: `Each booking from ${listed} waits for your yes in chat before it changes a cleaning.${sources.some((source) => source.platform === "airbnb") ? " Airbnb's are read as they come." : ""}` }
+          : {}),
+      },
     };
   }
 

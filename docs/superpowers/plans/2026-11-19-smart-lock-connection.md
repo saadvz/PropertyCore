@@ -163,6 +163,56 @@ Sandbox run (Saad, 21 Nov, with Grok and the partner's sandbox Yale login):
   wait for a `connected_account.connected` webhook. Before `save_locks` that webhook matches no saved
   device, so it's logged as dropped. That's harmless.
 
+Standing-code live run (Saad, 22 Nov, Grok, the partner's sandbox Yale workspace, Connected locks on
+in `/admin`). The cleaner's per-visit codes worked; the standing code didn't. Fixed on
+`claude/standing-codes-live-fixes-180`:
+
+- **C. "Show my code" did nothing.** The page's inline script sat in a TypeScript template literal,
+  which eats a backslash: `replace(/\/$/,"")` reached the phone as `replace(//$/,"")`, and `//` commented
+  out the rest of the one-line script, so it never ran. CSP, the token and the route were fine. The
+  script is now a plain string (`CODE_PAGE_SCRIPT`), and a test runs it against the service. The page
+  also never fails silently now: the tap shows the code, "Your code is still being added to the lock.
+  Try again in a minute." (409, the link keeps working), "couldn't be added yet; the host has been
+  told" (503), or "This link has ended" (404). Before, a tap before the code was set used the link up
+  and could hang for two minutes in the release's wait. The link is now used only when the code shows.
+- **D. No standing code on the lock.** The code is made at the person's YES (by design: nothing before
+  it), on the shared service. Two faults. (1) Standing codes go to the partner as ongoing codes (no
+  start or end), still with `use_backup_access_code_pool: true`. The partner's backup pool is for
+  time-bound codes only, which is the likeliest reason the create was refused. Ongoing codes now ask
+  for no backup pool. To confirm in the Railway log or the sandbox. (2) A door whose create threw was
+  kept as `failed` with no code id, and the grant counted as made, so no note went. The `syncStanding`
+  notes were dropped anyway, and nothing tried again. Now a door that didn't take the code is one host
+  note ("I couldn't put Pat's standing code on the lock yet...") through the #277 alerts path. The
+  lock clock re-syncs standing codes, and a page tap retries too. `get_locks` shows each standing
+  code's `lock` state.
+- **A. "Not confirmed" while the group was texting.** The invite's check (`textsAllowed`) is Cleaner
+  Core's own `hostConfirmed()`, the one the group texts pass, so a confirmed host passes it. But the
+  desk set `invitedAt` before sending. A send that failed (or a property whose texts weren't on yet)
+  was lost: never tried again, and shown as "waiting-for-yes". The reply also lumped three reasons
+  into one line ("the host's phone isn't confirmed, or they opted out"), and the agent picked the
+  wrong one. Now `invitedAt` is set only once the text went. The reply names the one reason
+  (`waiting`: `texts-off`, `send-failed` or `opted-out`). The lock clock sends a waiting invite once
+  it can, every 10 minutes for up to six tries, then one host note. Which of the two happened on 22
+  Nov needs the Railway lines around the first `add_standing_code`.
+- **B. "I've turned that on now."** No tool the agent has changes who may be texted. Consent comes
+  only from the landlord phone confirmed at sign-up and each person's own YES, STOP or START by text.
+  `save_host_texts` is Tour Core's and isn't listed for a properties account. The claim had no tool
+  behind it: what made the second try work was the remake's fresh, unmarked invite. Tool replies now
+  say "No tool changes who may be texted, so never tell the host you turned texts on". A test runs
+  every lock tool and checks no person's YES is set without their own text. A code made before the
+  fix needs no remake: `standing_code_link` before the YES re-sends the invite (with the host's yes,
+  at most once an hour).
+- **E. Wording.** "for Maria" was the agent's own line before any call. For the host's own code,
+  `add_standing_code` now takes no phone: the confirmed host phone on file is used, and the question
+  says "on your number ending 1234". The agent never asks the host to type it, so it has no reason to
+  say "I only have the last four digits" (`get_state` shows only the last four).
+- **Guest codes** share the page and grants. The lease page had the same early use of the link, and
+  the lease invite the same "marked before it went". Both are fixed and tested. A stay's link is made
+  only once its code is on the lock, so that page wasn't affected beyond the script.
+- **Open question for Saad.** AGENTS.md says the host never texts the Cleaner Core number, but a
+  standing code asks the host to reply YES there. The host's chat yes plus their confirmed phone could
+  stand in for it. That's left as it is until Saad decides.
+
 Still open:
 
 - **Sensor health** is stored at `save_locks` and from events; no periodic device refresh yet.
