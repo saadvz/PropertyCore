@@ -7,7 +7,7 @@ import { streetOf } from "../hub/people";
 import { readHubFile, type Stay } from "../hub/store";
 import { readOversight, writeOversight, type OversightFile } from "./store";
 import { visitWindow, wantedVisitCodes } from "./visitCodes";
-import { visitCodeText, visitDuringStayNote, visitInviteFailedNote, visitInviteText, visitRefusedNote, visitTextedNote, visitTextsOffNote, visitUnsureNote } from "./visitCodeTexts";
+import { visitCodeText, visitDuringStayNote, visitHostPhoneNote, visitInviteFailedNote, visitInviteText, visitNotSentNote, visitRefusedNote, visitTextedNote, visitTrimmedNote, visitTextsOffNote, visitUnsureNote } from "./visitCodeTexts";
 import type { ExpectedVisit, Visitor } from "./visits";
 
 /**
@@ -21,6 +21,7 @@ const INVITE_RETRY_MS = 10 * MINUTE_MS;
 const INVITE_TRIES = 6;
 const DEFAULT_BUFFER_MINUTES = 60;
 const STOP_WORDS = ["stop", "stopall", "unsubscribe", "cancel", "end", "quit"];
+const START_WORDS = ["start", "unstop"];
 
 export interface VisitCodeDeps {
   now(): Date;
@@ -34,9 +35,14 @@ export interface VisitCodeDeps {
   send(to: string, body: string): Promise<boolean>;
   /** Already a person on the property who said YES (a cleaner, co-host, assistant or pro): their YES stands. */
   optedInHere(phone: string): boolean;
+  /** The host's confirmed phone: never a visitor here, whatever the people list says. */
+  hostPhone?(): Promise<string | undefined>;
 }
 
 export class VisitCodeDesk {
+  /** The host's confirmed phone as this pass read it. */
+  private host: string | undefined;
+
   constructor(
     private readonly root: string,
     private readonly deps: VisitCodeDeps,
@@ -100,6 +106,7 @@ export class VisitCodeDesk {
 
   /** The visitor said YES here or on the property, and nobody said STOP. */
   private mayHaveCode(file: OversightFile, phone: string): boolean {
+    if (phone === this.host) return false;
     const visitor = this.visitorOf(file, phone);
     if (visitor?.stoppedAt || this.deps.stopped(phone)) return false;
     return Boolean(visitor?.yesAt) || this.deps.optedInHere(phone);
@@ -132,7 +139,15 @@ export class VisitCodeDesk {
     const timeZone = this.timeZone();
     const start = this.read();
     if (!door || !timeZone || !start) return [];
+    try {
+      this.host = await this.deps.hostPhone?.();
+    } catch {
+      // The host's phone unknown just now: the people-list check at add_expected_visit still stands.
+    }
     const notes: GrantNote[] = [];
+    for (const visit of start.visits) {
+      if (this.host && visit.phone === this.host && this.upcoming(visit, timeZone)) notes.push(...this.once(visit, "host-phone", visitHostPhoneNote(visit.who)));
+    }
     notes.push(...(await this.invites(start, timeZone)));
     const file = this.read() ?? start;
     const { wanted, duringStay } = wantedVisitCodes(file, { now: this.deps.now(), timeZone, stays: this.stays(), occupy: this.occupy(timeZone), mayHaveCode: (phone) => this.mayHaveCode(file, phone) });
@@ -144,6 +159,12 @@ export class VisitCodeDesk {
     for (const id of duringStay) {
       const visit = file.visits.find((item) => item.id === id);
       if (visit) notes.push(...this.once(visit, "during-stay", visitDuringStayNote(visit.who)));
+    }
+    for (const want of wanted) {
+      const visit = file.visits.find((item) => item.id === want.jobId);
+      if (!visit) continue;
+      const whole = visitWindow(visit, { timeZone, stays: [], occupy: this.occupy(timeZone) });
+      if (whole !== "during-stay" && (whole.from !== want.window.from || whole.until !== want.window.until)) notes.push(...this.once(visit, "trimmed", visitTrimmedNote(visit.who, want.window, timeZone)));
     }
     const now = this.deps.now().getTime();
     for (const want of wanted) {
@@ -159,7 +180,7 @@ export class VisitCodeDesk {
     const notes: GrantNote[] = [];
     const now = this.deps.now().getTime();
     for (const visitor of file.visitors ?? []) {
-      if (visitor.yesAt || visitor.stoppedAt || visitor.invitedAt || this.deps.stopped(visitor.phone) || this.deps.optedInHere(visitor.phone)) continue;
+      if (visitor.phone === this.host || visitor.yesAt || visitor.stoppedAt || visitor.invitedAt || this.deps.stopped(visitor.phone) || this.deps.optedInHere(visitor.phone)) continue;
       const visits = file.visits.filter((visit) => visit.phone === visitor.phone && this.upcoming(visit, timeZone));
       if (!visits.length) continue;
       if ((visitor.inviteTries ?? 0) >= INVITE_TRIES) continue;
@@ -201,7 +222,7 @@ export class VisitCodeDesk {
 
   /** One visit's code text: at most once, the mark saved before the send. */
   private async release(door: DoorAccess, visit: ExpectedVisit, window: { from: string; until: string }, timeZone: string): Promise<GrantNote[]> {
-    if (visit.code?.textAt) return visit.code.sent ? [] : this.once(visit, "unsure", visitUnsureNote(visit.who));
+    if (visit.code?.textAt) return visit.code.sent || visit.code.notSent ? [] : this.once(visit, "unsure", visitUnsureNote(visit.who));
     let allowed = false;
     try {
       allowed = await this.deps.textsAllowed();
@@ -224,13 +245,22 @@ export class VisitCodeDesk {
     const grant = await door.request({ person: visit.phone!, window, purpose: "visit", jobId: visit.id, label: visit.who });
     const notes: GrantNote[] = [...(grant.notes ?? [])];
     if (!grant.ok || grant.kind !== "code" || !/^\d{4,8}$/.test(grant.code)) return [...notes, ...this.once(visit, "refused", visitRefusedNote(visit.who))];
-    let sent = false;
+    let sent: boolean | undefined;
     try {
       sent = (await this.deps.send(visit.phone!, visitCodeText({ name: visit.who, street: this.street(), code: grant.code, ...(grant.lockLocation ? { lockLocation: grant.lockLocation } : {}), ...(grant.doors ? { doors: grant.doors } : {}), until: window.until, timeZone }))) === true;
     } catch {
       // Whether it went is unknown, so it is never sent again.
     }
-    if (!sent) return [...notes, ...this.once(visit, "unsure", visitUnsureNote(visit.who))];
+    if (sent === undefined) return [...notes, ...this.once(visit, "unsure", visitUnsureNote(visit.who))];
+    if (!sent) {
+      // The send said plainly it didn't go: the host hears that, not "unsure".
+      this.patch((file) => {
+        const current = file.visits.find((item) => item.id === visit.id);
+        if (current) (current.code ??= {}).notSent = true;
+      });
+      visit.code.notSent = true;
+      return [...notes, ...this.once(visit, "not-sent", visitNotSentNote(visit.who))];
+    }
     this.patch((file) => {
       const current = file.visits.find((item) => item.id === visit.id);
       if (current) (current.code ??= {}).sent = true;
@@ -239,21 +269,33 @@ export class VisitCodeDesk {
     return [...notes, { id: `visit:texted:${visit.id}`, text: visitTextedNote(visit.who) }];
   }
 
-  /** A visitor with no STOP on this property, so the shared line hands their text here. */
+  /** A visitor on this property, so the shared line hands their text here (a stopped one only acts on START or YES). */
   hasVisitor(phone: string): boolean {
-    const visitor = this.read()?.visitors?.find((item) => item.phone === phone);
-    return Boolean(visitor && !visitor.stoppedAt);
+    return Boolean(this.read()?.visitors?.some((item) => item.phone === phone));
   }
 
   /**
    * A visitor's text on the shared line. Their YES (after the invite) is taken and their code follows on this
-   * sync; STOP takes their codes off and returns false, so the usual routing still records it.
+   * sync; STOP takes their codes off and returns false, so the usual routing still records it. After a STOP, their
+   * START or YES puts them back (a YES after the invite is their YES too) and returns false, so the line's own START
+   * handling lifts the account-wide opt-out; their codes come back on the next pass.
    */
   async visitorText(from: string, text: string): Promise<boolean> {
     const file = this.read();
     const visitor = file && this.visitorOf(file, from);
-    if (!visitor || visitor.stoppedAt) return false;
+    if (!visitor) return false;
     const word = text.trim().toLowerCase().replace(/[.!]+$/, "");
+    if (visitor.stoppedAt) {
+      if (!START_WORDS.includes(word) && word !== "yes") return false;
+      const at = this.deps.now().toISOString();
+      this.patch((current) => {
+        const mine = this.visitorOf(current, from);
+        if (!mine) return;
+        delete mine.stoppedAt;
+        if (word === "yes" && mine.invitedAt) mine.yesAt ??= at;
+      });
+      return false;
+    }
     if (STOP_WORDS.includes(word)) {
       this.patch((current) => {
         const mine = this.visitorOf(current, from);

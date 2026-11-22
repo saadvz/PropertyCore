@@ -46,7 +46,7 @@ export interface OversightDeps {
 }
 
 /** What a visit's code looks like to the agent: its state and the phone's last four, never the phone or a code. */
-export type VisitCodeState = "none" | "opted-out" | "waiting-for-yes" | "texted" | "making" | string;
+export type VisitCodeState = "none" | "opted-out" | "waiting-for-yes" | "texted" | "not-sent" | "making" | string;
 
 const RECENT_DAYS = 7;
 const APPROVAL_MS = 10 * 60_000;
@@ -94,6 +94,7 @@ export class OversightDesk {
     if (visitor?.stoppedAt || this.deps.stopped?.(visit.phone)) return "opted-out";
     if (!visitor?.yesAt && !this.deps.optedInHere?.(visit.phone)) return "waiting-for-yes";
     if (visit.code?.sent) return "texted";
+    if (visit.code?.notSent) return "not-sent";
     return this.deps.codeStatus?.(visit) ?? "making";
   }
 

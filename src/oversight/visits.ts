@@ -27,7 +27,7 @@ export interface ExpectedVisit {
   /** The visitor's mobile (#280 17), for their own door code. Unset: no code, checked as before. */
   phone?: string;
   /** The visit code's text: marked before it's sent, so a restart never sends twice. Never the code. */
-  code?: { textAt?: string; sent?: boolean; told?: string[] };
+  code?: { textAt?: string; sent?: boolean; notSent?: boolean; told?: string[] };
 }
 
 /** Someone the host expects, saved with a visit that has a phone (#280 17). Never a code. */
