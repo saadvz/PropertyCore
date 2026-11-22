@@ -18,7 +18,7 @@ interface FakeCode {
 }
 
 export interface FakeCall {
-  op: "connectLink" | "accounts" | "devices" | "createCode" | "moveCode" | "removeCode" | "codeStatus" | "backupCode";
+  op: "connectLink" | "accounts" | "devices" | "removeAccount" | "createCode" | "moveCode" | "removeCode" | "codeStatus" | "backupCode";
   deviceId?: string;
   codeId?: string;
 }
@@ -29,6 +29,7 @@ export class FakeLockAdapter implements LockAdapter {
   readonly calls: FakeCall[] = [];
   private readonly byKey = new Map<string, LockDevice[]>();
   private listBroken = false;
+  private readonly disconnected = new Set<string>();
   private readonly codes = new Map<string, FakeCode>();
   private readonly behaviour = new Map<string, { programming?: boolean; fail?: boolean; refuseValues?: number; backups?: number; throwOn?: Set<FakeCall["op"]> }>();
   private seq = 0;
@@ -46,6 +47,23 @@ export class FakeLockAdapter implements LockAdapter {
   /** A partner account the host signed in to, tagged with `customerKey`, with no devices yet. */
   addAccount(customerKey: string): void {
     if (!this.byKey.has(customerKey)) this.byKey.set(customerKey, []);
+  }
+
+  /** The partner still lists the account, but it needs a new sign-in (#280 22). */
+  disconnectAccount(customerKey: string, on = true): void {
+    if (on) this.disconnected.add(customerKey);
+    else this.disconnected.delete(customerKey);
+  }
+
+  /**
+   * The device comes back under a new id, with the same name, kind and account, as after removing a
+   * connection and signing in fresh (#280 22). Codes on the old id are gone with it.
+   */
+  replaceDevice(oldId: string, newId: string): void {
+    for (const devices of this.byKey.values()) for (const device of devices) if (device.id === oldId) device.id = newId;
+    for (const code of this.codes.values()) if (code.deviceId === oldId) code.status = "removed";
+    const tune = this.behaviour.get(oldId);
+    if (tune) this.behaviour.set(newId, { ...tune, throwOn: undefined });
   }
 
   /** The next accounts or devices list throws, as a partner error would. */
@@ -104,12 +122,24 @@ export class FakeLockAdapter implements LockAdapter {
     return { url: `https://connect.example.com/${input.kind}/${linkId}`, linkId };
   }
 
-  async accounts(input: { customerKey: string }): Promise<{ id: string }[]> {
+  async accounts(input: { customerKey: string }): Promise<{ id: string; disconnected?: boolean }[]> {
     this.calls.push({ op: "accounts" });
     this.maybeBreakList();
     if (!this.byKey.has(input.customerKey)) return [];
     const ids = new Set([`acct-${input.customerKey}`, ...(this.byKey.get(input.customerKey) ?? []).map((device) => device.accountId)]);
-    return [...ids].map((id) => ({ id }));
+    const off = this.disconnected.has(input.customerKey);
+    return [...ids].map((id) => ({ id, ...(off ? { disconnected: true } : {}) }));
+  }
+
+  async removeAccount(input: { customerKey: string; accountId: string }): Promise<void> {
+    this.calls.push({ op: "removeAccount" });
+    const devices = this.byKey.get(input.customerKey);
+    if (!devices) return;
+    const ids = new Set([`acct-${input.customerKey}`, ...devices.map((device) => device.accountId)]);
+    if (!ids.has(input.accountId)) return;
+    for (const device of devices) for (const code of this.codes.values()) if (code.deviceId === device.id) code.status = "removed";
+    this.byKey.delete(input.customerKey);
+    this.disconnected.delete(input.customerKey);
   }
 
   async devices(input: { customerKey: string }): Promise<LockDevice[]> {

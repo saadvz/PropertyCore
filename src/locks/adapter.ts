@@ -59,6 +59,8 @@ export type LockEventKind =
   | "online"
   | "account-connected"
   | "account-disconnected"
+  /** A reconnected account finished its first sync: its devices are listed again, maybe under new ids (#280 22). */
+  | "account-synced"
   | "other";
 
 /** One webhook from the partner, verified and parsed. Holds no code digits. */
@@ -89,8 +91,13 @@ export interface LockWebhookEvent {
 export interface LockAdapter {
   /** A single-use link where the host signs in to their lock account. The link names the account, never a password. */
   connectLink(input: { customerKey: string; kind: "locks" | "sensors" }): Promise<{ url: string; linkId: string }>;
-  /** The partner's accounts the host signed in to, tagged with this Property Core account. None until a sign-in finishes. */
-  accounts(input: { customerKey: string }): Promise<{ id: string }[]>;
+  /**
+   * The partner's accounts the host signed in to, tagged with this Property Core account. None until a sign-in
+   * finishes. `disconnected` when the partner still lists the account but it needs a new sign-in (#280 22).
+   */
+  accounts(input: { customerKey: string }): Promise<{ id: string; disconnected?: boolean }[]>;
+  /** Removes a stuck connection, only one listed under this customer key; any other id is ignored (#280 22). */
+  removeAccount(input: { customerKey: string; accountId: string }): Promise<void>;
   /** The devices in the partner's accounts tagged with this Property Core account, and no other account's. */
   devices(input: { customerKey: string }): Promise<LockDevice[]>;
   /** Puts `code` on the device for the window. Throws `CodeValueRefused` when the value clashes. */

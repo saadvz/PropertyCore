@@ -64,6 +64,8 @@ export interface GuestDeskDeps {
   publicBase(): string | undefined;
 }
 
+/** Which stays get a guest code, said plainly (#280 19). */
+export const WHICH_STAYS = "Every booking from the calendar and the booking emails gets a code. Blocked dates don't.";
 const ok = (structured: Record<string, unknown>): LockReply => ({ text: typeof structured.next === "string" ? structured.next : "Done.", structured, isError: false });
 const fail = (text: string): LockReply => ({ text, isError: true });
 
@@ -192,7 +194,15 @@ export class GuestCodeDesk {
         : mode === "ask"
           ? "I'll ask the host before each booking's door code, 7 days before check-in."
           : "Guest door codes are off here. Every booking's code is coming off the lock.";
-    return ok({ mode, next });
+    return ok({ mode, next: mode === "off" ? next : `${next} ${this.stayCount()}` });
+  }
+
+  /** How many upcoming stays get a code, from the calendar and the booking emails (#280 19). */
+  private stayCount(): string {
+    const input = this.input();
+    const count = input ? guestStays(this.root, input).length : 0;
+    if (count === 0) return "No stays are on the calendar yet.";
+    return count === 1 ? "That's 1 upcoming stay." : `That's ${count} upcoming stays.`;
   }
 
   /** make_guest_code: under ask, the host's yes for one booking's code. */
@@ -260,18 +270,19 @@ export class GuestCodeDesk {
       const state = file.stays[stay.key];
       const grant = grants.live("guest", job);
       const status = grant && wanted.has(job) ? this.grantStatus(grant.doors) : !file.mode || file.mode === "off" ? "off" : file.mode === "ask" && !state?.yesAt ? "waiting-for-host" : stay.due ? "making" : "waiting-7-days";
-      return { stay: stay.key, dates: stayDates(stay.checkIn, stay.checkout), from: stay.window.from, until: stay.window.until, status, link: this.linkStatus(state?.link) };
+      return { stay: stay.key, source: stay.source, dates: stayDates(stay.checkIn, stay.checkout), from: stay.window.from, until: stay.window.until, status, link: this.linkStatus(state?.link) };
     });
     const leases = liveLeases(file, input).map((lease) => {
       const grant = grants.live("guest", leaseJob(lease.id));
       const status = !lease.invitedAt ? "not-texted" : !lease.yesAt ? "waiting-for-yes" : grant ? this.grantStatus(grant.doors) : "making";
       return { id: lease.id, name: lease.name, start: lease.start, moveOut: lease.moveOut, status, link: this.linkStatus(lease.link) };
     });
+    const which = file.mode === "off" ? "" : ` ${WHICH_STAYS}`;
     const next = !file.mode
-      ? "Ask the host how guests' door codes should work here: automatic (I make one for each booking, 7 days ahead), ask (I ask before each booking's code), or off (they keep making them). Then call guest_codes."
+      ? `Ask the host how guests' door codes should work here: automatic (I make one for each booking, 7 days ahead), ask (I ask before each booking's code), or off (they keep making them). Then call guest_codes.${which}`
       : file.mode === "ask"
-        ? "Guest door codes are ask here. For a stay with status waiting-for-host, ask the host, and only after their yes call make_guest_code with that stay."
-        : `Guest door codes are ${file.mode === "off" ? "off" : file.mode} here.`;
+        ? `Guest door codes are ask here. For a stay with status waiting-for-host, ask the host, and only after their yes call make_guest_code with that stay.${which}`
+        : `Guest door codes are ${file.mode === "off" ? "off" : file.mode} here.${which}`;
     return ok({ connected: true, mode: file.mode ?? "not-chosen", stays, leases, next });
   }
 

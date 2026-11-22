@@ -70,6 +70,12 @@ export interface DoorLocksFile {
   extend: ReleaseMode;
   /** Alerts already told, by key, so each goes once. */
   told?: string[];
+  /** When the lock account was last told disconnected, until it's back (#280 21). */
+  disconnectedAt?: string;
+  /** The disconnect turned the checkout-time code to ask; it goes back to automatic when the account is back. */
+  pausedByDisconnect?: true;
+  /** Saved doors the lock account no longer lists and no single lock matched after a reconnect (#280 22). The saved door code answers until the host picks the doors again. */
+  rehomeNeeded?: string[];
   /** Standing codes: the host and the people they named. */
   standing?: StandingPerson[];
 }
@@ -128,7 +134,7 @@ export function doorDevices(file: DoorLocksFile): StoredDevice[] {
 
 /** True when every saved door is a connected lock on this property, and there's at least one. */
 export function allDoorsConnected(file: DoorLocksFile): boolean {
-  return file.doors.length > 0 && doorDevices(file).length === file.doors.length;
+  return file.doors.length > 0 && doorDevices(file).length === file.doors.length && !(file.rehomeNeeded ?? []).some((id) => file.doors.includes(id));
 }
 
 export function asLockDevice(device: StoredDevice): LockDevice {

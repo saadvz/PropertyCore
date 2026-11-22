@@ -22,7 +22,15 @@ const CONNECT = {
   title: "Connect a smart lock",
   description:
     "Offer this when the host has a smart lock that works with an app: each cleaner and pro then gets their own code for each visit. Gives a one-time sign-in link: send it to the host, who signs in to their lock account there, never in chat. kind: sensors for a thermostat or noise sensor in an app. Then call get_locks to see the devices.",
-  inputSchema: { type: "object", properties: { kind: { type: "string", enum: ["locks", "sensors"] } }, additionalProperties: false },
+  inputSchema: {
+    type: "object",
+    properties: {
+      kind: { type: "string", enum: ["locks", "sensors"] },
+      fresh: { type: "boolean", description: "Only when get_locks says the lock account is still disconnected after the host signed in again: removes the stuck connection first, with the host's yes." },
+      confirmation: CONFIRMATION,
+    },
+    additionalProperties: false,
+  },
 };
 
 const SAVE = {
@@ -52,7 +60,7 @@ const SETTINGS = {
 const ADD_STANDING = {
   name: "add_standing_code",
   title: "Give someone a standing code",
-  description: `A standing door code for the host (role owner), a co-owner or a co-host, so their own entries are recorded too. Never for a cleaner or pro: theirs are per visit. When the host asks for their own, it's role owner with the host's name: leave phone out, and their confirmed number on file is used; the question names its last four, so never ask the host to type their number. Property Core makes the code. The person gets one text asking them to reply YES, then a private link that shows the code once. Never ask for or repeat a code. ${TWO_CALL}`,
+  description: `A standing door code for the host (role owner), a co-owner or a co-host, so their own entries are recorded too. Never for a cleaner or pro: theirs are per visit. When the host asks for their own, it's role owner with the host's name: leave phone out, and their confirmed number on file is used; the question names its last four, so never ask the host to type their number. Property Core makes the code. The host's own code skips the YES: the private link goes to their confirmed number once they say yes here. Anyone else gets one text asking them to reply YES, then a private link that shows the code once. Never ask for or repeat a code. ${TWO_CALL}`,
   inputSchema: {
     type: "object",
     properties: {

@@ -13,7 +13,7 @@ import type { DoorLocksFile } from "./settings";
 export const OFFLINE_ALERT_MS = 30 * 60_000;
 
 function who(label: string | undefined, flow: GrantRef["flow"]): string {
-  return label?.trim() || (flow === "cleaning" ? "the cleaner" : flow === "repair" ? "the pro" : flow === "guest" ? "the guest" : flow === "bring-in" ? "the person bringing the package in" : "they");
+  return label?.trim() || (flow === "cleaning" ? "the cleaner" : flow === "repair" ? "the pro" : flow === "guest" ? "the guest" : flow === "bring-in" ? "the person bringing the package in" : flow === "visit" ? "the visitor" : "they");
 }
 
 /** Marks an alert told. False when it was already. */
@@ -24,6 +24,31 @@ function once(file: DoorLocksFile, key: string): boolean {
   // The newest 500 keys are enough to keep each alert to once.
   if (told.length > 500) told.splice(0, told.length - 500);
   return true;
+}
+
+/** The notes not yet told, each marked told in door-locks.json by its id (#280 22). */
+/**
+ * The lock account is back after a disconnect the host heard about (#280 21): clears the disconnect, turns the
+ * checkout-time code back on if the disconnect paused it, and gives the host's note once. A first connect (no
+ * disconnect on file) says nothing. Changes `file`; the caller saves it.
+ */
+export function markReconnected(file: DoorLocksFile): GrantNote[] {
+  const since = file.disconnectedAt;
+  if (!since) return [];
+  const resumed = file.pausedByDisconnect === true;
+  if (resumed) file.release.cleaners = "automatic";
+  delete file.disconnectedAt;
+  delete file.pausedByDisconnect;
+  if (!once(file, `reconnected:${since}`)) return [];
+  return [{ id: `lock:reconnected:${since}`, text: `Your lock account is connected again, so I can make and change codes.${resumed ? " The cleaner's code goes out at checkout again, like before." : ""}` }];
+}
+
+export function onceNotes(door: DoorAccess, notes: readonly GrantNote[]): GrantNote[] {
+  if (notes.length === 0) return [];
+  const file = door.locks();
+  const fresh = notes.filter((note) => once(file, `note:${note.id}`));
+  door.saveLocks(file);
+  return fresh;
 }
 
 /** Which Property Core code an event names, never the code. */
@@ -128,8 +153,10 @@ export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, eve
       break;
     }
     case "account-disconnected": {
+      file.disconnectedAt ??= event.at;
       if (file.release.cleaners === "automatic") {
         file.release.cleaners = "ask";
+        file.pausedByDisconnect = true;
         notes.push({ id: `lock:auto-off:${event.id}`, text: "While your lock account is disconnected, the cleaner's code won't go out at checkout. Tell me when the guests have left, like before." });
       }
       if (once(file, `disconnected:${event.id}`)) {
@@ -141,6 +168,22 @@ export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, eve
         }
         notes.push({ id: `lock:disconnected:${event.id}`, urgent: true, text: `Your lock account was disconnected, so I can't make or change codes.${link}` });
       }
+      break;
+    }
+    case "account-synced": {
+      // The reconnect finished its first sync: the doors may be listed under new ids. Saved first, so the re-home reads the latest file.
+      door.saveLocks(file);
+      if (!file.customerKey) return { stored, notes };
+      try {
+        const listed = await adapter.devices({ customerKey: file.customerKey });
+        const result = await door.rehome(listed);
+        return { stored, notes: onceNotes(door, result.notes) };
+      } catch {
+        return { stored, notes };
+      }
+    }
+    case "account-connected": {
+      notes.push(...markReconnected(file));
       break;
     }
     default:
