@@ -18,7 +18,7 @@ interface FakeCode {
 }
 
 export interface FakeCall {
-  op: "connectLink" | "devices" | "createCode" | "moveCode" | "removeCode" | "codeStatus" | "backupCode";
+  op: "connectLink" | "accounts" | "devices" | "createCode" | "moveCode" | "removeCode" | "codeStatus" | "backupCode";
   deviceId?: string;
   codeId?: string;
 }
@@ -27,7 +27,8 @@ export const FAKE_SIGNATURE_HEADER = "x-fake-lock-signature";
 
 export class FakeLockAdapter implements LockAdapter {
   readonly calls: FakeCall[] = [];
-  private readonly accounts = new Map<string, LockDevice[]>();
+  private readonly byKey = new Map<string, LockDevice[]>();
+  private listBroken = false;
   private readonly codes = new Map<string, FakeCode>();
   private readonly behaviour = new Map<string, { programming?: boolean; fail?: boolean; refuseValues?: number; backups?: number; throwOn?: Set<FakeCall["op"]> }>();
   private seq = 0;
@@ -37,9 +38,19 @@ export class FakeLockAdapter implements LockAdapter {
   /** Adds a device to the partner account tagged with `customerKey`. */
   addDevice(customerKey: string, device: Omit<LockDevice, "accountId" | "kind" | "online"> & Partial<Pick<LockDevice, "accountId" | "kind" | "online">>): LockDevice {
     const full: LockDevice = { accountId: `acct-${customerKey}`, kind: "lock", online: true, backupCodes: true, ...device };
-    this.accounts.set(customerKey, [...(this.accounts.get(customerKey) ?? []), full]);
+    this.byKey.set(customerKey, [...(this.byKey.get(customerKey) ?? []), full]);
     if (!this.behaviour.has(full.id)) this.behaviour.set(full.id, { backups: 2 });
     return full;
+  }
+
+  /** A partner account the host signed in to, tagged with `customerKey`, with no devices yet. */
+  addAccount(customerKey: string): void {
+    if (!this.byKey.has(customerKey)) this.byKey.set(customerKey, []);
+  }
+
+  /** The next accounts or devices list throws, as a partner error would. */
+  breakAccounts(): void {
+    this.listBroken = true;
   }
 
   /** New codes on this device stay `programming` until `settle`. */
@@ -68,11 +79,11 @@ export class FakeLockAdapter implements LockAdapter {
   }
 
   setOnline(deviceId: string, online: boolean): void {
-    for (const devices of this.accounts.values()) for (const device of devices) if (device.id === deviceId) device.online = online;
+    for (const devices of this.byKey.values()) for (const device of devices) if (device.id === deviceId) device.online = online;
   }
 
   setBattery(deviceId: string, battery: number): void {
-    for (const devices of this.accounts.values()) for (const device of devices) if (device.id === deviceId) device.battery = battery;
+    for (const devices of this.byKey.values()) for (const device of devices) if (device.id === deviceId) device.battery = battery;
   }
 
   /** Every programming code on the device becomes `status`. */
@@ -93,9 +104,18 @@ export class FakeLockAdapter implements LockAdapter {
     return { url: `https://connect.example.com/${input.kind}/${linkId}`, linkId };
   }
 
+  async accounts(input: { customerKey: string }): Promise<{ id: string }[]> {
+    this.calls.push({ op: "accounts" });
+    this.maybeBreakList();
+    if (!this.byKey.has(input.customerKey)) return [];
+    const ids = new Set([`acct-${input.customerKey}`, ...(this.byKey.get(input.customerKey) ?? []).map((device) => device.accountId)]);
+    return [...ids].map((id) => ({ id }));
+  }
+
   async devices(input: { customerKey: string }): Promise<LockDevice[]> {
     this.calls.push({ op: "devices" });
-    return (this.accounts.get(input.customerKey) ?? []).map((device) => ({ ...device }));
+    this.maybeBreakList();
+    return (this.byKey.get(input.customerKey) ?? []).map((device) => ({ ...device }));
   }
 
   async createCode(input: { deviceId: string; code: string; name: string; window: CodeWindow }): Promise<CodeOnDevice> {
@@ -182,6 +202,12 @@ export class FakeLockAdapter implements LockAdapter {
       this.behaviour.set(deviceId, entry);
     }
     return entry;
+  }
+
+  private maybeBreakList(): void {
+    if (!this.listBroken) return;
+    this.listBroken = false;
+    throw new Error("The lock partner didn't answer.");
   }
 
   private maybeThrow(deviceId: string, op: FakeCall["op"]): void {

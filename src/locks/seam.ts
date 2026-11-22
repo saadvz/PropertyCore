@@ -8,9 +8,14 @@ import { CodeValueRefused, type CodeOnDevice, type CodeStatus, type CodeWindow, 
  * error. A code value is sent to Seam only in createCode, and read back only from a backup code.
  * Tests pass a stub `fetch`; nothing in the test suite reaches Seam.
  *
- * To confirm in the sandbox run (spec, "Left to the builder"): the event names mapped below, the
- * customer_key filter on devices/list, and whether Access Grants give the same codes, events and
- * backup codes on a Yale lock. Until then, access codes.
+ * Devices are found the documented way: the sign-in copies the customer key (the account id) to the
+ * connected account, so connected_accounts/list by customer key, then devices/list by those account
+ * ids. A device or account the partner returns for any other key is dropped, so one Property Core
+ * account never sees another's devices.
+ *
+ * To confirm in the sandbox run (spec, "Left to the builder"): the event names mapped below, and
+ * whether Access Grants give the same codes, events and backup codes on a Yale lock. Until then,
+ * access codes.
  */
 
 export const SEAM_API = "https://connect.getseam.com";
@@ -128,11 +133,21 @@ export class SeamLockAdapter implements LockAdapter {
     return { url: reply.connect_webview.url, linkId: reply.connect_webview.connect_webview_id };
   }
 
+  async accounts(input: { customerKey: string }): Promise<{ id: string }[]> {
+    const reply = await this.call<{ connected_accounts?: { connected_account_id?: unknown; customer_key?: unknown }[] }>("/connected_accounts/list", { customer_key: input.customerKey });
+    return (reply.connected_accounts ?? [])
+      .filter((account) => typeof account.connected_account_id === "string" && account.connected_account_id && account.customer_key === input.customerKey)
+      .map((account) => ({ id: account.connected_account_id as string }));
+  }
+
   async devices(input: { customerKey: string }): Promise<LockDevice[]> {
-    const reply = await this.call<{ devices: SeamDevice[] }>("/devices/list", { customer_key: input.customerKey });
-    return (reply.devices ?? []).map((device) => ({
+    const ids = new Set((await this.accounts(input)).map((account) => account.id));
+    if (ids.size === 0) return [];
+    const reply = await this.call<{ devices?: SeamDevice[] }>("/devices/list", { connected_account_ids: [...ids] });
+    const mine = (reply.devices ?? []).filter((device) => typeof device.device_id === "string" && device.connected_account_id !== undefined && ids.has(device.connected_account_id));
+    return mine.map((device) => ({
       id: device.device_id,
-      accountId: device.connected_account_id ?? "",
+      accountId: device.connected_account_id!,
       name: (device.display_name ?? device.properties?.name ?? "A lock").slice(0, 60),
       kind: deviceKind(device),
       online: device.properties?.online !== false,

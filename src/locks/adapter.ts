@@ -89,7 +89,9 @@ export interface LockWebhookEvent {
 export interface LockAdapter {
   /** A single-use link where the host signs in to their lock account. The link names the account, never a password. */
   connectLink(input: { customerKey: string; kind: "locks" | "sensors" }): Promise<{ url: string; linkId: string }>;
-  /** The devices in the partner's accounts tagged with this Property Core account. */
+  /** The partner's accounts the host signed in to, tagged with this Property Core account. None until a sign-in finishes. */
+  accounts(input: { customerKey: string }): Promise<{ id: string }[]>;
+  /** The devices in the partner's accounts tagged with this Property Core account, and no other account's. */
   devices(input: { customerKey: string }): Promise<LockDevice[]>;
   /** Puts `code` on the device for the window. Throws `CodeValueRefused` when the value clashes. */
   createCode(input: { deviceId: string; code: string; name: string; window: CodeWindow }): Promise<CodeOnDevice>;

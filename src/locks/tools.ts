@@ -13,7 +13,7 @@ const GET = {
   name: "get_locks",
   title: "Connected locks",
   description:
-    "The property's connected locks and sensors: online, battery, which locks the cleaner and pros use, how codes go out, standing codes, each per-visit code's status by door, and any problem. Never a code: you never see or pass one.",
+    "The property's connected locks and sensors: online, battery, which locks the cleaner and pros use, how codes go out, standing codes, each per-visit code's status by door, and any problem. After the host signs in: whether their lock account is connected (account), and its devices not yet on a property (available), whose ids save_locks takes. Never a code: you never see or pass one.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
 };
 
@@ -89,7 +89,7 @@ export async function handleLockTool(desk: LockDesk, name: string, args: unknown
   const input = args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
   const allowed = new Set(Object.keys(((LOCK_TOOLS.find((tool) => tool.name === name)!.inputSchema as { properties: Record<string, unknown> }).properties)));
   if (Object.keys(input).some((key) => !allowed.has(key))) return { text: "That tool doesn't take that field.", isError: true };
-  if (name === "get_locks") return desk.status();
+  if (name === "get_locks") return desk.list();
   if (name === "connect_lock") return desk.connectLink(input);
   if (name === "save_locks") return desk.saveLocks(input);
   if (name === "lock_settings") return desk.settings(input);

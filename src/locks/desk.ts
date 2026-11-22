@@ -5,6 +5,7 @@ import type { DoorAccess, GrantNote } from "../hub/doorAccess";
 import { sameHash } from "../hub/uploadCode";
 import { ConfirmationBook } from "../operator/confirmations";
 import { recordLockConnection } from "./eventLog";
+import type { DeviceKind, LockDevice } from "./adapter";
 import { lockAdapter } from "./registry";
 import { deskFeatureOn } from "../features/features";
 import { allDoorsConnected, packagesRelease, readDoorLocks, storedDevice, type DoorLocksFile, type ReleaseMode, type StandingPerson, type StandingRole } from "./settings";
@@ -65,6 +66,24 @@ function letters(length: number): string {
 
 const hashOf = (token: string) => createHash("sha256").update(token).digest("hex");
 
+const KIND_WORDS: Record<DeviceKind, string> = { lock: "lock", thermostat: "thermostat", "noise-sensor": "noise sensor", other: "other device" };
+
+/** What the agent does next on a property not yet on connected locks, from what the host's lock account shows. */
+function setupNext(account: "connected" | "none" | "unknown", available: { name: string; kind: DeviceKind; online: boolean }[], inAccount: number): string {
+  if (account === "unknown") return "I couldn't reach the host's lock account just now, so I can't see its devices. Call get_locks again in a minute. Don't send a new sign-in link for this.";
+  if (account === "none") return "No lock account is connected here yet. If the host just signed in, wait a minute and call get_locks again. If the sign-in page showed an error, or they haven't signed in, connect_lock gives a fresh link.";
+  if (available.length === 0) {
+    return inAccount > 0
+      ? "The host's lock account is connected, but every device in it is already on another property. A device belongs to one property."
+      : "The host's lock account is connected, but it shows no lock yet. Ask them to check the lock is added and online in its own app, then call get_locks again. A new sign-in link won't help.";
+  }
+  const listed = available.map((device) => `${device.name} (${KIND_WORDS[device.kind]}${device.online ? "" : ", offline"})`).join(", ");
+  const locks = available.some((device) => device.kind === "lock");
+  return locks
+    ? `The host's lock account is connected and shows: ${listed}. Ask the host which locks the cleaner and pros go through, and whether any other door they use isn't a connected lock. Then call save_locks with those ids from available.`
+    : `The host's lock account is connected and shows: ${listed}, but no lock. Ask them to check the lock is added and online in its own app, then call get_locks again.`;
+}
+
 function streetOf(address: string | undefined): string {
   return (address ?? "the property").split(",")[0]!.trim();
 }
@@ -123,6 +142,32 @@ export class LockDesk {
       problems,
       next: problems[0] ?? (door.connected() ? "The locks are connected." : "No lock is connected here. connect_lock gives the host a sign-in link."),
     });
+  }
+
+  /**
+   * get_locks: the status, plus what the host's connected lock account holds now, so the agent can
+   * offer the devices to pick (#180 sandbox run: a finished sign-in showed nothing until save_locks,
+   * which needs these ids). Only devices in accounts tagged with this Property Core account, not yet
+   * on this or another property. A partner error is said, never shown as an empty account.
+   */
+  async list(): Promise<LockReply> {
+    const base = this.status();
+    if (base.isError || !base.structured) return base;
+    const file = this.door().locks();
+    const taken = new Set([...file.devices.map((device) => device.id), ...this.deps.otherDevices()]);
+    let account: "connected" | "none" | "unknown" = "unknown";
+    let inAccount: LockDevice[] = [];
+    try {
+      const adapter = lockAdapter()!;
+      account = (await adapter.accounts({ customerKey: this.deps.customerKey })).length > 0 ? "connected" : "none";
+      if (account === "connected") inAccount = await adapter.devices({ customerKey: this.deps.customerKey });
+    } catch {
+      account = "unknown";
+    }
+    const available = inAccount.filter((device) => !taken.has(device.id)).map((device) => ({ id: device.id, name: device.name, kind: device.kind, online: device.online }));
+    const structured = { ...base.structured, account, available };
+    if (base.structured.connected === true || (base.structured.problems as string[]).length > 0) return ok(structured);
+    return ok({ ...structured, next: setupNext(account, available, inAccount.length) });
   }
 
   /** A single-use sign-in link for the host's lock (or sensor) account. Not a secret, but it names the account. */
