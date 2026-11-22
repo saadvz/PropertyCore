@@ -1,5 +1,6 @@
 import { createHash, randomInt } from "node:crypto";
 import { join } from "node:path";
+import { recordHostStep } from "../hours-log/hostSteps";
 import { formatWhen } from "../hub/calendar";
 import type { DoorAccess, GrantNote } from "../hub/doorAccess";
 import { hubFor } from "../hub/hub";
@@ -183,6 +184,7 @@ export class GuestCodeDesk {
     file.mode = mode;
     file.modeAt = this.deps.now().toISOString();
     writeGuestCodes(this.root, file);
+    recordHostStep(this.root, { at: file.modeAt, kind: "guest-codes-mode", about: mode });
     await this.resync();
     const next =
       mode === "automatic"
@@ -204,8 +206,10 @@ export class GuestCodeDesk {
     const gate = this.confirm("guest-codes-make", found.stay.key, input.confirmation, `Make a door code for ${found.stay.label}, ${this.span(found.stay.window, found.timeZone)}?`);
     if (gate !== "go") return gate;
     const fresh = readGuestCodes(this.root);
-    (fresh.stays[found.stay.key] ??= {}).yesAt = this.deps.now().toISOString();
+    const yesAt = this.deps.now().toISOString();
+    (fresh.stays[found.stay.key] ??= {}).yesAt = yesAt;
     writeGuestCodes(this.root, fresh);
+    recordHostStep(this.root, { at: yesAt, kind: "guest-code-make", about: found.stay.label, ref: found.stay.key });
     await this.resync();
     return ok({ stay: found.stay.key, next: found.stay.due ? `The code for ${found.stay.label} is going on the lock. The host gets a private link to it once it's there.` : `The code for ${found.stay.label} goes on the lock 7 days before check-in, and the host gets a private link then.` });
   }
@@ -222,6 +226,7 @@ export class GuestCodeDesk {
     const file = readGuestCodes(this.root);
     (file.stays[found.stay.key] ??= {}).link = made.link;
     writeGuestCodes(this.root, file);
+    recordHostStep(this.root, { at: this.deps.now().toISOString(), kind: "guest-code-link", about: found.stay.label, ref: found.stay.key });
     return ok({ stay: found.stay.key, next: `Give the host this private link to the door code for ${found.stay.label}. It opens once: ${made.url}` });
   }
 
@@ -485,6 +490,7 @@ export class GuestCodeDesk {
     const fresh = readGuestCodes(this.root);
     fresh.leases.push(lease);
     writeGuestCodes(this.root, fresh);
+    recordHostStep(this.root, { at: lease.addedAt, kind: "lease-add", about: name, ref: lease.id });
     const invited = await this.invite(lease.id);
     return ok({ id: lease.id, invited, next: invited ? `${name} got one text asking them to reply YES. Their code link goes once they do.` : `${name} can't be texted yet (the host's phone isn't confirmed, or they opted out). Their code waits.` });
   }
@@ -572,6 +578,7 @@ export class GuestCodeDesk {
     const file = readGuestCodes(this.root);
     file.leases.find((item) => item.id === lease.id)!.moveOut = moveOut;
     writeGuestCodes(this.root, file);
+    recordHostStep(this.root, { at: this.deps.now().toISOString(), kind: "lease-change", about: lease.name, ref: lease.id });
     await this.resync();
     return ok({ id: lease.id, next: `${lease.name}'s door code now ends at the end of ${longDate(moveOut)}.` });
   }
@@ -588,6 +595,7 @@ export class GuestCodeDesk {
     stored.removedAt = this.deps.now().toISOString();
     delete stored.link;
     writeGuestCodes(this.root, file);
+    recordHostStep(this.root, { at: stored.removedAt, kind: "lease-remove", about: lease.name, ref: lease.id });
     await this.resync();
     return ok({ id: lease.id, next: `${lease.name}'s door code is coming off the lock.` });
   }
@@ -601,6 +609,7 @@ export class GuestCodeDesk {
     const gate = this.confirm("guest-codes-lease-link", lease.id, input.confirmation, `Text ${lease.name} a new private link to their door code?`);
     if (gate !== "go") return gate;
     const sent = await this.sendLeaseLink(lease.id);
+    if (sent) recordHostStep(this.root, { at: this.deps.now().toISOString(), kind: "lease-link", about: lease.name, ref: lease.id });
     return sent ? ok({ id: lease.id, sent: true, next: `${lease.name} got a new link. The old one no longer works.` }) : fail(`The link couldn't go to ${lease.name} now.`);
   }
 

@@ -49,12 +49,13 @@ const ok = (reply: GuestReply) => {
 };
 
 describe("house facts", () => {
-  it("asks for facts when none are saved", () => {
+  it("doesn't ask the host for facts up front when none are saved (#16)", () => {
     const { desk } = setup();
     const read = ok(desk.getFacts());
-    expect(read).toMatchObject({ facts: [], skipped: [] });
-    expect(String(read.ask)).toMatch(/wifi/i);
-    expect(String(read.ask)).toMatch(/own words/);
+    expect(read).toMatchObject({ facts: [], houseRules: [], skipped: [] });
+    expect(read.ask).toBeUndefined();
+    expect(String(read.next)).toMatch(/Don't ask the host for house facts up front/);
+    expect(String(read.next)).not.toMatch(/Start with wifi/);
   });
 
   it("saves, replaces, skips and removes facts", () => {

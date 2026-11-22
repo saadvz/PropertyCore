@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { GrokRoutineWebhookSink, repairsUpdateEvent, testEvent } from "../alerts/operatorEvents";
 import { routineValuesRefused } from "../alerts/routineCheck";
+import { recordHostStep } from "../hours-log/hostSteps";
 import type { CleanerAssistant } from "../cleaner-core/assistant";
 import { currentCaller, withCaller } from "../cleaner-core/callerContext";
 import { OperatorEventOutbox } from "../alerts/outbox";
@@ -1006,6 +1007,7 @@ export class FixerDesk {
       if (existing) file.upkeep[file.upkeep.indexOf(existing)] = item;
       else file.upkeep.push(item);
       this.write(file);
+      recordHostStep(this.root, { at: this.deps.now().toISOString(), kind: "upkeep-save", about: item.what, ref: item.id });
       const today = this.today();
       return ok({ saved: true, upkeepId: item.id, nextDates: nextDates(item.schedule, today, today, 3) });
     });
@@ -1020,6 +1022,7 @@ export class FixerDesk {
       if (gate !== "go") return gate;
       file.upkeep = file.upkeep.filter((entry) => entry !== item);
       this.write(file);
+      recordHostStep(this.root, { at: this.deps.now().toISOString(), kind: "upkeep-remove", about: item.what, ref: item.id });
       return ok({ removed: item.what });
     });
   }

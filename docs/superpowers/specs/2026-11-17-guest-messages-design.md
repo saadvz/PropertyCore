@@ -2,6 +2,7 @@
 
 Date: 2026-11-17. Status: draft, for review in the project thread.
 Issue: saadvz/PropertyCore#242, a child of #236 (verification roadmap).
+Since 2026-11-22 (#15, #16): house rules are one list with the nightly stay check's, and house facts are learned as guests ask instead of asked up front. See [2026-11-22-house-rules-facts-hours-design.md](2026-11-22-house-rules-facts-hours-design.md).
 Builds on #244 (Airbnb booking emails, merged in #248). Guest codes wait on
 #180; sending through Guesty or Hospitable waits on #239's booking-software
 connection and a test account.

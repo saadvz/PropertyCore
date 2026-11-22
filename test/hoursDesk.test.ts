@@ -110,11 +110,12 @@ describe("export_hours", () => {
     expect(readHours(open!.root).months["2026-10"]).toMatchObject({ exportedAt: NOW.toISOString() });
   });
 
+  // July: August holds Fixer Core's and Supply Core's Activate, a setup row since #18.
   it("a month with no records confirms and exports empty logs", async () => {
     const d = desk();
-    const asked = await call(d, "review_hours", { month: "2026-08" });
-    await call(d, "review_hours", { month: "2026-08", confirmation: (asked.structured?.confirmation as { code: string }).code });
-    const reply = await call(d, "export_hours", { month: "2026-08" });
+    const asked = await call(d, "review_hours", { month: "2026-07" });
+    await call(d, "review_hours", { month: "2026-07", confirmation: (asked.structured?.confirmation as { code: string }).code });
+    const reply = await call(d, "export_hours", { month: "2026-07" });
     expect(reply.isError).toBe(false);
     expect(reply.structured?.logs).toEqual([]);
   });

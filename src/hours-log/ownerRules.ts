@@ -26,7 +26,27 @@ export const OWNER_KINDS: ReadonlySet<RowKind> = new Set<RowKind>([
   "approve-order",
   "place-order",
   "owner-on-site",
+  // The host's own steps in the newer features (#18), each from that feature's record of the host's yes.
+  "approve-text",
+  "approve-guest-reply",
+  "allow-late-checkout",
+  "house-facts",
+  "house-rules",
+  "lock-setup",
+  "standing-code",
+  "guest-codes",
+  "expected-visit",
+  "approve-booking-email",
+  "save-upkeep",
+  "setup",
 ]);
+
+/**
+ * Row kinds the hours log leaves out entirely, for now: no row in any log. Whether setup and onboarding time
+ * (turning a flow on, Activate) counts toward the owner's hours is a tax question still open with Saad, so
+ * "setup" is one switch here. Changing this set changes months' rows, so bump OWNER_RULES_VERSION with it.
+ */
+export const KINDS_OFF: ReadonlySet<RowKind> = new Set<RowKind>([]);
 
 /** True when a fact may stay in the owner's log: the host did it, and it's one of the owner's kinds. */
 export function ownerMay(fact: RowFact): boolean {

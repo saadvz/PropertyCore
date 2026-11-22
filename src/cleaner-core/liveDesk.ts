@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { readHostSteps, recordHostStep } from "../hours-log/hostSteps";
 import { ChatGptTaskSink, ClaudeRoutineFireSink, cleaningUpdateEvent, GrokRoutineWebhookSink, testEvent } from "../alerts/operatorEvents";
 import { ASSISTANT_PROFILES, CHATGPT_CHECK_GAP_MS, CHATGPT_DESK_WORDING, CHATGPT_TASK, CHATGPT_TASK_CONNECTED, chatGptAsk, CLAUDE_DESK_WORDING, CLAUDE_FIRE_URL, CLAUDE_IMAGE_TYPES, CLAUDE_MAX_IMAGE_BYTES, CLAUDE_MAX_IMAGES, CLAUDE_TASK, claudeAsk, claudeAskNext, cleanerAssistant, GROK_HELPER, MUSE_DESK_WORDING, MUSE_TASK, MUSE_TASK_CONNECTED, museAsk, runsSupplies, taskWarning, type CleanerAssistant, type DeskWording } from "./assistant";
 import { currentCaller, withCaller, type CleanerCaller } from "./callerContext";
@@ -1675,7 +1676,12 @@ export class LiveDesk {
       // Already inside the serial queue, so the inner steps, never runChecks.
       const texting = this.setUpTextingNow();
       if (!texting.ok) return texting;
-      return this.runChecksNow(input);
+      const reply = await this.runChecksNow(input);
+      // The hours log's setup row (#18): the host's first Activate here, once.
+      if (reply.ok && !readHostSteps(this.root).some((step) => step.kind === "activate" && step.about === "Cleaner Core")) {
+        recordHostStep(this.root, { at: this.now().toISOString(), kind: "activate", about: "Cleaner Core" });
+      }
+      return reply;
     });
   }
 

@@ -8,6 +8,12 @@ export const FACT_TOPICS = ["wifi", "parking", "trash", "checkout", "check_in", 
 
 export type GuestFactTopic = (typeof FACT_TOPICS)[number];
 
+/**
+ * The topics save_guest_facts takes. House rules are one list with the nightly stay check's (#15), saved with
+ * save_house_rules; "rules" stays a topic only so a guest's question about them is matched, and an older file reads.
+ */
+export const SAVE_TOPICS = FACT_TOPICS.filter((topic) => topic !== "rules");
+
 export interface GuestFact {
   topic: GuestFactTopic;
   /** The host's words. */
@@ -69,7 +75,7 @@ const TOPIC_WORDS: Readonly<Record<Exclude<GuestFactTopic, "other">, RegExp>> = 
   trash: /\b(trash|garbage|rubbish|recycling|bins?|dumpster)\b/i,
   checkout: /\b(check[\s-]?out|leave|leaving|departure)\b/i,
   check_in: /\b(check[\s-]?in|arrive|arriving|arrival|get in|early)\b/i,
-  rules: /\b(rules?|pets?|dogs?|smok(e|ing)|party|parties|quiet|noise|guests over|visitors?)\b/i,
+  rules: /\b(rules?|pets?|dogs?|cats?|smok(e|ing)|vap(e|ing)|party|parties|quiet|noise|guests over|visitors?|how many (people|guests|cars)|extra (guests?|people|person|cars?)|more (guests|people|cars))\b/i,
   area: /\b(restaurants?|grocery|groceries|coffee|beach|things to do|nearby|eat)\b/i,
 };
 
@@ -85,19 +91,28 @@ function contentWords(text: string): Set<string> {
   );
 }
 
-export interface FactMatch {
+/** A fact or a house rule as matching reads it: its topic and the host's words. */
+export type FactText = Pick<GuestFact, "topic" | "text">;
+
+export interface FactMatch<T extends FactText = GuestFact> {
   /** The saved facts that answer some part of the message. Only these may go in a draft. */
-  facts: GuestFact[];
+  facts: T[];
   /** Topics the message asks about with no saved fact. */
   missing: GuestFactTopic[];
   /** Nothing on file answers it. */
   isNew: boolean;
 }
 
-export function matchFacts(message: string, facts: readonly GuestFact[]): FactMatch {
+/**
+ * The facts that answer a message: a topic's fact when the message touches the topic, an "other" fact when they
+ * share a word. A house rule (topic "rules", #15) answers either way: every rule when the message is about the
+ * rules, and one rule on its own when they share a word, like "Two cars max" for "can we bring two cars?".
+ */
+export function matchFacts<T extends FactText>(message: string, facts: readonly T[]): FactMatch<T> {
   const touched = (Object.keys(TOPIC_WORDS) as Exclude<GuestFactTopic, "other">[]).filter((topic) => TOPIC_WORDS[topic].test(message));
   const words = contentWords(message);
-  const matched = facts.filter((fact) => (fact.topic === "other" ? [...contentWords(fact.text)].some((word) => words.has(word)) : touched.includes(fact.topic)));
+  const shares = (fact: T) => [...contentWords(fact.text)].some((word) => words.has(word));
+  const matched = facts.filter((fact) => (fact.topic === "other" ? shares(fact) : touched.includes(fact.topic) || (fact.topic === "rules" && shares(fact))));
   const missing = touched.filter((topic) => !facts.some((fact) => fact.topic === topic));
   return { facts: matched, missing, isNew: matched.length === 0 };
 }
