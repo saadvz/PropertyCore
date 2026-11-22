@@ -85,13 +85,56 @@ describe("the host's own standing code (E)", () => {
     const w = world();
     const asked = await handleLockTool(w.desk, "add_standing_code", { name: "Saad", role: "owner" });
     expect(asked?.isError).toBe(false);
-    expect(asked?.structured?.question).toBe("Give you your own standing door code at 12 Scratch Lane, on your number ending 0130? You get one text there asking you to reply YES first.");
-    const done = await approved((confirmation) => w.desk.addStanding({ name: "Saad", role: "owner", ...(confirmation ? { confirmation } : {}) }));
-    expect(done.structured?.invited).toBe(true);
-    expect(done.text).toBe("The host got one text asking them to reply YES. Their code link goes once they do.");
-    expect(w.sent).toEqual([expect.objectContaining({ to: HOST })]);
+    expect(asked?.structured?.question).toBe("Give you your own standing door code at 12 Scratch Lane? I'll text a private link to your number ending 0130.");
     // Nothing the agent sees says another person's name or "last four digits".
-    for (const text of [asked!.text, done.text]) expect(text).not.toMatch(/Maria|last four digits/);
+    expect(asked!.text).not.toMatch(/Maria|last four digits/);
+  });
+
+  it("the host's own code needs no YES: the private link goes to the confirmed number at once (#280 decision 1)", async () => {
+    const w = world();
+    const done = await approved((confirmation) => w.desk.addStanding({ name: "Saad", role: "owner", ...(confirmation ? { confirmation } : {}) }));
+    expect(done.isError).toBe(false);
+    expect(done.structured).toMatchObject({ invited: false, linkSent: true });
+    expect(done.text).toBe("The host's code is going on the lock, and the private link to it went to their number ending 0130.");
+    expect(w.sent).toHaveLength(1);
+    expect(w.sent[0]!.to).toBe(HOST);
+    expect(w.sent[0]!.body).toContain(STANDING_PAGE_PREFIX);
+    expect(w.sent[0]!.body).not.toMatch(/Reply YES/);
+    expect(w.door.locks().standing![0]!.yesAt).toBe(NOW.toISOString());
+    const code = w.fake.liveCodes("dev-front")[0]!.code;
+    expect(JSON.stringify([done, w.sent])).not.toContain(code);
+    expect(await w.desk.showCode(tokenOf(w.sent[0]!.body))).toEqual({ ok: true, code });
+    for (const text of [done.text]) expect(text).not.toMatch(/Maria|last four digits/);
+  });
+
+  it("the host's own link that couldn't go says so, and standing_code_link sends it later", async () => {
+    const w = world({ sendWorks: false });
+    const done = await approved((confirmation) => w.desk.addStanding({ name: "Saad", role: "owner", ...(confirmation ? { confirmation } : {}) }));
+    expect(done.structured).toMatchObject({ invited: false, linkSent: false });
+    expect(done.text).toBe("The host's code is going on the lock, but the private link couldn't be texted just now. Call standing_code_link to send it again.");
+    w.state.sendWorks = true;
+    const again = await approved((confirmation) => w.desk.newLink({ id: done.structured!.id, ...(confirmation ? { confirmation } : {}) }));
+    expect(again.structured?.sent).toBe(true);
+    expect(w.sent).toEqual([expect.objectContaining({ to: HOST, body: expect.stringContaining(STANDING_PAGE_PREFIX) })]);
+  });
+
+  it("a co-host still gets the YES invite first", async () => {
+    const w = world();
+    const done = await approved((confirmation) => w.desk.addStanding({ name: "Pat Lee", phone: COHOST, role: "co-host", ...(confirmation ? { confirmation } : {}) }));
+    expect(done.structured?.invited).toBe(true);
+    expect(w.sent).toEqual([expect.objectContaining({ to: COHOST, body: expect.stringContaining("Reply YES") })]);
+    expect(w.fake.liveCodes("dev-front")).toEqual([]);
+  });
+
+  it("an owner code on a typed number still asks for YES", async () => {
+    const w = world();
+    const other = "+15555550177";
+    const asked = await w.desk.addStanding({ name: "Saad", phone: other, role: "owner" });
+    expect(asked.structured?.question).toBe("Give Saad their own standing door code at 12 Scratch Lane? They get one text asking them to reply YES first.");
+    const done = await approved((confirmation) => w.desk.addStanding({ name: "Saad", phone: other, role: "owner", ...(confirmation ? { confirmation } : {}) }));
+    expect(done.structured?.invited).toBe(true);
+    expect(w.sent).toEqual([expect.objectContaining({ to: other, body: expect.stringContaining("Reply YES") })]);
+    expect(w.fake.liveCodes("dev-front")).toEqual([]);
   });
 
   it("asks for the number only when no confirmed host phone is on file, and still never for a co-host's", async () => {
@@ -113,7 +156,7 @@ describe("the host's own standing code (E)", () => {
 describe("the invite (A and B)", () => {
   it("is marked sent only once it went, says why it didn't, and goes on its own once it can, with no remove and remake", async () => {
     const w = world({ sendWorks: false });
-    const done = await approved((confirmation) => w.desk.addStanding({ name: "Saad", role: "owner", ...(confirmation ? { confirmation } : {}) }));
+    const done = await approved((confirmation) => w.desk.addStanding({ name: "Pat Lee", phone: COHOST, role: "co-host", ...(confirmation ? { confirmation } : {}) }));
     expect(done.structured).toMatchObject({ invited: false, waiting: "send-failed" });
     expect(done.text).toMatch(/didn't go out just now\. I'll try again on my own/);
     expect(done.text).toMatch(/No tool changes who may be texted, so never tell the host you turned texts on/);
@@ -124,7 +167,7 @@ describe("the invite (A and B)", () => {
     expect(w.sent).toEqual([]); // waits 10 minutes between tries
     w.at(NOW.getTime() + 11 * 60_000);
     await w.desk.standingClock();
-    expect(w.sent).toEqual([expect.objectContaining({ to: HOST, body: expect.stringContaining("Reply YES") })]);
+    expect(w.sent).toEqual([expect.objectContaining({ to: COHOST, body: expect.stringContaining("Reply YES") })]);
     expect(standing(w)[0]!.status).toBe("waiting-for-yes");
     await w.desk.standingClock();
     expect(w.sent).toHaveLength(1);

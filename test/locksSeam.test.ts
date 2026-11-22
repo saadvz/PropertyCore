@@ -141,6 +141,26 @@ describe("the lock partner's adapter", () => {
   });
 });
 
+describe("a lock account that dropped (#280 22)", () => {
+  it("flags an account the partner lists as disconnected", async () => {
+    const { adapter } = stub({
+      "/connected_accounts/list": { body: { connected_accounts: [{ connected_account_id: "ca1", customer_key: "acct-1", errors: [{ error_code: "account_disconnected" }] }, { connected_account_id: "ca2", customer_key: "acct-1", errors: [] }] } },
+    });
+    expect(await adapter.accounts({ customerKey: "acct-1" })).toEqual([{ id: "ca1", disconnected: true }, { id: "ca2" }]);
+  });
+
+  it("removes a connection by its id, only for an account listed under that customer key", async () => {
+    const { adapter, calls } = stub({
+      "/connected_accounts/list": { body: { connected_accounts: [{ connected_account_id: "ca1", customer_key: "acct-1" }] } },
+      "/connected_accounts/delete": { body: {} },
+    });
+    await adapter.removeAccount({ customerKey: "acct-1", accountId: "ca1" });
+    expect(calls.filter((call) => call.url.endsWith("/connected_accounts/delete")).map((call) => call.body)).toEqual([{ connected_account_id: "ca1" }]);
+    await adapter.removeAccount({ customerKey: "acct-1", accountId: "ca-other" });
+    expect(calls.filter((call) => call.url.endsWith("/connected_accounts/delete")).length).toBe(1);
+  });
+});
+
 describe("the lock partner's webhook check", () => {
   const body = JSON.stringify({ event_id: "ev_1", event_type: "lock.unlocked", occurred_at: "2026-12-01T11:59:00.000Z", device_id: "d1", connected_account_id: "ca1", access_code_id: "ac_1", method: "keycode" });
 
@@ -172,6 +192,24 @@ describe("the lock partner's webhook check", () => {
     expect(kind("device.connected")).toBe("online");
     expect(kind("connected_account.disconnected")).toBe("account-disconnected");
     expect(kind("something.new")).toBe("other");
+  });
+
+  it("maps a reconnect's first sync to account-synced (#280 22)", () => {
+    const { adapter } = stub({});
+    const b = JSON.stringify({ event_id: "ev_sync", event_type: "connected_account.completed_first_sync_after_reconnection", occurred_at: NOW.toISOString(), connected_account_id: "ca_1" });
+    const parsed = adapter.parseWebhook({ headers: sign(b), body: b });
+    expect(parsed?.kind).toBe("account-synced");
+    expect(parsed?.accountId).toBe("ca_1");
+  });
+
+  it("never reads the unlock's code field (#280 20)", () => {
+    const { adapter } = stub({});
+    const b = JSON.stringify({ event_id: "ev_remote", event_type: "lock.unlocked", occurred_at: NOW.toISOString(), device_id: "d1", connected_account_id: "ca1", method: "remote", code: CODE });
+    const parsed = adapter.parseWebhook({ headers: sign(b), body: b });
+    expect(parsed?.kind).toBe("unlock");
+    expect(parsed?.method).toBe("remote");
+    expect(parsed?.side).toBeUndefined();
+    expect(JSON.stringify(parsed).includes(CODE)).toBe(false);
   });
 
   it("is made from the environment only when its key is set", () => {

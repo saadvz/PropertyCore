@@ -189,6 +189,14 @@ describe("setting up connected locks", () => {
     expect(fake.liveCodes("dev-front")).toEqual([]);
   });
 
+  it("switching off removes an expected visitor's code too (#280 17)", async () => {
+    const { desk, door, fake } = world();
+    await door.syncGrants("visit", [{ jobId: "v-0000aaaa", person: "+15555550161", label: "Mike Doyle", who: { role: "visitor" }, window: { from: "2026-12-01T16:00:00.000Z", until: "2026-12-01T22:00:00.000Z" } }]);
+    expect(fake.liveCodes("dev-front")).toHaveLength(1);
+    await approved((confirmation) => desk.saveLocks({ off: true, ...(confirmation ? { confirmation } : {}) }));
+    expect(fake.liveCodes("dev-front")).toEqual([]);
+  });
+
   it("every lock tool's input is strict, and none takes a code", async () => {
     const { desk } = world();
     for (const tool of LOCK_TOOLS) {
