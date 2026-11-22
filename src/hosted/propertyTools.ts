@@ -4,6 +4,7 @@ import { findProperty, propertyFolder, type FlowName, type Property } from "../c
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
 import type { FrontReply } from "./serviceTools";
+import { OFFER_IDS } from "./featureOffers";
 
 /**
  * The account's own tools on the shared address, and how a property tool call names its property.
@@ -55,8 +56,8 @@ const GET_STATE = {
   name: "get_state",
   title: "What's next",
   description:
-    "Call this first. Lists the account's properties, which flows each one has on, and each one's next step. With property, gives that property's own Cleaner Core state and next step (or Supply Core's, when only Supply Core is on there, or Fixer Core's, when only Fixer Core is). With one property, it gives that property's state directly. agentNumber is the account's text line: when the host asks for their agent's number, give it, and say their pros and cleaner text or call it, while the host talks to you in chat. Setup starts with a draft for each property: pass drafted: true with the property once the host corrected its summary.",
-  inputSchema: { type: "object", properties: { property: PROPERTY_ARG, choice: { type: "string", maxLength: 40 }, drafted: { type: "boolean" } }, additionalProperties: false },
+    "Call this first. Lists the account's properties, which flows each one has on, and each one's next step. With property, gives that property's own Cleaner Core state and next step (or Supply Core's, when only Supply Core is on there, or Fixer Core's, when only Fixer Core is). With one property, it gives that property's state directly. agentNumber is the account's text line: when the host asks for their agent's number, give it, and say their pros and cleaner text or call it, while the host talks to you in chat. Setup starts with a draft for each property: pass drafted: true with the property once the host corrected its summary. Once setup is done, it may give offer: one feature that's on for the account, to offer the host in one line with Skip always there; pass offered with that offer's name and the property once the host answered, yes or skip.",
+  inputSchema: { type: "object", properties: { property: PROPERTY_ARG, choice: { type: "string", maxLength: 40 }, drafted: { type: "boolean" }, offered: { type: "string", enum: [...OFFER_IDS] } }, additionalProperties: false },
 };
 
 const ADD_PROPERTY = {

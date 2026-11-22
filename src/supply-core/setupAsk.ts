@@ -16,6 +16,28 @@ export interface SupplyAsk {
   questions: AskQuestion[];
 }
 
+/** The smallest cap suggestion, and the step suggestions round up to. */
+const CAP_FLOOR_CENTS = 5_000;
+const CAP_STEP_CENTS = 2_500;
+
+/**
+ * The caps setup suggests: per order, the whole list once plus a fifth for tax and shipping, rounded up to the next
+ * $25 and at least $50; per month, two full restocks. Both stay within what save_supply_settings accepts.
+ */
+export function suggestedCaps(file: Pick<SupplyFile, "items">): { perOrderCents: number; perMonthCents: number } {
+  const list = file.items.reduce((sum, item) => sum + item.preferred.priceCents * Math.max(1, item.qtyPerOrder), 0);
+  const perOrderCents = Math.min(500_000, Math.max(CAP_FLOOR_CENTS, Math.ceil((list * 1.2) / CAP_STEP_CENTS) * CAP_STEP_CENTS));
+  return { perOrderCents, perMonthCents: Math.min(2_000_000, perOrderCents * 2) };
+}
+
+/** Whole dollars, like $150. */
+function dollars(cents: number): string {
+  return `$${Math.round(cents / 100).toLocaleString("en-US")}`;
+}
+
+const CAPS_HOW =
+  "Offer both caps with the suggested amounts: per order, the whole list once with room for tax and shipping; per month, two full restocks. The host can change either amount. A cart over a cap waits for their yes. No cap only when the host picks it: say plainly that then no order is held for what it costs, and save perOrderCapCents and perMonthCapCents as null.";
+
 /** Asked first: whether anything has a standing order at all, and when the cleaner is asked what's low. */
 const ORDERING_QUESTIONS: AskQuestion[] = [
   {
@@ -233,24 +255,28 @@ export function supplySetupAsk(file: SupplyFile, hub: Hub): SupplyAsk | undefine
     };
   }
   if (!file.setup.capsDone) {
+    const caps = suggestedCaps(file);
+    const perOrder = dollars(caps.perOrderCents);
+    const perMonth = dollars(caps.perMonthCents);
     return {
       step: "caps",
       tool: "save_supply_settings",
       questions: [
         {
           field: "caps",
-          ask: "whether they want a spending cap",
+          ask: `which spending caps to set: suggest both, ${perOrder} per order and ${perMonth} a month`,
           required: true,
           options: [
+            { value: "both", label: "Both" },
             { value: "order", label: "Per order" },
             { value: "month", label: "Per month" },
-            { value: "both", label: "Both" },
             { value: "none", label: "No cap" },
           ],
-          how: "No cap saves perOrderCapCents and perMonthCapCents as null.",
+          default: "both",
+          how: CAPS_HOW,
         },
-        { field: "perOrderCapCents", ask: "the most one order can cost", required: false, when: "caps is order or both", example: "7500 for $75" },
-        { field: "perMonthCapCents", ask: "the most to spend in a month", required: false, when: "caps is month or both", example: "30000 for $300" },
+        { field: "perOrderCapCents", ask: "the most one order can cost", required: false, when: "caps is order or both", default: String(caps.perOrderCents), example: `${caps.perOrderCents} for ${perOrder}` },
+        { field: "perMonthCapCents", ask: "the most to spend in a month", required: false, when: "caps is month or both", default: String(caps.perMonthCents), example: `${caps.perMonthCents} for ${perMonth}` },
       ],
     };
   }

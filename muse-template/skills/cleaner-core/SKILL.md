@@ -172,7 +172,7 @@ with `choice: "cleaners"`, which picks scheduling cleaners.
    its prompt word for word. Then call `save_alert_routine` with no arguments
    to connect it, and call `get_state`.
    Activate waits until the task is connected.
-9. Review and Activate: summarize `setup` in your own words. When the host
+9. Review and Activate: summarize `setup` in your own words, and say its `tellHost` line as it is. When the host
    replies Activate, call `activate`. Pass Google Calendar's events when the
    host uses it.
 

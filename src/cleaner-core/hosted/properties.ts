@@ -21,6 +21,8 @@ export interface Property {
   flows: Record<FlowName, Flow>;
   /** The property migrated from a one-property tenant: its links stay under /t/<tenantId>/. */
   legacyPaths?: true;
+  /** The feature offers the host answered here, yes or skip, so each is made once (src/hosted/featureOffers.ts). */
+  offersAnswered?: string[];
 }
 
 const PROPERTY_ID = /^prp_[a-z0-9]{10}$/;

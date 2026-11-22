@@ -311,6 +311,16 @@ export class TenantRegistry {
     });
   }
 
+  /** Notes that the host answered one feature offer on this property, yes or skip. Changes nothing else. */
+  noteOfferAnswered(tenantId: string, propertyId: string, offer: string): Property {
+    return this.update(tenantId, (tenant) => {
+      const property = tenant.properties.find((p) => p.id === propertyId);
+      if (!property) throw new RegistryError("unknown-property");
+      if (!(property.offersAnswered ?? []).includes(offer)) property.offersAnswered = [...(property.offersAnswered ?? []), offer];
+      return property;
+    });
+  }
+
   /**
    * Turns one feature on or off for one account, recording who and when. Only /admin calls this: no agent tool
    * reaches it. No other account's switches are read or written.

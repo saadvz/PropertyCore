@@ -84,7 +84,9 @@ stay for those accounts and are marked parked: the Tour Core task in each of
 [`claude/routines/`](claude/routines/tour-core-task.md),
 [`chatgpt/routines/`](chatgpt/routines/tour-core-task.md), and
 [`muse/skills/property-core/references/`](muse/skills/property-core/references/tour-core-task.md),
-and the seven Tour Core skills the Grok template carries. Touring's guide is
+and the seven Tour Core skills in [`.grok/skills/`](../.grok/skills/), which a
+touring account's bot reads from the clone. The team template doesn't carry
+them, so a new host never sees touring. Touring's guide is
 [`docs/tour-core/README.md`](../docs/tour-core/README.md).
 
 ## Build the team template
@@ -99,9 +101,9 @@ nothing from a real setup comes along.
    from [`bot-profile.md`](bot-profile.md), and paste its **Standing
    instructions** section as the bot's instructions. Add the suggested
    starting prompts.
-3. Add the seven Tour Core skills listed in [`template.json`](template.json),
-   for touring accounts. Cleaner Core and Supply Core have no skills; their
-   guides are read at setup.
+3. Add no skills. A bot that carries Tour Core's skills offers self-guided
+   tours to every new host, and touring is parked. Each flow's guide is read
+   at setup.
 4. Don't connect the service, don't create any routines, and don't run setup.
    Each installed bot connects with its host's own invite code and creates
    only its chosen flows' routines during setup.
@@ -111,8 +113,9 @@ nothing from a real setup comes along.
 6. Choose **Team** and click **Publish**. Share the link with the team, and
    update `templateLink` in [`template.json`](template.json) if it changed.
 7. Test it: add the template as a new bot, say "Set up Property Core", and
-   check that it connects, adds a property, and offers Cleaner Core and Supply
-   Core before anything else.
+   check that its first message doesn't mention tours, and that it connects,
+   adds a property, and offers Cleaner Core, Supply Core and Fixer Core before
+   anything else.
 
 Update the template only when `bot-profile.md` or the skills change. Changes to
 the flows' guides and routine docs reach every bot on its next setup without
