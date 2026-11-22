@@ -230,15 +230,20 @@ export class DoorAccess {
     if (waiting.length > 0) next.rehomeNeeded = waiting;
     else delete next.rehomeNeeded;
     this.saveLocks(next);
-    const flows = await this.grants().rehome(moves);
+    const { flows, parts, notTaken } = await this.grants().rehome(moves);
     const notes: GrantNote[] = [];
     const moved = Object.values(moves);
     const doorWords = (ids: string[], name: (id: string) => string | undefined) => ids.map((id) => `the ${name(id) ?? "door"}`).join(" and ");
     if (moved.length > 0) {
-      const where = doorWords(Object.keys(moves).filter((id) => file.doors.includes(id)), (id) => names.get(id));
-      const codes = flows.length > 0 ? ` Everyone's codes were put back on ${where || "your doors"}, so nobody needs a new one.` : "";
+      const where = doorWords(Object.keys(moves).filter((id) => file.doors.includes(id)), (id) => names.get(id)) || "your doors";
+      const fallback = "a backup code or your saved door code instead";
+      let codes = "";
+      if (flows.length > 0 && notTaken === 0) codes = `. Everyone's codes were put back on ${where}, so nobody needs a new one.`;
+      else if (flows.length > 0 && notTaken >= parts) codes = `, but ${where} didn't take back the codes from before, so those visits get ${fallback}.`;
+      else if (flows.length > 0) codes = `. Codes from before were put back on ${where}, except ${notTaken} the lock didn't take, which ${notTaken === 1 ? "gets" : "get"} ${fallback}.`;
+      else codes = ".";
       const standing = flows.includes("standing") ? " Codes named Standing from before may still be on the lock: remove those in the lock's own app." : "";
-      notes.push({ id: `lock:rehomed:${[...moved].sort().join(",")}`, text: `Your locks came back after the reconnect.${codes}${standing}` });
+      notes.push({ id: `lock:rehomed:${[...moved].sort().join(",")}`, text: `Your locks came back after the reconnect${codes}${standing}` });
     }
     if (record && stillMissing.length > 0) {
       notes.push({ id: `lock:rehome-missing:${[...stillMissing].sort().join(",")}`, urgent: true, text: `After the reconnect I can't tell which lock in your lock account is ${doorWords(stillMissing, (id) => names.get(id))}. Until you pick the doors again, visits use your saved door code.` });
