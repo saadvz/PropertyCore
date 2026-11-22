@@ -4,6 +4,9 @@ import type { Tenant } from "../cleaner-core/hosted/registry";
 import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { hubFor } from "../hub/hub";
 import { lockAdapter } from "../locks/registry";
+import { peopleFor } from "../hub/people";
+import { tenantFolder } from "../cleaner-core/hosted/registry";
+import { optedInOnProperty, visitCodeDesk, visitCodesAvailable } from "./locks";
 import { doorDevices } from "../locks/settings";
 import { redactDigitRuns } from "../visits/store";
 import { oversightDeskFor, type OversightDesk } from "../oversight/desk";
@@ -55,5 +58,11 @@ export function oversightDeskOf(h: HostedCleaner, tenant: Tenant, property: Prop
     // As the visit log writes a device's name, so a door with digits in its name still matches.
     doors: () => safely(() => doorDevices(door().locks()).map((device) => redactDigitRuns(device.name).trim().slice(0, 80)), []),
     cameras: () => featureOn(h.registry.get(tenant.id), "cameras", h.baseEnv()),
+    // Visit codes (#280 17): with the account's locks on and the property on connected locks.
+    codes: () => visitCodesAvailable(h, h.registry.get(tenant.id) ?? tenant) && safely(() => door().connected(), false),
+    hostPhone: () => safely(() => peopleFor(tenantFolder(h.dataRoot, tenant.id), { now: () => h.now() }).hostOf(property.id), undefined),
+    stopped: (phone) => safely(() => peopleFor(tenantFolder(h.dataRoot, tenant.id), { now: () => h.now() }).stopped(phone), true),
+    optedInHere: (phone) => safely(() => optedInOnProperty(h, h.registry.get(tenant.id) ?? tenant, property, phone), false),
+    codeStatus: (visit) => safely(() => visitCodeDesk(h, h.registry.get(tenant.id) ?? tenant, property).codeStatus(visit), undefined),
   });
 }

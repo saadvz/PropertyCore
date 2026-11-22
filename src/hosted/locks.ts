@@ -18,6 +18,7 @@ import { lockAdapter } from "../locks/registry";
 import { featureOn } from "../features/features";
 import { readDoorLocks } from "../locks/settings";
 import { fixerDesk } from "./fixer";
+import { VisitCodeDesk } from "../oversight/visitCodeDesk";
 
 /**
  * Connected locks on the shared service (#180): the lock partner's webhook, and the clock pass for
@@ -129,10 +130,14 @@ export async function tickAllLocks(h: HostedCleaner): Promise<void> {
         const door = hubFor(ctx.root, { now: () => h.now() }).doorAccess(ctx.env);
         if (!door.locks().activeAt) continue;
         for (const note of lockHealthNotes(door, h.now())) await tellLockNote(h, { tenant, property }, note);
+        // After a reconnect (#280 22): doors that came back under new ids get everyone's codes again. The desk tells the host.
+        if (anyDoorFlow(property) && (door.locks().disconnectedAt || (door.locks().rehomeNeeded ?? []).length > 0)) await lockDesk(h, tenant, property).reconnectClock();
         // Standing codes (#180): an invite that couldn't go yet goes once it can, and a code a door refused is tried again. The desk tells the host.
         if (anyDoorFlow(property) && (door.locks().standing ?? []).some((person) => !person.removedAt)) await lockDesk(h, tenant, property).standingClock();
         // Guest codes (#262): each stay's code follows the booking log on this clock, so a booking email or late checkout reaches the lock within a tick.
         if (guestCodesAvailable(h, tenant) && anyDoorFlow(property)) for (const note of await guestDesk(h, tenant, property).sync()) await tellLockNote(h, { tenant, property }, note);
+        // Visit codes (#280 17): each expected visitor's invite, their code on the lock, and its text, on this clock.
+        if (visitCodesAvailable(h, tenant) && anyDoorFlow(property)) for (const note of await visitCodeDesk(h, tenant, property).sync()) await tellLockNote(h, { tenant, property }, note);
         // The checkout-time release and a paused turnover's reminders run on this clock.
         if (property.flows.cleaning.on) await liveDeskFor(ctx.root, ctx.env, () => h.now()).lockClock();
       } catch {
@@ -144,11 +149,13 @@ export async function tickAllLocks(h: HostedCleaner): Promise<void> {
 
 const desks = new Map<string, LockDesk>();
 const guestDesks = new Map<string, GuestCodeDesk>();
+const visitDesks = new Map<string, VisitCodeDesk>();
 
 /** Tests only. */
 export function resetLockDesks(): void {
   desks.clear();
   guestDesks.clear();
+  visitDesks.clear();
 }
 
 /** Some account on the service has connected locks on. */
@@ -164,6 +171,42 @@ export function locksAvailable(h: HostedCleaner, tenant: Tenant): boolean {
 /** Guest codes for this account (#262): its "guest-codes" switch (which needs its locks on), with the adapter. */
 export function guestCodesAvailable(h: HostedCleaner, tenant: Tenant): boolean {
   return featureOn(tenant, "guest-codes", h.baseEnv()) && Boolean(lockAdapter());
+}
+
+/** Visit codes for this account (#280 17): its "oversight" switch (expected visits) and connected locks. */
+export function visitCodesAvailable(h: HostedCleaner, tenant: Tenant): boolean {
+  return featureOn(tenant, "oversight", h.baseEnv()) && locksAvailable(h, tenant);
+}
+
+/** A person on this property who said YES and hasn't said STOP: a visit needs no new invite for them. */
+export function optedInOnProperty(h: HostedCleaner, tenant: Tenant, property: Property, phone: string): boolean {
+  const people = peopleFor(tenantFolder(h.dataRoot, tenant.id), { now: () => h.now() });
+  return people.optedIn(phone) && !people.stopped(phone) && people.rolesOn(phone, property.id).length > 0;
+}
+
+/** The property's visit-code desk (#280 17). Every dependency reads the account again on each call. */
+export function visitCodeDesk(h: HostedCleaner, tenant: Tenant, property: Property): VisitCodeDesk {
+  const root = propertyFolder(h.dataRoot, tenant.id, property);
+  const existing = visitDesks.get(root);
+  if (existing) return existing;
+  const fresh = () => {
+    const account = h.registry.get(tenant.id) ?? tenant;
+    return { account, property: account.properties.find((item) => item.id === property.id) ?? property };
+  };
+  const desk = new VisitCodeDesk(root, {
+    now: () => h.now(),
+    door: () => {
+      const ctx = propertyContext(h, fresh().account, fresh().property);
+      return hubFor(ctx.root, { now: () => h.now() }).doorAccess(ctx.env);
+    },
+    textsAllowed: async () => (await cleaningDesk(h, fresh().account, fresh().property)?.textsAllowed()) ?? false,
+    stopped: (phone) => peopleFor(tenantFolder(h.dataRoot, tenant.id), { now: () => h.now() }).stopped(phone),
+    // The body is never logged or kept: sendLiveSms hands it to Twilio and keeps only the message id.
+    send: async (to, body) => (await sendLiveSms(propertyContext(h, fresh().account, fresh().property).env(), { to, body })) !== undefined,
+    optedInHere: (phone) => optedInOnProperty(h, fresh().account, fresh().property, phone),
+  });
+  visitDesks.set(root, desk);
+  return desk;
 }
 
 /** The property's guest-code desk. Every dependency reads the account again on each call. */
@@ -302,6 +345,26 @@ export async function guestLineText(h: HostedCleaner, tenant: Tenant, from: stri
       if (await desk.leaseText(from, text)) handled = true;
     } catch {
       h.log(`A lease text for ${tenant.id}/${property.id} couldn't be read.`);
+    }
+  }
+  return handled;
+}
+
+/**
+ * A text on the shared line from a phone saved as an expected visitor on one of the account's properties (#280 17).
+ * Only its YES (after the invite) is taken here; STOP takes the code off and still goes on to the usual routing.
+ */
+export async function visitorLineText(h: HostedCleaner, tenant: Tenant, from: string, text: string): Promise<boolean> {
+  if (!visitCodesAvailable(h, tenant) || !from) return false;
+  let handled = false;
+  for (const property of tenant.properties) {
+    if (!anyDoorFlow(property)) continue;
+    try {
+      const desk = visitCodeDesk(h, tenant, property);
+      if (!desk.hasVisitor(from)) continue;
+      if (await desk.visitorText(from, text)) handled = true;
+    } catch {
+      h.log(`A visitor text for ${tenant.id}/${property.id} couldn't be read.`);
     }
   }
   return handled;

@@ -17,7 +17,7 @@ import { proRoute } from "../fixer-core/proLine";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { isStartText, isStopText, TenantOptOuts } from "./crossService";
 import { fixerProText } from "./fixer";
-import { guestLineText, standingLineText } from "./locks";
+import { guestLineText, standingLineText, visitorLineText } from "./locks";
 import { LineAsks } from "./lineAsks";
 import { accountPeople } from "./sharedPeople";
 import { answerOf, bareAnswer, businessFor, droppedNote, lineStartText, lineStopText, namedProperty, whichPropertyText, type Named } from "./sharedRoute";
@@ -213,6 +213,11 @@ export async function handleLineText(h: HostedCleaner, r: HostedRequest, tenant:
   }
   // A tenant the host gave a lease code (#262): their YES gets their private code link. Nothing else is taken here.
   if (await guestLineText(h, tenant, from, text)) {
+    h.registry.touch(tenant.id);
+    return r.send(200, "text/xml", EMPTY_TWIML);
+  }
+  // Someone the host expects, given their own visit code (#280 17): their YES gets the code before the visit. Nothing else is taken here.
+  if (await visitorLineText(h, tenant, from, text)) {
     h.registry.touch(tenant.id);
     return r.send(200, "text/xml", EMPTY_TWIML);
   }
