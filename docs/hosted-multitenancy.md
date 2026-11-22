@@ -173,7 +173,7 @@ events reach it only with Connected locks on, and camera events only with Camera
 
 Behind each account's switch:
 
-- **Visit records (`visits`).** `list_visits`, `visit_health` and `name_lock_code`, listed for every agent on the
+- **Visit records (`visits`).** `list_visits`, `visit_health`, `door_activity` (each unlock and lock for up to 7 days, read only) and `name_lock_code`, listed for every agent on the
   account when any property runs Cleaner Core or Fixer Core. Visit records are rebuilt from the log on every read.
   Only with a connected lock: a cleaner not in 30 minutes after the expected time (15 on a same-day turnover) gets
   one text, and the host one note when the next check-in is at risk, on a no-show, on a failed arrival-day check,
@@ -214,7 +214,10 @@ Behind each account's switch:
   after its window, or at 8 PM for an all-day visit. It reads the visit log: unlocks and lock status only with
   Connected locks on and the property on them, camera sightings only with Cameras on; otherwise a visit is "can't
   tell". Where Cleaner Core or Fixer Core runs at the property, the host-alert clock (#250) runs the check every
-  15 minutes from 7 AM local and sends a new flag through the account's Alerts routine, once.
+  15 minutes from 7 AM local and sends a new flag through the account's Alerts routine, once. With Connected locks on
+  and the property on them, `add_expected_visit` also takes the visitor's `phone` (#280 17): with the host's yes the
+  visitor gets one opt-in text, and after their YES their own code for the visit's window, by one text 30 minutes
+  before, on the lock clock. Never during a guest's stay; STOP or a cancel takes it off.
 - **Booking platforms (`booking-platforms`).** `save_sources` takes `bookingEmails` (Airbnb, Vrbo, Booking.com,
   the host's own site or Other, with each sender) and `shareSamples`; `get_state` and `check_now` return
   `bookingEmails` and `waitingBookings`; `read_booking_email` takes `extracted` and `email.authentication`; and the
@@ -231,7 +234,7 @@ Behind each account's switch:
   `docs/cleaner-core-safety-gates.md` and `docs/fixer-core-safety-gates.md` are green and Saad okays it.
 - **Guest codes (`guest-codes`).** Needs Connected locks on for the same account. `get_guest_codes`,
   `guest_codes`, `make_guest_code`, `guest_code_link` and the lease tools; the lock clock keeps each stay's code in
-  step with `booking-emails.jsonl` and late checkouts, and `/locks/guest/<token>` serves the single-use page. Only
+  step with `booking-emails.jsonl`, the calendar's stays (never its blocks, #280 19) and late checkouts, and `/locks/guest/<token>` serves the single-use page. Only
   a property on connected locks whose host chose automatic or ask gets guest codes; leases each take the host's
   yes. With it off, nothing changes.
 - **Cameras (`cameras`).** Needs `CAMERA_TOKEN_KEY` and the three `RING_*` secrets on the service; counting also
