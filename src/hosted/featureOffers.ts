@@ -67,7 +67,8 @@ export function offersFor(ctx: OfferContext): Offer[] {
       offer: "house-rules",
       kind: "setup",
       pitch: "Want to add your house rules? I keep them in one list.",
-      onYes: `Call ${rules.join(" or ")} and follow what it says.`,
+      // get_house_rules holds the one rules list and its setup question; facts alone only where it isn't listed.
+      onYes: `Call ${rules.includes("get_house_rules") ? "get_house_rules" : "get_guest_facts"} and follow what it says.`,
       tools: has(ctx, "get_house_rules", "save_house_rules", "get_guest_facts", "save_guest_facts"),
     });
   }

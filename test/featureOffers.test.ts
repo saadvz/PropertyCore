@@ -35,6 +35,9 @@ describe("the feature offers", () => {
   it("offers house rules as one item, whichever rules tools are listed", () => {
     expect(ids(ctx({ listed: new Set(["get_guest_facts", "save_guest_facts"]) }))).toEqual(["house-rules"]);
     expect(ids(ctx({ listed: new Set(["get_house_rules", "save_house_rules"]) }))).toEqual(["house-rules"]);
+    const onYes = (names: string[]) => offersFor(ctx({ listed: new Set(names) })).find((offer) => offer.offer === "house-rules")!.onYes;
+    expect(onYes(["get_house_rules", "get_guest_facts"])).toBe("Call get_house_rules and follow what it says.");
+    expect(onYes(["get_guest_facts"])).toBe("Call get_guest_facts and follow what it says.");
   });
 
   it("gives one offer at a time with Skip always there, and skips the answered ones", () => {
