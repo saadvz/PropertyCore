@@ -1,3 +1,5 @@
+import { mergeGuestRules } from "../house-rules/merge";
+import { recordHostStep } from "../hours-log/hostSteps";
 import { stayForNight, type EmailStay } from "../hub/bookingEmails";
 import { addCalendarDays, zonedInstant } from "../hub/calendar";
 import { readHubFile, type HubFile, type Stay as CalendarStay } from "../hub/store";
@@ -19,6 +21,13 @@ export interface StayCheckReply {
 
 export interface StayCheckDeps {
   now: () => Date;
+  /**
+   * The nightly check runs here (the account's stay-check switch). Unset is on. Off, the house rules are still
+   * the one list guest replies draft from (#15), but no rule can carry a camera check.
+   */
+  checks?: boolean;
+  /** Guest replies draft from these rules (the account's guest-messages switch). Unset is off. */
+  guestReplies?: boolean;
 }
 
 export const DEFAULT_CHECK_TIME = "23:00";
@@ -28,8 +37,22 @@ const DATE_SHAPE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 /** A real calendar date as YYYY-MM-DD: 2026-02-31 isn't one. */
 const DATE = { test: (value: string) => DATE_SHAPE.test(value) && new Date(`${value}T12:00:00Z`).toISOString().slice(0, 10) === value };
 
-export const ASK_FOR_RULES =
-  "No house rules are saved yet. Ask the host for their house rules in their own words. Examples help: \"No more than 6 guests\", \"No pets\", \"Two cars max\", \"Quiet after 10 PM\", \"No parties\". Don't suggest rules they didn't give. For each rule the cameras can watch (guests, pets, cars, quiet hours), read it back in checkable form, like \"I'll flag more than 6 people on camera at once\", and save its check only after they agree. Save every other rule as text. Then ask what time they'd like the nightly check; 11 PM is a good default.";
+/**
+ * The house rules question (#16): the one thing setup asks the host about the house, focused on what the
+ * cameras can check. A setup step that offers house rules calls get_house_rules and asks this. Its examples
+ * are only examples: no rule is suggested or saved that the host didn't give.
+ */
+export function rulesAsk(options: { checks: boolean; guestReplies: boolean }): string {
+  const replies = options.guestReplies ? " Every rule is also used to draft guest replies." : "";
+  if (!options.checks) {
+    return `No house rules are saved yet. Ask the host for their house rules in their own words: how many guests at most, pets, how many cars, quiet hours, and anything else guests should know. Examples help: "No more than 6 guests", "No pets", "Two cars max", "Quiet after 10 PM", "No parties". Don't suggest rules they didn't give. Save each one as text, in their words.${replies}`;
+  }
+  return `No house rules are saved yet. Ask the host for their house rules in their own words, starting with what the cameras can check: how many guests at most, pets, how many cars, and quiet hours. Examples help: "No more than 6 guests", "No pets", "Two cars max", "Quiet after 10 PM". Then ask whether there's any other rule guests should know, like "No parties". Don't suggest rules they didn't give. For each rule the cameras can watch (guests, pets, cars, quiet hours), read it back in checkable form, like "I'll flag more than 6 people on camera at once", and save its check only after they agree. Save every other rule as text.${replies} Then ask what time they'd like the nightly check; 11 PM is a good default.`;
+}
+
+export const ASK_FOR_RULES = rulesAsk({ checks: true, guestReplies: false });
+
+const NO_CHECKS_HERE = "The nightly stay check isn't on for this account, so no rule can carry a camera check. Save the rule as text only, in the host's words.";
 
 const ok = (structured: Record<string, unknown>): StayCheckReply => ({ text: JSON.stringify(structured), structured, isError: false });
 const fail = (text: string): StayCheckReply => ({ text, isError: true });
@@ -59,29 +82,46 @@ export class StayCheckDesk {
     }
   }
 
+  private get checks(): boolean {
+    return this.deps.checks !== false;
+  }
+
   /** The saved rules, check time and allowances. With none saved, how to ask the host for theirs. */
   getRules(): StayCheckReply {
     return this.guarded(() => {
+      mergeGuestRules(this.root, this.deps.now());
       const file = readStayCheck(this.root);
-      if (!file.rules.length) return ok({ rules: [], ask: ASK_FOR_RULES });
+      if (!file.rules.length) return ok({ rules: [], ask: rulesAsk({ checks: this.checks, guestReplies: this.deps.guestReplies === true }) });
+      if (!this.checks) return ok({ rules: file.rules, checks: false, next: NO_CHECKS_HERE.replace("Save the rule as text only, in the host's words.", "Every rule is kept as text.") });
       return ok({ rules: file.rules, checkTime: file.checkTime ?? DEFAULT_CHECK_TIME, checkTimeChosen: file.checkTime !== undefined, allowances: file.allowances });
     });
   }
 
-  /** `rules` replaces the list (an empty list clears it). `checkTime` replaces the saved time. */
-  saveRules(input: { rules?: unknown; checkTime?: unknown }): StayCheckReply {
+  /**
+   * `rules` replaces the list (an empty list clears it). `add` puts one rule at the end of it, like a rule the
+   * host gave while answering a guest (#16). `checkTime` replaces the saved time.
+   */
+  saveRules(input: { rules?: unknown; add?: unknown; checkTime?: unknown }): StayCheckReply {
     return this.guarded(() => {
-      if (input.rules === undefined && input.checkTime === undefined) return fail("Give the host's rules, a check time, or both.");
-      const problem = (input.rules !== undefined ? rulesProblem(input.rules) : undefined) ?? (input.checkTime !== undefined ? checkTimeProblem(input.checkTime) : undefined);
-      if (problem) return fail(problem);
+      if (input.rules === undefined && input.add === undefined && input.checkTime === undefined) return fail("Give the host's rules, a check time, or both.");
+      if (input.rules !== undefined && input.add !== undefined) return fail("Give either the whole list in rules, or one rule in add, not both.");
+      mergeGuestRules(this.root, this.deps.now());
       const file = readStayCheck(this.root);
+      const given = input.add !== undefined ? [input.add] : input.rules;
+      if (given !== undefined && !this.checks && Array.isArray(given) && given.some((rule) => rule && typeof rule === "object" && (rule as HouseRule).check !== undefined)) return fail(NO_CHECKS_HERE);
+      const list = input.add !== undefined ? [...file.rules, input.add] : input.rules;
+      const problem = (list !== undefined ? rulesProblem(list) : undefined) ?? (input.checkTime !== undefined ? checkTimeProblem(input.checkTime) : undefined);
+      if (problem) return fail(input.add !== undefined ? problem.replace(/rule \d+ without/, "the rule without") : problem);
+      const at = this.deps.now().toISOString();
       const next: StayCheckFile = { ...file };
-      if (input.rules !== undefined) {
-        next.rules = (input.rules as HouseRule[]).map((rule) => ({ text: rule.text.trim(), ...(rule.check ? { check: cleanCheck(rule.check) } : {}) }));
-        next.rulesSavedAt = this.deps.now().toISOString();
+      if (list !== undefined) {
+        next.rules = (list as HouseRule[]).map((rule) => ({ text: rule.text.trim(), ...(rule.check ? { check: cleanCheck(rule.check) } : {}) }));
+        next.rulesSavedAt = at;
       }
       if (input.checkTime !== undefined) next.checkTime = input.checkTime as string;
       writeStayCheck(this.root, next);
+      if (list !== undefined) recordHostStep(this.root, { at, kind: input.add !== undefined ? "rules-add" : "rules-save", about: String(next.rules.length) });
+      if (input.checkTime !== undefined) recordHostStep(this.root, { at, kind: "check-time", about: input.checkTime as string });
       const watched = next.rules.filter((rule) => rule.check).length;
       return ok({
         saved: true,
@@ -106,6 +146,7 @@ export class StayCheckDesk {
       if (allow.length) allowances.push({ checkIn, allow });
       allowances.sort((a, b) => a.checkIn.localeCompare(b.checkIn));
       writeStayCheck(this.root, { ...file, allowances });
+      recordHostStep(this.root, { at: this.deps.now().toISOString(), kind: "stay-allow", about: checkIn });
       const onCalendar = (this.hub()?.stays ?? []).some((stay) => stay.kind === "stay" && stay.checkIn === checkIn);
       const unmatched = allow.length && !onCalendar ? ` No stay on the calendar checks in ${checkIn} yet, so check the date with the host.` : "";
       return ok({ saved: true, checkIn, allow, next: allow.length ? `Saved. ${allow.join(", ")} won't be flagged for the stay that checks in ${checkIn}.${unmatched}` : `Removed. The stay that checks in ${checkIn} is checked as usual.` });
@@ -119,6 +160,7 @@ export class StayCheckDesk {
       const kind = input.kind;
       const file = markFalse(readStayCheck(this.root), kind);
       writeStayCheck(this.root, file);
+      recordHostStep(this.root, { at: this.deps.now().toISOString(), kind: "flag-false", about: kind });
       const sightingsNeeded = needed(file.sightings, kind);
       return ok({ saved: true, kind, sightingsNeeded, next: `Noted. A ${kind} flag at this property now needs ${sightingsNeeded} sightings in one night. The house rule itself is unchanged.` });
     });

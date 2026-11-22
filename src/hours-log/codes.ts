@@ -23,9 +23,35 @@ export const ROW_KINDS = [
   "owner-on-site",
   "package-drop",
   "bring-in",
+  // The host's own steps in the newer features (#18).
+  "approve-text",
+  "approve-guest-reply",
+  "allow-late-checkout",
+  "house-facts",
+  "house-rules",
+  "lock-setup",
+  "standing-code",
+  "guest-codes",
+  "expected-visit",
+  "approve-booking-email",
+  "save-upkeep",
+  "setup",
 ] as const;
 
 export type RowKind = (typeof ROW_KINDS)[number];
+
+/**
+ * The row kinds before #18. A month the host confirmed before #18 is built with these alone, so its rows and
+ * fingerprint stay exactly as confirmed (see `ROW_KIND_SET`). A month confirmed since keeps every kind.
+ */
+export const V1_ROW_KINDS: ReadonlySet<RowKind> = new Set<RowKind>(ROW_KINDS.slice(0, ROW_KINDS.indexOf("approve-text")));
+
+/** Which set of row kinds a month is built with: 1 before #18, 2 since. Saved on each month the host confirms. */
+export const ROW_KIND_SET = 2;
+
+export function rowKindsFor(set: number | undefined): ReadonlySet<RowKind> | undefined {
+  return set === undefined || set < 2 ? V1_ROW_KINDS : undefined;
+}
 
 export function isRowKind(value: unknown): value is RowKind {
   return typeof value === "string" && (ROW_KINDS as readonly string[]).includes(value);
@@ -58,6 +84,14 @@ export const DEFAULT_CODES: readonly ActivityCode[] = [
   { code: "SITE-1", group: "On site", activity: "Owner on site" },
   { code: "PKG-1", group: "Packages", activity: "Package delivered" },
   { code: "PKG-2", group: "Packages", activity: "Bring a package inside" },
+  { code: "CLN-3", group: "Cleaning and turnover", activity: "Approve a text to the cleaner" },
+  { code: "GST-1", group: "Guests", activity: "Approve a guest reply or late checkout" },
+  { code: "GST-2", group: "Guests", activity: "House rules and house facts" },
+  { code: "GST-3", group: "Guests", activity: "Approve a booking or a cancellation" },
+  { code: "ACC-1", group: "Locks and access", activity: "Lock settings and door codes" },
+  { code: "ACC-2", group: "Locks and access", activity: "Expected visits" },
+  { code: "REP-4", group: "Repairs and upkeep", activity: "Upkeep schedule" },
+  { code: "SET-1", group: "Setup", activity: "Setup and onboarding" },
 ];
 
 export const DEFAULT_KIND_CODES: Readonly<Record<RowKind, string>> = {
@@ -79,4 +113,16 @@ export const DEFAULT_KIND_CODES: Readonly<Record<RowKind, string>> = {
   "owner-on-site": "SITE-1",
   "package-drop": "PKG-1",
   "bring-in": "PKG-2",
+  "approve-text": "CLN-3",
+  "approve-guest-reply": "GST-1",
+  "allow-late-checkout": "GST-1",
+  "house-facts": "GST-2",
+  "house-rules": "GST-2",
+  "approve-booking-email": "GST-3",
+  "lock-setup": "ACC-1",
+  "standing-code": "ACC-1",
+  "guest-codes": "ACC-1",
+  "expected-visit": "ACC-2",
+  "save-upkeep": "REP-4",
+  setup: "SET-1",
 };

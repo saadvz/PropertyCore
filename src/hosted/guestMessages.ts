@@ -12,7 +12,8 @@ import type { FrontReply } from "./serviceTools";
 
 /**
  * Guest messages (#242) on the shared service, behind the account's "guest-messages" switch, answered in this process. It writes
- * only the property's guest-facts.json, guest-messages.jsonl and guest-approvals.json, and sends nothing to a
+ * only the property's guest-facts.json, guest-messages.jsonl and guest-approvals.json (and stay-check.json, once, to move an
+ * older rules fact onto the one house rules list, #15), and sends nothing to a
  * guest: the host pastes each approved reply into Airbnb. Sending through booking software waits on #239.
  */
 
@@ -20,7 +21,7 @@ export const GUEST_FRONT_NAMES: ReadonlySet<string> = GUEST_TOOL_NAMES;
 
 /** Said on initialize after Property Core's own line, while the account's switch is on. */
 export const GUEST_MESSAGES_INSTRUCTION =
-  "When the host's email is connected, pass each Airbnb guest-message email to read_guest_message as it arrives, exactly as received, and follow its next. Never pass a reservation email there. Nothing reaches a guest from Property Core: the host pastes each approved reply into Airbnb.";
+  "When the host's email is connected, pass each Airbnb guest-message email to read_guest_message as it arrives, exactly as received, and follow its next. Never pass a reservation email there. Don't ask the host for house facts up front: when a guest asks something nothing saved answers, ask the host, and on their okay keep the answer with save_guest_facts so the next guest gets a draft. House rules are one list, in get_house_rules. Nothing reaches a guest from Property Core: the host pastes each approved reply into Airbnb.";
 
 const anyFlowOn = (property: Property) => property.flows.cleaning.on || property.flows.supplies.on || property.flows.fixer.on;
 

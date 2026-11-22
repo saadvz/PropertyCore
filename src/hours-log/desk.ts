@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { zonedParts } from "../core/timezone";
 import { ConfirmationBook } from "../operator/confirmations";
 import { buildMonth, isMonth, type Month } from "./month";
+import { ROW_KIND_SET, rowKindsFor } from "./codes";
 import { OWNER_RULES_VERSION } from "./ownerRules";
 import { DEFAULT_COLUMNS, sheetRows } from "./sheet";
 import { readRecords } from "./sources";
@@ -45,10 +46,15 @@ export class HoursDesk {
     this.approvals = new ConfirmationBook(30 * 60_000, () => deps.now().getTime(), { file: join(root, "hours-approvals.json") });
   }
 
+  /**
+   * The month as it's built now. A month the host confirmed before #18 is built with the row kinds it was
+   * confirmed with, so it keeps its rows and fingerprint and still exports (#18). Every other month has every kind.
+   */
   private month(month: string): Month {
     const file = readHours(this.root);
-    const kept = file.months[month]?.ownerFacts;
-    return buildMonth(readRecords(this.root), month, file.settings, kept ? { kept } : {});
+    const mark = file.months[month];
+    const kinds = mark ? rowKindsFor(mark.kindSet) : undefined;
+    return buildMonth(readRecords(this.root), month, file.settings, { ...(mark?.ownerFacts ? { kept: mark.ownerFacts } : {}), ...(kinds ? { kinds } : {}) });
   }
 
   /** A broken hours.json is a plain refusal, and nothing is written over it. */
@@ -92,7 +98,9 @@ export class HoursDesk {
       } catch {
         return fail(APPROVAL_STALE);
       }
-      file.months[month] = { confirmedAt: this.deps.now().toISOString(), fingerprint: built.fingerprint, rulesVersion: built.rulesVersion, rows: built.rows.length, ownerFacts: built.ownerFacts };
+      // A month confirmed again keeps the kinds it was first confirmed with; a new one has every kind.
+      const kindSet = mark ? mark.kindSet : ROW_KIND_SET;
+      file.months[month] = { confirmedAt: this.deps.now().toISOString(), fingerprint: built.fingerprint, rulesVersion: built.rulesVersion, rows: built.rows.length, ownerFacts: built.ownerFacts, ...(kindSet !== undefined ? { kindSet } : {}) };
       writeHours(this.root, file);
       return ok({ month, confirmed: true, rows: built.rows.length, next: "Confirmed. Call export_hours with this month to write it to the host's spreadsheet." });
     }

@@ -2,6 +2,7 @@
 
 Date: 2026-11-17. Status: approved in the project thread, for Saad's review.
 Issue: saadvz/PropertyCore#239, a child of #236 (verification roadmap).
+Since 2026-11-22 (#15): these rules are the one house rules list, also used for guest replies, and `save_house_rules` takes `add`. See [2026-11-22-house-rules-facts-hours-design.md](2026-11-22-house-rules-facts-hours-design.md).
 Builds on #244 (`stayForNight`, merged in #248). Runs ahead of the camera
 connection, which waits on the Grok test #249. How the alert reaches the host
 waits on #250.
