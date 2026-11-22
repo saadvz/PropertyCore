@@ -15,7 +15,7 @@ const LANE = "+15555550153";
 const PATH = "/mcp";
 const SLOW = { timeout: 90_000 };
 const NOW = new Date("2027-01-05T15:00:00.000Z");
-const TOOLS = ["list_visits", "visit_health", "name_lock_code"];
+const TOOLS = ["list_visits", "visit_health", "door_activity", "name_lock_code"];
 
 let open: MultiTenantApp | undefined;
 afterEach(() => {

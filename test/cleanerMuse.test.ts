@@ -8,6 +8,7 @@ import { CHOOSE } from "../src/hosted/supplies";
 import { SUPPLY_TOOL_NAMES } from "../src/supply-core/tools";
 import { FIXER_TOOL_NAMES } from "../src/fixer-core/tools";
 import { LOCK_TOOL_NAMES } from "../src/locks/tools";
+import { VISIT_TOOL_NAMES } from "../src/visits/tools";
 import { GUEST_TOOL_NAMES } from "../src/locks/guestTools";
 import { filesUnder, REPO_ROOT } from "./files";
 
@@ -147,7 +148,7 @@ describe("Muse template", () => {
   });
 
   it("names only real Cleaner Core, Supply Core or Fixer Core tools, or the account's own", async () => {
-    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name)), ...SUPPLY_TOOL_NAMES, CHOOSE, ...FIXER_TOOL_NAMES, ...LOCK_TOOL_NAMES, ...GUEST_TOOL_NAMES];
+    const tools = [...(await toolNames()), ...accountTools().map((tool) => String(tool.name)), ...SUPPLY_TOOL_NAMES, CHOOSE, ...FIXER_TOOL_NAMES, ...LOCK_TOOL_NAMES, ...GUEST_TOOL_NAMES, ...VISIT_TOOL_NAMES];
     for (const file of filesUnder(TEMPLATE)) {
       for (const m of read(file).matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) expect(tools, `${file}: ${m[1]}`).toContain(m[1]);
     }

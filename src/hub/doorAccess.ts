@@ -12,7 +12,9 @@ import { DOOR_GRANTS_FILE, GrantBook, type GrantFlow, type GrantNote, type Grant
 import { lockAdapter } from "../locks/registry";
 import { deskFeatureOn } from "../features/features";
 import { visitLogFor } from "../visits/store";
-import { allDoorsConnected, asLockDevice, doorDevices, readDoorLocks, writeDoorLocks, type DoorLocksFile } from "../locks/settings";
+import { allDoorsConnected, asLockDevice, doorDevices, readDoorLocks, storedDevice, writeDoorLocks, type DoorLocksFile } from "../locks/settings";
+import type { LockDevice } from "../locks/adapter";
+import { matchDoors } from "../locks/rehome";
 import type { HubCaller } from "./store";
 import { sameHash, UPLOAD_GONE, UPLOAD_MINUTES, uploadHash } from "./uploadCode";
 
@@ -57,7 +59,7 @@ export interface AccessRequest {
   person: string;
   /** ISO instants. */
   window: { from: string; until: string };
-  purpose: "cleaning" | "repair" | "standing" | "guest" | "bring-in";
+  purpose: "cleaning" | "repair" | "standing" | "guest" | "bring-in" | "visit";
   /** The request's own key, else the server's key. */
   key?: Buffer;
   /** The flow's job. On connected locks the code is that job's own; without one, the saved code answers. */
@@ -199,6 +201,54 @@ export class DoorAccess {
       });
     }
     return this.book;
+  }
+
+  /**
+   * After a reconnect (#280 22): compares the saved devices with what the lock account lists now. A door that came
+   * back under a new id with the same name gets every live code, same digits; one with no single match is kept in
+   * `rehomeNeeded`, and the saved door code answers until the host picks the doors again. Returns the host's notes,
+   * each told once by its id. Never a code; nobody is texted.
+   */
+  async rehome(listed: readonly LockDevice[], options: { recordMissing?: boolean } = {}): Promise<{ moved: string[]; missing: string[]; notes: GrantNote[] }> {
+    const file = this.locks();
+    // An empty list is a lock account still syncing after a reconnect, never "every door is gone".
+    if (!file.activeAt || file.devices.length === 0 || listed.length === 0) return { moved: [], missing: [], notes: [] };
+    const record = options.recordMissing !== false;
+    const { moves, missing } = matchDoors(file.devices, listed);
+    const before = file.rehomeNeeded ?? [];
+    if (Object.keys(moves).length === 0 && missing.length === 0 && before.length === 0) return { moved: [], missing: [], notes: [] };
+    const byId = new Map(listed.map((device) => [device.id, device]));
+    const names = new Map(file.devices.map((device) => [device.id, device.name]));
+    const next: DoorLocksFile = {
+      ...file,
+      devices: file.devices.map((device) => (moves[device.id] ? storedDevice(byId.get(moves[device.id]!)!) : device)),
+      doors: file.doors.map((id) => moves[id] ?? id),
+    };
+    const stillMissing = missing.filter((id) => file.doors.includes(id));
+    // Not recording (the clock while the account may still be syncing): only doors already waiting stay waiting.
+    const waiting = record ? stillMissing : stillMissing.filter((id) => before.includes(id));
+    if (waiting.length > 0) next.rehomeNeeded = waiting;
+    else delete next.rehomeNeeded;
+    this.saveLocks(next);
+    const { flows, parts, notTaken } = await this.grants().rehome(moves);
+    const notes: GrantNote[] = [];
+    const moved = Object.values(moves);
+    const doorWords = (ids: string[], name: (id: string) => string | undefined) => ids.map((id) => `the ${name(id) ?? "door"}`).join(" and ");
+    if (moved.length > 0) {
+      const where = doorWords(Object.keys(moves).filter((id) => file.doors.includes(id)), (id) => names.get(id)) || "your doors";
+      const fallback = "a backup code or your saved door code instead";
+      let codes = "";
+      if (flows.length > 0 && notTaken === 0) codes = `. Everyone's codes were put back on ${where}, so nobody needs a new one.`;
+      else if (flows.length > 0 && notTaken >= parts) codes = `, but ${where} didn't take back the codes from before, so those visits get ${fallback}.`;
+      else if (flows.length > 0) codes = `. Codes from before were put back on ${where}, except ${notTaken} the lock didn't take, which ${notTaken === 1 ? "gets" : "get"} ${fallback}.`;
+      else codes = ".";
+      const standing = flows.includes("standing") ? " Codes named Standing from before may still be on the lock: remove those in the lock's own app." : "";
+      notes.push({ id: `lock:rehomed:${[...moved].sort().join(",")}`, text: `Your locks came back after the reconnect${codes}${standing}` });
+    }
+    if (record && stillMissing.length > 0) {
+      notes.push({ id: `lock:rehome-missing:${[...stillMissing].sort().join(",")}`, urgent: true, text: `After the reconnect I can't tell which lock in your lock account is ${doorWords(stillMissing, (id) => names.get(id))}. Until you pick the doors again, visits use your saved door code.` });
+    }
+    return { moved, missing: stillMissing, notes };
   }
 
   /**

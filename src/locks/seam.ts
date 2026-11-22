@@ -71,6 +71,7 @@ const EVENT_KINDS: Record<string, LockEventKind> = {
   "device.connected": "online",
   "connected_account.connected": "account-connected",
   "connected_account.disconnected": "account-disconnected",
+  "connected_account.completed_first_sync_after_reconnection": "account-synced",
 };
 
 function kindOf(eventType: string): LockEventKind {
@@ -133,11 +134,26 @@ export class SeamLockAdapter implements LockAdapter {
     return { url: reply.connect_webview.url, linkId: reply.connect_webview.connect_webview_id };
   }
 
-  async accounts(input: { customerKey: string }): Promise<{ id: string }[]> {
-    const reply = await this.call<{ connected_accounts?: { connected_account_id?: unknown; customer_key?: unknown }[] }>("/connected_accounts/list", { customer_key: input.customerKey });
+  async accounts(input: { customerKey: string }): Promise<{ id: string; disconnected?: boolean }[]> {
+    const reply = await this.call<{ connected_accounts?: { connected_account_id?: unknown; customer_key?: unknown; errors?: unknown }[] }>("/connected_accounts/list", { customer_key: input.customerKey });
     return (reply.connected_accounts ?? [])
       .filter((account) => typeof account.connected_account_id === "string" && account.connected_account_id && account.customer_key === input.customerKey)
-      .map((account) => ({ id: account.connected_account_id as string }));
+      .map((account) => {
+        const errors = Array.isArray(account.errors) ? (account.errors as { error_code?: unknown }[]) : [];
+        const disconnected = errors.some((error) => error?.error_code === "account_disconnected");
+        return { id: account.connected_account_id as string, ...(disconnected ? { disconnected: true } : {}) };
+      });
+  }
+
+  async removeAccount(input: { customerKey: string; accountId: string }): Promise<void> {
+    // Only an account the partner lists under this customer key: one Property Core account never removes another's.
+    if (!(await this.accounts({ customerKey: input.customerKey })).some((account) => account.id === input.accountId)) return;
+    try {
+      await this.call("/connected_accounts/delete", { connected_account_id: input.accountId });
+    } catch (error) {
+      if (error instanceof SeamError && error.status === 404) return;
+      throw error;
+    }
   }
 
   async devices(input: { customerKey: string }): Promise<LockDevice[]> {

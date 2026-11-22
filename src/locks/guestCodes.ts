@@ -2,13 +2,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { rebuildBookings, readBookingEmails, type EmailBooking } from "../hub/bookingEmails";
 import { zonedInstant } from "../hub/calendar";
+import { readHubFile } from "../hub/store";
 import type { WantedCode } from "../hub/grants";
 import { lateCheckoutFor, readGuestMessages } from "../guest-messages/store";
 import { writeFileAtomic } from "../storage/atomicWrite";
 import type { CodeWindow } from "./adapter";
 
 /**
- * Guest codes (#262): one code for each stay in the property's booking-email log, and one for each
+ * Guest codes (#262): one code for each stay in the property's booking-email log, one for each stay
+ * on the calendar that no booking email covers (#280 19, like a Guesty Lite iCal), and one for each
  * lease the host entered, on the connected locks through the hub's `guest` grants. This file works out
  * which codes the property wants now and keeps `guest-codes.json`: the host's choice, each booking's
  * yes under ask, the leases, page-link hashes, and which notes went. It never holds a code.
@@ -127,6 +129,19 @@ export interface GuestStay {
   label: string;
   /** True once check-in is within 7 days, so its code is due. */
   due: boolean;
+  /** Where the stay came from: a booking email, or only the calendar (keyed cal:<check-in>:<checkout>). */
+  source: "email" | "calendar";
+}
+
+/** A calendar-only stay's key: its dates, since the calendar gives no reference. */
+export const calendarKey = (checkIn: string, checkout: string): string => `cal:${checkIn}:${checkout}`;
+
+const overlaps = (a: { checkIn: string; checkout: string }, b: { checkIn: string; checkout: string }): boolean => a.checkIn < b.checkout && b.checkIn < a.checkout;
+
+/** A calendar key's dates, or undefined for any other key. */
+function calendarDates(key: string): { checkIn: string; checkout: string } | undefined {
+  const match = /^cal:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/.exec(key);
+  return match ? { checkIn: match[1]!, checkout: match[2]! } : undefined;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -151,30 +166,62 @@ export function stayLabel(checkIn: string, checkout: string): string {
 export const stayJob = (key: string): string => `stay:${key}`;
 export const leaseJob = (id: string): string => `lease:${id}`;
 
-/** Every booking in the log that isn't cancelled and hasn't checked out, oldest check-in first. */
+/**
+ * Every stay that can carry a code, oldest check-in first: each booking in the email log that isn't
+ * cancelled, and each calendar stay (never a block) no live booking email overlaps, on the property's
+ * usual times. An email for a calendar stay whose code was already made, asked about or said yes to
+ * keeps the calendar key, so the same code, link and notes carry on with the email's times; so does a
+ * calendar stay whose dates changed.
+ */
 export function guestStays(root: string, input: WantedInput): GuestStay[] {
   const late = readGuestMessages(root);
   const out: GuestStay[] = [];
   const holds = input.needsHostYes ?? needsHostYes;
-  for (const [key, booking] of rebuildBookings(readBookingEmails(root))) {
-    if (booking.cancelled || holds(booking)) continue;
-    const checkInTime = booking.checkInTime ?? input.checkInTime ?? DEFAULT_CHECK_IN;
-    const checkoutTime = lateCheckoutFor(late, booking.checkout) ?? booking.checkoutTime ?? input.checkoutTime ?? DEFAULT_CHECKOUT;
+  const started = Object.entries(readGuestCodes(root).stays)
+    .filter(([, state]) => state.toldWindow || state.yesAt || state.askedAt)
+    .flatMap(([key]) => {
+      const dates = calendarDates(key);
+      return dates ? [{ key, ...dates }] : [];
+    });
+  const add = (key: string, source: GuestStay["source"], stay: { checkIn: string; checkout: string; checkInTime?: string; checkoutTime?: string }): void => {
+    const checkInTime = stay.checkInTime ?? input.checkInTime ?? DEFAULT_CHECK_IN;
+    const checkoutTime = lateCheckoutFor(late, stay.checkout) ?? stay.checkoutTime ?? input.checkoutTime ?? DEFAULT_CHECKOUT;
     let window: CodeWindow;
     try {
-      window = { from: zonedInstant(booking.checkIn, checkInTime, input.timeZone), until: zonedInstant(booking.checkout, checkoutTime, input.timeZone) };
+      window = { from: zonedInstant(stay.checkIn, checkInTime, input.timeZone), until: zonedInstant(stay.checkout, checkoutTime, input.timeZone) };
     } catch {
-      continue;
+      return;
     }
-    if (Date.parse(window.until) <= input.now.getTime() || Date.parse(window.from) >= Date.parse(window.until)) continue;
+    if (Date.parse(window.until) <= input.now.getTime() || Date.parse(window.from) >= Date.parse(window.until)) return;
+    if (out.some((item) => item.key === key)) return;
     out.push({
       key,
-      checkIn: booking.checkIn,
-      checkout: booking.checkout,
+      checkIn: stay.checkIn,
+      checkout: stay.checkout,
       window,
-      label: stayLabel(booking.checkIn, booking.checkout),
+      label: stayLabel(stay.checkIn, stay.checkout),
       due: Date.parse(window.from) - input.now.getTime() <= MAKE_AHEAD_DAYS * DAY_MS,
+      source,
     });
+  };
+  const emails: { checkIn: string; checkout: string }[] = [];
+  for (const [key, booking] of rebuildBookings(readBookingEmails(root))) {
+    if (booking.cancelled || holds(booking)) continue;
+    emails.push(booking);
+    const carried = started.find((item) => overlaps(item, booking));
+    add(carried?.key ?? key, "email", booking);
+  }
+  const calendar = (readHubFile(root)?.stays ?? []).filter((stay) => stay.kind === "stay" && !emails.some((email) => overlaps(email, stay)));
+  const listedKeys = new Set(calendar.map((stay) => calendarKey(stay.checkIn, stay.checkout)));
+  const claimed = new Set(out.map((item) => item.key));
+  for (const stay of calendar) {
+    const own = calendarKey(stay.checkIn, stay.checkout);
+    // A calendar stay whose dates changed (an extension, an early checkout) keeps the code its old dates were given,
+    // so the guest's code and the host's link carry on.
+    const moved = started.find((item) => !listedKeys.has(item.key) && !claimed.has(item.key) && overlaps(item, stay));
+    const use = started.some((item) => item.key === own) ? own : (moved?.key ?? own);
+    claimed.add(use);
+    add(use, "calendar", stay);
   }
   return out.sort((a, b) => Date.parse(a.window.from) - Date.parse(b.window.from));
 }

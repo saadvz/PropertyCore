@@ -1,5 +1,5 @@
 import type { VisitDesk, VisitReply } from "./desk";
-import { MAX_LIST_DAYS } from "./desk";
+import { MAX_ACTIVITY_DAYS, MAX_LIST_DAYS } from "./desk";
 
 /** Visit records' tools (#237), as tools/list shows them. Each takes `property` on the shared service. None writes a lock event. */
 
@@ -15,8 +15,15 @@ const LIST = {
 const HEALTH = {
   name: "visit_health",
   title: "Visit log health",
-  description: "How the property's visit log reads: lines kept, lines skipped, the last lock event's time and how many lock codes are named. A lock that has gone quiet shows here. Read-only.",
+  description: "How the property's visit log reads: lines kept, lines skipped, the last lock event's time and how many lock codes are named. A lock that has gone quiet shows here. Not who came in: for that, call door_activity. Read-only.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
+};
+
+const ACTIVITY = {
+  name: "door_activity",
+  title: "Who came in",
+  description: `Who came in: every unlock and lock at the property's doors, with whose code it was (the cleaner, a pro, the host's own code, a guest's, a visitor's) or how a door was opened without a code (from the app, by hand or with a key, on its own). Use it for "did anyone come in today?". From and to are local dates, at most ${MAX_ACTIVITY_DAYS} days; with neither, today. Tell the host each sentence as given. Read-only: nothing is sent to anyone.`,
+  inputSchema: { type: "object", properties: { from: { ...DATE, description: "First day, YYYY-MM-DD." }, to: { ...DATE, description: "Last day, YYYY-MM-DD." } }, additionalProperties: false },
 };
 
 const NAME_CODE = {
@@ -36,7 +43,7 @@ const NAME_CODE = {
   },
 };
 
-export const VISIT_TOOLS: readonly Record<string, unknown>[] = [LIST, HEALTH, NAME_CODE];
+export const VISIT_TOOLS: readonly Record<string, unknown>[] = [LIST, HEALTH, ACTIVITY, NAME_CODE];
 export const VISIT_TOOL_NAMES: ReadonlySet<string> = new Set(VISIT_TOOLS.map((tool) => tool.name as string));
 
 /** Answers one visit records tool. Undefined when the name isn't one of them. */
@@ -45,5 +52,6 @@ export function handleVisitTool(desk: VisitDesk, name: string, args: unknown): V
   const input = args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
   if (name === "list_visits") return desk.listVisits({ from: input.from, to: input.to });
   if (name === "visit_health") return desk.health();
+  if (name === "door_activity") return desk.doorActivity({ from: input.from, to: input.to });
   return desk.nameLockCode({ codeName: input.codeName, person: input.person, proId: input.proId });
 }

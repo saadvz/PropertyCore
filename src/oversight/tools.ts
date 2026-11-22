@@ -9,7 +9,7 @@ const ADD = {
   name: "add_expected_visit",
   title: "Expect a visit",
   description:
-    "Saves a visit the host expects at the property, like someone telling the host \"I'll stop by Thursday afternoon\": a property manager, a cleaner, a handyman or a friend. If no one comes in, it's flagged the same day: 1 hour after the window, or at 8 PM for an all-day visit. From what the host says or forwards: give who, date, and from and to when there's a time. Loose words get a suggested window the host can change: morning 08:00-12:00, afternoon 12:00-17:00, evening 17:00-20:00. No time at all is an all-day visit. Read the visit back to the host (\"Mike Doyle, Thursday Nov 19, 12 to 5 PM?\") and save only after they agree. From a calendar invite the visitor sent: pass the invite's text as invite, with who if it doesn't name the organizer. The first call reads it back without saving; call again with confirm: true once the host agrees. Never create a visit the host didn't give. No door codes in who or note. Nothing is sent to anyone from here.",
+    "Saves a visit the host expects at the property, like someone telling the host \"I'll stop by Thursday afternoon\": a property manager, a cleaner, a handyman or a friend. If no one comes in, it's flagged the same day: 1 hour after the window, or at 8 PM for an all-day visit. From what the host says or forwards: give who, date, and from and to when there's a time. Loose words get a suggested window the host can change: morning 08:00-12:00, afternoon 12:00-17:00, evening 17:00-20:00. No time at all is an all-day visit. Read the visit back to the host (\"Mike Doyle, Thursday Nov 19, 12 to 5 PM?\") and save only after they agree. From a calendar invite the visitor sent: pass the invite's text as invite, with who if it doesn't name the organizer. The first call reads it back without saving; call again with confirm: true once the host agrees. Never create a visit the host didn't give. No door codes in who or note. With connected locks, the visitor can have their own door code for this visit: give their phone, and the read-back becomes a question with a confirmation code (\"Mike Doyle, Thursday, Nov 19, 12 to 5 PM, with their own door code?\"); call again with confirmation only after the host's yes. They get one text asking them to reply YES (once ever), then the code by text 30 minutes before the visit, working for the visit's window. No code during a guest's stay. Without a phone nothing is sent to anyone from here.",
   inputSchema: {
     type: "object",
     properties: {
@@ -20,6 +20,8 @@ const ADD = {
       note: { type: "string", minLength: 1, maxLength: MAX_NOTE, description: "Why, like walk-through." },
       invite: { type: "string", maxLength: 20000, description: "A calendar invite's text (.ics), in place of date, from, to and note." },
       confirm: { type: "boolean", description: "With invite: true once the host agreed to the read-back." },
+      phone: { type: "string", maxLength: 30, description: "The visitor's mobile, with country code, only when the host wants them to have their own door code for this visit. Needs connected locks. Never the host's own number." },
+      confirmation: { type: "string", description: "With phone: the confirmation code from the first call, only after the host's yes to the read-back." },
     },
     additionalProperties: false,
   },
@@ -46,7 +48,7 @@ export const OVERSIGHT_TOOL_NAMES: ReadonlySet<string> = new Set(OVERSIGHT_TOOLS
 export function handleOversightTool(desk: OversightDesk, name: string, args: unknown): OversightReply | undefined {
   if (!OVERSIGHT_TOOL_NAMES.has(name)) return undefined;
   const input = args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
-  if (name === "add_expected_visit") return desk.addVisit({ who: input.who, date: input.date, from: input.from, to: input.to, note: input.note, invite: input.invite, confirm: input.confirm });
+  if (name === "add_expected_visit") return desk.addVisit({ who: input.who, date: input.date, from: input.from, to: input.to, note: input.note, invite: input.invite, confirm: input.confirm, phone: input.phone, confirmation: input.confirmation });
   if (name === "list_expected_visits") return desk.listVisits();
   return desk.cancelVisit({ id: input.id });
 }

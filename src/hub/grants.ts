@@ -23,10 +23,10 @@ const POLL_MS = 15_000;
 export const KEEP_AFTER_MS = 24 * 60 * 60_000;
 const CODE_SHAPE = /^\d{4,8}$/;
 
-export type GrantFlow = "cleaning" | "repair" | "standing" | "guest" | "bring-in";
+export type GrantFlow = "cleaning" | "repair" | "standing" | "guest" | "bring-in" | "visit";
 
 /** How a flow's codes are named on the lock. The name never holds the person, a phone or a digit. */
-const CODE_NAME_PREFIX: Record<GrantFlow, string> = { cleaning: "Cleaning", repair: "Repair", standing: "Standing", guest: "Guest", "bring-in": "Package" };
+const CODE_NAME_PREFIX: Record<GrantFlow, string> = { cleaning: "Cleaning", repair: "Repair", standing: "Standing", guest: "Guest", "bring-in": "Package", visit: "Visit" };
 
 /** A code a flow wants on the locks now. */
 export interface WantedCode {
@@ -119,7 +119,7 @@ function sameWindow(a: CodeWindow, b: CodeWindow): boolean {
 }
 
 function whoOf(flow: GrantFlow, label: string | undefined): string {
-  return label?.trim() || (flow === "cleaning" ? "the cleaner" : flow === "repair" ? "the pro" : flow === "guest" ? "the guest" : flow === "bring-in" ? "the person bringing the package in" : "they");
+  return label?.trim() || (flow === "cleaning" ? "the cleaner" : flow === "repair" ? "the pro" : flow === "guest" ? "the guest" : flow === "bring-in" ? "the person bringing the package in" : flow === "visit" ? "the visitor" : "they");
 }
 
 /** The host's one note when a code couldn't go on a lock. Stable id, so it's told once. Never a code. */
@@ -223,6 +223,47 @@ export class GrantBook {
       }
       this.write();
       return notes;
+    });
+  }
+
+  /**
+   * The doors came back under new ids (#280 22): each live grant's part on an old id moves to its new id with no
+   * code there yet, backups on old ids are dropped, and the same digits go on the new door. A code whose window is
+   * over stays where it was. Nobody is sent anything. Returns the flows whose codes moved, and how many moved parts
+   * the new doors didn't take (refused or no answer yet) out of how many moved.
+   */
+  rehome(moves: Readonly<Record<string, string>>): Promise<{ flows: GrantFlow[]; parts: number; notTaken: number }> {
+    return this.serial(async () => {
+      const adapter = this.deps.adapter();
+      if (!adapter || Object.keys(moves).length === 0) return { flows: [], parts: 0, notTaken: 0 };
+      const flows = new Set<GrantFlow>();
+      const now = this.deps.now().getTime();
+      let parts = 0;
+      let notTaken = 0;
+      for (const grant of this.file.grants) {
+        if (grant.revokedAt || Date.parse(grant.window.until) <= now || !grant.devices.some((device) => moves[device.deviceId])) continue;
+        const moved = new Set(grant.devices.filter((device) => moves[device.deviceId]).map((device) => moves[device.deviceId]!));
+        grant.devices = grant.devices.map((device) => (moves[device.deviceId] ? { deviceId: moves[device.deviceId]!, status: "programming" as const } : device));
+        grant.backups = grant.backups?.filter((backup) => !moves[backup.deviceId]);
+        grant.failTold = grant.failTold?.filter((id) => !moves[id]);
+        await this.retryDoors(adapter, grant);
+        parts += moved.size;
+        notTaken += grant.devices.filter((device) => moved.has(device.deviceId) && (!device.codeId || device.status === "failed")).length;
+        flows.add(grant.flow);
+      }
+      this.write();
+      return { flows: [...flows], parts, notTaken };
+    });
+  }
+
+  /** Revokes every live code with a part on these devices (a door the host replaced with another): its flow makes a new one on its next sync. */
+  revokeOn(deviceIds: readonly string[]): Promise<void> {
+    return this.serial(async () => {
+      const adapter = this.deps.adapter();
+      if (!adapter || deviceIds.length === 0) return;
+      const gone = new Set(deviceIds);
+      for (const grant of this.file.grants) if (!grant.revokedAt && grant.devices.some((device) => gone.has(device.deviceId))) await this.revokeGrant(adapter, grant);
+      this.write();
     });
   }
 
@@ -429,7 +470,7 @@ export class GrantBook {
         continue;
       }
       this.file.grants.push(grant);
-      const who: CodePerson | undefined = want.who ?? (flow === "cleaning" ? { role: "cleaner" } : flow === "standing" ? { role: "shared" } : flow === "guest" ? { role: "guest" } : flow === "bring-in" ? { role: "package" } : undefined);
+      const who: CodePerson | undefined = want.who ?? (flow === "cleaning" ? { role: "cleaner" } : flow === "standing" ? { role: "shared" } : flow === "guest" ? { role: "guest" } : flow === "bring-in" ? { role: "package" } : flow === "visit" ? { role: "visitor" } : undefined);
       try {
         if (who) this.deps.named?.(codeName, who);
       } catch {

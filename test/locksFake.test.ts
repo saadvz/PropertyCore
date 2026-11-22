@@ -32,6 +32,29 @@ describe("lock adapter fake", () => {
   });
 });
 
+describe("a lock account that dropped and came back (#280 22)", () => {
+  it("replaces a device with a new id and the same name, dropping its codes", async () => {
+    const { fake } = twoDoors();
+    await fake.createCode({ deviceId: "dev-front", code: ["2", "4", "6", "8", "1", "3"].join(""), name: "Cleaning abc", window: WINDOW });
+    fake.replaceDevice("dev-front", "dev-front-2");
+    const listed = await fake.devices({ customerKey: "acct-1" });
+    expect(listed.map((device) => [device.id, device.name])).toEqual([["dev-front-2", "Front door"], ["dev-side", "Side gate"]]);
+    expect(fake.liveCodes("dev-front")).toEqual([]);
+    expect(fake.liveCodes("dev-front-2")).toEqual([]);
+  });
+
+  it("a disconnected account is flagged until it reconnects, and removing it empties the account", async () => {
+    const { fake } = twoDoors();
+    fake.disconnectAccount("acct-1");
+    expect(await fake.accounts({ customerKey: "acct-1" })).toEqual([{ id: "acct-acct-1", disconnected: true }]);
+    fake.disconnectAccount("acct-1", false);
+    expect(await fake.accounts({ customerKey: "acct-1" })).toEqual([{ id: "acct-acct-1" }]);
+    await fake.removeAccount({ customerKey: "acct-1", accountId: "acct-acct-1" });
+    expect(await fake.accounts({ customerKey: "acct-1" })).toEqual([]);
+    expect(await fake.devices({ customerKey: "acct-1" })).toEqual([]);
+  });
+});
+
 describe("one code on every door", () => {
   it("puts the same value on each device", async () => {
     const { fake, devices } = twoDoors();

@@ -312,7 +312,7 @@ function validPerson(value: unknown): CodePerson | undefined {
   if (!value || typeof value !== "object") return undefined;
   const person = value as { role?: unknown; proId?: unknown };
   if (person.role === "pro") return isId(person.proId) ? { role: "pro", proId: person.proId } : undefined;
-  if (person.role === "cleaner" || person.role === "host" || person.role === "guest" || person.role === "shared" || person.role === "package") return { role: person.role };
+  if (person.role === "cleaner" || person.role === "host" || person.role === "guest" || person.role === "shared" || person.role === "package" || person.role === "visitor") return { role: person.role };
   return undefined;
 }
 

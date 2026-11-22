@@ -7,9 +7,11 @@ import { issueFailedNote } from "../hub/grants";
 import { sameHash } from "../hub/uploadCode";
 import { ConfirmationBook } from "../operator/confirmations";
 import { recordLockConnection } from "./eventLog";
+import { markReconnected, onceNotes } from "./inbound";
 import type { DeviceKind, LockDevice } from "./adapter";
 import { lockAdapter } from "./registry";
 import { deskFeatureOn } from "../features/features";
+import { pairPicked } from "./rehome";
 import { allDoorsConnected, packagesRelease, readDoorLocks, storedDevice, type DoorLocksFile, type ReleaseMode, type StandingPerson, type StandingRole } from "./settings";
 
 export type { StandingPerson, StandingRole };
@@ -162,35 +164,104 @@ export class LockDesk {
   }
 
   /**
+   * After a reconnect (#280 22): when the lock account answers and isn't disconnected, saved doors that came back
+   * under new ids get everyone's codes again. Each note goes to the host once, through `tell`. Never a code.
+   */
+  private async doorCheck(from: "clock" | "host"): Promise<GrantNote[]> {
+    const door = this.door();
+    const file = door.locks();
+    if (!file.activeAt || file.devices.length === 0) return [];
+    const listed = await lockAdapter()!.devices({ customerKey: this.deps.customerKey });
+    // Right after a fresh sign-in the account lists its locks a few at a time: while it lists fewer locks than the
+    // property's doors, the clock moves what matches and waits, with no "can't tell which lock" note.
+    const kinds = new Set(file.devices.filter((device) => file.doors.includes(device.id)).map((device) => device.kind));
+    const syncing = listed.filter((device) => kinds.has(device.kind)).length < file.doors.length;
+    if (listed.length === 0) return [];
+    const result = await door.rehome(listed, { recordMissing: from === "host" || !syncing });
+    const notes = [...result.notes];
+    // The account answers and every door is accounted for: the disconnect is over (#280 21), even when the
+    // partner's connected event went to a new connection this property doesn't know yet.
+    const now = door.locks();
+    if (now.disconnectedAt && (!syncing || result.missing.length === 0)) {
+      notes.unshift(...markReconnected(now));
+      door.saveLocks(now);
+    }
+    const told = onceNotes(door, notes);
+    if (told.length > 0) await this.deps.tell?.(told);
+    return told;
+  }
+
+  /** The lock clock while a disconnect is unresolved or a door is still unmatched: re-homes once the doors show up. */
+  async reconnectClock(): Promise<GrantNote[]> {
+    if (!this.available()) return [];
+    const file = this.door().locks();
+    if (!file.disconnectedAt && !(file.rehomeNeeded ?? []).length) return [];
+    try {
+      const accounts = await lockAdapter()!.accounts({ customerKey: this.deps.customerKey });
+      if (accounts.length === 0 || accounts.some((account) => account.disconnected)) return [];
+      return await this.doorCheck("clock");
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * get_locks: the status, plus what the host's connected lock account holds now, so the agent can
    * offer the devices to pick (#180 sandbox run: a finished sign-in showed nothing until save_locks,
    * which needs these ids). Only devices in accounts tagged with this Property Core account, not yet
-   * on this or another property. A partner error is said, never shown as an empty account.
+   * on this or another property. A partner error is said, never shown as an empty account. A lock
+   * account the partner still lists as disconnected says how to fix it, and doors that came back under
+   * new ids get everyone's codes again (#280 22).
    */
   async list(): Promise<LockReply> {
+    if (!this.available()) return fail(LOCKS_OFF);
+    let account: "connected" | "disconnected" | "none" | "unknown" = "unknown";
+    let inAccount: LockDevice[] = [];
+    try {
+      const adapter = lockAdapter()!;
+      const accounts = await adapter.accounts({ customerKey: this.deps.customerKey });
+      account = accounts.length === 0 ? "none" : accounts.some((item) => item.disconnected) ? "disconnected" : "connected";
+      if (account !== "none") inAccount = await adapter.devices({ customerKey: this.deps.customerKey });
+      if (account === "connected") await this.doorCheck("host");
+    } catch {
+      account = "unknown";
+    }
     const base = this.status();
     if (base.isError || !base.structured) return base;
     const file = this.door().locks();
     const taken = new Set([...file.devices.map((device) => device.id), ...this.deps.otherDevices()]);
-    let account: "connected" | "none" | "unknown" = "unknown";
-    let inAccount: LockDevice[] = [];
-    try {
-      const adapter = lockAdapter()!;
-      account = (await adapter.accounts({ customerKey: this.deps.customerKey })).length > 0 ? "connected" : "none";
-      if (account === "connected") inAccount = await adapter.devices({ customerKey: this.deps.customerKey });
-    } catch {
-      account = "unknown";
-    }
     const available = inAccount.filter((device) => !taken.has(device.id)).map((device) => ({ id: device.id, name: device.name, kind: device.kind, online: device.online }));
     const structured = { ...base.structured, account, available };
+    if (account === "disconnected") {
+      return ok({ ...structured, next: "The host's lock account is still disconnected, so codes can't be made or changed. Send a fresh sign-in link with connect_lock. If they signed in and it still shows disconnected, call connect_lock with fresh: true: it removes the stuck connection, with the host's yes, and gives a new link. Codes already made go back on the doors once they show up." });
+    }
+    const unmatched = (file.rehomeNeeded ?? []).map((id) => file.devices.find((device) => device.id === id)?.name ?? "a door");
+    if (unmatched.length > 0) {
+      return ok({ ...structured, next: `After the reconnect, ${unmatched.join(" and ")} isn't in the lock account under its old id, and I can't tell which lock it is now. Until the host picks the doors again, visits use the saved door code. Ask which locks the cleaner and pros go through, then call save_locks with those ids from available. Everyone's codes go back on them.` });
+    }
     if (base.structured.connected === true || (base.structured.problems as string[]).length > 0) return ok(structured);
-    return ok({ ...structured, next: setupNext(account, available, inAccount.length) });
+    return ok({ ...structured, next: setupNext(account === "connected" ? "connected" : account, available, inAccount.length) });
   }
 
-  /** A single-use sign-in link for the host's lock (or sensor) account. Not a secret, but it names the account. */
-  async connectLink(input: { kind?: unknown }): Promise<LockReply> {
+  /**
+   * A single-use sign-in link for the host's lock (or sensor) account. Not a secret, but it names the account.
+   * `fresh: true`, with the host's yes, first removes a connection the partner still lists as disconnected (#280 22).
+   */
+  async connectLink(input: { kind?: unknown; fresh?: unknown; confirmation?: unknown }): Promise<LockReply> {
     if (!this.available()) return fail(LOCKS_OFF);
     const kind = input.kind === "sensors" ? "sensors" : "locks";
+    if (input.fresh === true) {
+      let stuck: string[];
+      try {
+        stuck = (await lockAdapter()!.accounts({ customerKey: this.deps.customerKey })).filter((account) => account.disconnected).map((account) => account.id);
+      } catch {
+        return fail("I couldn't reach the host's lock account just now. Try again in a minute.");
+      }
+      if (stuck.length === 0) return fail("The lock account isn't stuck, so there's nothing to remove. connect_lock without fresh gives a sign-in link if the host needs one.");
+      const gate = this.confirm("locks-fresh", stuck.join(","), typeof input.confirmation === "string" ? input.confirmation : undefined, "Remove the stuck connection to your lock account and start a new sign-in? Codes already made go back on your doors once they show up again.");
+      if (gate !== "go") return gate;
+      for (const accountId of stuck) await lockAdapter()!.removeAccount({ customerKey: this.deps.customerKey, accountId });
+    }
     const link = await lockAdapter()!.connectLink({ customerKey: this.deps.customerKey, kind });
     const file = this.door().locks();
     if (!file.customerKey) this.door().saveLocks({ ...file, customerKey: this.deps.customerKey });
@@ -210,7 +281,7 @@ export class LockDesk {
       const gate = this.confirm("locks-off", "off", confirmation, "Switch this property back to your saved door code? I'll remove every per-visit code here.");
       if (gate !== "go") return gate;
       const file = door.locks();
-      for (const flow of ["cleaning", "repair", "standing", "bring-in"] as const) await door.syncGrants(flow, []);
+      for (const flow of ["cleaning", "repair", "standing", "bring-in", "visit"] as const) await door.syncGrants(flow, []);
       const { activeAt: _off, ...rest } = file;
       door.saveLocks({ ...rest, release: { ...file.release, cleaners: "ask" } });
       if (file.activeAt) recordLockConnection(this.root, false, () => this.deps.now());
@@ -239,6 +310,12 @@ export class LockDesk {
       doors: input.otherDoors === true ? [...doors, "other"] : doors,
     };
     delete file.blockedBy;
+    delete file.rehomeNeeded;
+    // Doors the lock account no longer lists, replaced by new ones (#280 22): live codes move to the picked door of the same name with the same digits; a gone door with no clear pair has its codes made again.
+    const gone = before.doors.filter((id) => id !== "other" && !byId.has(id));
+    const added = doors.filter((id) => !before.doors.includes(id));
+    const { moves } = pairPicked(before.devices.filter((item) => gone.includes(item.id)), added.map((id) => byId.get(id)!));
+    const unpaired = gone.filter((id) => !moves[id]);
     if (!allDoorsConnected(file)) {
       file.blockedBy = "mixed-doors";
       delete file.activeAt;
@@ -255,6 +332,8 @@ export class LockDesk {
     const at = this.deps.now().toISOString();
     file.activeAt ??= at;
     door.saveLocks(file);
+    if (Object.keys(moves).length > 0) await door.grants().rehome(moves);
+    if (unpaired.length > 0) await door.grants().revokeOn(unpaired);
     // Visit records count a lock as connected from the latest connection line.
     if (switchedOn) recordLockConnection(this.root, true, () => this.deps.now());
     recordHostStep(this.root, { at, kind: "locks-on", about: names });
@@ -324,13 +403,28 @@ export class LockDesk {
     const file = door.locks();
     if (this.standing(file).some((person) => person.phone === phone)) return fail(own ? "The host already has a standing code here. get_locks shows where it is." : `${name} already has a standing code here.`);
     const question = own
-      ? `Give you your own standing door code at ${this.street()}, on your number ending ${phone.slice(-4)}? You get one text there asking you to reply YES first.`
+      ? `Give you your own standing door code at ${this.street()}? I'll text a private link to your number ending ${phone.slice(-4)}.`
       : `Give ${name} their own standing door code at ${this.street()}? They get one text asking them to reply YES first.`;
     const gate = this.confirm("locks-standing", JSON.stringify([name, phone, role]), typeof input.confirmation === "string" ? input.confirmation : undefined, question);
     if (gate !== "go") return gate;
     const person: StandingPerson = { id: `std_${letters(10)}`, name, phone, role, addedAt: this.deps.now().toISOString() };
+    // The host's own code on their confirmed number (#280 decision 1): their yes in chat is the YES, so
+    // no opt-in text goes; the code is made and the private link goes to that number at once.
+    if (own) person.yesAt = person.addedAt;
     this.saveStanding(file, [...this.allStanding(file), person]);
     recordHostStep(this.root, { at: person.addedAt, kind: "standing-add", about: name, ref: person.id });
+    if (own) {
+      await this.syncStanding();
+      const linkSent = await this.sendLink(person.id);
+      return ok({
+        id: person.id,
+        invited: false,
+        linkSent,
+        next: linkSent
+          ? `The host's code is going on the lock, and the private link to it went to their number ending ${phone.slice(-4)}.`
+          : "The host's code is going on the lock, but the private link couldn't be texted just now. Call standing_code_link to send it again.",
+      });
+    }
     const result = await this.invite(person.id);
     return ok({ id: person.id, invited: result === "sent", ...(result === "sent" ? {} : { waiting: result }), next: inviteNext(result, own ? "the host" : name) });
   }
