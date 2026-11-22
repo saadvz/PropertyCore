@@ -228,13 +228,13 @@ describe("the host's page", () => {
     const ready = (await desk.sync()).find((note) => note.id.startsWith("guest:ready:"))!;
     const token = tokenIn(ready.text);
     expect(desk.pageOpen(token)).toMatchObject({ title: expect.stringContaining("12–15 Dec") });
-    expect(await desk.showCode(token)).toEqual({ code: codes()[0]!.code });
+    expect(await desk.showCode(token)).toEqual({ ok: true, code: codes()[0]!.code });
     expect(desk.pageOpen(token)).toBeUndefined();
-    expect(await desk.showCode(token)).toBeUndefined();
+    expect(await desk.showCode(token)).toEqual({ ok: false, reason: "gone" });
     const link = await approved((confirmation) => desk.newLink({ stay: "HMSCRATCHAA", ...(confirmation ? { confirmation } : {}) }));
     expect(link.isError).toBe(false);
     const fresh = tokenIn(link.text);
-    expect(await desk.showCode(fresh)).toEqual({ code: codes()[0]!.code });
+    expect(await desk.showCode(fresh)).toEqual({ ok: true, code: codes()[0]!.code });
     expect(link.text).not.toContain(codes()[0]!.code);
   });
 
@@ -246,7 +246,7 @@ describe("the host's page", () => {
     appendGuestMessage(root, { id: "lc_scratch", at: NOW.toISOString(), event: "late-checkout", lateCheckout: { checkout: "2026-12-15", time: "13:00" } });
     await desk.sync();
     at("2026-12-15T17:00:00.000Z");
-    expect(await desk.showCode(token)).toEqual({ code: codes()[0]!.code });
+    expect(await desk.showCode(token)).toEqual({ ok: true, code: codes()[0]!.code });
   });
 
   it("a cancelled stay's link shows nothing", async () => {
@@ -257,7 +257,7 @@ describe("the host's page", () => {
     email(root, { kind: "cancelled", confirmationCode: "HMSCRATCHAA", checkIn: { date: "2026-12-12" }, checkout: { date: "2026-12-15" } }, "applied");
     await desk.sync();
     expect(desk.pageOpen(token)).toBeUndefined();
-    expect(await desk.showCode(token)).toBeUndefined();
+    expect(await desk.showCode(token)).toEqual({ ok: false, reason: "gone" });
   });
 });
 
@@ -278,7 +278,7 @@ describe("leases", () => {
     expect(sent[1]!.body).toContain(GUEST_PAGE_PREFIX);
     const code = codes()[0]!.code;
     for (const item of sent) expect(item.body).not.toContain(code);
-    expect(await desk.showCode(tokenIn(sent[1]!.body))).toEqual({ code });
+    expect(await desk.showCode(tokenIn(sent[1]!.body))).toEqual({ ok: true, code });
     stops.add(TENANT);
     expect(await desk.leaseText(TENANT, "STOP")).toBe(false);
     expect(codes()).toHaveLength(0);
