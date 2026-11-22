@@ -15,6 +15,7 @@ const states: PropertyStates = {
   supplies: async () => ok({ next: "supplies" }),
   fixer: async () => ok({ next: "fixer" }),
   next: async () => "next",
+  step: async () => undefined,
 };
 
 describe("the agent's number", () => {

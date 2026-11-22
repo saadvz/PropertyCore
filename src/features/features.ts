@@ -9,7 +9,7 @@ import { cameraTokenKey } from "../cameras/accounts";
  * Background-only recording isn't here: the visit log is always written, because it only records and sends nothing.
  */
 
-export const FEATURES = ["visits", "hours", "stay-check", "guest-messages", "packages", "oversight", "booking-platforms", "locks", "guest-codes", "cameras"] as const;
+export const FEATURES = ["visits", "hours", "stay-check", "guest-messages", "packages", "oversight", "booking-platforms", "locks", "guest-codes", "cameras", "bots"] as const;
 
 export type Feature = (typeof FEATURES)[number];
 
@@ -25,6 +25,7 @@ export const FEATURE_INFO: Record<Feature, { title: string; covers: string }> = 
   locks: { title: "Connected locks", covers: "The lock tools, the lock partner's events, and per-visit codes. Needs SEAM_API_KEY and SEAM_WEBHOOK_SECRET on the service." },
   "guest-codes": { title: "Guest codes", covers: "Each stay's own code and leases. Needs Connected locks on for this account." },
   cameras: { title: "Cameras", covers: "The Ring camera connection and its tools. Needs CAMERA_TOKEN_KEY and the three RING_* secrets on the service." },
+  bots: { title: "Separate bots", covers: "A Grok bot for each of Cleaner Core, Supply Core and Fixer Core, managed by the Property Core bot." },
 };
 
 export interface FeatureSwitch {

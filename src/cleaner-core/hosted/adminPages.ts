@@ -1,4 +1,5 @@
 import { FEATURE_INFO, FEATURES, type Feature, type FeatureState } from "../../features/features";
+import { JOB_NAMES } from "../../jobs/jobs";
 import { POOL_LOW_AT, type PoolState, type PoolSummary } from "./numberPool";
 import type { Tenant } from "./registry";
 
@@ -192,8 +193,9 @@ export function tenantPage(t: Tenant, csrf: string, error: string | undefined, h
   const connections = t.connections
     .map((c) => {
       const grant = `<input type="hidden" name="grantId" value="${escape(c.grantId)}" />`;
-      const primary = c.grantId === t.primaryGrantId ? "<strong>primary</strong>" : action(`${base}/primary`, csrf, "Make primary", grant);
-      return `<tr><td>${escape(c.assistant)}</td><td>${escape(c.connectedAt)}</td><td>${primary}</td><td>${action(`${base}/disconnect`, csrf, "Disconnect", grant)}</td></tr>`;
+      // Only a /mcp chat can be primary: a core's own bot (#250) holds its job, never the account.
+      const primary = c.job ? "" : c.grantId === t.primaryGrantId ? "<strong>primary</strong>" : action(`${base}/primary`, csrf, "Make primary", grant);
+      return `<tr><td>${escape(c.assistant)}</td><td>${escape(JOB_NAMES[c.job ?? "property"])}</td><td>${escape(c.connectedAt)}</td><td>${primary}</td><td>${action(`${base}/disconnect`, csrf, "Disconnect", grant)}</td></tr>`;
     })
     .join("\n");
   return shell(
@@ -208,7 +210,7 @@ export function tenantPage(t: Tenant, csrf: string, error: string | undefined, h
       ${featuresSection(t, base, csrf, features)}
       <h2>Connections</h2>
       <table>
-        <tr><th>Chat</th><th>Connected</th><th></th><th></th></tr>
+        <tr><th>Chat</th><th>Runs</th><th>Connected</th><th></th><th></th></tr>
         ${connections || '<tr><td colspan="4">No connections yet.</td></tr>'}
       </table>
       <h2>Actions</h2>

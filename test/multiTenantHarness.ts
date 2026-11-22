@@ -4,9 +4,10 @@ import type { CleanerAssistant } from "../src/cleaner-core/assistant";
 import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { TenantRegistry } from "../src/cleaner-core/hosted/registry";
 import { setTouringAlertFetch } from "../src/hosted/touringAlerts";
-import { CLEANER_SCOPE, OPERATOR_SCOPE } from "../src/mcp/oauth/provider";
+import { jobOfPath } from "../src/jobs/jobs";
+import { CLEANER_SCOPE, JOB_SCOPES, OPERATOR_SCOPE } from "../src/mcp/oauth/provider";
 import { twilioSignature } from "../src/messaging/twilio/signature";
-import { BASE, CLEANER_RESOURCE, hostedApp } from "./cleanerOauthHarness";
+import { BASE, CLEANER_RESOURCE, hostedApp, pkce } from "./cleanerOauthHarness";
 import { CALENDAR_ICS, CALENDAR_URL, fakeSms } from "./wiringProof";
 
 /**
@@ -21,6 +22,9 @@ export const REDIRECTS: Record<CleanerAssistant, string> = {
   chatgpt: "https://chatgpt.com/connector_platform_oauth_redirect",
   muse: "https://agent.meta.ai/api/hatch/oauth/callback",
 };
+
+/** Every address a chat can connect to: the shared one, its old alias, and one for each core's own bot (#250). */
+export type McpAddress = "/mcp" | "/mcp/cleaner-core" | "/mcp/cleaner" | "/mcp/supply" | "/mcp/fixer";
 
 export interface Wake {
   url: string;
@@ -77,13 +81,37 @@ export async function multiTenantApp(options: { now?: () => Date; authNow?: () =
 
   /** Connects one chat at an address on the service: /mcp/cleaner-core (the default) or the shared /mcp. */
   /** `service` is the pick on the shared address's Allow page. */
-  const joinAt = async (tenantId: string, assistant: CleanerAssistant, path: "/mcp" | "/mcp/cleaner-core", service?: "touring" | "cleaning") => {
+  /** The scope each address grants: /mcp's, a core's own bot's (#250), or /mcp/cleaner-core's. */
+  const scopeAt = (path: string) => {
+    const job = jobOfPath(path);
+    return path === "/mcp" ? OPERATOR_SCOPE : job ? JOB_SCOPES[job] : CLEANER_SCOPE;
+  };
+
+  const joinAt = async (tenantId: string, assistant: CleanerAssistant, path: McpAddress, service?: "touring" | "cleaning") => {
     const redirect = REDIRECTS[assistant];
     const clientId = await app.register(assistant, redirect);
     const inviteCode = registry.invite(tenantId);
     const resource = `${BASE}${path}`;
-    const { access } = await app.connect(clientId, resource, path === "/mcp" ? OPERATOR_SCOPE : CLEANER_SCOPE, resource, { inviteCode, redirect, ...(service ? { service } : {}) });
+    const { access } = await app.connect(clientId, resource, scopeAt(path), resource, { inviteCode, redirect, ...(service ? { service } : {}) });
     return access;
+  };
+
+  /** The approval page a chat is shown for an address. */
+  const pageAt = async (assistant: CleanerAssistant, path: McpAddress) => {
+    const redirect = REDIRECTS[assistant];
+    const clientId = await app.register(assistant, redirect);
+    const page = await app.authorize(clientId, pkce().challenge, `${BASE}${path}`, scopeAt(path), "state-1", redirect);
+    return { status: page.status, html: await page.text() };
+  };
+
+  /** A sign-in at an address that the page refuses: the refusal's words, and the invite it was given, still unused. */
+  const refusedAt = async (tenantId: string, assistant: CleanerAssistant, path: McpAddress) => {
+    const page = await pageAt(assistant, path);
+    const { id, code } = app.pageParts(page.html);
+    const inviteCode = registry.invite(tenantId);
+    const res = await app.approve(id, code, {}, inviteCode);
+    const body = (await res.json()) as { ok?: boolean; error?: { message?: string } };
+    return { status: res.status, message: body.error?.message ?? "", inviteCode };
   };
 
   /** One JSON-RPC message to an address. */
@@ -160,7 +188,7 @@ export async function multiTenantApp(options: { now?: () => Date; authNow?: () =
   };
   const hosted = () => app.server.tourCore.hosted!;
 
-  return { app, registry, sms, wakes, makeTouring, joinCleaning, cleaningRoot, setWakeStatus: (status: number) => void (wakeStatus = status), join, joinAt, tool, toolAt, rpcAt, toolNames, twilio, text, touring, hosted, close };
+  return { app, registry, sms, wakes, makeTouring, joinCleaning, cleaningRoot, setWakeStatus: (status: number) => void (wakeStatus = status), join, joinAt, pageAt, refusedAt, tool, toolAt, rpcAt, toolNames, twilio, text, touring, hosted, close };
 }
 
 export type MultiTenantApp = Awaited<ReturnType<typeof multiTenantApp>>;

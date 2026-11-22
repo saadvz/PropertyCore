@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
 import type { InboundMedia } from "../cleaner-core/photos";
 import { FIXER_AGENTS_ONLY, runsFixer, type CleanerAssistant } from "../cleaner-core/assistant";
-import { withCaller } from "../cleaner-core/callerContext";
+import { currentCaller, withCaller } from "../cleaner-core/callerContext";
 import { cleanerAlertFetch, liveDeskFor } from "../cleaner-core/liveDesk";
 import { sendLiveSms } from "../cleaner-core/liveSms";
 import { photoFolder, photoKey } from "../cleaner-core/photos";
 import { propertyBasePath, propertyFolder, type Property } from "../cleaner-core/hosted/properties";
 import { tenantFolder, type Tenant } from "../cleaner-core/hosted/registry";
 import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/router";
+import { listenForQuiet } from "./botTools";
+import { holder } from "./jobDeps";
 import { parsePhone } from "../core/phone";
 import { CARD_REFUSAL, fixerDeskFor, type FixerDesk, type FixerReply } from "../fixer-core/desk";
 import { liveBooking } from "../fixer-core/gate";
@@ -56,6 +58,13 @@ export function fixerDesk(h: HostedCleaner, tenant: Tenant, property: Property):
     const now = current(h, tenant, property);
     return propertyContext(h, now.account, now.property);
   };
+  // Cleaner Core takes Fixer Core's notes only while it runs here and one chat holds both cores (#250).
+  const sharesNotes = () => {
+    const now = current(h, tenant, property);
+    return now.property.flows.cleaning.on && holder(h, now.account, "cleaning")?.grantId === holder(h, now.account, "fixer")?.grantId;
+  };
+  // A wake-up this desk queues is checked for a Fixer Core bot gone quiet, also before any chat has asked for the property's context.
+  listenForQuiet(h, id, propertyFolder(h.dataRoot, id, property));
   return fixerDeskFor(propertyFolder(h.dataRoot, id, property), {
     now: () => h.now(),
     propertyId: property.id,
@@ -74,18 +83,25 @@ export function fixerDesk(h: HostedCleaner, tenant: Tenant, property: Property):
     send: async (to, body) => (await sendLiveSms(ctx().env(), { to, body })) !== undefined,
     textsAllowed: async () => (await cleaningDesk(h, tenant, property)?.textsAllowed()) ?? false,
     business: async () => cleaningDesk(h, tenant, property)?.businessName(),
-    // Without Cleaner Core at the property, nothing takes the note: it waits in check_fixes' news.
-    notifyHost: async (noteId, text) => (await cleaningDesk(h, tenant, property)?.noteForHost(noteId, text)) === true,
+    sharesNotes,
+    ownBot: () => {
+      const id = currentCaller()?.connectionId;
+      return Boolean(id && current(h, tenant, property).account.connections.some((c) => c.grantId === id && c.job === "fixer"));
+    },
+    // Unless Cleaner Core takes the note, it waits in check_fixes' news.
+    notifyHost: async (noteId, text) => sharesNotes() && (await cleaningDesk(h, tenant, property)?.noteForHost(noteId, text)) === true,
     photoKey: () => {
       const c = ctx();
       return photoKey(c.env(), c.saveSecrets);
     },
     lineNumber: () => current(h, tenant, property).account.twilioNumber || undefined,
-    // The account's alerts routine for its primary chat, the same one Cleaner Core wakes.
+    // The Alerts routine of the chat that holds Fixer Core: the primary chat, or Fixer Core's own bot once it has saved one (#250).
     routine: () => {
-      const env = ctx().env();
-      const url = env.CLEANER_CORE_ROUTINE_URL?.trim();
-      const key = env.CLEANER_CORE_ROUTINE_KEY?.trim();
+      const account = current(h, tenant, property).account;
+      const held = holder(h, account, "fixer");
+      const saved = held ? h.secrets.connection(account.id, held.grantId) : {};
+      const url = saved.CLEANER_CORE_ROUTINE_URL?.trim();
+      const key = saved.CLEANER_CORE_ROUTINE_KEY?.trim();
       return url && key ? { url, key } : undefined;
     },
     assistant: () => h.registry.primary(id, (grantId) => h.grantLive(grantId))?.assistant,

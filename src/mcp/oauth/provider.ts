@@ -18,6 +18,7 @@ import { checkRedirectUri, ClientMetadataError, fetchMetadataDocument, isMetadat
 import { consentPage, PAGE_HEADERS, problemPage } from "./pages";
 import { hashSecret, newSecret, type OAuthGrantStore } from "./store";
 import { assistantForRedirect, type CleanerAssistant } from "../../cleaner-core/assistant";
+import type { CoreJob } from "../../jobs/jobs";
 import type { InviteRefusal } from "../../cleaner-core/hosted/registry";
 
 /**
@@ -55,7 +56,10 @@ export function endpointsFor(publicBaseUrl: string, mcpPath: string): OAuthEndpo
   return { issuer: origin, resource: `${origin}${mcpPath}`, resourceMetadataUrl: `${origin}/.well-known/oauth-protected-resource${mcpPath}` };
 }
 
-export type ResourceLabel = "Tour Core" | "Cleaner Core" | "Property Core";
+export type ResourceLabel = "Tour Core" | "Cleaner Core" | "Property Core" | "Supply Core" | "Fixer Core";
+
+/** The scope each core's own bot is granted at its own address (#250). */
+export const JOB_SCOPES: Record<CoreJob, string> = { cleaning: "propertycore.cleaning", supplies: "propertycore.supplies", fixer: "propertycore.fixer" };
 
 /** One protected MCP resource on this authorization server, with its own scope. */
 export interface OAuthResource {
@@ -64,6 +68,8 @@ export interface OAuthResource {
   label: ResourceLabel;
   /** Unset means always on. Off means no metadata, no approvals and no tokens for it. */
   enabled?: () => boolean;
+  /** Set for the address of a core's own bot (#250). */
+  job?: CoreJob;
 }
 
 /** The endpoints of one active resource. */
@@ -71,6 +77,7 @@ export interface ResourceEndpoints extends OAuthEndpoints {
   path: string;
   scope: string;
   label: ResourceLabel;
+  job?: CoreJob;
 }
 
 /**
@@ -133,8 +140,12 @@ interface CodeEntry {
 export interface InviteBook {
   /** Uses the invite up when it is good. */
   claim(code: string): { tenantId: string } | { refused: InviteRefusal };
-  /** The grant now exists. */
-  connected(tenantId: string, grantId: string, assistant: CleanerAssistant): void;
+  /** The grant now exists, bound to this address. */
+  connected(tenantId: string, grantId: string, assistant: CleanerAssistant, resourcePath: string): void;
+  /** The account an unused invite belongs to, without using it up. */
+  owner?(code: string): string | undefined;
+  /** Words that refuse this connection for this account, or undefined to let it through. Asked before an invite is used up. */
+  admit?(tenantId: string, assistant: CleanerAssistant, resourcePath: string): string | undefined;
   /** The words for each refusal. */
   refusal(reason: InviteRefusal): string;
   /** Sign in and Create account with a phone code. Unset or closed: the page takes only an invite code. */
@@ -376,6 +387,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
       hosted,
       firstClaim: hosted && !this.options.invites && !(this.options.hostedClaimed?.(ep.path) ?? false),
       label: ep.label,
+      ...(ep.job ? { job: ep.job } : {}),
       // On the multi-tenant service every address takes an invite code.
       ...(this.options.invites
         ? { assistant: assistantForRedirect(request.redirectUri), invite: true, ...accountPage(this.options.invites) }
@@ -412,6 +424,13 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
     const request = this.requests.get(id);
     if (!request || request.status !== "pending") return refused;
     if (!codesMatch(matchCodeGiven, request.matchCode)) return refused;
+    // A connection this account can't have is refused before the invite is used up.
+    const owner = invites.owner?.(inviteCode);
+    const notAdmitted = owner ? invites.admit?.(owner, assistantForRedirect(request.redirectUri), request.resourcePath) : undefined;
+    if (notAdmitted) {
+      this.log(`Refused a connection at ${request.resourcePath}: this account can't have it.`);
+      return { ok: false, message: notAdmitted };
+    }
     const claim = invites.claim(inviteCode);
     if ("refused" in claim) {
       this.log(`Refused a Cleaner Core approval: the invite code was ${claim.refused}.`);
@@ -463,6 +482,11 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
     // The page may have been denied or expired while the code was checked. A new account is kept.
     if (found.request.status !== "pending" || found.request.expiresAt <= this.now()) {
       return mode === "sign-up" ? { ok: false, message: "Your account is set up, but this page timed out. Reconnect, then choose Sign in." } : refused;
+    }
+    const notAdmitted = this.options.invites?.admit?.(answer.tenantId, assistantForRedirect(found.request.redirectUri), found.request.resourcePath);
+    if (notAdmitted) {
+      this.log(`Refused a connection at ${found.request.resourcePath}: this account can't have it.`);
+      return { ok: false, message: notAdmitted };
     }
     if (!this.bind(found.request, answer.tenantId)) return refused;
     this.log(`A connect-page ${mode} approved a connection for ${answer.tenantId}.`);
@@ -602,7 +626,7 @@ export class TourCoreOAuthProvider implements OAuthServerProvider {
       ...(entry.tenantId && entry.assistant ? { tenantId: entry.tenantId, assistant: entry.assistant } : {}),
     });
     entry.grantId = grant.id;
-    if (entry.tenantId && entry.assistant) this.options.invites?.connected(entry.tenantId, grant.id, entry.assistant);
+    if (entry.tenantId && entry.assistant) this.options.invites?.connected(entry.tenantId, grant.id, entry.assistant, target.ep.path);
     return this.tokens(access, refresh, grant.scopes);
   }
 

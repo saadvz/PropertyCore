@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeJsonAtomic } from "../storage/atomicWrite";
-import { ALERT_KINDS, type AlertKind } from "./routes";
+import { ALERT_KINDS, isBotRoutine, type AlertKind } from "./routes";
 
 /**
  * One property's host-alert ledger (#250), `host-alerts.json`. Each due alert is kept here, by id, before its
@@ -21,8 +21,10 @@ export interface KeptAlert {
   text?: string;
   keptAt: string;
   deliveredAt?: string;
-  /** Which sink took it: "cleaning", "fixer" or "list_cameras". */
+  /** Which sink took it: "cleaning", "fixer" or "list_cameras" (a desk's notes), or "property" or "supplies" (a wake-up for check_alerts). */
   via?: string;
+  /** When a bot read it with check_alerts (#250). Separate from deliveredAt, which is when the wake-up was sent. */
+  shownAt?: string;
   /** The guard refused the text, so it was never kept or sent. */
   withheld?: true;
   /** Not handed over within the time an alert stays useful, so it was let go. */
@@ -84,9 +86,43 @@ export class HostAlertLedger {
     return true;
   }
 
-  /** Kept alerts not yet handed over, oldest first. */
+  /** Kept alerts not yet handed over and not yet read with check_alerts, oldest first. */
   pending(): (KeptAlert & { text: string })[] {
-    return readHostAlerts(this.root).alerts.filter((alert): alert is KeptAlert & { text: string } => !alert.withheld && !alert.deliveredAt && !alert.expiredAt && typeof alert.text === "string");
+    return readHostAlerts(this.root).alerts.filter((alert): alert is KeptAlert & { text: string } => !alert.withheld && !alert.deliveredAt && !alert.shownAt && !alert.expiredAt && typeof alert.text === "string");
+  }
+
+  /**
+   * Kept alerts of these kinds that check_alerts hasn't shown yet, oldest first: not withheld, not expired, with
+   * their text. One a desk's notes already took (via "cleaning", "fixer" or "list_cameras") was read there.
+   */
+  unshown(kinds: readonly AlertKind[]): (KeptAlert & { text: string })[] {
+    return readHostAlerts(this.root).alerts.filter(
+      (alert): alert is KeptAlert & { text: string } => kinds.includes(alert.kind) && !alert.withheld && !alert.shownAt && !alert.expiredAt && typeof alert.text === "string" && (!alert.deliveredAt || isBotRoutine(alert.via)),
+    );
+  }
+
+  /**
+   * Alerts of these kinds a bot was woken for and never read go back to pending. For kinds that have gone back to
+   * the one Alerts routine (the last core bot went away): check_alerts is gone with it, so the desk's notes take them.
+   */
+  reopen(kinds: readonly AlertKind[]): number {
+    const file = readHostAlerts(this.root);
+    const stranded = file.alerts.filter((alert) => kinds.includes(alert.kind) && alert.deliveredAt && isBotRoutine(alert.via) && !alert.shownAt && !alert.expiredAt && !alert.withheld);
+    for (const alert of stranded) {
+      delete alert.deliveredAt;
+      delete alert.via;
+    }
+    if (stranded.length) writeHostAlerts(this.root, file);
+    return stranded.length;
+  }
+
+  /** Marks one alert read with check_alerts. Never touches deliveredAt or the producer's own record. */
+  shown(id: string): void {
+    const file = readHostAlerts(this.root);
+    const alert = file.alerts.find((each) => each.id === id);
+    if (!alert || alert.shownAt) return;
+    alert.shownAt = this.now().toISOString();
+    writeHostAlerts(this.root, file);
   }
 
   delivered(id: string, via: string): void {

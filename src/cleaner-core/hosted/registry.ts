@@ -6,6 +6,7 @@ import { hashSecret } from "../../mcp/oauth/store";
 import { writeJsonAtomic } from "../../storage/atomicWrite";
 import type { CleanerAssistant } from "../assistant";
 import type { Feature, FeatureSwitches } from "../../features/features";
+import { mainConnection, type CoreJob } from "../../jobs/jobs";
 import { newPropertyId, type FlowName, type Property } from "./properties";
 
 /**
@@ -17,6 +18,10 @@ export interface TenantConnection {
   grantId: string;
   assistant: CleanerAssistant;
   connectedAt: string;
+  /** Set for a core's own bot (#250): the job of the address its grant is bound to. Unset: a /mcp connection. */
+  job?: CoreJob;
+  /** The last call from this connection, written at most every 5 minutes. */
+  lastSeenAt?: string;
 }
 
 export interface TenantInvite {
@@ -219,6 +224,20 @@ export class TenantRegistry {
     return { refused: "invalid" };
   }
 
+  /** The account an unused, unexpired invite belongs to, without using it up. Anything else is left for claimInvite to refuse. */
+  inviteOwner(code: string): string | undefined {
+    const normalized = normalizeCode(code);
+    if (!normalized) return undefined;
+    const hash = hashSecret(normalized);
+    for (const tenant of this.read().tenants) {
+      const invite = tenant.invites.find((i) => i.hash === hash);
+      if (!invite) continue;
+      if (invite.usedAt || tenant.disabled || Date.parse(invite.expiresAt) <= this.now().getTime()) return undefined;
+      return tenant.id;
+    }
+    return undefined;
+  }
+
   /** The account whose signed-up landlord has this phone. Admin-made accounts have none until one is set. */
   byOwnerPhone(raw: string): Tenant | undefined {
     const phone = parsePhone(raw);
@@ -238,10 +257,16 @@ export class TenantRegistry {
     this.write(doc);
   }
 
-  connect(tenantId: string, connection: TenantConnection): void {
-    this.update(tenantId, (tenant) => {
-      tenant.connections = [...tenant.connections.filter((c) => c.grantId !== connection.grantId), connection];
-      tenant.primaryGrantId ??= connection.grantId;
+  /**
+   * Records a connection. A core's job has one bot: a new connection for a job takes the place of any older one,
+   * and their grant ids come back as `replaced` for the caller to end. The primary is only ever a /mcp connection.
+   */
+  connect(tenantId: string, connection: TenantConnection): { replaced: string[] } {
+    return this.update(tenantId, (tenant) => {
+      const replaced = connection.job ? tenant.connections.filter((c) => c.job === connection.job && c.grantId !== connection.grantId).map((c) => c.grantId) : [];
+      tenant.connections = [...tenant.connections.filter((c) => c.grantId !== connection.grantId && !replaced.includes(c.grantId)), connection];
+      if (!connection.job) tenant.primaryGrantId ??= connection.grantId;
+      return { replaced };
     });
   }
 
@@ -249,7 +274,7 @@ export class TenantRegistry {
     this.update(tenantId, (tenant) => {
       tenant.connections = tenant.connections.filter((c) => c.grantId !== grantId);
       if (tenant.primaryGrantId === grantId) {
-        const next = oldest(tenant.connections);
+        const next = oldest(tenant.connections.filter((c) => !c.job));
         if (next) tenant.primaryGrantId = next.grantId;
         else delete tenant.primaryGrantId;
       }
@@ -258,18 +283,15 @@ export class TenantRegistry {
 
   setPrimary(tenantId: string, grantId: string): void {
     this.update(tenantId, (tenant) => {
-      if (!tenant.connections.some((c) => c.grantId === grantId)) throw new RegistryError("unknown-tenant");
+      if (!tenant.connections.some((c) => c.grantId === grantId && !c.job)) throw new RegistryError("unknown-tenant");
       tenant.primaryGrantId = grantId;
     });
   }
 
-  /** The primary connection, or the oldest live one when the primary's grant is gone. */
+  /** The primary connection, or the oldest live one when the primary's grant is gone. Only ever a /mcp connection, never a core's bot. */
   primary(tenantId: string, isLive: (grantId: string) => boolean): TenantConnection | undefined {
     const tenant = this.get(tenantId);
-    if (!tenant) return undefined;
-    const chosen = tenant.connections.find((c) => c.grantId === tenant.primaryGrantId);
-    if (chosen && isLive(chosen.grantId)) return chosen;
-    return oldest(tenant.connections.filter((c) => isLive(c.grantId)));
+    return tenant ? mainConnection(tenant, { isLive }) : undefined;
   }
 
   /** Makes an account a touring account. Only /admin does this, and only for an account with no properties. */
@@ -356,6 +378,18 @@ export class TenantRegistry {
     const last = tenant.lastActivityAt ? Date.parse(tenant.lastActivityAt) : 0;
     if (this.now().getTime() - last < TOUCH_MS) return;
     this.update(id, (t) => void (t.lastActivityAt = this.stamp()));
+  }
+
+  /** A connection's last call, written at most every 5 minutes. */
+  seen(tenantId: string, grantId: string): void {
+    const connection = this.get(tenantId)?.connections.find((c) => c.grantId === grantId);
+    if (!connection) return;
+    const last = connection.lastSeenAt ? Date.parse(connection.lastSeenAt) : 0;
+    if (this.now().getTime() - last < TOUCH_MS) return;
+    this.update(tenantId, (tenant) => {
+      const found = tenant.connections.find((c) => c.grantId === grantId);
+      if (found) found.lastSeenAt = this.stamp();
+    });
   }
 }
 

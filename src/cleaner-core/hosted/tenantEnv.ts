@@ -36,13 +36,15 @@ export const ROUTINE_NAMES = ["CLEANER_CORE_ROUTINE_URL", "CLEANER_CORE_ROUTINE_
 
 /**
  * A desk's environment: the shared process values, this tenant's secrets and number, its links
- * under /t/<id>, and the primary connection's assistant and routine.
+ * under /t/<id>, and the assistant and routine of the connection woken for this desk's news: the
+ * primary chat, or Cleaner Core's own bot once it holds the job (#250).
  */
 export function buildTenantEnv(input: {
   base: NodeJS.ProcessEnv;
   tenant: Tenant;
   secrets: TenantSecrets;
-  primary: TenantConnection | undefined;
+  /** The connection woken for this desk's news. Its id is written as CLEANER_CORE_PRIMARY_CONNECTION. */
+  alerts: TenantConnection | undefined;
   origin: string;
   /** Every tenant's number on this service. None of them is ever texted, even when any number is allowed. */
   serviceLines?: readonly string[];
@@ -74,10 +76,10 @@ export function buildTenantEnv(input: {
     env.CLEANER_CORE_PROPERTY_LABEL = input.property.label;
     env.CLEANER_CORE_PROPERTY_COUNT = String(input.propertyCount ?? 1);
   }
-  if (input.primary) {
-    env.CLEANER_CORE_ASSISTANT = input.primary.assistant;
-    env.CLEANER_CORE_PRIMARY_CONNECTION = input.primary.grantId;
-    const routine = input.secrets.connection(input.tenant.id, input.primary.grantId);
+  if (input.alerts) {
+    env.CLEANER_CORE_ASSISTANT = input.alerts.assistant;
+    env.CLEANER_CORE_PRIMARY_CONNECTION = input.alerts.grantId;
+    const routine = input.secrets.connection(input.tenant.id, input.alerts.grantId);
     for (const name of ROUTINE_NAMES) if (routine[name]) env[name] = routine[name];
   }
   return env;

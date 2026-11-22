@@ -86,6 +86,77 @@ describe("TenantRegistry", () => {
     expect(reg.get(tenant.id)?.primaryGrantId).toBeUndefined();
   });
 
+  it("connecting a core bot never makes it primary", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    reg.connect(tenant.id, { grantId: "g-fix", assistant: "grok", connectedAt: "2026-10-27T10:00:00.000Z", job: "fixer" });
+    expect(reg.get(tenant.id)!.primaryGrantId).toBeUndefined();
+    expect(reg.primary(tenant.id, () => true)).toBeUndefined();
+    reg.connect(tenant.id, { grantId: "g-main", assistant: "grok", connectedAt: "2026-10-27T11:00:00.000Z" });
+    expect(reg.get(tenant.id)!.primaryGrantId).toBe("g-main");
+    expect(reg.primary(tenant.id, () => true)?.grantId).toBe("g-main");
+  });
+
+  it("disconnecting the primary never picks a core connection", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    reg.connect(tenant.id, { grantId: "g-main", assistant: "grok", connectedAt: "2026-10-27T10:00:00.000Z" });
+    reg.connect(tenant.id, { grantId: "g-fix", assistant: "grok", connectedAt: "2026-10-27T10:30:00.000Z", job: "fixer" });
+    reg.connect(tenant.id, { grantId: "g-second", assistant: "grok", connectedAt: "2026-10-27T11:00:00.000Z" });
+    reg.disconnect(tenant.id, "g-main");
+    expect(reg.get(tenant.id)!.primaryGrantId).toBe("g-second");
+    reg.disconnect(tenant.id, "g-second");
+    expect(reg.get(tenant.id)!.primaryGrantId).toBeUndefined();
+    expect(reg.primary(tenant.id, () => true)).toBeUndefined();
+    expect(reg.get(tenant.id)!.connections.map((c) => c.grantId)).toEqual(["g-fix"]);
+  });
+
+  it("a second bot for a job replaces the first, and a /mcp chat replaces nothing", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    expect(reg.connect(tenant.id, { grantId: "g-main", assistant: "grok", connectedAt: "2026-10-27T10:00:00.000Z" })).toEqual({ replaced: [] });
+    expect(reg.connect(tenant.id, { grantId: "g-fix", assistant: "grok", connectedAt: "2026-10-27T10:30:00.000Z", job: "fixer" })).toEqual({ replaced: [] });
+    expect(reg.connect(tenant.id, { grantId: "g-sup", assistant: "grok", connectedAt: "2026-10-27T10:40:00.000Z", job: "supplies" })).toEqual({ replaced: [] });
+    expect(reg.connect(tenant.id, { grantId: "g-fix-2", assistant: "grok", connectedAt: "2026-10-27T11:00:00.000Z", job: "fixer" })).toEqual({ replaced: ["g-fix"] });
+    expect(reg.connect(tenant.id, { grantId: "g-second", assistant: "grok", connectedAt: "2026-10-27T11:30:00.000Z" })).toEqual({ replaced: [] });
+    expect(reg.get(tenant.id)!.connections.map((c) => c.grantId)).toEqual(["g-main", "g-sup", "g-fix-2", "g-second"]);
+  });
+
+  it("setPrimary refuses a core connection", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    reg.connect(tenant.id, { grantId: "g-main", assistant: "grok", connectedAt: "2026-10-27T10:00:00.000Z" });
+    reg.connect(tenant.id, { grantId: "g-fix", assistant: "grok", connectedAt: "2026-10-27T10:30:00.000Z", job: "fixer" });
+    expect(() => reg.setPrimary(tenant.id, "g-fix")).toThrow();
+    expect(reg.get(tenant.id)!.primaryGrantId).toBe("g-main");
+  });
+
+  it("seen writes a connection's lastSeenAt at most every 5 minutes", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    reg.connect(tenant.id, { grantId: "g-fix", assistant: "grok", connectedAt: "2026-10-27T10:00:00.000Z", job: "fixer" });
+    const seenAt = () => reg.get(tenant.id)!.connections[0]!.lastSeenAt;
+    reg.seen(tenant.id, "g-fix");
+    const first = seenAt();
+    expect(first).toBe("2026-10-27T10:00:00.000Z");
+    advance(4 * MINUTE);
+    reg.seen(tenant.id, "g-fix");
+    expect(seenAt()).toBe(first);
+    advance(2 * MINUTE);
+    reg.seen(tenant.id, "g-fix");
+    expect(seenAt()).toBe("2026-10-27T10:06:00.000Z");
+    reg.seen(tenant.id, "g-unknown");
+    reg.seen("tnt_zzzzzzzzzz", "g-fix");
+  });
+
+  it("inviteOwner names the account and leaves the invite usable", () => {
+    const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
+    const code = reg.invite(tenant.id);
+    expect(reg.inviteOwner(code)).toBe(tenant.id);
+    expect(reg.inviteOwner(code.toLowerCase())).toBe(tenant.id);
+    expect(reg.claimInvite(code)).toEqual({ tenantId: tenant.id });
+    expect(reg.inviteOwner(code)).toBeUndefined();
+    expect(reg.inviteOwner("not-a-code")).toBeUndefined();
+    const stale = reg.invite(tenant.id);
+    advance(8 * DAY);
+    expect(reg.inviteOwner(stale)).toBeUndefined();
+  });
+
   it("finds a tenant by number in any format, and remove frees the number", () => {
     const { tenant } = reg.create({ label: "Lane", twilioNumber: "+15555550150" });
     expect(reg.byNumber("+1 (555) 555-0150")?.id).toBe(tenant.id);

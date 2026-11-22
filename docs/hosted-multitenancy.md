@@ -24,6 +24,7 @@ Every request resolves exactly one tenant before it reads or writes anything:
 | Way in | How the tenant is found |
 | --- | --- |
 | `/mcp/cleaner-core` | The OAuth grant. The host's invite code, sign-in, or new account on the Allow page bound it to a tenant |
+| `/mcp/cleaner`, `/mcp/supply`, `/mcp/fixer` | The OAuth grant, as above, bound to that one address and its job. Only with the account's Separate bots switch on (see Chats) |
 | A text to `/webhooks/twilio/cleaner-core` | The `To` number. Each tenant has its own Twilio number |
 | A call to `/webhooks/twilio/voice`, and its transcript to `/webhooks/twilio/voice/transcript` | The `To` number, as for a text. Both are signed by Twilio. Only a known caller is recorded; see the Voicemail gate in `docs/fixer-core-safety-gates.md` |
 | Everything Cleaner Core hands out: group webhooks, status callbacks, upload pages, photo links | The `/t/<tenantId>/` path prefix, and `/p/<propertyId>/` after it for every property but a migrated one. Twilio signs the full URL, and photo links are signed with the tenant's own key |
@@ -52,7 +53,83 @@ first one connected. When the primary hasn't connected its alert routine and
 another chat on the tenant does, that chat becomes primary, so setup never
 waits on a chat that won't make one. A primary whose routine is connected
 changes only when Saad changes it on the admin page. When the primary's grant
-is gone, the oldest live connection stands in.
+is gone, the oldest live connection stands in. Only a chat connected at `/mcp`
+is ever the primary.
+
+### A bot for each core (#250)
+
+Behind the account's Separate bots switch (`bots`, see Feature switches), off by
+default. The design is `docs/superpowers/specs/2026-11-22-bot-per-core-design.md`.
+
+Every connection carries a **job**, from the address its sign-in is bound to:
+
+| Address | Job | Tools |
+| --- | --- | --- |
+| `/mcp` | Property Core | Properties, flows, locks, cameras and the other account tools, plus every core whose own bot doesn't hold it |
+| `/mcp/cleaner` | Cleaner Core | Cleaner Core's, and three filing tools (below) |
+| `/mcp/supply` | Supply Core | Supply Core's and package arrivals |
+| `/mcp/fixer` | Fixer Core | Fixer Core's |
+
+A token for one address is refused at the others. A core's address is accepted
+only with the switch on, from Grok Bot, on an account whose primary chat is on
+Grok Bot; a refusal doesn't use up the invite code. The Allow page names the
+job. One bot per core: a second bot at the same address ends the first one's
+sign-in and deletes its saved routine.
+
+**The rule.** A core's job is held by its own bot once that bot is connected
+and has saved its Alerts routine. Until then, and whenever that bot goes away,
+the Property Core connection holds it. A bot that *has* a job may list and call
+its tools; the bot that *holds* it is also the one woken. The holder is worked
+out on each request, so the job comes back with nothing to save when the bot's
+grant ends, Saad disconnects it, the switch goes off, or the host tells the
+Property Core bot it's gone (`remove_bot`, two calls). An account with only
+`/mcp` chats has and holds every job on them, exactly as before the switch
+existed.
+
+What follows from the rule:
+
+- **Lists and calls.** A job only takes tools away. A tool another job owns is
+  left off the list and refused on the call, before any desk, with a line that
+  names the bot to open. When a hand-over changes what a chat may call, the
+  account's other chats are told their tool list changed.
+- **Wake-ups.** Each core's notes wake the bot that holds it, and show in that
+  bot's check only. A wake-up is an event's name, ids and a time: no note text,
+  code, phone number or another core's question travels between bots.
+- **Host alerts.** On a team (an account where some core's own bot holds its
+  job), the clock's host alerts go by kind: packages to the Supply Core bot
+  when it holds its job, the rest to the Property Core bot. Each is woken with
+  no content and reads its own with `check_alerts`, shown once; an alert two
+  days old is let go. An account that isn't a team keeps its one Alerts
+  routine, and when the last core bot goes, an alert a bot was woken for and
+  never read goes to the host's notes there instead of being lost. `check_alerts` with `connect: true` gives the
+  calling chat a single-use link, good for 30 minutes, to save its own routine.
+- **Filing.** A chat that runs Cleaner Core for a property, and not the core
+  that owns the record, can still read the supply list's ids and names
+  (`get_supply_state`), mark items low (`report_low`) and open a repair
+  (`open_job`): each as the cleaner's report only, and only where that core
+  runs at the property. That is the Cleaner Core bot, and the Property Core
+  chat while it still runs Cleaner Core. The reply says it was filed and who
+  asks the host. The owning bot is woken; a wake-up that doesn't go through is
+  kept by time only (`kept-wakes.json`) and tried again every 5 minutes, until
+  it goes through, that bot calls on its own, or two days pass.
+- **A quiet bot.** Each connection's last call is kept (`lastSeenAt`, moved at
+  most every 5 minutes). A holder is quiet when it hasn't called for longer
+  than its own check allows: 150 minutes for Cleaner Core and Fixer Core, whose
+  checks run every hour, and 26 hours for Supply Core, whose check runs once a
+  day. When news is queued for a quiet holder, the Property Core bot is told
+  once, by name and time only, so the host can open that bot or say it's gone.
+- **`get_state`.** A core's bot sees only its own flow at each property. Once
+  a core has its own bot connected, the Property Core bot also gets `team`:
+  per core, who holds it, when its bot last called, and whether its alerts are
+  connected. On a team, each property's next step is given per flow, by name.
+- **Feature offers.** After setup, `get_state` offers a feature only to a chat
+  whose jobs can run that feature's tools, and takes an answer only from such
+  a chat. A core's own bot is offered only its own (package arrivals, for the
+  Supply Core bot); the rest are the Property Core chat's.
+
+The gates are the "Separate bots (#250)" sections of
+`docs/cleaner-core-safety-gates.md`, `docs/supply-core-safety-gates.md` and
+`docs/fixer-core-safety-gates.md`.
 
 ## Saad's admin page
 
@@ -65,6 +142,11 @@ flows, with a health line per property, and can turn a flow off with force,
 which sends nothing. It can make an account with no properties a touring
 account. The host's chat adds properties and turns flows on. The page never
 shows a door code, a calendar link, a routine key, or a cleaner's phone.
+
+Each chat's row names its job: Property Core for a `/mcp` chat, or the core
+whose address it signed in at (#250). Make primary is offered only for a `/mcp`
+chat; Disconnect is offered for every chat, and disconnecting a core's bot hands
+its job back to the Property Core chat.
 
 ## Text lines and the number pool
 
@@ -245,6 +327,11 @@ Behind each account's switch:
   pick are read. `cameras.json` keeps the picks, the consent time and notes waiting for the host. No image is
   kept; a clip is copied to `evidence/` only when the host pins it. Camera offline and back-online notes go out on the
   host-alert clock (#250) through the account's Alerts routine, else wait for `list_cameras`. It texts nobody.
+- **Separate bots (`bots`).** A Grok bot for each of Cleaner Core, Supply Core and Fixer Core, at `/mcp/cleaner`,
+  `/mcp/supply` and `/mcp/fixer`, managed by the Property Core bot (see Chats). Grok Bot only. `check_alerts` and
+  `remove_bot` are listed, and `get_state` carries `team`, only once a core has its own bot connected. With it off,
+  the three addresses are refused, a core's connection made earlier lists nothing, and every job is the Property
+  Core chat's again, exactly as before.
 
 ## Touring (parked)
 

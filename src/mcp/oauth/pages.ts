@@ -5,6 +5,8 @@
  */
 import { ASSISTANT_PROFILES, type CleanerAssistant, type ConsentWho } from "../../cleaner-core/assistant";
 import type { InviteRefusal } from "../../cleaner-core/hosted/registry";
+import { JOB_NAMES, type CoreJob } from "../../jobs/jobs";
+import type { ResourceLabel } from "./provider";
 
 /** What the multi-tenant Cleaner Core's Allow page says when an invite code is refused. */
 export const INVITE_REFUSALS: Record<InviteRefusal, string> = {
@@ -44,7 +46,8 @@ ${body}
 </html>
 `;
 
-export function consentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; label?: "Tour Core" | "Cleaner Core" | "Property Core"; assistant?: CleanerAssistant; invite?: boolean; account?: AccountForms }): string {
+export function consentPage(p: { requestId: string; matchCode: string; clientName: string; redirectHost: string; hosted?: boolean; firstClaim?: boolean; label?: ResourceLabel; job?: CoreJob; assistant?: CleanerAssistant; invite?: boolean; account?: AccountForms }): string {
+  if (p.job) return cleanerConsentPage(p, ASSISTANT_PROFILES[p.assistant ?? "grok"].consent, jobWords(p.job));
   if (p.label === "Cleaner Core") return cleanerConsentPage(p, ASSISTANT_PROFILES[p.assistant ?? "grok"].consent);
   if (p.label === "Property Core") return cleanerConsentPage(p, ASSISTANT_PROFILES[p.assistant ?? "grok"].consent, SHARED_WORDS);
   const requestId = escape(p.requestId);
@@ -122,6 +125,21 @@ const SHARED_WORDS: ConsentWords = {
   connected: "your Property Core account.",
   next: (name) => `In ${name}, say "Set up Property Core". It adds your property and asks whether you want Cleaner Core, Supply Core, or Fixer Core there.`,
 };
+
+/** What the page says for a core's own bot (#250): the shared service's rules, and the one job this chat is allowed. */
+function jobWords(job: CoreJob): ConsentWords {
+  const name = JOB_NAMES[job];
+  return {
+    ...SHARED_WORDS,
+    product: name,
+    asking: `is asking to run ${name} for your account.`,
+    lede: `Allow this chat to run ${name} for your account. It gets ${name}'s tools and nothing else: the server decides what each of your bots can do, and your assistant's words can't change it.`,
+    can: [`run ${name} at your properties`, "tell you what needs you there"],
+    canShort: `Run ${name} at your properties · Tell you what needs you there`,
+    connected: `${name} on your Property Core account.`,
+    next: (chat) => `In ${chat}, say "Set up ${name}".`,
+  };
+}
 
 // ---- Icons: inline SVG, drawn with stroke so they take the page's colors ----
 

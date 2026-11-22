@@ -42,6 +42,10 @@ import { handleTouringAlertUpload, refreshTouringAlerts, touringAlertFormReply, 
 import { forwardTenantPath } from "../../hosted/touringForward";
 import { touringPublicRoute } from "../../hosted/workerRoutes";
 import { MCP_PATH } from "../../mcp/paths";
+import { jobOfPath } from "../../jobs/jobs";
+import { listenForQuiet } from "../../hosted/botTools";
+import { holder, noteTeamChanged } from "../../hosted/jobDeps";
+import { handleJobRoutineUpload } from "../../hosted/jobRoutineLink";
 import { TWILIO_WEBHOOK_PATH } from "../../messaging/twilio/provider";
 import { formParams, verifyTwilioSignature } from "../../messaging/twilio/signature";
 import { serviceLines } from "./lines";
@@ -66,6 +70,8 @@ export interface HostedCleaner {
   grantLive(grantId: string): boolean;
   /** Every live grant's id, from one read of the grants. Without it, callers ask grantLive per id. */
   liveGrantIds?(): Set<string>;
+  /** Ends a grant, as /admin's Disconnect does. */
+  revokeGrant?(grantId: string): void;
   now(): Date;
   log(line: string): void;
   /** Touring tenants' processes and saved texts. Absent when the service runs no touring. */
@@ -125,14 +131,15 @@ function accountContext(h: HostedCleaner, tenant: Tenant, root: string, property
     env: () => {
       const current = h.registry.get(id);
       const property = propertyId ? current?.properties.find((p) => p.id === propertyId) : undefined;
-      const primary = h.registry.primary(id, (grantId) => h.grantLive(grantId));
+      // The chat woken for Cleaner Core's news: the primary, or Cleaner Core's own bot once it has saved its routine (#250).
+      const alerts = current ? holder(h, current, "cleaning") : undefined;
       // Every number the service owns, the pool's too, so none is ever texted as a person.
       const ownLines = serviceLines(h);
       const env = buildTenantEnv({
         base: h.baseEnv(),
         tenant: current ?? tenant,
         secrets: h.secrets,
-        primary,
+        alerts,
         origin: h.origin() ?? "",
         serviceLines: ownLines,
         ...(property ? { property, propertyCount: current?.properties.length ?? 1 } : {}),
@@ -152,12 +159,19 @@ function accountContext(h: HostedCleaner, tenant: Tenant, root: string, property
         else own[name] = value;
       }
       if (Object.keys(own).length > 0) h.secrets.set(id, own);
-      if (connection && Object.keys(routine).length > 0) h.secrets.setForConnection(id, connection, routine);
+      if (connection && Object.keys(routine).length > 0) {
+        h.secrets.setForConnection(id, connection, routine);
+        // A core's own bot that saves its routine takes hold of its job: the account's other chats list fewer tools now.
+        const now = h.registry.get(id);
+        if (now?.connections.some((c) => c.grantId === connection && c.job)) noteTeamChanged(now, connection);
+      }
     },
     deleteSecrets: (names) => h.secrets.delete(id, names),
   };
   // A connected lock's per-visit codes are sealed with the account's own server key, made here if missing.
   if (propertyId) registerSecretSaver(root, (values) => context.saveSecrets(values));
+  // A wake-up this property's desks queue is checked for a core's bot gone quiet (#250).
+  if (propertyId) listenForQuiet(h, id, root);
   return context;
 }
 
@@ -199,7 +213,7 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
 
   if (TOUR_CORE_PATHS.has(path)) return notFound();
 
-  if (path === MCP_PATH || path === CLEANER_MCP_PATH) {
+  if (path === MCP_PATH || path === CLEANER_MCP_PATH || jobOfPath(path)) {
     await handleTenantMcp(h, r, path);
     return true;
   }
@@ -311,6 +325,11 @@ export async function handleHostedCleaner(h: HostedCleaner, r: HostedRequest): P
     h.registry.touch(tenant.id);
     return true;
   }
+  // A bot's own Alerts routine link (#250) is the account's, not a property's.
+  if (!scoped.propertyId) {
+    const routine = await handleJobRoutineUpload(h, r, tenant, scoped.rest);
+    if (routine !== undefined) return routine ? true : notFound();
+  }
   // The migrated property answers the old /t/<id>/ links; every other property its /t/<id>/p/<pid>/ ones.
   const property = scoped.propertyId ? tenant.properties.find((p) => p.id === scoped.propertyId) : tenant.properties.find((p) => p.legacyPaths);
   if (!property) return notFound();
@@ -398,6 +417,9 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
     return true;
   }
   if (method !== "POST") return false;
+  // Fixer Core's own bot saves its own Alerts routine, also where Cleaner Core runs.
+  const fixerAlert = fixer.on ? fixerAlertUploadCode(rest) : undefined;
+  if (fixerAlert) return sendFixerAlertUpload(h, r, tenant, property, ctx, fixerAlert, contentType);
   const upload = { contentType, readBody: () => r.readCapped(ALERT_UPLOAD_MAX_BYTES), env: ctx.env, root: ctx.root, now };
   const alert = alertUploadCode(rest);
   const door = doorCodeUploadCode(rest);
@@ -428,6 +450,16 @@ function fixerAlertUploadCode(rest: string): string | undefined {
   return /^[A-Za-z0-9_-]{43}$/.test(code) ? code : undefined;
 }
 
+/** Fixer Core's alerts upload: the routine a chat's own computer posts to the link save_repair_alerts gave. */
+async function sendFixerAlertUpload(h: HostedCleaner, r: HostedRequest, tenant: Tenant, property: Property, ctx: TenantContext, code: string, contentType: string): Promise<true> {
+  const read = await uploadBody(contentType, () => r.readCapped(ALERT_UPLOAD_MAX_BYTES));
+  const saved = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : await fixerDesk(h, tenant, property).uploadAlerts(code, read.parsed, ctx.saveSecrets);
+  // The chat that saved the routine gets the alerts when the primary chat has no routine of its own.
+  if (saved.status === 200 && "by" in saved && saved.by) promoteFixerRoutine(h, tenant.id, saved.by);
+  r.send(saved.status, JSON_TYPE, JSON.stringify(saved.body), saved.status === 413 ? { Connection: "close" } : {});
+  return true;
+}
+
 /**
  * A property where Fixer Core runs without Cleaner Core: the job photo links get_job_photos gives,
  * and the door code link from change_door_code, which saves to the hub's door access. Grok's own
@@ -438,15 +470,7 @@ async function handleFixerOnlyPath(h: HostedCleaner, r: HostedRequest, tenant: T
   // Only a repair job's photos: Cleaner Core's, from when it ran here, stay off with it.
   if (method === "GET" && rest.startsWith(CLEANER_PHOTO_PREFIX)) return sendPhoto(r, ctx, rest, now, fixerPhotoFolders(h, tenant, property));
   const alert = fixerAlertUploadCode(rest);
-  if (alert) {
-    if (method !== "POST") return false;
-    const read = await uploadBody(contentType, () => r.readCapped(ALERT_UPLOAD_MAX_BYTES));
-    const saved = "error" in read ? { status: read.status, body: { ok: false, error: read.error } } : await fixerDesk(h, tenant, property).uploadAlerts(alert, read.parsed, ctx.saveSecrets);
-    // The chat that saved the routine gets the alerts when the primary chat has no routine of its own.
-    if (saved.status === 200 && "by" in saved && saved.by) promoteFixerRoutine(h, tenant.id, saved.by);
-    r.send(saved.status, JSON_TYPE, JSON.stringify(saved.body), saved.status === 413 ? { Connection: "close" } : {});
-    return true;
-  }
+  if (alert) return method === "POST" ? sendFixerAlertUpload(h, r, tenant, property, ctx, alert, contentType) : false;
   const code = doorCodeUploadCode(rest);
   if (!code) return false;
   const door = hubFor(ctx.root, { now }).doorAccess(ctx.env);
@@ -520,7 +544,8 @@ export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
   void shareRoutine(h, tenantId).catch(() => h.log(`Couldn't share ${tenantId}'s alert routine with its properties this time.`));
   const tenant = h.registry.get(tenantId);
   if (!tenant || tenant.disabled) return;
-  const live = (grantId: string) => h.grantLive(grantId) && tenant.connections.some((c) => c.grantId === grantId);
+  // Only a /mcp chat can become primary: a core's own bot (#250) holds its job through the rule, not by being primary.
+  const live = (grantId: string) => h.grantLive(grantId) && tenant.connections.some((c) => c.grantId === grantId && !c.job);
   // A routine connected through any of the account's properties counts, in the order they were connected.
   const ids = cleaningDesks(h, tenant).flatMap((desk) => desk.routineConnectionIds());
   const connected = [...new Set(ids)].filter(live);
@@ -532,9 +557,10 @@ export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
 }
 
 /** Makes `grantId` the primary chat when the primary has no saved routine, so Fixer Core's alerts reach the chat that saved one. */
-function promoteFixerRoutine(h: HostedCleaner, tenantId: string, grantId: string): void {
+export function promoteFixerRoutine(h: HostedCleaner, tenantId: string, grantId: string): void {
   const primary = h.registry.primary(tenantId, (id) => h.grantLive(id));
   if (!primary || primary.grantId === grantId) return;
+  if (h.registry.get(tenantId)?.connections.some((c) => c.grantId === grantId && c.job)) return;
   const own = h.secrets.connection(tenantId, primary.grantId);
   if (own.CLEANER_CORE_ROUTINE_URL && own.CLEANER_CORE_ROUTINE_KEY) return;
   h.registry.setPrimary(tenantId, grantId);
