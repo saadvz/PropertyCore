@@ -2519,6 +2519,11 @@ export class LiveDesk {
     return this.serial(async () => this.hostConfirmed());
   }
 
+  /** The saved host's phone, only when it's the account's confirmed landlord phone. For the host's own standing code (#180). Sends nothing. */
+  confirmedHostPhone(): Promise<string | undefined> {
+    return this.serial(async () => (this.hostConfirmed() ? parsePhone(this.file.host ?? "") : undefined));
+  }
+
   /** The business name saved for this property. */
   businessName(): Promise<string | undefined> {
     return this.serial(async () => this.file.business);

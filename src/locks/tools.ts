@@ -52,16 +52,16 @@ const SETTINGS = {
 const ADD_STANDING = {
   name: "add_standing_code",
   title: "Give someone a standing code",
-  description: `A standing door code for the host (role owner), a co-owner or a co-host, so their own entries are recorded too. Never for a cleaner or pro: theirs are per visit. Property Core makes the code. The person gets one text asking them to reply YES, then a private link that shows the code once. Never ask for or repeat a code. ${TWO_CALL}`,
+  description: `A standing door code for the host (role owner), a co-owner or a co-host, so their own entries are recorded too. Never for a cleaner or pro: theirs are per visit. When the host asks for their own, it's role owner with the host's name: leave phone out, and their confirmed number on file is used; the question names its last four, so never ask the host to type their number. Property Core makes the code. The person gets one text asking them to reply YES, then a private link that shows the code once. Never ask for or repeat a code. ${TWO_CALL}`,
   inputSchema: {
     type: "object",
     properties: {
       name: { type: "string", minLength: 1, maxLength: 60 },
-      phone: { type: "string", maxLength: 30, description: "Their mobile, with country code." },
+      phone: { type: "string", maxLength: 30, description: "Their mobile, with country code. Leave out for the host's own code (role owner): the number on file is used." },
       role: { type: "string", enum: ["owner", "co-owner", "co-host"] },
       confirmation: CONFIRMATION,
     },
-    required: ["name", "phone", "role"],
+    required: ["name", "role"],
     additionalProperties: false,
   },
 };
@@ -69,7 +69,7 @@ const ADD_STANDING = {
 const LINK = {
   name: "standing_code_link",
   title: "New link to a standing code",
-  description: `Texts the person a new private link to their standing code, after they replied YES. The old link stops working. ${TWO_CALL}`,
+  description: `Texts the person a new private link to their standing code, after they replied YES; the old link stops working. Before their YES, it texts the invite again instead (when theirs never arrived), so there's no need to remove and remake the code. ${TWO_CALL}`,
   inputSchema: { type: "object", properties: { id: { type: "string", maxLength: 40 }, confirmation: CONFIRMATION }, required: ["id"], additionalProperties: false },
 };
 

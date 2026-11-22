@@ -2,6 +2,7 @@ import { createHash, randomInt } from "node:crypto";
 import { join } from "node:path";
 import { hubFor } from "../hub/hub";
 import type { DoorAccess, GrantNote } from "../hub/doorAccess";
+import { issueFailedNote } from "../hub/grants";
 import { sameHash } from "../hub/uploadCode";
 import { ConfirmationBook } from "../operator/confirmations";
 import { recordLockConnection } from "./eventLog";
@@ -44,7 +45,22 @@ export interface LockDeskDeps {
   /** This property's public address on the service, for the page link. */
   publicBase(): string | undefined;
   cleaningOn(): boolean;
+  /** The property's saved host phone, only when it's the account's confirmed landlord phone. For the host's own standing code. */
+  hostPhone?(): Promise<string | undefined>;
+  /** Tells the host each note once, by its id (the alerts path). Never holds a code. */
+  tell?(notes: GrantNote[]): Promise<void>;
 }
+
+/** What a code page's "show my code" gets: the code once, or why not. Never logged. */
+export type CodeShown = { ok: true; code: string; doors?: { door: string; code: string }[] } | { ok: false; reason: "gone" | "pending" | "failed" };
+
+/** Why a standing code's invite didn't go: each says what happens next, so the agent never guesses. */
+type InviteResult = "sent" | "already" | "opted-out" | "texts-off" | "send-failed";
+
+/** How long a failed invite waits before the clock tries it again, and how many tries it gets. */
+const INVITE_RETRY_MS = 10 * 60_000;
+const INVITE_TRIES = 6;
+const NO_CONSENT_TOOL = "No tool changes who may be texted, so never tell the host you turned texts on, and don't remove and remake the code for this.";
 
 export interface LockReply {
   text: string;
@@ -137,7 +153,7 @@ export class LockDesk {
       devices: file.devices.map((device) => ({ id: device.id, name: device.name, kind: device.kind, online: device.online, ...(typeof device.battery === "number" ? { battery: Math.round(device.battery * 100) } : {}), door: file.doors.includes(device.id) })),
       release: file.release,
       extend: file.extend,
-      standing: this.standing(file).map((person) => ({ id: person.id, name: person.name, role: person.role, status: standingStatus(person, this.deps.now()) })),
+      standing: this.standing(file).map((person) => ({ id: person.id, name: person.name, role: person.role, status: standingStatus(person, this.deps.now()), ...(person.yesAt ? { lock: standingOnLock(door, person.id) } : {}) })),
       codes: door.grants().statuses().filter((grant) => !grant.revoked).map((grant) => ({ flow: grant.flow, jobId: grant.jobId, from: grant.window.from, until: grant.window.until, doors: grant.doors })),
       problems,
       next: problems[0] ?? (door.connected() ? "The locks are connected." : "No lock is connected here. connect_lock gives the host a sign-in link."),
@@ -278,42 +294,110 @@ export class LockDesk {
 
   /**
    * A standing code for the host or a person they name. Naming them, with the host's yes, is the yes
-   * for the code. The person gets one text asking them to reply YES; nothing else until they do.
+   * for the code. The person gets one text asking them to reply YES; nothing else until they do. For
+   * the host (owner) with no phone given, their confirmed number on file is used, named by its last
+   * four, so they never type it.
    */
   async addStanding(input: { name?: unknown; phone?: unknown; role?: unknown; confirmation?: unknown }): Promise<LockReply> {
     if (!this.available()) return fail(LOCKS_OFF);
     const door = this.door();
     if (!door.connected()) return fail("Standing codes need connected locks here first.");
     const name = typeof input.name === "string" ? input.name.trim() : "";
-    const phone = typeof input.phone === "string" ? normalizePhone(input.phone) : undefined;
     const role: StandingRole | undefined = input.role === "owner" || input.role === "co-owner" || input.role === "co-host" ? input.role : undefined;
     if (!name || name.length > 60 || /\d{4,}/.test(name)) return fail("Give the person's name, with no numbers in it.");
-    if (!phone) return fail("Give their mobile number with its country code, like +1 555 555 0142.");
     if (!role) return fail("Say who they are: owner (the host), co-owner, or co-host.");
+    const typed = typeof input.phone === "string" && input.phone.trim() !== "";
+    let phone = typed ? normalizePhone(input.phone as string) : undefined;
+    if (typed && !phone) return fail("That isn't a mobile number I can use. Ask for it with its country code, like +1 555 555 0142.");
+    const onFile = role === "owner" ? await this.deps.hostPhone?.() : undefined;
+    if (!phone) {
+      if (role !== "owner") return fail(`Ask the host for ${name}'s mobile number, with its country code.`);
+      if (!onFile) return fail("I don't have the host's confirmed mobile on file for this property. Ask them for the number to use, and pass it as phone.");
+      phone = onFile;
+    }
+    const own = role === "owner" && phone === onFile;
     const file = door.locks();
-    if (this.standing(file).some((person) => person.phone === phone)) return fail(`${name} already has a standing code here.`);
-    const gate = this.confirm("locks-standing", JSON.stringify([name, phone, role]), typeof input.confirmation === "string" ? input.confirmation : undefined, `Give ${name} their own standing door code at ${this.street()}? They get one text asking them to reply YES first.`);
+    if (this.standing(file).some((person) => person.phone === phone)) return fail(own ? "The host already has a standing code here. get_locks shows where it is." : `${name} already has a standing code here.`);
+    const question = own
+      ? `Give you your own standing door code at ${this.street()}, on your number ending ${phone.slice(-4)}? You get one text there asking you to reply YES first.`
+      : `Give ${name} their own standing door code at ${this.street()}? They get one text asking them to reply YES first.`;
+    const gate = this.confirm("locks-standing", JSON.stringify([name, phone, role]), typeof input.confirmation === "string" ? input.confirmation : undefined, question);
     if (gate !== "go") return gate;
     const person: StandingPerson = { id: `std_${letters(10)}`, name, phone, role, addedAt: this.deps.now().toISOString() };
-    const all = [...this.allStanding(file), person];
-    this.saveStanding(file, all);
-    const invited = await this.invite(person);
-    return ok({ id: person.id, invited, next: invited ? `${name} got one text asking them to reply YES. Their code link goes once they do.` : `${name} can't be texted yet (the host's phone isn't confirmed, or they opted out). Their code waits.` });
+    this.saveStanding(file, [...this.allStanding(file), person]);
+    const result = await this.invite(person.id);
+    return ok({ id: person.id, invited: result === "sent", ...(result === "sent" ? {} : { waiting: result }), next: inviteNext(result, own ? "the host" : name) });
   }
 
-  /** The one opt-in text. Never twice, never to a STOP. */
-  private async invite(person: StandingPerson): Promise<boolean> {
-    if (person.invitedAt || this.deps.stopped(person.phone) || !(await this.deps.textsAllowed())) return false;
-    const file = this.door().locks();
-    const all = this.allStanding(file);
-    const mine = all.find((item) => item.id === person.id);
-    if (!mine) return false;
-    mine.invitedAt = this.deps.now().toISOString();
-    this.saveStanding(file, all);
+  /** The one opt-in text. Never twice (unless the host asks again), never to a STOP. Marked sent only once it went. */
+  private readonly inviting = new Set<string>();
+
+  private async invite(id: string, again = false): Promise<InviteResult> {
+    if (this.inviting.has(id)) return "already";
+    this.inviting.add(id);
     try {
-      return await this.deps.send(person.phone, `This is the text line for ${this.street()}. The host wants to give you your own door code there. Reply YES to get a private link to it, or STOP to opt out.`);
+      const person = this.allStanding(this.door().locks()).find((item) => item.id === id);
+      if (!person || person.removedAt || person.yesAt || (person.invitedAt && !again)) return "already";
+      if (person.stoppedAt || this.deps.stopped(person.phone)) return "opted-out";
+      if (!(await this.deps.textsAllowed())) return "texts-off";
+      let sent = false;
+      try {
+        sent = await this.deps.send(person.phone, `This is the text line for ${this.street()}. The host wants to give you your own door code there. Reply YES to get a private link to it, or STOP to opt out.`);
+      } catch {
+        sent = false;
+      }
+      const file = this.door().locks();
+      const all = this.allStanding(file);
+      const mine = all.find((item) => item.id === id);
+      if (mine) {
+        const at = this.deps.now().toISOString();
+        if (sent) {
+          mine.invitedAt ??= at;
+          if (again) mine.reinvitedAt = at;
+          delete mine.inviteTriedAt;
+          delete mine.inviteTries;
+        } else {
+          mine.inviteTriedAt = at;
+          mine.inviteTries = (mine.inviteTries ?? 0) + 1;
+        }
+        this.saveStanding(file, all);
+      }
+      return sent ? "sent" : "send-failed";
+    } finally {
+      this.inviting.delete(id);
+    }
+  }
+
+  /**
+   * The clock pass for standing codes: an invite that couldn't go yet (texts not on, or a send that
+   * failed) goes once it can, so nobody removes and remakes a code; and each code after its YES is
+   * kept on the locks, a door that refused it tried again. Notes go to the host once each.
+   */
+  async standingClock(): Promise<GrantNote[]> {
+    if (!this.available()) return [];
+    const now = this.deps.now().getTime();
+    const notes: GrantNote[] = [];
+    for (const person of this.standing(this.door().locks())) {
+      if (person.invitedAt || person.yesAt || person.stoppedAt) continue;
+      if ((person.inviteTries ?? 0) >= INVITE_TRIES) continue;
+      if (person.inviteTriedAt && now - Date.parse(person.inviteTriedAt) < INVITE_RETRY_MS) continue;
+      const result = await this.invite(person.id);
+      const after = this.standing(this.door().locks()).find((item) => item.id === person.id);
+      if (result === "send-failed" && (after?.inviteTries ?? 0) >= INVITE_TRIES) {
+        notes.push({ id: `lock:standing-invite:${person.id}`, text: `The text asking ${person.name} to reply YES for their standing code couldn't go out after several tries. Check the number with the host; standing_code_link tries once more.` });
+      }
+    }
+    if (this.standing(this.door().locks()).some((person) => person.yesAt && !person.stoppedAt)) notes.push(...(await this.syncStanding(false)));
+    await this.tellHost(notes);
+    return notes;
+  }
+
+  private async tellHost(notes: readonly GrantNote[] | undefined): Promise<void> {
+    if (!notes || notes.length === 0 || !this.deps.tell) return;
+    try {
+      await this.deps.tell([...notes]);
     } catch {
-      return false;
+      // The note waits for the next pass: the grant keeps its state.
     }
   }
 
@@ -343,13 +427,19 @@ export class LockDesk {
     return true;
   }
 
-  /** The standing codes on the locks: each named person after their YES, not stopped or removed. */
-  async syncStanding(): Promise<GrantNote[]> {
+  private wantedStanding(person: StandingPerson) {
+    return { jobId: person.id, person: person.phone, label: person.name, who: person.role === "owner" ? ({ role: "host" } as const) : ({ role: "shared" } as const), window: standingWindow(person) };
+  }
+
+  /** The standing codes on the locks: each named person after their YES, not stopped or removed. A note for the host goes on (once each) unless the caller tells it. */
+  async syncStanding(tell = true): Promise<GrantNote[]> {
     const door = this.door();
     const wanted = this.standing(door.locks())
       .filter((person) => person.yesAt && !person.stoppedAt)
-      .map((person) => ({ jobId: person.id, person: person.phone, label: person.name, who: person.role === "owner" ? ({ role: "host" } as const) : ({ role: "shared" } as const), window: { from: person.yesAt!, until: new Date(Date.parse(person.yesAt!) + STANDING_YEARS * 365 * 24 * 3600_000).toISOString() } }));
-    return door.syncGrants("standing", wanted);
+      .map((person) => this.wantedStanding(person));
+    const notes = await door.syncGrants("standing", wanted);
+    if (tell) await this.tellHost(notes);
+    return notes;
   }
 
   /** Texts a new single-use link, after the person's YES. The link holds a letters-only token, never the code. */
@@ -370,13 +460,26 @@ export class LockDesk {
     }
   }
 
-  /** A new page link for a standing code, with the host's yes. Only after the person's own YES. */
+  /**
+   * A new page link for a standing code, with the host's yes, only after the person's own YES. Before
+   * their YES it sends the invite again instead (at most once an hour), so a code whose invite never
+   * arrived needs no remove and remake.
+   */
   async newLink(input: { id?: unknown; confirmation?: unknown }): Promise<LockReply> {
     if (!this.available()) return fail(LOCKS_OFF);
     const person = this.standing(this.door().locks()).find((item) => item.id === input.id);
     if (!person) return fail("No standing code with that id. Call get_locks.");
-    if (!person.yesAt || person.stoppedAt) return fail(`${person.name} hasn't replied YES, so no link can go yet.`);
-    const gate = this.confirm("locks-standing-link", person.id, typeof input.confirmation === "string" ? input.confirmation : undefined, `Text ${person.name} a new private link to their door code?`);
+    if (person.stoppedAt || this.deps.stopped(person.phone)) return fail(`${person.name} opted out of texts from this line (they replied STOP). Only their own START by text turns that back on. ${NO_CONSENT_TOOL}`);
+    const confirmation = typeof input.confirmation === "string" ? input.confirmation : undefined;
+    if (!person.yesAt) {
+      const last = person.reinvitedAt ? Date.parse(person.reinvitedAt) : 0;
+      if (this.deps.now().getTime() - last < 3600_000) return fail(`The invite went to ${person.name} again within the hour. Give it time; they reply YES to it.`);
+      const gate = this.confirm("locks-standing-invite", person.id, confirmation, `Text ${person.name} the invite again, asking them to reply YES for their door code?`);
+      if (gate !== "go") return gate;
+      const result = await this.invite(person.id, true);
+      return result === "sent" ? ok({ sent: true, next: `${person.name} got the invite again. Their code link goes once they reply YES.` }) : ok({ sent: false, waiting: result, next: inviteNext(result, person.name) });
+    }
+    const gate = this.confirm("locks-standing-link", person.id, confirmation, `Text ${person.name} a new private link to their door code?`);
     if (gate !== "go") return gate;
     const sent = await this.sendLink(person.id);
     return sent ? ok({ sent: true, next: `${person.name} got a new link. The old one no longer works.` }) : fail(`The link couldn't go to ${person.name} now.`);
@@ -412,21 +515,51 @@ export class LockDesk {
   }
 
   /**
-   * The page's "show my code": the person's code, once. The link is used up when it's shown. Undefined
-   * when the link is used, expired or wrong, or the code isn't on the locks. The caller never logs it.
+   * The page's "show my code": the person's code, once. The link is used up only when the code is
+   * shown. While the code is still going on the lock the link keeps working ("pending"); a lock that
+   * refused it is "failed", and the host hears it once. The caller never logs the code.
    */
-  async showCode(token: string): Promise<{ code: string; doors?: { door: string; code: string }[] } | undefined> {
+  async showCode(token: string): Promise<CodeShown> {
     const person = this.byToken(token);
-    if (!person) return undefined;
+    if (!person) return { ok: false, reason: "gone" };
     const door = this.door();
-    const file = door.locks();
+    let state = await door.checkGrant("standing", person.id);
+    if (state === "none" || state === "failed") {
+      // Nothing on the lock yet, or a door that didn't take it (the YES-time try didn't reach it): try now, and the page says to wait.
+      await this.syncStanding();
+      state = await door.checkGrant("standing", person.id);
+    }
+    if (state === "failed") {
+      await this.tellHost([issueFailedNote("standing", this.wantedStanding(person))]);
+      return { ok: false, reason: "failed" };
+    }
+    if (state !== "set") return { ok: false, reason: "pending" };
+    // Claimed before the release, so two taps can't both show it; given back when nothing shows.
+    if (!this.useLink(person.id, token, true)) return { ok: false, reason: "gone" };
+    const grant = await door.request({ person: person.phone, window: standingWindow(person), purpose: "standing", jobId: person.id, label: person.name });
+    await this.tellHost(grant.notes);
+    if (!grant.ok) {
+      this.useLink(person.id, token, false);
+      return { ok: false, reason: "failed" };
+    }
+    return { ok: true, code: grant.code, ...(grant.doors ? { doors: grant.doors } : {}) };
+  }
+
+  /** Marks the link used (or gives it back). False when it was used in the meantime. */
+  private useLink(id: string, token: string, use: boolean): boolean {
+    const file = this.door().locks();
     const all = this.allStanding(file);
-    const mine = all.find((item) => item.id === person.id)!;
-    mine.link = { ...mine.link!, usedAt: this.deps.now().toISOString() };
+    const mine = all.find((item) => item.id === id);
+    if (!mine?.link || !sameHash(hashOf(token), mine.link.hash)) return false;
+    if (use) {
+      if (mine.link.usedAt) return false;
+      mine.link = { ...mine.link, usedAt: this.deps.now().toISOString() };
+    } else {
+      const { usedAt: _given, ...rest } = mine.link;
+      mine.link = rest;
+    }
     this.saveStanding(file, all);
-    const grant = await door.request({ person: person.phone, window: { from: person.yesAt!, until: new Date(Date.parse(person.yesAt!) + STANDING_YEARS * 365 * 24 * 3600_000).toISOString() }, purpose: "standing", jobId: person.id, label: person.name });
-    if (!grant.ok) return undefined;
-    return { code: grant.code, ...(grant.doors ? { doors: grant.doors } : {}) };
+    return true;
   }
 
   /** The owners' standing codes, for the hours log: the grant ids whose unlocks are the host's own. */
@@ -445,9 +578,31 @@ export function normalizePhone(raw: string): string | undefined {
   return undefined;
 }
 
+/** Where a standing code is on the locks, from the kept statuses: set, programming, failed, or none yet. */
+function standingOnLock(door: DoorAccess, id: string): "set" | "programming" | "failed" | "none" {
+  const grant = door.grants().live("standing", id);
+  if (!grant || grant.doors.length === 0) return "none";
+  if (grant.doors.some((item) => item.status === "failed" || item.status === "removed")) return "failed";
+  return grant.doors.every((item) => item.status === "set" || item.status === "backup") ? "set" : "programming";
+}
+
+/** A standing code's window: from the person's YES, with no end the lock needs to know about. */
+function standingWindow(person: StandingPerson): { from: string; until: string } {
+  return { from: person.yesAt!, until: new Date(Date.parse(person.yesAt!) + STANDING_YEARS * 365 * 24 * 3600_000).toISOString() };
+}
+
+/** What the agent tells the host about an invite, by why it did or didn't go. */
+function inviteNext(result: InviteResult, name: string): string {
+  if (result === "sent") return `${name.charAt(0).toUpperCase()}${name.slice(1)} got one text asking them to reply YES. Their code link goes once they do.`;
+  if (result === "opted-out") return `${name} opted out of texts from this line (they replied STOP), so no invite went. Only their own START by text turns that back on. ${NO_CONSENT_TOOL}`;
+  if (result === "texts-off") return `No invite went yet: this property's texts wait until the host's own phone is confirmed for this account. The invite goes on its own once it is. ${NO_CONSENT_TOOL}`;
+  if (result === "send-failed") return `The invite text to ${name} didn't go out just now. I'll try again on my own in a few minutes, and tell you if it still can't go. ${NO_CONSENT_TOOL}`;
+  return `The invite to ${name} already went. They reply YES to it.`;
+}
+
 function standingStatus(person: StandingPerson, now: Date): string {
   if (person.stoppedAt) return "opted-out";
-  if (!person.invitedAt) return "not-texted";
+  if (!person.invitedAt) return person.inviteTriedAt ? "invite-not-sent-yet" : "not-texted";
   if (!person.yesAt) return "waiting-for-yes";
   if (person.link?.usedAt) return "code-seen";
   if (person.link && now.getTime() >= Date.parse(person.link.expiresAt)) return "link-expired";
