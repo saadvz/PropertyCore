@@ -204,6 +204,7 @@ export function visitCodeDesk(h: HostedCleaner, tenant: Tenant, property: Proper
     // The body is never logged or kept: sendLiveSms hands it to Twilio and keeps only the message id.
     send: async (to, body) => (await sendLiveSms(propertyContext(h, fresh().account, fresh().property).env(), { to, body })) !== undefined,
     optedInHere: (phone) => optedInOnProperty(h, fresh().account, fresh().property, phone),
+    hostPhone: async () => (await cleaningDesk(h, fresh().account, fresh().property)?.confirmedHostPhone()) ?? undefined,
   });
   visitDesks.set(root, desk);
   return desk;

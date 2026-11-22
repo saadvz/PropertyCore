@@ -217,12 +217,14 @@ export async function handleLineText(h: HostedCleaner, r: HostedRequest, tenant:
     return r.send(200, "text/xml", EMPTY_TWIML);
   }
   // Someone the host expects, given their own visit code (#280 17): their YES gets the code before the visit. Nothing else is taken here.
-  if (await visitorLineText(h, tenant, from, text)) {
+  const visitor = await visitorLineText(h, tenant, from, text);
+  // A pro, and nothing else on the account, texts Fixer Core: their DONE, a price, photos, or YES and STOP.
+  const pros = proRoute(tenant, people, from);
+  // A visitor who is also a pro on the account: one YES answers both invites, so the pro route hears it too.
+  if (visitor && !pros) {
     h.registry.touch(tenant.id);
     return r.send(200, "text/xml", EMPTY_TWIML);
   }
-  // A pro, and nothing else on the account, texts Fixer Core: their DONE, a price, photos, or YES and STOP.
-  const pros = proRoute(tenant, people, from);
   if (pros) {
     h.registry.touch(tenant.id);
     await fixerProText(h, tenant, pros, { id: fields.MessageSid ?? "", from, text, media: mediaOf(fields) });
