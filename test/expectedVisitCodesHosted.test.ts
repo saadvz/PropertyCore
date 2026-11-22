@@ -8,6 +8,7 @@ import { FakeLockAdapter } from "../src/locks/fake";
 import { setLockAdapter } from "../src/locks/registry";
 import { emptyLocks, storedDevice } from "../src/locks/settings";
 import { readOversight, writeOversight } from "../src/oversight/store";
+import { accountPeople } from "../src/hosted/sharedPeople";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 import { FAKE_LOCK_CREDENTIALS, switchOn } from "./featureEnv";
@@ -102,5 +103,19 @@ describe("visit codes on the shared service (#280 17)", () => {
     const asked = oversightCall(m.hosted(), a.tenant, a.property, "add_expected_visit", { who: "Mike Doyle", date: "2026-11-19", from: "12:00", to: "17:00", phone: MIKE });
     expect(asked.isError).toBe(false);
     expect(asked.text).toContain("with their own door code?");
+  });
+
+  it("one YES on the line answers both a visit invite and a Fixer invite on another property of the account", async () => {
+    const { m, a } = await world();
+    invited(a.root);
+    const annex = m.registry.addProperty(a.tenant.id, "Lane annex");
+    m.registry.setFlow(a.tenant.id, annex.id, "fixer", true);
+    const people = await accountPeople(m.hosted(), m.registry.get(a.tenant.id)!);
+    people.saveRolePeople(annex.id, "pro", [{ phone: MIKE, name: "Mike Doyle" }]);
+    expect(people.optedIn(MIKE)).toBe(false);
+    const res = await m.text("+15555550150", MIKE, "YES", "SMvisitpro01");
+    expect(res.status).toBe(200);
+    expect(readOversight(a.root).visitors![0]!.yesAt).toBeDefined();
+    expect((await accountPeople(m.hosted(), m.registry.get(a.tenant.id)!)).optedIn(MIKE)).toBe(true);
   });
 });

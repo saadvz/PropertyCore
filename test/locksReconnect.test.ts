@@ -171,6 +171,19 @@ describe("a stuck reconnect (#280 22)", () => {
     expect(door.locks().rehomeNeeded).toBeUndefined();
   });
 
+  it("picking the new doors pairs each old door with the new one of the same name, whatever order they're picked in", async () => {
+    const { desk, fake, door } = deskWorld();
+    await door.syncGrants("cleaning", [{ jobId: "job-1", person: "+15555550101", window: WINDOW, label: "Maria" }]);
+    const front = fake.liveCodes("dev-front").map((code) => code.code);
+    const back = fake.addDevice("acct-1", { id: "dev-back", name: "Back door" });
+    door.saveLocks({ ...door.locks(), devices: [...door.locks().devices, storedDevice(back)], doors: ["dev-front", "dev-back"] });
+    fake.replaceDevice("dev-front", "dev-8");
+    fake.replaceDevice("dev-back", "dev-7");
+    await approved((confirmation) => desk.saveLocks({ doors: ["dev-7", "dev-8"], ...(confirmation ? { confirmation } : {}) }));
+    expect(fake.liveCodes("dev-8").map((code) => code.code)).toEqual(front);
+    expect(fake.liveCodes("dev-7")).toEqual([]);
+  });
+
   it("picking a different number of doors takes the old codes off, for their flows to make again", async () => {
     const { desk, fake, door } = deskWorld();
     await door.syncGrants("cleaning", [{ jobId: "job-1", person: "+15555550101", window: WINDOW, label: "Maria" }]);

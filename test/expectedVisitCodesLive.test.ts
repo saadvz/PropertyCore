@@ -32,7 +32,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function world(options: { textsAllowed?: boolean; sendWorks?: boolean; optedIn?: string[] } = {}) {
+function world(options: { textsAllowed?: boolean; sendWorks?: boolean; optedIn?: string[]; confirmedHost?: string } = {}) {
   const root = mkdtempSync(join(tmpdir(), "visit-live-"));
   roots.push(root);
   let clock = new Date(NOW);
@@ -46,18 +46,20 @@ function world(options: { textsAllowed?: boolean; sendWorks?: boolean; optedIn?:
   door.saveLocks({ ...emptyLocks(), customerKey: "acct", devices: [storedDevice({ id: "dev-front", accountId: "acct-acct", name: "Front door", kind: "lock", online: true })], doors: ["dev-front"], activeAt: NOW.toISOString() });
   const sent: { to: string; body: string }[] = [];
   const stopped = new Set<string>();
-  const state = { textsAllowed: options.textsAllowed ?? true, sendWorks: options.sendWorks ?? true };
+  const state = { textsAllowed: options.textsAllowed ?? true, sendWorks: options.sendWorks ?? true, sendThrows: false };
   const codes = new VisitCodeDesk(root, {
     now: () => clock,
     door: () => door,
     textsAllowed: async () => state.textsAllowed,
     stopped: (phone) => stopped.has(phone),
     send: async (to, body) => {
+      if (state.sendThrows) throw new Error("timed out");
       if (!state.sendWorks) return false;
       sent.push({ to, body });
       return true;
     },
     optedInHere: (phone) => (options.optedIn ?? []).includes(phone),
+    ...(options.confirmedHost ? { hostPhone: async () => options.confirmedHost } : {}),
   });
   const visits = new OversightDesk(root, { now: () => clock, codes: () => true, hostPhone: () => HOST, codeStatus: (visit) => codes.codeStatus(visit) });
   const told: GrantNote[] = [];
@@ -128,14 +130,29 @@ describe("the visitor's own door code (#280 17)", () => {
     await w.codes.visitorText(MIKE, "YES");
     w.at(ny("11:45"));
     // The send dies after the mark was saved: whether it went is unknown, so it's never sent again.
-    w.state.sendWorks = false;
+    w.state.sendThrows = true;
     const first = await w.tick();
     expect(first.map((note) => note.text)).toContain("I'm not sure Mike Doyle's code text went out. Check with them before their visit.");
-    w.state.sendWorks = true;
+    w.state.sendThrows = false;
     const fresh = new VisitCodeDesk(w.root, { now: () => ny("11:50"), door: () => w.door, textsAllowed: async () => true, stopped: () => false, send: async (to, body) => (w.sent.push({ to, body }), true), optedInHere: () => false });
     const again = await fresh.sync();
     expect(w.sent.filter((text) => text.body.startsWith("Hi Mike"))).toEqual([]);
     expect(again.filter((note) => note.id.includes(":unsure:"))).toEqual([]);
+  });
+
+  it("a code text that definitely didn't go is told as not sent, once, and never as unsure", async () => {
+    const w = world();
+    addMike(w);
+    await w.tick();
+    await w.codes.visitorText(MIKE, "YES");
+    w.at(ny("11:45"));
+    w.state.sendWorks = false;
+    await w.tick();
+    await w.tick();
+    const texts = w.told.map((note) => note.text);
+    expect(texts.filter((text) => text === "Mike Doyle's code text couldn't go out, so they don't have their door code. Let them in another way.")).toHaveLength(1);
+    expect(texts.some((text) => text.startsWith("I'm not sure"))).toBe(false);
+    expect(w.visits.listVisits().structured?.open).toEqual([expect.objectContaining({ code: "not-sent" })]);
   });
 
   it("STOP takes the code off", async () => {
@@ -149,6 +166,54 @@ describe("the visitor's own door code (#280 17)", () => {
     w.at(ny("11:45"));
     await w.tick();
     expect(w.sent).toHaveLength(1);
+  });
+
+  it("START after STOP puts the visitor back, and their code comes back on", async () => {
+    const w = world();
+    addMike(w);
+    await w.tick();
+    await w.codes.visitorText(MIKE, "YES");
+    await w.codes.visitorText(MIKE, "STOP");
+    w.stopped.add(MIKE);
+    expect(w.codes.hasVisitor(MIKE)).toBe(true);
+    // Left for the line's own START handling too, so the account-wide opt-out is lifted.
+    expect(await w.codes.visitorText(MIKE, "START")).toBe(false);
+    w.stopped.delete(MIKE);
+    await w.tick();
+    expect(w.fake.liveCodes("dev-front")).toHaveLength(1);
+    expect(readOversight(w.root).visitors?.[0]?.stoppedAt).toBeUndefined();
+  });
+
+  it("YES after STOP, before any YES, counts as their YES as well", async () => {
+    const w = world();
+    addMike(w);
+    await w.tick();
+    await w.codes.visitorText(MIKE, "STOP");
+    w.stopped.add(MIKE);
+    expect(await w.codes.visitorText(MIKE, "yes")).toBe(false);
+    w.stopped.delete(MIKE);
+    await w.tick();
+    expect(w.fake.liveCodes("dev-front")).toHaveLength(1);
+    expect(w.sent.filter((text) => text.body === INVITE)).toHaveLength(1);
+  });
+
+  it("a stopped visitor's other texts still do nothing", async () => {
+    const w = world();
+    addMike(w);
+    await w.tick();
+    await w.codes.visitorText(MIKE, "STOP");
+    expect(await w.codes.visitorText(MIKE, "hello")).toBe(false);
+    expect(readOversight(w.root).visitors?.[0]?.stoppedAt).toBeDefined();
+  });
+
+  it("the host's confirmed phone never gets a visitor's invite or code, even when the people list missed it", async () => {
+    const w = world({ confirmedHost: MIKE, optedIn: [] });
+    addMike(w);
+    await w.tick();
+    await w.tick();
+    expect(w.sent).toEqual([]);
+    expect(w.fake.liveCodes("dev-front")).toEqual([]);
+    expect(w.told.filter((note) => note.text === "Mike Doyle's number is your own confirmed number, so no visitor code goes to it. Ask for a standing code for yourself instead.")).toHaveLength(1);
   });
 
   it("a cancel takes the code off", async () => {
@@ -190,6 +255,24 @@ describe("the visitor's own door code (#280 17)", () => {
     await w.tick();
     expect(w.fake.liveCodes("dev-front")).toEqual([]);
     expect(w.told.filter((note) => note.text === "Mike Doyle's visit falls during a guest's stay, so they get no door code. You'll need to let them in.")).toHaveLength(1);
+  });
+
+  it("a visit cut short by a guest's check-in tells the host the code's shorter hours, once", async () => {
+    const w = world({ optedIn: [MIKE] });
+    const hub = JSON.parse(readFileSync(join(w.root, "hub.json"), "utf8")) as Record<string, unknown>;
+    writeFileSync(join(w.root, "hub.json"), JSON.stringify({ ...hub, stays: [{ checkIn: "2026-11-19", checkout: "2026-11-22", kind: "stay" }] }));
+    addMike(w);
+    await w.tick();
+    await w.tick();
+    expect(w.fake.liveCodes("dev-front")[0]!.window).toEqual({ from: ny("11:30").toISOString(), until: ny("15:00").toISOString() });
+    expect(w.told.filter((note) => note.text === "A guest's stay overlaps Mike Doyle's visit, so their door code works only from 11:30 AM to 3:00 PM.")).toHaveLength(1);
+  });
+
+  it("a visit the stays don't touch gets no shorter-hours note", async () => {
+    const w = world({ optedIn: [MIKE] });
+    addMike(w);
+    await w.tick();
+    expect(w.told.some((note) => note.text.includes("works only from"))).toBe(false);
   });
 
   it("a visitor's later visit needs no second invite", async () => {

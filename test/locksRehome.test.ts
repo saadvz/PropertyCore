@@ -121,6 +121,46 @@ describe("re-homing live codes", () => {
     expect(statuses.filter((status) => status === "set").length).toBe(3);
   });
 
+  it("doesn't say everyone's codes went back when the lock took none of them", async () => {
+    const { door, fake } = setup();
+    await issueAll(door);
+    fake.replaceDevice("dev-front", "dev-9");
+    fake.refuseValues("dev-9", 4);
+    const result = await door.rehome(await fake.devices({ customerKey: "acct-1" }));
+    expect(result.notes.map((note) => note.text)).toEqual([
+      "Your locks came back after the reconnect, but the Front door didn't take back the codes from before, so those visits get a backup code or your saved door code instead. Codes named Standing from before may still be on the lock: remove those in the lock's own app.",
+    ]);
+  });
+
+  it("says how many codes the lock didn't take back when it took some", async () => {
+    const { door, fake } = setup();
+    await issueAll(door);
+    fake.replaceDevice("dev-front", "dev-9");
+    fake.refuseValues("dev-9", 1);
+    const result = await door.rehome(await fake.devices({ customerKey: "acct-1" }));
+    expect(result.notes.map((note) => note.text)).toEqual([
+      "Your locks came back after the reconnect. Codes from before were put back on the Front door, except 1 the lock didn't take, which gets a backup code or your saved door code instead. Codes named Standing from before may still be on the lock: remove those in the lock's own app.",
+    ]);
+  });
+
+  it("leaves a code whose window is over where it was", async () => {
+    let clock = NOW;
+    const root = mkdtempSync(join(tmpdir(), "lock-rehome-"));
+    roots.push(root);
+    const fake = new FakeLockAdapter();
+    setLockAdapter(fake);
+    const device = fake.addDevice("acct-1", { id: "dev-front", name: "Front door" });
+    const door = hubFor(root, { now: () => clock }).doorAccess(() => ON);
+    door.useSleep(async () => undefined);
+    door.saveLocks({ ...emptyLocks(), customerKey: "acct-1", devices: [storedDevice(device)], doors: [device.id], activeAt: NOW.toISOString() });
+    await door.syncGrants("cleaning", [{ jobId: "job-1", person: "+15555550101", window: WINDOW, label: "Maria" }]);
+    clock = new Date(Date.parse(WINDOW.until) + 60 * 60_000);
+    fake.replaceDevice("dev-front", "dev-9");
+    const result = await door.rehome(await fake.devices({ customerKey: "acct-1" }));
+    expect(fake.liveCodes("dev-9")).toEqual([]);
+    expect(result.notes.map((note) => note.text)).toEqual(["Your locks came back after the reconnect."]);
+  });
+
   it("does nothing when every saved door is still there", async () => {
     const { door, fake } = setup();
     await issueAll(door);
