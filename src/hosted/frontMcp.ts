@@ -30,6 +30,7 @@ import { featureOn } from "../features/features";
 import { BOOKING_PLATFORMS_INSTRUCTION } from "../cleaner-core/bookingEmailDesk";
 import { FIXER_FRONT_NAMES, fixerCall, fixerDesk, fixerPhotos, fixerPreview, listedFixerFront, namesRepairJob, repairsLine } from "./fixer";
 import { taskWarning } from "./touringAlerts";
+import { isOfferId, nextOffer, OFFER_IDS } from "./featureOffers";
 import { callWorkerMcp, forwardMcp, type WorkerTarget } from "./touringForward";
 
 /**
@@ -185,7 +186,7 @@ async function propertiesAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tena
 
 /** Said on initialize before Cleaner Core's own instructions. */
 export const PROPERTY_INSTRUCTIONS =
-  "This connection runs Property Core for the host's properties: Cleaner Core for turnover cleanings, Supply Core for supplies, and Fixer Core for repairs. Call get_state first. When the account has more than one property, name the property in every property tool call with its id from get_state. Use set_flows to turn Cleaner Core, Supply Core or Fixer Core on or off for a property. The host runs everything from this chat.";
+  "This connection runs Property Core for the host's properties: Cleaner Core for turnover cleanings, Supply Core for supplies, and Fixer Core for repairs. Call get_state first. When the account has more than one property, name the property in every property tool call with its id from get_state. Use set_flows to turn Cleaner Core, Supply Core or Fixer Core on or off for a property. The host runs everything from this chat. Touring is parked: never offer the host tours.";
 
 async function propertyToolList(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller): Promise<Record<string, unknown>[]> {
   const required = tenant.properties.length > 1;
@@ -216,7 +217,12 @@ async function propertyToolList(h: HostedCleaner, r: HostedRequest, tenant: Tena
 
 async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller, sessionKey: string, name: string, args: unknown): Promise<FrontReply> {
   const noteToolsChanged = () => noteInitialized(sessionKey);
-  if (name === "get_state") return accountState(tenant, args, propertyStates(h, r, tenant, caller), caller.assistant);
+  if (name === "get_state") {
+    const answered = answerOffer(h, tenant, args);
+    if (answered.refusal) return { text: answered.refusal, isError: true };
+    const now = h.registry.get(tenant.id) ?? tenant;
+    return accountState(now, answered.args, propertyStates(h, r, now, caller), caller.assistant);
+  }
   if (name === "add_property") {
     const reply = addProperty(h, tenant, args);
     if (!reply.isError) noteToolsChanged();
@@ -387,16 +393,18 @@ function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, call
     const reply = await withDraftPeople(h, tenant, property, desk);
     // Cleaner Core's get_state carries one Supply Core line while Supply Core is on for the property.
     const line = !reply.isError && reply.structured ? suppliesLine(h, tenant, property) : undefined;
-    return withLocks(property, withRepairs(property, line && reply.structured ? withField(reply, "supplies", line) : reply));
+    return withOffers(property, withLocks(property, withRepairs(property, line && reply.structured ? withField(reply, "supplies", line) : reply)));
   };
   // With connected locks on the service, Cleaner Core's and Fixer Core's get_state carry the property's lock status, never a code.
   const withLocks = (property: Property, reply: FrontReply): FrontReply => {
     if (reply.isError || !reply.structured || listedLockFront(h, tenant).length === 0) return reply;
     const status = lockDesk(h, tenant, property).status().structured;
     if (!status) return reply;
+    // A host who answered the locks offer isn't asked again here.
+    const asked = (property.offersAnswered ?? []).includes("locks");
     const summary = status.connected
       ? { connected: true, devices: status.devices, problems: status.problems }
-      : { connected: false, next: "Ask the host whether they have a smart lock that works with an app. connect_lock connects it, so each cleaner and pro gets their own code." };
+      : { connected: false, ...(asked ? {} : { next: "Ask the host whether they have a smart lock that works with an app. connect_lock connects it, so each cleaner and pro gets their own code." }) };
     return withField(reply, "locks", summary);
   };
   // Cleaner Core's and Supply Core's get_state carry one Fixer Core line while Fixer Core is on for the property.
@@ -404,8 +412,26 @@ function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, call
     const line = !reply.isError && reply.structured ? repairsLine(h, tenant, property, caller.assistant) : undefined;
     return line ? withField(reply, "repairs", line) : reply;
   };
-  const supplies = async (property: Property): Promise<FrontReply> => withRepairs(property, supplyReplyFor(caller.assistant, "get_supply_state", await supplyDesk(h, tenant, property).state()));
-  const fixer = async (property: Property): Promise<FrontReply> => withLocks(property, await fixerDesk(h, tenant, property).state());
+  // Once the property's core setup is done, get_state offers the next feature that's on for the account and fits here.
+  const withOffers = (property: Property, reply: FrontReply): FrontReply => {
+    const s = reply.structured;
+    if (reply.isError || !s || s.ask || s.draft) return reply;
+    // Cleaner Core is live once its checks ran (get_state then lists turns); Supply and Fixer Core once activated.
+    if (property.flows.cleaning.on && !("turns" in s)) return reply;
+    if ([s.supplies, s.repairs].some((line) => typeof line === "string" && line.endsWith("setup not finished."))) return reply;
+    const offer = nextOffer(
+      {
+        listed: listedFeatureTools(h, tenant),
+        lockConnected: listedLockFront(h, tenant).length > 0 && lockDesk(h, tenant, property).status().structured?.connected === true,
+        supplies: property.flows.supplies.on,
+        answered: property.offersAnswered ?? [],
+      },
+      caller.assistant,
+    );
+    return offer ? withField(reply, "offer", offer) : reply;
+  };
+  const supplies = async (property: Property): Promise<FrontReply> => withOffers(property, withRepairs(property, supplyReplyFor(caller.assistant, "get_supply_state", await supplyDesk(h, tenant, property).state())));
+  const fixer = async (property: Property): Promise<FrontReply> => withOffers(property, withLocks(property, await fixerDesk(h, tenant, property).state()));
   return {
     cleaning,
     supplies,
@@ -424,6 +450,34 @@ function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, call
       return typeof ask?.step === "string" ? ask.step : undefined;
     },
   };
+}
+
+/** The names of every feature tool listed for the account now: what get_state's offers are worked out from. */
+function listedFeatureTools(h: HostedCleaner, tenant: Tenant): Set<string> {
+  const listed = [
+    ...listedHoursFront(h, tenant),
+    ...listedStayCheckFront(h, tenant),
+    ...listedOversightFront(h, tenant),
+    ...listedVisitsFront(h, tenant),
+    ...listedPackageFront(h, tenant),
+    ...listedGuestFront(h, tenant),
+    ...listedLockFront(h, tenant),
+  ];
+  return new Set(listed.map((tool) => String(tool.name)));
+}
+
+/**
+ * get_state's offered: the host answered that feature offer (yes or skip) on the property, so it isn't made again.
+ * Returns the arguments without it, for the property's own get_state.
+ */
+function answerOffer(h: HostedCleaner, tenant: Tenant, args: unknown): { args: unknown; refusal?: string } {
+  if (!args || typeof args !== "object" || !("offered" in args)) return { args };
+  const { offered, ...rest } = args as Record<string, unknown>;
+  if (!isOfferId(offered)) return { args: rest, refusal: `offered is one of ${OFFER_IDS.join(", ")}.` };
+  const resolved = resolveProperty(tenant, rest);
+  if ("refusal" in resolved) return { args: rest, refusal: resolved.refusal };
+  h.registry.noteOfferAnswered(tenant.id, resolved.property.id, offered);
+  return { args: rest };
 }
 
 /** A reply with one more field in its structured content and JSON text. */

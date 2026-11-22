@@ -27,7 +27,7 @@ import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, ME
 import { calendarUrlAllowed, type CalendarFetch } from "../hub/fetchLimits";
 import { setCalendarFetch } from "../hub/calendarFetch";
 import { waitingStays } from "../hub/bookingEmails";
-import { bookingEmailsLine, type BookingSource as EmailSource } from "../hub/bookingSources";
+import { bookingEmailsLine, platformLabel, type BookingSource as EmailSource } from "../hub/bookingSources";
 import { forgetHub, hubFor, resetHubs, type Hub, type HubSave, type UploadResult } from "../hub/hub";
 import type { HubProperty } from "../hub/store";
 import { DOOR_CODE_IN_CHAT, LEGACY_CALENDAR, MAX_CALENDARS, maskedLink, setAsideLine, type StoredCalendar } from "../hub/calendars";
@@ -623,6 +623,18 @@ function hourMinute(text: string | undefined): string | undefined {
 function minutesOfDay(hm: string): number {
   const [hour = 0, minute = 0] = hm.split(":").map(Number);
   return hour * 60 + minute;
+}
+
+/**
+ * The host's note when the cleaner declines a cleaning: who said no to which day, that nobody is booked for it,
+ * and, when the next guests are known, that whoever cleans has until they check in.
+ */
+export function declinedLine(name: string, job: Pick<JobView, "checkoutDate" | "nextCheckInAt">, timeZone: string): string {
+  const day = formatWhen(zonedInstant(job.checkoutDate, "12:00", timeZone), timeZone).day;
+  const said = `${name} said no to the ${day} cleaning, so nobody is booked for it yet.`;
+  if (!job.nextCheckInAt) return said;
+  const next = formatWhen(job.nextCheckInAt, timeZone);
+  return `${said} The next guests check in ${next.day} at ${next.time}, so whoever cleans has until then.`;
 }
 
 /** "HH:MM" as "10:30 AM". */
@@ -1317,6 +1329,7 @@ export class LiveDesk {
     const escalateTo = input.escalateTo === undefined ? saved.escalateTo : input.escalateTo.trim() || undefined;
     if (escalateTo && escalateTo.length > MAX_NAME) return this.fail(`Keep who hears about problems under ${MAX_NAME} characters.`);
     if (escalateTo && this.carriesCode(escalateTo)) return this.fail(DOOR_CODE_IN_CHAT);
+    const offerTimingChanged = Boolean(this.file.texting) && (saved.firstText !== firstText || saved.firstTextDays !== firstTextDays);
     this.file.schedule = {
       firstText,
       ...(firstTextDays !== undefined ? { firstTextDays } : {}),
@@ -1326,10 +1339,35 @@ export class LiveDesk {
       ...(quiet ? { quietFrom: quiet.from, quietUntil: quiet.until } : {}),
       ...(escalateTo ? { escalateTo } : {}),
     };
+    // On a live setup, read the open offer before the engine reopens with the new schedule.
+    const changed = offerTimingChanged ? this.offerTimingLine(firstText, firstTextDays) : undefined;
     this.persist();
     // The engine reads the schedule when it opens.
     this.stale = true;
-    return this.setupReply();
+    if (!changed) return this.setupReply();
+    return this.reply({ changed, next: `Tell the host plainly, in one or two short lines: "${changed}" Nothing else changed.` });
+  }
+
+  /**
+   * What a live change to the first text's timing means right now: when offers go from here on, and the offer
+   * the cleaner already has, if any. The cleaner gets one offer at a time, so the next goes once they answer.
+   */
+  private offerTimingLine(firstText: Schedule["firstText"], days: number | undefined): string {
+    const name = this.file.cleanerName ?? "The cleaner";
+    const plural = (n: number | undefined) => `${n} ${n === 1 ? "day" : "days"}`;
+    const when =
+      firstText === "when-confirmed"
+        ? "as soon as its times are confirmed"
+        : firstText === "days-after-check-in"
+          ? `${plural(days)} after the guests check in`
+          : `${plural(days)} before checkout`;
+    const done = `Done. Each cleaning offer now goes to ${name === "The cleaner" ? "the cleaner" : name} ${when}.`;
+    this.resume();
+    const open = this.engine?.jobs().find((job) => job.status === "offered");
+    if (!open) return `${done} The next one goes out at the next check.`;
+    const zone = this.place.timeZone ?? "UTC";
+    const day = formatWhen(zonedInstant(open.checkoutDate, "12:00", zone), zone).day;
+    return `${done} ${name} already has the offer for ${day}. The next one goes out as soon as ${name === "The cleaner" ? "they answer" : `${name} answers`} it.`;
   }
 
   saveCalendarLink(input: { url?: string; google?: boolean }, pinKey?: Buffer): Promise<ToolReply> {
@@ -3360,6 +3398,7 @@ export class LiveDesk {
       ...(media.length > 0 ? { media: media.length, photos } : {}),
     });
     this.noteCleanerYes(engine, offered);
+    this.noteCleanerNo(engine, offered);
     this.noteSeen(input.id);
     // Every setup save runs in the queue, so this is only a guard: reopen from the saved store.
     if (this.engine !== engine) {
@@ -3469,6 +3508,17 @@ export class LiveDesk {
     for (const job of engine.jobs()) {
       if (!offered.has(job.id) || job.status !== "confirmed") continue;
       engine.keepHostNote(`cleaner-yes:${job.id}`, `The cleaner said YES to the turnover at ${this.place.address ?? "the property"}.`);
+    }
+  }
+
+  /**
+   * The cleaner said no to an offer: one note per job, in Cleaner Core's words, so the host hears that nobody is
+   * booked for it. The deadline belongs to whoever cleans, never to the cleaner who just said no.
+   */
+  private noteCleanerNo(engine: CleanerCore, offered: Set<string>): void {
+    for (const job of engine.jobs()) {
+      if (!offered.has(job.id) || job.status !== "declined") continue;
+      engine.keepHostNote(`cleaner-no:${job.id}`, declinedLine(this.file.cleanerName ?? "The cleaner", job, this.place.timeZone ?? "UTC"));
     }
   }
 
@@ -3762,7 +3812,7 @@ export class LiveDesk {
         ...(place.checkoutTime ? { checkoutTime: clockText(place.checkoutTime) } : {}),
         ...(place.checkInTime ? { checkInTime: clockText(place.checkInTime) } : {}),
       },
-      sources: { calendars: this.hub.calendars().map((calendar) => calendar.name), google: this.hub.google() },
+      sources: { calendars: this.hub.calendars().map((calendar) => calendar.name), google: this.hub.google(), ...this.reviewBookingEmails() },
       people: {
         host: { ...(file.hostName ? { name: file.hostName } : {}), ...last4(file.host) },
         cleaner: { ...(file.cleanerName ? { name: file.cleanerName } : {}), ...last4(file.cleaner) },
@@ -3774,6 +3824,25 @@ export class LiveDesk {
       access: this.door().lockLocation() ? { lockLocation: this.door().lockLocation() } : {},
       preferences: file.preferences,
       payments: this.reviewPayments(),
+    };
+  }
+
+  /**
+   * The booking emails for the review, with the account's booking platforms on (#263, #269): every platform the
+   * host saved, and the ones whose bookings wait for the host's yes (all but Airbnb), with the line the summary says.
+   */
+  private reviewBookingEmails(): { bookingEmails?: Record<string, unknown> } {
+    if (!this.bookingPlatformsOn()) return {};
+    const sources = this.hub.bookingSources();
+    const waitForYes = sources.filter((source) => source.platform !== "airbnb").map((source) => platformLabel(source));
+    const listed = waitForYes.length > 1 ? `${waitForYes.slice(0, -1).join(", ")} and ${waitForYes.at(-1)}` : waitForYes[0];
+    return {
+      bookingEmails: {
+        platforms: sources.map((source) => platformLabel(source)),
+        ...(waitForYes.length > 0
+          ? { waitForYes, tellHost: `Each booking from ${listed} waits for your yes in chat before it changes a cleaning.${sources.some((source) => source.platform === "airbnb") ? " Airbnb's are read as they come." : ""}` }
+          : {}),
+      },
     };
   }
 
