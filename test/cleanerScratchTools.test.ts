@@ -148,6 +148,7 @@ describe("Scratch test tools", () => {
       "run_checks",
       "check_now",
       "read_booking_email",
+      "move_cleaning",
       "save_arrival",
       "get_job_photos",
       "save_alert_routine",

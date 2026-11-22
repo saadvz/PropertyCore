@@ -22,6 +22,7 @@ import { cleanerMultiTenant, groupChatEnabled } from "./flag";
 import { deskFeatureOn } from "../features/features";
 import { visitLogFor } from "../visits/store";
 import { LATE_CHECKOUT_ACTION, setLateCheckout } from "./lateCheckout";
+import { MOVE_CLEANING_ACTION, moveCleaning } from "./moveCleaning";
 import { GROUP_RECIPIENT, draftStatus, earlierThan, replyStateAt, type ReplyState, type StoredDraft } from "./replies";
 import { publicBaseUrl } from "../messaging/publicUrl";
 import { CLEANER_PHOTO_PREFIX, cleanerPhotoFetch, downloadPhotos, dropPhotos, MESSAGE_PHOTO_KEEP_MS, messagePhotoId, photoCount, photoKey, photoLinks, prunePhotos, servePhoto, storePhotos, type InboundMedia } from "./photos";
@@ -483,6 +484,10 @@ interface LiveFile {
   hostKeyword?: "stop" | "start";
   seenInbound?: string[];
   conversationSid?: string;
+  /** The group conversation the host was told about ("scratch" in a Scratch run), so they hear it's set up once. */
+  groupNoted?: string;
+  /** A new group conversation Twilio made but couldn't confirm yet: the host hears about it on its first confirmed text. */
+  groupPending?: string;
   deliveries?: { id: string; status: DeliveryReport }[];
   localSends?: { id: string; to: string; kind: TextKind; status: DeliveryReport; body?: string }[];
 }
@@ -669,6 +674,12 @@ type JobView = ReturnType<CleanerCore["jobs"]>[number];
 /** A job has its times when it has a checkout time, and a next check-in time if a next stay is booked. */
 function hasTimes(job: JobView): boolean {
   return Boolean(job.checkoutTime && (job.nextCheckInTime || !job.nextCheckInDate));
+}
+
+/** mark_guests_left before a moved cleaning's start: the guests count as gone, and the code waits. */
+function movedCodeLine(name: string | undefined, moved: { day: string; time: string }): string {
+  const who = name?.trim() || "the cleaner";
+  return `Got it, the guests are gone. The cleaning was moved to ${moved.day} at ${moved.time}, so ${who} gets the door code then, not before.`;
 }
 
 /** A job that is called off, declined, started, or done: never timed again. */
@@ -1780,6 +1791,8 @@ export class LiveDesk {
       if (!this.door().connected()) return;
       const before = new Set(this.visibleNotes(engine).map((note) => note.id));
       await engine.checkoutRelease();
+      // A moved cleaning the host already cleared gets its code at its moved start (move_cleaning).
+      await engine.movedRelease();
       engine.pausedReminders();
       this.syncHold();
       this.queueNewAlerts(before);
@@ -2388,11 +2401,11 @@ export class LiveDesk {
     return this.reply({
       next:
         sent === "opt-in"
-          ? "Times saved. The cleaner got one text asking them to reply YES. Nothing else goes to them until they do."
+          ? `Times saved. The cleaner got one text asking them to reply YES. Nothing else goes to them until they do. ${this.replyPromise("the cleaner")}`
           : sent === "offer"
-            ? "Times saved. I sent the cleaner the cleaning offer. They reply YES to take it."
+            ? `Times saved. I sent the cleaner the cleaning offer. They reply YES to take it. ${this.replyPromise("the cleaner")}`
             : sent === "corrected"
-              ? "Times saved. I sent the cleaner the new time."
+              ? `Times saved. I sent the cleaner the new time. ${this.replyPromise("the cleaner")}`
               : held
                 ? UPDATE_HELD
                 : "Times saved. Nothing was sent.",
@@ -2428,9 +2441,9 @@ export class LiveDesk {
     return this.reply({
       next:
         sent === "opt-in"
-          ? `${saved} The cleaner got one text asking them to reply YES. Offers start after they do, one at a time.`
+          ? `${saved} The cleaner got one text asking them to reply YES. Offers start after they do, one at a time. ${this.replyPromise("the cleaner")}`
           : sent === "offer"
-            ? `${saved} I sent the cleaner the first cleaning offer. They reply YES to take it, and the next offer comes after.`
+            ? `${saved} I sent the cleaner the first cleaning offer. They reply YES to take it, and the next offer comes after. ${this.replyPromise("the cleaner")}`
             : `${saved} Nothing was sent yet. The cleaner gets one cleaning offer at a time, starting with the first.`,
       turns: this.turns(),
     });
@@ -2505,6 +2518,9 @@ export class LiveDesk {
     }
     if (heldLine) return this.reply({ next: heldLine });
     if (sentNow) return this.reply({ next: privateNow ? PIN_SENT : PIN_SENT_GROUP });
+    // A moved cleaning: the guests are cleared, and the code waits for the moved start (move_cleaning).
+    const waiting = this.engine.jobs().find((job) => job.movedTo && Date.parse(job.movedTo.at) > this.now().getTime() && (job.status === "confirmed" || job.status === "awaiting_departure"));
+    if (waiting?.movedTo) return this.reply({ next: movedCodeLine(this.file.cleanerName, waiting.movedTo) });
     return this.reply({ next: this.words().pinFailed });
   }
 
@@ -2714,6 +2730,45 @@ export class LiveDesk {
       this.persist();
       return answer.ok ? this.reply(answer.result) : this.fail(answer.error);
     });
+  }
+
+  /**
+   * Moves one cleaning to another day or time between its checkout and the next check-in, on the host's
+   * yes, and puts the cleaner back on it after a decline. Previews the change and the cleaner's text with
+   * a code first. See src/cleaner-core/moveCleaning.ts.
+   */
+  moveCleaning(input: { checkout?: string; date?: string; time?: string; confirmation?: string }, pinKey?: Buffer): Promise<ToolReply> {
+    return this.serial(async () => {
+      this.resume();
+      this.openSeal(pinKey);
+      if (this.file.choice !== "cleaners") return this.fail(PICK_FIRST);
+      const answer = await moveCleaning(
+        {
+          now: () => this.now(),
+          engine: () => (this.file.checked ? this.engine : undefined),
+          timeZone: () => this.place.timeZone,
+          address: () => this.place.address,
+          propertyLabel: () => this.place.nickname ?? this.place.address,
+          cleanerName: () => this.file.cleanerName,
+          replyPromise: (who) => this.replyPromise(who),
+          issueApproval: (target, fingerprint, next) => this.approvals.issue(MOVE_CLEANING_ACTION, target, fingerprint, next),
+          redeem: (code, target, fingerprint) => this.redeemed(this.approvals, code, MOVE_CLEANING_ACTION, target, fingerprint),
+        },
+        input,
+      );
+      this.syncHold();
+      this.persist();
+      return answer.ok ? this.reply({ ...answer.result, turns: this.turns() }) : this.fail(answer.error);
+    });
+  }
+
+  /**
+   * What Grok may promise the host about a cleaner's reply: a post here when a wake-up reaches the chat
+   * (a connected alert routine with no failing wake-up), else the next scheduled check.
+   */
+  private replyPromise(who: string): string {
+    const wakes = this.file.routineConnected && !this.polledTask(this.primaryAssistant()) && !this.wakeProblem();
+    return wakes ? `I'll post here when ${who} replies.` : `${who[0]!.toUpperCase()}${who.slice(1)}'s reply shows at the next scheduled check.`;
   }
 
   /**
@@ -3393,18 +3448,28 @@ export class LiveDesk {
       return { sent, handled: keyword === "stop" || keyword === "start" ? keyword : "none" };
     }
     const offered = new Set(engine.jobs().filter((job) => job.status === "offered").map((job) => job.id));
+    const cleanerBefore = this.file.cleaner ? engine.consentOf(this.file.cleaner) : undefined;
     const media = input.media ?? [];
     const photoJob = media.length > 0 ? engine.photoJobFor({ id: input.id, from }) : undefined;
     const photos = photoJob ? storePhotos(this.root, photoJob, downloads) : 0;
-    const result = await engine.receive({
-      id: input.id,
-      from,
-      text: input.text,
-      ...(input.channel ? { channel: input.channel } : {}),
-      ...(media.length > 0 ? { media: media.length, photos } : {}),
-    });
+    this.holdGroupNote = true;
+    let result: ReceiveResult;
+    try {
+      result = await engine.receive({
+        id: input.id,
+        from,
+        text: input.text,
+        ...(input.channel ? { channel: input.channel } : {}),
+        ...(media.length > 0 ? { media: media.length, photos } : {}),
+      });
+    } catch (err) {
+      this.flushGroupNote(engine);
+      throw err;
+    }
     this.noteCleanerYes(engine, offered);
     this.noteCleanerNo(engine, offered);
+    this.noteCleanerOptIn(engine, cleanerBefore, input.id);
+    this.flushGroupNote(engine);
     this.noteSeen(input.id);
     // Every setup save runs in the queue, so this is only a guard: reopen from the saved store.
     if (this.engine !== engine) {
@@ -3509,12 +3574,55 @@ export class LiveDesk {
   /** Recent texts from group members, kept in memory only, to drop a group reply's second copy. */
   private recentInbound: { from: string; words: string; media: number; group: boolean; at: number }[] = [];
 
-  /** The engine tells the host nothing when the cleaner accepts. One note per job, the first time it is confirmed. */
+  /**
+   * The engine tells the host nothing when the cleaner takes a cleaning. One note per offer the cleaner
+   * says YES to (a moved cleaning is a new offer), naming the cleaner and the day. A NO is noteCleanerNo's.
+   */
   private noteCleanerYes(engine: CleanerCore, offered: Set<string>): void {
+    const address = this.place.address ?? "the property";
+    const who = this.file.cleanerName?.trim() || "The cleaner";
     for (const job of engine.jobs()) {
-      if (!offered.has(job.id) || job.status !== "confirmed") continue;
-      engine.keepHostNote(`cleaner-yes:${job.id}`, `The cleaner said YES to the turnover at ${this.place.address ?? "the property"}.`);
+      if (!offered.has(job.id)) continue;
+      const round = job.movedTo ? `:m${job.movedTo.round}` : "";
+      const day = job.movedTo ? `${job.movedTo.day} at ${job.movedTo.time}` : this.checkoutDay(job.checkoutDate);
+      if (job.status === "confirmed" || job.status === "awaiting_departure") {
+        engine.keepHostNote(`cleaner-yes:${job.id}${round}`, `${who} said YES to the ${day} cleaning at ${address}.`);
+      }
     }
+  }
+
+  /** The cleaner's YES to cleaning texts: one note per opt-in, so the host hears it without asking. */
+  private noteCleanerOptIn(engine: CleanerCore, before: "pending" | "in" | "out" | undefined, inboundId: string): void {
+    if (before === "in" || !this.file.cleaner || engine.consentOf(this.file.cleaner) !== "in") return;
+    const who = this.file.cleanerName?.trim() || "The cleaner";
+    engine.keepHostNote(`cleaner-opt-in:${inboundId}`, `${who} said YES to cleaning texts for ${this.place.address ?? "the property"}.`);
+  }
+
+  /** While a text is read, the group note waits so it follows the opt-in note it came from. In memory only. */
+  private holdGroupNote = false;
+  private heldGroupNote: string | undefined;
+
+  /**
+   * The first text in the property's group: one note, so the host hears it's set up. A conversation
+   * Twilio makes again later (a member added or a restart) is the same group to the host: no second note.
+   */
+  private noteGroupMade(group: string): void {
+    if (this.file.groupNoted) return;
+    this.file.groupNoted = group;
+    delete this.file.groupPending;
+    if (this.holdGroupNote) this.heldGroupNote = group;
+    else this.engine?.keepHostNote(`group-made:${group}`, this.groupMadeLine());
+  }
+
+  private flushGroupNote(engine: CleanerCore): void {
+    this.holdGroupNote = false;
+    const group = this.heldGroupNote;
+    this.heldGroupNote = undefined;
+    if (group) engine.keepHostNote(`group-made:${group}`, this.groupMadeLine());
+  }
+
+  private groupMadeLine(): string {
+    return `The group text for ${this.place.address ?? "the property"} is set up.`;
   }
 
   /**
@@ -3522,9 +3630,15 @@ export class LiveDesk {
    * booked for it. The deadline belongs to whoever cleans, never to the cleaner who just said no.
    */
   private noteCleanerNo(engine: CleanerCore, offered: Set<string>): void {
+    const name = this.file.cleanerName?.trim() || "The cleaner";
     for (const job of engine.jobs()) {
       if (!offered.has(job.id) || job.status !== "declined") continue;
-      engine.keepHostNote(`cleaner-no:${job.id}`, declinedLine(this.file.cleanerName ?? "The cleaner", job, this.place.timeZone ?? "UTC"));
+      // A moved cleaning (move_cleaning) is a new offer: its NO is a new note, on its moved day.
+      const round = job.movedTo ? `:m${job.movedTo.round}` : "";
+      const line = declinedLine(name, job.movedTo ? { checkoutDate: job.movedTo.date, nextCheckInAt: job.nextCheckInAt } : job, this.place.timeZone ?? "UTC");
+      // With a next check-in, the cleaning can move to another time before it (finding #8).
+      const move = job.nextCheckInAt ? ` It can also move to another day or time before then, if ${name === "The cleaner" ? "the cleaner" : name} can do it.` : "";
+      engine.keepHostNote(`cleaner-no:${job.id}${round}`, `${line}${move}`);
     }
   }
 
@@ -3979,6 +4093,8 @@ export class LiveDesk {
       checkoutTime: job.checkoutTime,
       nextCheckInTime: job.nextCheckInTime,
       ...(job.arrivalTime ? { arrivalTime: job.arrivalTime } : {}),
+      // A cleaning the host moved (move_cleaning) starts here instead of at checkout.
+      ...(job.movedTo ? { movedTo: `${job.movedTo.day} at ${job.movedTo.time}` } : {}),
       status: job.status,
       ...(this.held ? { held: true } : {}),
     }));
@@ -4120,6 +4236,7 @@ export class LiveDesk {
           }
           if (!liveSmsOn(env())) {
             if (text.kind === "pin") this.noteAccepted("scratch-pin");
+            if (text.channel === "group") this.noteGroupMade("scratch");
             return;
           }
           const address = this.place.address;
@@ -4128,12 +4245,19 @@ export class LiveDesk {
           const inviteSms = text.kind === "opt-in";
           if (hostLine && text.kind !== "pin-failed" && !SAFETY.has(text.kind) && !holdSms && !readySms && !inviteSms) return;
           if (text.channel === "group" && text.audience && text.audience.length > 0) {
+            const had = this.file.conversationSid;
             try {
               const sent = await sendLiveGroup(env(), { audience: [...text.audience], body: this.labeled(text.to, text.body, true), conversationSid: this.file.conversationSid });
               if (sent?.conversationSid) this.file.conversationSid = sent.conversationSid;
+              // Only a group made from here on is news: one that was already running before is never announced.
+              const sid = this.file.conversationSid;
+              if (sid && (sid !== had || this.file.groupPending === sid)) this.noteGroupMade(sid);
               if (text.kind === "pin" && sent?.sid) this.noteAccepted(sent.sid);
             } catch (err) {
-              if (err instanceof GroupNotConfirmed && err.conversationSid) this.file.conversationSid = err.conversationSid;
+              if (err instanceof GroupNotConfirmed && err.conversationSid) {
+                if (err.conversationSid !== had) this.file.groupPending = err.conversationSid;
+                this.file.conversationSid = err.conversationSid;
+              }
               if (err instanceof GroupNotConfirmed && err.refused) {
                 const { phone, code, message } = err.refused;
                 console.warn(`  Cleaner Core: Twilio refused ${redactPhone(phone)} for the group text${code !== undefined ? ` (error ${code}${message ? `: ${message}` : ""})` : ""}.`);

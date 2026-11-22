@@ -146,9 +146,24 @@ export function reminderBody(address: string, when: { day: string; time: string 
     : `Reminder: checkout at ${address} is ${when.day} at ${when.time}. Reply STOP to opt out.`;
 }
 
+/**
+ * A cleaning the host moved to another day or time between checkout and the next check-in
+ * (move_cleaning). It asks for YES again, as an offer does: only the cleaner's YES puts them on it.
+ */
+export function movedCleaningBody(address: string, when: { day: string; time: string }): string {
+  return `Update: the cleaning at ${address} is now ${when.day} at ${when.time}. Reply YES to take it, or NO if you can't.`;
+}
+
 /** The scheduled reminder. It names the checkout and asks the cleaner when they plan to arrive. */
 export function arrivalReminderBody(address: string, when: { day: string; time: string }): string {
   return `Reminder: cleaning at ${address} on ${when.day}. Checkout is ${when.time}. What time do you plan to arrive?`;
+}
+
+/** The reminder for a cleaning the host moved (move_cleaning): it names the moved start, never the checkout. */
+export function movedReminderBody(address: string, when: { day: string; time: string }, asksArrival: boolean): string {
+  return asksArrival
+    ? `Reminder: cleaning at ${address} on ${when.day}, starting ${when.time}. What time do you plan to arrive?`
+    : `Reminder: cleaning at ${address} is ${when.day} at ${when.time}.`;
 }
 
 /** The new-booking question for the host when the property's usual times are saved. */

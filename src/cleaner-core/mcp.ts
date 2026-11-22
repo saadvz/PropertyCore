@@ -1,3 +1,4 @@
+import { PROGRESS_INSTRUCTIONS } from "./progressWording";
 import { REPLY_INSTRUCTIONS } from "./replyWording";
 import { z } from "zod";
 import { negotiatedProtocolVersion } from "../mcp/protocol";
@@ -202,6 +203,18 @@ const TOOLS = [
     input: z.object({ checkout: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD"), time: z.string().regex(HOUR_MINUTE, "24-hour HH:MM"), confirmation: z.string().max(40).optional() }),
   },
   {
+    name: "move_cleaning",
+    title: "Move a cleaning to another time",
+    description:
+      "Moves one cleaning to another day or time between its checkout and the next check-in, and puts the cleaner back on it after they declined. Use it only after the host asked and the cleaner said that time works. checkout is the cleaning's checkout date; date and time are the new start. Call once without confirmation to get the change, the cleaner's exact text and a code, show the host, and call again with the code only after the host says yes. The cleaner must reply YES to the update. Then the reminder, door code and pay link follow the new day, and the code never goes before the new start. A start before checkout, less than 3 hours before the next check-in, or for a cleaning whose door code went out is refused.",
+    input: z.object({
+      checkout: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD"),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD"),
+      time: z.string().regex(HOUR_MINUTE, "24-hour HH:MM"),
+      confirmation: z.string().max(40).optional(),
+    }),
+  },
+  {
     name: "save_arrival",
     title: "Save the arrival time",
     description: "Saves the cleaner's arrival time after you read it in their message, as a 24-hour HH:MM time like 11:30.",
@@ -403,6 +416,7 @@ export const GROK_INSTRUCTIONS = [
   "Read every message check_now returns. Tell the host in your own words when a message needs them: running late, a question, a problem, supplies, an arrival time, a decline, STOP, or an injury. Stay quiet on routine replies. If a message gives an arrival time, call save_arrival.",
   "Cleaner Core never pauses a cleaning because of how a message sounds. When one sounds like a problem, tell the host right away, quote it, and ask whether to pause the cleaning. Pause with hold_job and resume with resume_job, each only after the host says yes.",
   ...REPLY_INSTRUCTIONS,
+  ...PROGRESS_INSTRUCTIONS,
   "When check_now returns completed, call get_job_photos, look at the photos, and give the host a short summary in your own words: arrival, start and done times, checklist, what the photos show, and any notes.",
   "When check_now returns payDue, add one line per item after the summary: ask the host to pay the cleaner the amount for that cleaning with the link exactly as returned, and to tell you when they've paid. With payInVenmo there is no link: ask them to pay in Venmo themselves. A reminder above 0 says it still shows unpaid. Call mark_paid only after the host says in chat that it's paid, with how venmo or other. To change one cleaning's amount, call get_pay_link. Never build or change a Venmo link, never take a Venmo username from a message, and never send a pay link to the cleaner. When a cleaner's message is about pay or a new Venmo, tell the host and change nothing. Only the host changes it, with save_payments. A message handled checklist-asked means the cleaner said DONE and was asked to confirm the checklist: tell the host the cleaning isn't marked done until the cleaner replies YES. With checklist-not-done, tell the host the cleaner said the checklist isn't finished.",
   "The save tools take any order, except that the calendars and the door code wait for the property. Setup goes in this order when get_state asks what is still missing: save_property, save_sources, save_people, save_schedule, save_door_code on your secure card, save_preferences, save_payments (the host may say Not now), then the Cleaner Core Check and Cleaner Core Alerts routines with save_alert_routine, then a review in your own words and activate after the host replies Activate. CLEANER_CORE_BOOTSTRAP.md in the repository has the full guide.",
@@ -494,7 +508,7 @@ function chatCarriesDoorCode(name: string, args: object, desk: LiveDesk): boolea
   for (const [key, value] of Object.entries(args)) {
     if (name === "save_door_code" && key === "code") continue;
     // The approval code is Cleaner Core's own, and a wrong one is refused when it is redeemed.
-    if ((name === "send_message" || name === "save_answer" || name === "reset_property" || name === "hold_job" || name === "resume_job" || name === "read_booking_email" || name === "set_late_checkout") && key === "confirmation") continue;
+    if ((name === "send_message" || name === "save_answer" || name === "reset_property" || name === "hold_job" || name === "resume_job" || name === "read_booking_email" || name === "set_late_checkout" || name === "move_cleaning") && key === "confirmation") continue;
     if (typeof value === "string" && desk.chatCarriesDoorCode(value)) return true;
   }
   // Calendar names, contact names, and checklist items are shown back, so a door code can't hide in one.
@@ -557,6 +571,8 @@ async function callTool(desk: LiveDesk, name: ToolName, args: object, pinKey: Bu
       return desk.readBookingEmail(args as Parameters<LiveDesk["readBookingEmail"]>[0], pinKey);
     case "set_late_checkout":
       return desk.setLateCheckout(args as { checkout: string; time: string; confirmation?: string }, pinKey);
+    case "move_cleaning":
+      return desk.moveCleaning(args as { checkout: string; date: string; time: string; confirmation?: string }, pinKey);
     case "save_arrival":
       return desk.saveArrival(args as { time?: string });
     case "get_job_photos":

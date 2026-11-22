@@ -41,6 +41,8 @@ webhook address, no key, and no secret.
 5. Read every item in `messages`. Tell the host in your own words when one
    needs them: running late, a question, a problem, supplies, an arrival
    time, a decline, STOP, or an injury. Stay quiet on routine replies.
+   A message handled `opted-in`, `confirmed` or `declined` is the same news as
+   its line in `alerts`: post the alert line once, not the message too.
    When a message sounds like a problem that could stop the cleaning, tell
    the host right away, quote it, and ask whether to pause the cleaning.
    Cleaner Core never pauses on its own. Only the host's yes in chat pauses

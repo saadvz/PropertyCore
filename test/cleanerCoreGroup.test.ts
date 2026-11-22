@@ -55,9 +55,12 @@ const PIN_FAILED = "The door code didn't reach the cleaner. Tell your Grok Bot t
 const AFTER_CHECKS = "Create the Cleaner Core Check and Cleaner Core Alerts routines. Only the host can see the Alerts routine's webhook address and key. Right after you create it, without waiting to be asked, send the host a link that opens the Alerts routine's Webhook URL field directly and one that opens its Webhook key field directly, with one secure card for each, the address first. Never send a link to the Routines page, and never tell the host to open Routines and pick the routine: opening the routine from there doesn't show its Webhook URL. Keep it to three short steps: open the link, copy the value, paste it in the card. Then call save_alert_routine with no arguments to get a one-time upload link, and send both values to that link from your own computer. Never put them in chat.";
 const PRACTICE_HOLD = waitingForYesNote(PRACTICE);
 const PRACTICE_SETUP = [PRACTICE_HOLD];
-const PRACTICE_YES = `The cleaner said YES to the turnover at ${PRACTICE}.`;
-/** After the cleaner's YES, LiveDesk keeps one host note for the newly confirmed job. */
-const PRACTICE_CONFIRMED = [PRACTICE_HOLD, PRACTICE_YES];
+const PRACTICE_YES = `Maria said YES to the Sunday, Oct 18 cleaning at ${PRACTICE}.`;
+/** Finding #6: the cleaner's opt-in and the group being set up each give the host one note too. */
+const PRACTICE_OPT_IN = `Maria said YES to cleaning texts for ${PRACTICE}.`;
+const PRACTICE_GROUP = `The group text for ${PRACTICE} is set up.`;
+/** After the cleaner's YES, LiveDesk keeps one host note for the opt-in, the group, and the newly confirmed job. */
+const PRACTICE_CONFIRMED = [PRACTICE_HOLD, PRACTICE_OPT_IN, PRACTICE_GROUP, PRACTICE_YES];
 const PRACTICE_OFFER = "Turnover at 12 Practice Lane, Teaneck, NJ 07666 on Sunday, Oct 18. Checkout 11:00 AM, next guest 4:00 PM. The cleaner will reply to confirm.";
 const PRACTICE_GROUP_OFFER = "Turnover at 12 Practice Lane, Teaneck, NJ 07666 on Sunday, Oct 18. Checkout 11:00 AM, next guest 4:00 PM. Maria, reply YES to schedule it.";
 const PRACTICE_CONFIRM = "Cleaning is scheduled for Sunday, Oct 18 at 11:00 AM at 12 Practice Lane, Teaneck, NJ 07666.";
@@ -1383,7 +1386,7 @@ describe("live group membership", () => {
     const grouped = await readyPractice(true);
     await grouped.desk.inbound({ id: "group-yes-offer", from: LIVE_CLEANER, text: "YES" });
     await grouped.desk.inbound({ id: "group-yes-schedule", from: LIVE_CLEANER, text: "YES" });
-    expect(notesOf(await grouped.desk.getState())).toEqual([hold, PRACTICE_YES]);
+    expect(notesOf(await grouped.desk.getState())).toEqual([hold, PRACTICE_OPT_IN, PRACTICE_GROUP, PRACTICE_YES]);
     // A problem from the cleaner goes to Grok, which asks Cory. Only Cory's yes holds the cleaning.
     await grouped.desk.inbound({ id: "group-problem", from: LIVE_CLEANER, text: "The lock is broken", channel: "group" });
     const notHeld = await grouped.desk.getTurns();

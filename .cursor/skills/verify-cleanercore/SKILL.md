@@ -131,6 +131,12 @@ Visit records (#237) are one drive: the live desk with the account's Visit recor
 npx tsx .cursor/skills/verify-cleanercore/scripts/prove-visits.ts .cursor/skills/verify-cleanercore/evidence/visits/visits.json
 ```
 
+The host's progress notes and moved cleanings (findings #6 and #8) are one desk drive on Scratch Lane with the fake lock adapter. The host hears the cleaner's opt-in and NO once each, with one wake-up each. The host moves the declined Oct 18 cleaning to Monday Oct 19 at 10:00 with `move_cleaning` (two calls), and the cleaner's YES puts them back on it. The reminder names the moved day, and the door code and the cleaner's own lock code start only at the moved start. It exits non-zero unless every check holds, every recipient is a Scratch number, and no code appears in the evidence; see [features/move-cleaning.md](features/move-cleaning.md):
+
+```
+npx tsx .cursor/skills/verify-cleanercore/scripts/prove-move-cleaning.ts .cursor/skills/verify-cleanercore/evidence/move-cleaning/move-cleaning.json
+```
+
 ## Evidence
 
 Write one directory per turnover or safety run:

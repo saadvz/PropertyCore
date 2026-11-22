@@ -557,7 +557,9 @@ describe("Cleaner Core Grok demo: check_now follow-ups", () => {
 const ROUTINE_URL = "https://routine.example/hook";
 const ROUTINE_KEY = "k-test-123456";
 const CONNECTED = "Alerts are connected. I queued a test alert for the routine.";
-const YES_NOTE = `The cleaner said YES to the turnover at ${ADDRESS}.`;
+/** The cleaner's opt-in and YES each give the host one note (finding #6). */
+const OPT_IN_NOTE = `The cleaner said YES to cleaning texts for ${ADDRESS}.`;
+const YES_NOTE = `The cleaner said YES to the Thursday, Oct 15 cleaning at ${ADDRESS}.`;
 
 interface AlertPost {
   url: string;
@@ -1513,7 +1515,7 @@ describe("Cleaner Core Grok demo: Scratch rehearsal", () => {
     if (!LANE) throw new Error("missing tenant");
     const address = LANE.property.address;
     const scratchNumbers = new Set([LANE.ownerPhone, LANE.cleanerPhone]);
-    const yesNote = `The cleaner said YES to the turnover at ${address}.`;
+    const yesNote = `The cleaner said YES to the Wednesday, Oct 14 cleaning at ${address}.`;
     const readyNote = `The cleaner marked the cleaning at ${address} done.`;
     const today = { id: "g1", start: "2026-10-10", end: "2026-10-14" };
     const group = groupStub();
@@ -1653,7 +1655,7 @@ describe("Cleaner Core Grok demo: Scratch rehearsal", () => {
 
     // 9. The host's times. The cleaner already joined, so the offer goes out at once with no second invite.
     const secondTimes = await say("confirm_times", { checkout: "11:00", checkIn: "16:00" });
-    expect(secondTimes.structured?.next).toBe("Times saved. I sent the cleaner the cleaning offer. They reply YES to take it.");
+    expect(secondTimes.structured?.next).toBe("Times saved. I sent the cleaner the cleaning offer. They reply YES to take it. I'll post here when the cleaner replies.");
     expect(await labelled("Opt-in text to the cleaner")).toHaveLength(1);
     const secondOffers = (await labelled("Cleaning offer to the group")).filter((item) => item.body.includes("Oct 24"));
     expect(secondOffers.map((item) => item.body.startsWith(`Turnover at ${address} on Saturday, Oct 24. Checkout 11:00 AM`))).toEqual([true]);
