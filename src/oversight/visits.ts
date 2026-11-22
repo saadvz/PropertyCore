@@ -24,6 +24,22 @@ export interface ExpectedVisit {
   cancelledAt?: string;
   /** When a run of the day first found it missed. */
   flaggedAt?: string;
+  /** The visitor's mobile (#280 17), for their own door code. Unset: no code, checked as before. */
+  phone?: string;
+  /** The visit code's text: marked before it's sent, so a restart never sends twice. Never the code. */
+  code?: { textAt?: string; sent?: boolean; told?: string[] };
+}
+
+/** Someone the host expects, saved with a visit that has a phone (#280 17). Never a code. */
+export interface Visitor {
+  phone: string;
+  name: string;
+  addedAt: string;
+  invitedAt?: string;
+  inviteTriedAt?: string;
+  inviteTries?: number;
+  yesAt?: string;
+  stoppedAt?: string;
 }
 
 export interface VisitInput {

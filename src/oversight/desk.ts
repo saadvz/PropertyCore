@@ -1,4 +1,7 @@
-import { localDateOf } from "../core/timezone";
+import { join } from "node:path";
+import { formatDay, localDateOf } from "../core/timezone";
+import { normalizePhone } from "../locks/desk";
+import { ConfirmationBook } from "../operator/confirmations";
 import { addCalendarDays } from "../hub/calendar";
 import { readHubFile } from "../hub/store";
 import { visitLogFor } from "../visits/store";
@@ -6,7 +9,7 @@ import { checkDay, type DayEvidence, type DayResult, type VisitResult } from "./
 import { dayEvidence, entryNamesFrom, standingNames } from "./evidence";
 import { visitFromInvite } from "./invite";
 import { OversightFileError, readOversight, writeOversight, type OversightFile } from "./store";
-import { cleanVisit, isDate, MAX_OPEN_VISITS, newVisitId, sameVisit, visitProblem, type ExpectedVisit, type VisitInput } from "./visits";
+import { cleanVisit, isDate, MAX_OPEN_VISITS, newVisitId, sameVisit, visitProblem, type ExpectedVisit, type VisitInput, type Visitor } from "./visits";
 
 /**
  * Expected visits for one property (#240): save one from what the host says or a calendar invite, list and cancel
@@ -30,9 +33,24 @@ export interface OversightDeps {
   doors?: () => readonly string[];
   /** The account has cameras on, so camera sightings can be read. Off by default. */
   cameras?: () => boolean;
+  /** Visit codes can be made here (#280 17): the account's locks on and the property on connected locks. Off by default. */
+  codes?: () => boolean;
+  /** The host's confirmed mobile, so it's never saved as a visitor. */
+  hostPhone?: () => string | undefined;
+  /** This phone replied STOP to the account's line. */
+  stopped?: (phone: string) => boolean;
+  /** This phone is already a person on the property who said YES (a cleaner, co-host, assistant or pro): no new invite. */
+  optedInHere?: (phone: string) => boolean;
+  /** Where a visit's code is on the locks now (on-lock, programming, failed, none-during-stay), from the lock side. */
+  codeStatus?: (visit: ExpectedVisit) => string | undefined;
 }
 
+/** What a visit's code looks like to the agent: its state and the phone's last four, never the phone or a code. */
+export type VisitCodeState = "none" | "opted-out" | "waiting-for-yes" | "texted" | "making" | string;
+
 const RECENT_DAYS = 7;
+const APPROVAL_MS = 10 * 60_000;
+const APPROVAL_STALE = "That approval has expired or doesn't match. Ask the host again.";
 const NOTHING_SENT = "Nothing is sent to anyone from here.";
 
 const ok = (structured: Record<string, unknown>): OversightReply => ({ text: JSON.stringify(structured), structured, isError: false });
@@ -41,11 +59,43 @@ const pad = (n: number) => String(n).padStart(2, "0");
 
 const byWhen = (a: ExpectedVisit, b: ExpectedVisit) => a.date.localeCompare(b.date) || (a.from ?? "").localeCompare(b.from ?? "") || a.who.localeCompare(b.who);
 
+/** "12 to 5 PM", "9 AM to 12:30 PM": the read-back's times. */
+function spokenWindow(from: string, to: string): string {
+  const part = (clock: string) => {
+    const [h, m] = clock.split(":").map(Number) as [number, number];
+    const hour = h % 12 === 0 ? 12 : h % 12;
+    return { text: m ? `${hour}:${String(m).padStart(2, "0")}` : String(hour), half: h < 12 ? "AM" : "PM" };
+  };
+  const a = part(from);
+  const b = part(to);
+  return a.half === b.half ? `${a.text} to ${b.text} ${b.half}` : `${a.text} ${a.half} to ${b.text} ${b.half}`;
+}
+
+/** The visit with its phone taken out: the phone's last four only. */
+function shownVisit(visit: ExpectedVisit, code?: VisitCodeState): Record<string, unknown> {
+  const { phone, code: _text, ...rest } = visit;
+  return { ...rest, ...(phone ? { phoneLast4: phone.slice(-4) } : {}), ...(code ? { code } : {}) };
+}
+
 export class OversightDesk {
+  private readonly approvals: ConfirmationBook;
+
   constructor(
     private readonly root: string,
     private readonly deps: OversightDeps,
-  ) {}
+  ) {
+    this.approvals = new ConfirmationBook(APPROVAL_MS, () => this.deps.now().getTime(), { file: join(root, "oversight-approvals.json") });
+  }
+
+  /** A visitor's code state for list_expected_visits. */
+  private codeState(file: OversightFile, visit: ExpectedVisit): VisitCodeState {
+    if (!visit.phone) return "none";
+    const visitor = file.visitors?.find((item) => item.phone === visit.phone);
+    if (visitor?.stoppedAt || this.deps.stopped?.(visit.phone)) return "opted-out";
+    if (!visitor?.yesAt && !this.deps.optedInHere?.(visit.phone)) return "waiting-for-yes";
+    if (visit.code?.sent) return "texted";
+    return this.deps.codeStatus?.(visit) ?? "making";
+  }
 
   /** A broken oversight.json is a plain refusal, and nothing is written over it. */
   private guarded(run: () => OversightReply): OversightReply {
@@ -74,13 +124,23 @@ export class OversightDesk {
    * Saves one expected visit: `who`, `date`, `from`/`to` and `note` from what the host says, or `invite` (the
    * invite's text). An invite is read back without saving until `confirm` is true.
    */
-  addVisit(input: { who?: unknown; date?: unknown; from?: unknown; to?: unknown; note?: unknown; invite?: unknown; confirm?: unknown }): OversightReply {
+  addVisit(input: { who?: unknown; date?: unknown; from?: unknown; to?: unknown; note?: unknown; invite?: unknown; confirm?: unknown; phone?: unknown; confirmation?: unknown }): OversightReply {
     return this.guarded(() => {
       // A broken record refuses before anything is read back, so the host never agrees to a visit that can't be saved.
       const file = readOversight(this.root);
       const timeZone = this.timeZone();
       if (!timeZone) return fail("The property has no time zone yet, so its days can't be told apart. Set the property's time zone first.");
       const today = this.today(timeZone);
+      // A phone gives the visitor their own door code (#280 17), with the host's yes to the read-back.
+      let phone: string | undefined;
+      if (input.phone !== undefined && !(typeof input.phone === "string" && input.phone.trim() === "")) {
+        if (this.deps.codes?.() !== true) return fail("Door codes for visitors need connected locks here. Save the visit without a phone, and it's still checked.");
+        phone = typeof input.phone === "string" ? normalizePhone(input.phone) : undefined;
+        if (!phone) return fail("That isn't a mobile number I can use. Ask for it with its country code, like +1 555 555 0142.");
+        if (phone === this.deps.hostPhone?.()) return fail("That's your own number. Ask for a standing code with add_standing_code instead.");
+        const known = file.visitors?.find((item) => item.phone === phone);
+        if (known?.stoppedAt || this.deps.stopped?.(phone)) return fail("That number opted out of texts from this line (they replied STOP), so it can't get a code. Save the visit without a phone, and it's still checked.");
+      }
       let candidate: Record<string, unknown>;
       let source: ExpectedVisit["source"] = "text";
       let titleLeftOut = false;
@@ -103,16 +163,41 @@ export class OversightDesk {
       const visit = cleanVisit(candidate as unknown as VisitInput);
       const leftOut = titleLeftOut ? { titleLeftOut: true } : {};
       const leftOutNote = titleLeftOut ? " The invite's title may hold a code, so it was left out." : "";
-      if (source === "invite" && input.confirm !== true) {
+      if (phone) {
+        const known = file.visitors?.find((item) => item.phone === phone);
+        const yes = Boolean(known?.yesAt) || this.deps.optedInHere?.(phone) === true;
+        const when = visit.from !== undefined && visit.to !== undefined ? spokenWindow(visit.from, visit.to) : "all day";
+        const question = `${visit.who}, ${formatDay(new Date(`${visit.date}T12:00:00Z`), "UTC")}, ${when}, with their own door code?${yes ? "" : " They get one text asking them to reply YES first."}`;
+        const fingerprint = JSON.stringify([visit.who, visit.date, visit.from ?? "", visit.to ?? "", visit.note ?? "", phone]);
+        const code = typeof input.confirmation === "string" && input.confirmation ? input.confirmation : undefined;
+        if (!code) {
+          return ok({ saved: false, visit: { ...visit, source, phoneLast4: phone.slice(-4) }, ...leftOut, question, confirmation: this.approvals.issue("visit-code", "oversight", fingerprint, question), next: `Ask the host: "${question}" Call again with the confirmation code only after their yes.${leftOutNote}` });
+        }
+        try {
+          this.approvals.redeem(code, "visit-code", "oversight", fingerprint);
+        } catch {
+          return fail(APPROVAL_STALE);
+        }
+      } else if (source === "invite" && input.confirm !== true) {
         return ok({ saved: false, visit: { ...visit, source }, ...leftOut, next: `Read this visit back to the host. Save it only after they agree, by calling again with confirm: true.${leftOutNote}` });
       }
-      const existing = file.visits.find((v) => !v.cancelledAt && sameVisit(v, visit));
-      if (existing) return ok({ saved: false, duplicate: true, visit: existing, next: "That visit is already saved." });
+      const existing = file.visits.find((v) => !v.cancelledAt && sameVisit(v, visit) && (v.phone ?? "") === (phone ?? ""));
+      if (existing) return ok({ saved: false, duplicate: true, visit: shownVisit(existing), next: "That visit is already saved." });
       const open = file.visits.filter((v) => !v.cancelledAt && v.date >= today).length;
       if (open >= MAX_OPEN_VISITS) return fail(`There are already ${MAX_OPEN_VISITS} expected visits ahead. Cancel some before adding more.`);
-      const saved: ExpectedVisit = { id: newVisitId(), ...visit, source, savedAt: this.deps.now().toISOString() };
-      writeOversight(this.root, { ...file, visits: [...file.visits, saved] });
-      return ok({ saved: true, visit: saved, ...leftOut, next: `Saved. If no one comes in, it's flagged the same day. ${NOTHING_SENT}${leftOutNote}` });
+      const at = this.deps.now().toISOString();
+      const saved: ExpectedVisit = { id: newVisitId(), ...visit, source, savedAt: at, ...(phone ? { phone } : {}) };
+      let visitors = file.visitors;
+      if (phone) {
+        const known = visitors?.find((item) => item.phone === phone);
+        const visitor: Visitor = known ? { ...known, name: visit.who } : { phone, name: visit.who, addedAt: at };
+        visitors = [...(visitors ?? []).filter((item) => item.phone !== phone), visitor];
+      }
+      writeOversight(this.root, { ...file, visits: [...file.visits, saved], ...(visitors ? { visitors } : {}) });
+      const codeNext = phone
+        ? ` ${visit.who} gets their own door code by text 30 minutes before the visit${file.visitors?.find((item) => item.phone === phone)?.yesAt || this.deps.optedInHere?.(phone) ? "" : ", once they reply YES to the one text asking them"}.`
+        : "";
+      return ok({ saved: true, visit: shownVisit(saved, phone ? this.codeState({ ...file, ...(visitors ? { visitors } : {}) }, saved) : undefined), ...leftOut, next: `Saved. If no one comes in, it's flagged the same day.${codeNext}${phone ? "" : ` ${NOTHING_SENT}`}${leftOutNote}` });
     });
   }
 
@@ -148,7 +233,8 @@ export class OversightDesk {
         const day = checkDay({ label: "", visits: file.visits, date, timeZone, now, ...evidence });
         return day.status === "none" ? [] : day.visits;
       });
-      return ok({ today, open, recent, results, next: open.length ? NOTHING_SENT : `No visits are expected ahead. ${NOTHING_SENT}` });
+      const shown = (list: ExpectedVisit[]) => list.map((v) => shownVisit(v, this.codeState(file, v)));
+      return ok({ today, open: shown(open), recent: shown(recent), results, next: open.length ? NOTHING_SENT : `No visits are expected ahead. ${NOTHING_SENT}` });
     });
   }
 
@@ -159,10 +245,10 @@ export class OversightDesk {
       const file = readOversight(this.root);
       const visit = file.visits.find((v) => v.id === input.id);
       if (!visit) return fail("There's no expected visit with that id. List the visits to find it.");
-      if (visit.cancelledAt) return ok({ cancelled: true, visit, next: "That visit was already cancelled." });
+      if (visit.cancelledAt) return ok({ cancelled: true, visit: shownVisit(visit), next: "That visit was already cancelled." });
       const cancelled = { ...visit, cancelledAt: this.deps.now().toISOString() };
       writeOversight(this.root, { ...file, visits: file.visits.map((v) => (v.id === visit.id ? cancelled : v)) });
-      return ok({ cancelled: true, visit: cancelled, next: `Cancelled. It won't be checked. ${NOTHING_SENT}` });
+      return ok({ cancelled: true, visit: shownVisit(cancelled), next: `Cancelled. It won't be checked.${visit.phone ? ` ${visit.who}'s door code for it comes off the lock.` : ` ${NOTHING_SENT}`}` });
     });
   }
 
