@@ -41,7 +41,9 @@ credentials:
 `installation.test` for the test sent when the routine is saved. The payload
 never holds message text. The words come from `check_now`.
 
-Every new message from the cleaner or a saved contact wakes the routine. Cleaner
+Every new message from the cleaner or a saved contact wakes the routine. So does
+the cleaner's YES to get texts, the group text being set up, and each YES or NO
+to a cleaning: each one is also a line in `alerts`, once. Cleaner
 Core keeps at most one wake-up waiting. If several things happen before the
 routine runs, it wakes once, and `check_now` returns all of them.
 
@@ -60,9 +62,15 @@ routine runs, it wakes once, and `check_now` returns all of them.
    says a cleaning offer or reminder may not have gone out, ask the host
    whether to send it again. Only the host's yes in chat resends it, with
    `retry_send`.
+   When an alert says the cleaner said NO to a cleaning and it can move, ask
+   the host whether to ask the cleaner about another day or time before the
+   next check-in. Don't move it from the routine: the host's yes in chat moves
+   it, with `move_cleaning`, after the cleaner says a time works.
 4. Read every item in `messages`. Tell the host in your own words when one
    needs them: running late, a question, a problem, supplies, an arrival time,
    a decline, STOP, or an injury. Stay quiet on routine replies.
+   A message handled `opted-in`, `confirmed` or `declined` is the same news as
+   its line in `alerts`: post the alert line once, not the message too.
    When a message sounds like a problem that could stop the cleaning, tell
    the host right away, quote it, and ask whether to pause the cleaning.
    Cleaner Core never pauses on its own. Only the host's yes in chat pauses

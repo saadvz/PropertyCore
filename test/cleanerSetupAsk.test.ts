@@ -373,7 +373,7 @@ describe("Cleaner Core times: the usual times for every turnover", () => {
 
     const all = ok(await desk.confirmTimes({ checkout: "10:00", checkIn: "16:00", all: true }));
     // The reply says what went out: here the group invite.
-    expect(all.next).toBe("Times saved for 2 turnovers. The cleaner got one text asking them to reply YES. Offers start after they do, one at a time.");
+    expect(all.next).toBe("Times saved for 2 turnovers. The cleaner got one text asking them to reply YES. Offers start after they do, one at a time. I'll post here when the cleaner replies.");
     const turns = all.turns as { checkoutTime?: string; nextCheckInDate: string | null; nextCheckInTime?: string }[];
     expect(turns).toHaveLength(2);
     for (const turn of turns) {

@@ -51,6 +51,12 @@ const fixer = (): FixerFile =>
   }) as unknown as FixerFile;
 
 describe("the hours log reads visit records", () => {
+  it("names the day a moved cleaning moved to (move_cleaning, finding #8)", () => {
+    const moved = base({ cleaningJobs: [{ id: "j1", checkoutDate: "2027-01-03", cleanOn: { date: "2027-01-04", minutes: 660 }, done: true, startedAt: "2027-01-04T16:30:00.000Z", doneAt: "2027-01-04T18:40:00.000Z" }] });
+    const [row] = cleanerRows(moved);
+    expect(row).toMatchObject({ at: "2027-01-04T16:30:00.000Z", task: "Turnover cleaning after the 2027-01-03 checkout, moved to 2027-01-04" });
+  });
+
   it("keeps a cleaning's START-to-DONE row when there's no visit record", () => {
     const [row] = cleanerRows(base());
     expect(row).toMatchObject({ at: "2027-01-04T16:30:00.000Z", until: "2027-01-04T18:40:00.000Z", timing: "measured", reference: "Cleaner Core job j1" });

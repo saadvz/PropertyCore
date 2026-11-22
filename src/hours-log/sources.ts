@@ -30,6 +30,14 @@ export interface CleaningJob {
   arrivalAt?: string;
   startedAt?: string;
   doneAt?: string;
+  /** A cleaning the host moved to another day (move_cleaning). Its row names the day it moved to. */
+  cleanOn?: { date: string; minutes: number };
+}
+
+/** A cleaning row's task: the checkout it follows, and the day it was moved to when the host moved it. */
+function cleaningTask(job: CleaningJob): string {
+  const moved = job.cleanOn && typeof job.cleanOn.date === "string" && job.cleanOn.date !== job.checkoutDate ? `, moved to ${job.cleanOn.date}` : "";
+  return `Turnover cleaning after the ${job.checkoutDate} checkout${moved}`;
 }
 
 /** A time the host gave for a cleaning, in chat. */
@@ -189,7 +197,7 @@ export const cleanerRows: RowSource = (records) => {
         participant: cleaner,
         at: measured.arrival!.at,
         until: measured.departure!.at,
-        task: `Turnover cleaning after the ${job.checkoutDate} checkout`,
+        task: cleaningTask(job),
         reference: `Cleaner Core job ${job.id}, ${measuredHow(measured)}`,
         onSite: true,
         timing: "measured",
@@ -205,7 +213,7 @@ export const cleanerRows: RowSource = (records) => {
       participant: cleaner,
       at: start ?? job.doneAt,
       ...(start ? { until: job.doneAt } : {}),
-      task: `Turnover cleaning after the ${job.checkoutDate} checkout`,
+      task: cleaningTask(job),
       reference: `Cleaner Core job ${job.id}`,
       onSite: true,
       timing: job.startedAt ? "measured" : "scheduled",

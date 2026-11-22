@@ -27,7 +27,7 @@ import {
 } from "../hub/sources";
 import { fingerprintOf, freshnessOf, GUESTY_POLL_MS, staleAfterMs, type FreshnessStatus, type SourceRecord } from "./freshness";
 import { containsCodeToken, redactLine, redactPhone } from "./redact";
-import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, SUPPLY_ARRIVAL_ASK, SUPPLY_DONE_ASK, SUPPLY_NOTED, repairDoneAsk, supplyRepairDoneAsk, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupFellBackLine, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, resumeNote, schedulerOptInBody, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
+import { waitingForYesNote, withoutStopAsk, addressCleaner, asOptedInCleaner, checklistBody, cleanerNextStep, cleanerOptOutHold, CHECKLIST_ASK, CHECKLIST_NOT_DONE, SUPPLY_ARRIVAL_ASK, SUPPLY_DONE_ASK, SUPPLY_NOTED, repairDoneAsk, supplyRepairDoneAsk, doorCodeBody, groupDoorCodeBody, groupIntroBody, groupInviteBody, groupFellBackLine, groupUnconfirmedLine, groupRefusedLine, groupOfferBody, namedAsk, hostDoneLine, hostStartReply, hostStopReply, injuryHoldLine, isPrivateCodeLine, jobHoldLine, offerBody, offerForOthers, optedOutCodeLine, ownerOptOutHoldNote, PHOTO_FIRST, privateCodeLine, reminderBody, movedCleaningBody, movedReminderBody, resumeNote, schedulerOptInBody, usualTimesAsk, arrivalReminderBody, hostNoteOf, withHostNote, type CleanerStep, type OptedInCleaner } from "./cleanerTexts";
 import { codeRoute, GroupNotConfirmed, type GroupSeat } from "./groupThread";
 import { GROK_HELPER } from "./assistant";
 import { codeHandlingText, HEALTH_NOTE, reviewAlert, reviewId, type AuditEvent, type ReviewDetail, type ReviewItem, type ReviewKind } from "./review";
@@ -85,6 +85,14 @@ export interface CleanerText {
   audience?: string[];
 }
 
+/** Why move_cleaning left a cleaning where it was. */
+export type MoveRefusal = "unknown" | "closed" | "code-sent" | "not-offered" | "no-cleaner" | "held" | "before-checkout" | "into-check-in" | "too-far" | "past" | "same";
+
+/** A moved cleaning starts at least this long before the next check-in: the time a turnover needs. */
+export const MOVE_CHECK_IN_LEAD_MS = 3 * 60 * 60_000;
+/** With no next check-in on the calendar, a cleaning moves at most this many days past checkout. */
+export const MOVE_MAX_DAYS = 7;
+
 export type JobStatus =
   | "discovered"
   | "awaiting_checkin"
@@ -114,6 +122,8 @@ export interface JobView {
   nextCheckInTime: string | null;
   checkoutAt: string | null;
   nextCheckInAt: string | null;
+  /** A moved cleaning's start (move_cleaning): its day, its clock time, and the instant. Absent when not moved. */
+  movedTo?: { date: string; day: string; time: string; at: string; round: number };
   version: number;
   hostCheckoutVersion: number;
   hostCheckInVersion: number;
@@ -507,6 +517,16 @@ export interface CleanerCore {
   setJobTimes(input: { jobId: string; checkout?: number; checkIn?: number }): Promise<{ applied: boolean; reason?: "unknown" | "closed" | "code-sent"; sent: CleanerText[] }>;
   /** Calls off one cleaning on the host's yes, the way a stay leaving the calendar does. Never one cleared or under way. */
   callOffJob(jobId: string): Promise<{ calledOff: boolean; sent: CleanerText[] }>;
+  /**
+   * Moves one cleaning to another start between its checkout and the next check-in, on the host's yes
+   * (move_cleaning), and puts the cleaner back on it after a decline. The cleaner gets an update text
+   * and must reply YES, as for any offer. Refused before checkout, into the next check-in, in the past,
+   * for a cleaning called off, under way or done, once its door code went out, without an opted-in
+   * cleaner, and while the cleaning is paused. Never sends a code.
+   */
+  moveCleaning(input: { jobId: string; date: string; minutes: number }): Promise<{ applied: boolean; reason?: MoveRefusal; sent: CleanerText[] }>;
+  /** Why a move of this cleaning to this start would be refused, or undefined when it would be taken. Changes nothing. */
+  moveCheck(input: { jobId: string; date: string; minutes: number }): MoveRefusal | undefined;
   /** The host told Grok the guests have left. The door code goes out under the same rules as before. */
   hostDeparture(id: string): Promise<ReceiveResult>;
   /** The host told Grok to send an uncertain offer or reminder once more. */
@@ -597,6 +617,11 @@ export interface CleanerCore {
   lockHeld(): void;
   /** The checkout-time release, when codeAtCheckout says "on". */
   checkoutRelease(): Promise<CleanerText[]>;
+  /**
+   * A moved cleaning whose guests were already cleared: its code goes once its moved start arrives,
+   * through the same release and checks as "guests have left". Sends nothing else.
+   */
+  movedRelease(): Promise<CleanerText[]>;
   /** Host notes every 30 minutes while a turnover on connected locks is paused. */
   pausedReminders(): void;
   /** The new-booking question that offers the usual times, when usualTimesName is set and the stay's check-in is known. */
@@ -696,6 +721,8 @@ interface Announced {
   checkoutMinutes: number;
   nextCheckInDate: string | null;
   checkInMinutes: number | null;
+  /** The move round the cleaner was last told about. Absent before any move. */
+  move?: number;
 }
 
 /** A job in one of these keeps the number on cleaning. */
@@ -738,6 +765,14 @@ interface Job {
   autoReleasedAt?: string;
   /** Bumped when a hold revoked a code already sent, so the release makes and sends a new one. */
   releaseRound?: number;
+  /**
+   * The host-approved start of a moved cleaning: a day and time after checkout and before the next
+   * check-in (move_cleaning). The reminder, the code release, the lock window and the visit window
+   * read it. Absent means the cleaning starts at checkout, as before.
+   */
+  cleanOn?: { date: string; minutes: number };
+  /** Bumped by each move, and when a move stops fitting, so the cleaner is asked again and must say YES again. */
+  moveRound?: number;
   /**
    * Photos the cleaner sent during the cleaning, counted when they arrive, so a failed download
    * never keeps DONE waiting.
@@ -1214,20 +1249,24 @@ class Engine implements CleanerCore {
       if (!this.canRemind(job)) continue;
       const fact = this.latestFact(job.id, "checkout");
       if (!fact) continue;
+      // A moved cleaning is reminded on its own day, at its own time.
+      const start = this.cleaningStart(job, fact);
       for (const trigger of this.triggers) {
-        if (!this.triggerDue(trigger, job.checkoutDate)) continue;
-        const id = `reminder:${job.id}:${trigger.id}:${job.checkoutDate}:${fact.version}:${fact.minutes}`;
+        if (!this.triggerDue(trigger, start.date)) continue;
+        const id = `reminder:${job.id}:${trigger.id}:${start.date}:${fact.version}:${start.minutes}`;
         this.cancelOtherReminders(job.id, trigger.id, id);
         const existing = this.delivery(id);
         if (existing === "sent" || existing === "canceled") continue;
-        const replaced = (trigger.replaces ?? []).some((other) => this.delivery(`reminder:${job.id}:${other}:${job.checkoutDate}:${fact.version}:${fact.minutes}`) === "sent");
+        const replaced = (trigger.replaces ?? []).some((other) => this.delivery(`reminder:${job.id}:${other}:${start.date}:${fact.version}:${start.minutes}`) === "sent");
         if (replaced) continue;
-        const when = this.clock(job.checkoutDate, fact.minutes);
+        const when = this.clock(start.date, start.minutes);
         const addressed = addressCleaner(this.cleanerRecord(), {
           kind: "reminder",
-          body: this.options.reminderAsksArrival
-            ? arrivalReminderBody(this.options.property.address, when)
-            : reminderBody(this.options.property.address, when, Boolean(this.pin)),
+          body: job.cleanOn
+            ? movedReminderBody(this.options.property.address, when, Boolean(this.options.reminderAsksArrival))
+            : this.options.reminderAsksArrival
+              ? arrivalReminderBody(this.options.property.address, when)
+              : reminderBody(this.options.property.address, when, Boolean(this.pin)),
         });
         if (!addressed) continue;
         const text = await this.emit({
@@ -1514,6 +1553,39 @@ class Engine implements CleanerCore {
     const text = draft ? await this.emit(draft) : null;
     this.save();
     return { calledOff: true, sent: text ? [text] : [] };
+  }
+
+  moveCheck(input: { jobId: string; date: string; minutes: number }): MoveRefusal | undefined {
+    const job = this.jobsState.find((item) => item.id === input.jobId);
+    if (!job) return "unknown";
+    if (job.canceled || job.done || job.started) return "closed";
+    if (this.pinDelivered(job)) return "code-sent";
+    const status = this.derive(job);
+    if (status === "cleared" || status === "in_progress") return "closed";
+    // The cleaner heard about this cleaning: it was offered, taken, or declined.
+    if (!job.announced || !this.latestFact(job.id, "checkout")) return "not-offered";
+    if (this.problemHold) return "held";
+    if (!this.cleanerRecord() || this.optedOut) return "no-cleaner";
+    const refusal = this.moveRefusal(job, input.date, input.minutes, true);
+    if (refusal) return refusal;
+    if (!job.declined && job.cleanOn?.date === input.date && job.cleanOn.minutes === input.minutes) return "same";
+    return undefined;
+  }
+
+  async moveCleaning(input: { jobId: string; date: string; minutes: number }): Promise<{ applied: boolean; reason?: MoveRefusal; sent: CleanerText[] }> {
+    const reason = this.moveCheck(input);
+    if (reason) return { applied: false, reason, sent: [] };
+    const job = this.jobsState.find((item) => item.id === input.jobId)!;
+    // The host's yes puts the cleaner back on a declined cleaning: the update asks them again.
+    job.declined = false;
+    job.cleanOn = { date: input.date, minutes: input.minutes };
+    job.moveRound = (job.moveRound ?? 0) + 1;
+    delete job.autoReleasedAt;
+    this.cancelPendingReminders(job.id);
+    this.cancelUnsentPin(job.id);
+    const sent = !this.enabled || !this.everConsented ? [] : await this.drainOne();
+    this.save();
+    return { applied: true, sent };
   }
 
   holdNotice(): string | undefined {
@@ -1949,7 +2021,8 @@ class Engine implements CleanerCore {
     const checkout = this.latestFact(job.id, "checkout");
     const to = this.cleanerRecord()?.phone;
     if (!checkout || !to) return [];
-    const when = this.clock(job.checkoutDate, checkout.minutes);
+    const start = this.cleaningStart(job, checkout);
+    const when = this.clock(start.date, start.minutes);
     const id = confirmId(job, checkout.minutes);
     const text = await this.emit({
       id,
@@ -2331,6 +2404,13 @@ class Engine implements CleanerCore {
     const checkout = this.latestFact(job.id, "checkout");
     if (!checkout) return undefined;
     const window = cleaningWindow({ checkoutDate: job.checkoutDate, checkoutTime: hm(checkout.minutes), nextCheckInDate: job.nextCheckInDate, timeZone: this.options.property.timeZone });
+    // A moved cleaning's code works from its moved start to the end of that day, and never past the usual window.
+    if (job.cleanOn) {
+      const zone = this.options.property.timeZone;
+      const from = new Date(Date.parse(zonedInstant(job.cleanOn.date, hm(job.cleanOn.minutes), zone))).toISOString();
+      const dayEnd = Date.parse(zonedInstant(addCalendarDays(job.cleanOn.date, 1), "00:00", zone));
+      return { from, until: new Date(Math.min(dayEnd, Date.parse(window.until))).toISOString() };
+    }
     const cleared = [...this.clearances].reverse().find((item) => item.jobId === job.id && item.minutes === checkout.minutes);
     if (cleared?.at && Date.parse(cleared.at) < Date.parse(window.from)) return { from: new Date(Date.parse(cleared.at)).toISOString(), until: window.until };
     return window;
@@ -2377,11 +2457,14 @@ class Engine implements CleanerCore {
       if (status !== "confirmed" && status !== "awaiting_departure") continue;
       const checkout = this.latestFact(job.id, "checkout");
       if (!checkout || this.stale(job) || !this.confirmSent(job)) continue;
-      const at = Date.parse(zonedInstant(job.checkoutDate, hm(checkout.minutes), this.options.property.timeZone));
-      const time = this.clock(job.checkoutDate, checkout.minutes).time;
+      // A moved cleaning's code goes at its moved start, never at checkout.
+      const start = this.cleaningStart(job, checkout);
+      const at = Date.parse(zonedInstant(start.date, hm(start.minutes), this.options.property.timeZone));
+      const time = this.clock(start.date, start.minutes).time;
       if (now < at - 60 * 60_000) continue;
       if (now < at) {
-        this.keepHostNote(`host:code-at-checkout-soon:${job.id}:${checkout.minutes}:${checkout.version}`, `The cleaner's code goes out at checkout, ${time}. If the guests are staying late, say pause.`);
+        if (job.cleanOn) this.keepHostNote(`host:code-at-move-soon:${job.id}:${job.moveRound ?? 0}`, `The cleaner's code goes out at the moved start, ${time}. If something changed, say pause.`);
+        else this.keepHostNote(`host:code-at-checkout-soon:${job.id}:${checkout.minutes}:${checkout.version}`, `The cleaner's code goes out at checkout, ${time}. If the guests are staying late, say pause.`);
         continue;
       }
       this.recordClearance(job);
@@ -2397,6 +2480,19 @@ class Engine implements CleanerCore {
       }
     }
     this.save();
+    return sent;
+  }
+
+  async movedRelease(): Promise<CleanerText[]> {
+    if (!this.enabled || this.optedOut || this.problemHold || !this.pin || this.groupPinTerminal) return [];
+    const sent: CleanerText[] = [];
+    for (const job of this.ordered()) {
+      if (!job.cleanOn || this.beforeMovedStart(job)) continue;
+      const key = this.pinKey(job);
+      if (!key || this.delivery(key) === "sent" || this.delivery(key) === "canceled") continue;
+      sent.push(...(await this.deliverPin(job)));
+    }
+    if (sent.length > 0) this.save();
     return sent;
   }
 
@@ -2464,6 +2560,8 @@ class Engine implements CleanerCore {
 
   private async deliverPin(job: Job): Promise<CleanerText[]> {
     if (!this.pin || !this.cleanerPhone || this.optedOut || this.stale(job) || job.canceled || job.declined) return [];
+    // A moved cleaning's code never goes before its moved start. The next check after it sends it.
+    if (this.beforeMovedStart(job)) return [];
     const key = this.pinKey(job);
     if (!key) return [];
     const sent: CleanerText[] = [];
@@ -2681,6 +2779,8 @@ class Engine implements CleanerCore {
       existing.version += 1;
       existing.canceled = false;
       delete existing.calledOff;
+      // A moved cleaning was moved inside the old stay's gap: a new date drops it, and the cleaner is asked again.
+      if ((checkoutDateChanged || checkInDateChanged) && existing.cleanOn) this.dropMove(existing);
       if (checkoutDateChanged) {
         this.clearHostTime(existing.id, "checkout", oldCheckout);
         this.dropClearance(existing.id);
@@ -2823,6 +2923,23 @@ class Engine implements CleanerCore {
         to,
         kind: "corrected",
         body: `Update: checkout at ${this.options.property.address} moved to ${when.day} at ${when.time}. Reply YES to keep the cleaning, or STOP to opt out.`,
+        afterSend: () => {
+          job.announced = this.currentAnnouncement(job);
+        },
+      };
+    }
+    if (this.moveDrift(job)) {
+      const to = this.cleanerRecord()?.phone;
+      if (!to) return null;
+      const start = this.cleaningStart(job, checkout);
+      const id = `moved:${job.id}:${job.moveRound ?? 0}:${start.date}:${start.minutes}`;
+      if (this.delivery(id) === "sent") return null;
+      return {
+        id,
+        jobId: job.id,
+        to,
+        kind: "corrected",
+        body: movedCleaningBody(this.options.property.address, this.clock(start.date, start.minutes)),
         afterSend: () => {
           job.announced = this.currentAnnouncement(job);
         },
@@ -3654,6 +3771,16 @@ class Engine implements CleanerCore {
       nextCheckInTime: checkinClock?.time ?? null,
       checkoutAt: checkout ? zonedInstant(job.checkoutDate, hm(checkout.minutes), this.options.property.timeZone) : null,
       nextCheckInAt: checkin && job.nextCheckInDate ? zonedInstant(job.nextCheckInDate, hm(checkin.minutes), this.options.property.timeZone) : null,
+      ...(job.cleanOn
+        ? {
+            movedTo: {
+              date: job.cleanOn.date,
+              ...this.clock(job.cleanOn.date, job.cleanOn.minutes),
+              at: zonedInstant(job.cleanOn.date, hm(job.cleanOn.minutes), this.options.property.timeZone),
+              round: job.moveRound ?? 1,
+            },
+          }
+        : {}),
       version: job.version,
       hostCheckoutVersion: checkout?.version ?? 0,
       hostCheckInVersion: checkin?.version ?? 0,
@@ -3732,6 +3859,7 @@ class Engine implements CleanerCore {
       checkoutMinutes: checkout.minutes,
       nextCheckInDate: job.nextCheckInDate,
       checkInMinutes: job.nextCheckInDate ? (checkin?.minutes ?? null) : null,
+      ...(job.moveRound ? { move: job.moveRound } : {}),
     };
   }
 
@@ -3779,6 +3907,13 @@ class Engine implements CleanerCore {
     if (latest?.minutes === minutes) return;
     this.hostFacts.push({ jobId, field, version: (latest?.version ?? 0) + 1, minutes, at: this.now().toISOString() });
     this.cancelPendingReminders(jobId);
+    // A new checkout or check-in time can leave a moved cleaning outside its gap: then the move is dropped.
+    const job = this.jobsState.find((item) => item.id === jobId);
+    if (job?.cleanOn && this.moveRefusal(job, job.cleanOn.date, job.cleanOn.minutes, false)) {
+      const when = this.clock(job.cleanOn.date, job.cleanOn.minutes);
+      this.dropMove(job);
+      this.keepHostNote(`host:move-dropped:${job.id}:${job.moveRound}`, `The cleaning moved to ${when.day} at ${when.time} no longer fits between checkout and the next check-in, so it's back at checkout. The cleaner is asked again.`);
+    }
   }
 
   private toldOwner(jobId: string): boolean {
@@ -3933,7 +4068,7 @@ class Engine implements CleanerCore {
   saveArrival(minutes: number): boolean {
     const job = this.ordered().find((item) => !item.canceled && !item.declined && !item.done);
     if (!job) return false;
-    job.arrivalAt = zonedInstant(job.checkoutDate, hm(minutes), this.options.property.timeZone);
+    job.arrivalAt = zonedInstant(job.cleanOn?.date ?? job.checkoutDate, hm(minutes), this.options.property.timeZone);
     this.save();
     return true;
   }
@@ -3998,6 +4133,50 @@ class Engine implements CleanerCore {
   /** True when `ymd` is an earlier day than today in the property's time zone. */
   private beforeToday(ymd: string): boolean {
     return this.now().getTime() >= Date.parse(zonedInstant(addCalendarDays(ymd, 1), "00:00", this.options.property.timeZone));
+  }
+
+  /** When this cleaning starts: its moved day and time, else its checkout. */
+  private cleaningStart(job: Job, checkout: HostFact): { date: string; minutes: number } {
+    return job.cleanOn ?? { date: job.checkoutDate, minutes: checkout.minutes };
+  }
+
+  /** True when the cleaner hasn't been told about the latest move (or that a move was dropped). */
+  private moveDrift(job: Job): boolean {
+    if (!job.announced) return false;
+    return (job.announced.move ?? 0) !== (job.moveRound ?? 0);
+  }
+
+  /** True while a moved cleaning's start is still ahead. */
+  private beforeMovedStart(job: Job): boolean {
+    if (!job.cleanOn) return false;
+    return this.now().getTime() < Date.parse(zonedInstant(job.cleanOn.date, hm(job.cleanOn.minutes), this.options.property.timeZone));
+  }
+
+  /**
+   * Why a start doesn't fit this cleaning's gap: before its checkout, too close to (or past) the next
+   * check-in, more than MOVE_MAX_DAYS past checkout with no next check-in, or (when `now` is checked) already past.
+   */
+  private moveRefusal(job: Job, date: string, minutes: number, checkNow: boolean): MoveRefusal | undefined {
+    const zone = this.options.property.timeZone;
+    const checkout = this.latestFact(job.id, "checkout");
+    if (!checkout || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isInteger(minutes) || minutes < 0 || minutes >= 24 * 60) return "before-checkout";
+    const start = Date.parse(zonedInstant(date, hm(minutes), zone));
+    if (Number.isNaN(start)) return "before-checkout";
+    if (start < Date.parse(zonedInstant(job.checkoutDate, hm(checkout.minutes), zone))) return "before-checkout";
+    if (job.nextCheckInDate) {
+      const checkin = this.latestFact(job.id, "checkin")?.minutes ?? this.defaultCheckIn;
+      if (start > Date.parse(zonedInstant(job.nextCheckInDate, hm(checkin), zone)) - MOVE_CHECK_IN_LEAD_MS) return "into-check-in";
+    } else if (date > addCalendarDays(job.checkoutDate, MOVE_MAX_DAYS)) return "too-far";
+    if (checkNow && start <= this.now().getTime()) return "past";
+    return undefined;
+  }
+
+  /** Drops a move that no longer fits. The new round asks the cleaner again, at checkout. */
+  private dropMove(job: Job): void {
+    delete job.cleanOn;
+    job.moveRound = (job.moveRound ?? 0) + 1;
+    this.cancelPendingReminders(job.id);
+    this.cancelUnsentPin(job.id);
   }
 
   private checkoutReached(job: Job): boolean {
@@ -4081,9 +4260,12 @@ class Engine implements CleanerCore {
   private visitWindowOf(job: Job): Omit<WindowEvent, "id" | "at"> | undefined {
     const timeZone = this.options.property.timeZone;
     const checkout = this.latestFact(job.id, "checkout")?.minutes ?? this.defaultCheckout;
-    const from = zonedInstant(job.checkoutDate, hm(checkout), timeZone);
+    // A moved cleaning's window is its moved day, from its moved start.
+    const day = job.cleanOn?.date ?? job.checkoutDate;
+    const from = zonedInstant(day, hm(job.cleanOn?.minutes ?? checkout), timeZone);
     const checkIn = job.nextCheckInDate ? zonedInstant(job.nextCheckInDate, hm(this.latestFact(job.id, "checkin")?.minutes ?? this.defaultCheckIn), timeZone) : undefined;
-    let until = job.sameDay && checkIn ? checkIn : zonedInstant(job.checkoutDate, "20:00", timeZone);
+    const sameDay = job.cleanOn ? job.nextCheckInDate === day : job.sameDay;
+    let until = sameDay && checkIn ? checkIn : zonedInstant(day, "20:00", timeZone);
     // A late checkout past 8 PM still gets a window: two hours from checkout.
     if (Date.parse(until) <= Date.parse(from)) until = new Date(Date.parse(from) + 2 * 3_600_000).toISOString();
     return {
@@ -4093,7 +4275,7 @@ class Engine implements CleanerCore {
       from,
       until,
       expectedAt: job.arrivalAt ?? from,
-      sameDay: job.sameDay,
+      sameDay,
       ...(checkIn ? { checkIn } : {}),
       who: { role: "cleaner", name: this.options.visits?.cleanerName?.trim() || "The cleaner" },
     };
@@ -4682,7 +4864,8 @@ function aliasesOf(job: Job): string[] {
 
 /** The confirm text's outbox id. It is stored, and confirmSent finds the confirm by it, so it must stay the same. */
 function confirmId(job: Job, minutes: number): string {
-  return `confirm:${job.id}:${job.checkoutDate}:${minutes}:${job.nextCheckInDate ?? ""}`;
+  // A moved cleaning needs its own YES: each move round has its own confirm. Unmoved ids are unchanged.
+  return `confirm:${job.id}:${job.checkoutDate}:${minutes}:${job.nextCheckInDate ?? ""}${job.moveRound ? `:m${job.moveRound}` : ""}`;
 }
 
 /** The read lists this job's booking: a stay or a merged source UID is one the job was read under. */
