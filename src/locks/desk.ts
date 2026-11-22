@@ -11,6 +11,7 @@ import { markReconnected, onceNotes } from "./inbound";
 import type { DeviceKind, LockDevice } from "./adapter";
 import { lockAdapter } from "./registry";
 import { deskFeatureOn } from "../features/features";
+import { pairPicked } from "./rehome";
 import { allDoorsConnected, packagesRelease, readDoorLocks, storedDevice, type DoorLocksFile, type ReleaseMode, type StandingPerson, type StandingRole } from "./settings";
 
 export type { StandingPerson, StandingRole };
@@ -310,10 +311,11 @@ export class LockDesk {
     };
     delete file.blockedBy;
     delete file.rehomeNeeded;
-    // Doors the lock account no longer lists, replaced by new ones (#280 22): live codes move to them with the same digits when the counts match, else they're made again.
+    // Doors the lock account no longer lists, replaced by new ones (#280 22): live codes move to the picked door of the same name with the same digits; a gone door with no clear pair has its codes made again.
     const gone = before.doors.filter((id) => id !== "other" && !byId.has(id));
     const added = doors.filter((id) => !before.doors.includes(id));
-    const moves: Record<string, string> = gone.length > 0 && gone.length === added.length ? Object.fromEntries(gone.map((id, i) => [id, added[i]!])) : {};
+    const { moves } = pairPicked(before.devices.filter((item) => gone.includes(item.id)), added.map((id) => byId.get(id)!));
+    const unpaired = gone.filter((id) => !moves[id]);
     if (!allDoorsConnected(file)) {
       file.blockedBy = "mixed-doors";
       delete file.activeAt;
@@ -331,7 +333,7 @@ export class LockDesk {
     file.activeAt ??= at;
     door.saveLocks(file);
     if (Object.keys(moves).length > 0) await door.grants().rehome(moves);
-    else if (gone.length > 0) await door.grants().revokeOn(gone);
+    if (unpaired.length > 0) await door.grants().revokeOn(unpaired);
     // Visit records count a lock as connected from the latest connection line.
     if (switchedOn) recordLockConnection(this.root, true, () => this.deps.now());
     recordHostStep(this.root, { at, kind: "locks-on", about: names });

@@ -24,3 +24,25 @@ export function matchDoors(saved: readonly StoredDevice[], listed: readonly Lock
   }
   return { moves, missing };
 }
+
+/**
+ * The host picked new doors in save_locks while some saved ones are gone: each gone door pairs with the one picked
+ * door of the same name and kind. One gone door left with one picked door left is the host's own replacement, so
+ * they pair too. Anything else is never guessed: those gone doors' codes are taken off for their flows to make again.
+ */
+export function pairPicked(gone: readonly StoredDevice[], picked: readonly LockDevice[]): { moves: Record<string, string>; unpaired: string[] } {
+  const moves: Record<string, string> = {};
+  const used = new Set<string>();
+  for (const device of gone) {
+    const sameName = gone.filter((other) => key(other.name) === key(device.name));
+    const candidates = picked.filter((other) => other.kind === device.kind && key(other.name) === key(device.name));
+    if (sameName.length === 1 && candidates.length === 1 && !used.has(candidates[0]!.id)) {
+      moves[device.id] = candidates[0]!.id;
+      used.add(candidates[0]!.id);
+    }
+  }
+  const leftGone = gone.filter((device) => !moves[device.id]);
+  const leftPicked = picked.filter((device) => !used.has(device.id));
+  if (leftGone.length === 1 && leftPicked.length === 1) moves[leftGone[0]!.id] = leftPicked[0]!.id;
+  return { moves, unpaired: gone.map((device) => device.id).filter((id) => !moves[id]) };
+}
