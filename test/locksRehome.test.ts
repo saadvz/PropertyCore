@@ -182,3 +182,50 @@ describe("the reconnect's first sync", () => {
     expect((await applyLockEvent(door, fake, synced, NOW)).notes).toEqual([]);
   });
 });
+
+describe("codes left on doors that are no longer saved (23 Nov Grok run)", () => {
+  /** The doors were picked again before re-homing existed: the saved door has a new id, and the codes still name the old one. */
+  function pickedAgainBeforeRehome() {
+    const made = setup();
+    const { door, fake } = made;
+    return {
+      ...made,
+      pickAgain: () => {
+        fake.replaceDevice("dev-front", "dev-9");
+        const front = lock("dev-9", "Front door");
+        door.saveLocks({ ...door.locks(), devices: [storedDevice(front)], doors: [front.id] });
+      },
+    };
+  }
+
+  it("the next sync puts each live code on the saved door, with the same digits", async () => {
+    const { door, fake, pickAgain } = pickedAgainBeforeRehome();
+    await issueAll(door);
+    const before = fake.liveCodes("dev-front").map((code) => code.code).sort();
+    pickAgain();
+    expect(fake.liveCodes("dev-9")).toEqual([]);
+    await issueAll(door);
+    expect(fake.liveCodes("dev-9").map((code) => code.code).sort()).toEqual(before);
+    const live = door.grants().statuses().filter((grant) => !grant.revoked);
+    expect(live.length).toBe(4);
+    for (const grant of live) expect(grant.doors.map((item) => item.door)).toEqual(["Front door"]);
+  });
+
+  it("get_locks stops calling a code set while it is only on a door that's gone", async () => {
+    const { door, pickAgain } = pickedAgainBeforeRehome();
+    await issueAll(door);
+    pickAgain();
+    const standing = door.grants().live("standing", "st-1");
+    expect(standing?.doors).toEqual([{ door: "a door", status: "set" }]);
+    await door.syncGrants("standing", [{ jobId: "st-1", person: "+15555550103", window: { from: NOW.toISOString(), until: "2046-12-01T00:00:00.000Z" }, label: "Sam", who: { role: "shared" } }]);
+    expect(door.grants().live("standing", "st-1")?.doors).toEqual([{ door: "Front door", status: "set" }]);
+  });
+
+  it("leaves a code alone while its door is still saved", async () => {
+    const { door, fake } = setup();
+    await issueAll(door);
+    const before = fake.liveCodes("dev-front").map((code) => code.codeId).sort();
+    await issueAll(door);
+    expect(fake.liveCodes("dev-front").map((code) => code.codeId).sort()).toEqual(before);
+  });
+});

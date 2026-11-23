@@ -212,6 +212,7 @@ export class GrantBook {
         if (Date.parse(want.window.until) <= now.getTime()) continue;
         const live = this.liveOf(flow).find((grant) => grant.jobId === want.jobId);
         if (live) {
+          await this.coverSavedDoors(adapter, live);
           await this.retryDoors(adapter, live);
           if (live.devices.some((device) => !device.codeId)) notes.push(issueFailedNote(flow, want));
           continue;
@@ -514,6 +515,25 @@ export class GrantBook {
     }
     for (const device of grant.devices) device.status = "removed";
     grant.revokedAt = this.deps.now().toISOString();
+  }
+
+  /**
+   * A live code with a part on a door that is no longer saved (the doors were picked again before re-homing
+   * existed, as on the 23 Nov Grok run): the parts on gone doors come off, and each saved door the code lacks
+   * gets a part with no code yet, so retryDoors puts the same digits there. Nobody needs a new code. A code
+   * whose parts are all on saved doors is left as it is.
+   */
+  private async coverSavedDoors(adapter: LockAdapter, grant: StoredGrant): Promise<void> {
+    const saved = this.deps.doors().map((device) => device.id);
+    if (saved.length === 0 || grant.devices.every((device) => saved.includes(device.deviceId))) return;
+    const gone = grant.devices.filter((device) => !saved.includes(device.deviceId));
+    // Best effort: a door that left the lock account usually can't be reached any more.
+    await removeAll(adapter, gone);
+    const kept = grant.devices.filter((device) => saved.includes(device.deviceId));
+    const missing = saved.filter((id) => !kept.some((device) => device.deviceId === id));
+    grant.devices = [...kept, ...missing.map((deviceId) => ({ deviceId, status: "programming" as const }))];
+    grant.backups = grant.backups?.filter((backup) => saved.includes(backup.deviceId));
+    grant.failTold = grant.failTold?.filter((id) => saved.includes(id));
   }
 
   /** A door with no code on it (it didn't answer at issue) gets the same value again. */

@@ -174,7 +174,7 @@ const TOOLS = [
     name: "check_now",
     title: "Check the calendars now",
     description:
-      "Re-reads the booking calendars, sends any reminders that are due, and returns new alerts for the host. Pass googleEvents only when you just read Google Calendar. unread names any calendar link that didn't read; its saved bookings are kept. A message with photos has photos: links good for one hour. Look at them before you tell the host about the message.",
+      "Re-reads the booking calendars, sends any reminders that are due, and returns new alerts for the host. Pass googleEvents only when you just read Google Calendar. unread names any calendar link that didn't read; its saved bookings are kept. A message with photos has photos: links good for one hour. Look at them before you tell the host about the message. newsElsewhere names other properties with news waiting: call check_now again with no property to read them.",
     input: z.object({ googleEvents: z.object({ timeZone: z.string().optional(), items: z.array(z.unknown()) }).optional() }),
   },
   {

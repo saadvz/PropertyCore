@@ -1479,6 +1479,8 @@ class Engine implements CleanerCore {
     }
     await this.sendHostOptIn();
     await this.sendOptIn();
+    // A reset keeps the cleaner's YES, so with it already in the offer goes now, not at the next check (23 Nov Grok run).
+    if (this.cleanerConsent === "in") await this.drainOne();
     this.save();
     return { created: true };
   }
@@ -3884,6 +3886,9 @@ class Engine implements CleanerCore {
   private offerDue(job: Job): boolean {
     const trigger = this.options.offerTrigger;
     if (!trigger) return true;
+    // A Scratch test turnover is made on demand to test the texts now (23 Nov Grok run): its offer waits for
+    // neither quiet hours nor the first-text day.
+    if (job.id === TEST_TURN_ID) return true;
     if (this.inQuietHours()) return false;
     if (trigger.kind === "when-confirmed") return true;
     if (trigger.kind === "days-after-check-in" && !job.checkInDate) return true;
