@@ -25,9 +25,15 @@ If any of these is missing, say which one in one line and stop.
 
 Look for `docs/grok-tests/<number>-*.md`. If there is none, write one in the README's format from the pull
 request description and the issue's "still to test" list. Save it to
-`/mnt/project-files/grok-tests/<number>/script.md`, post it in the thread, and run it without waiting. Leave out
-any step that would text a real phone, disconnect the lock account, or buy something, and name those in a "Still by
-hand" note.
+`/mnt/project-files/grok-tests/<number>/script.md`. Before running it, check it the way the saved scripts are
+checked, and fix every problem it lists:
+
+```
+GROK_TEST_SCRIPT=/mnt/project-files/grok-tests/<number>/script.md npx vitest run test/grokTestScripts.test.ts
+```
+
+Then post it in the thread and run it without waiting. Leave out any step that would text a real phone, disconnect
+the lock account, or buy something, and name those in a "Still by hand" note.
 
 ## Preflight
 
@@ -69,8 +75,9 @@ Every Say line on 12 Scratch Lane starts with "On 12 Scratch Lane only:". Lines 
 Test texts can come only from the host, the cleaner or the observer. A pro or visitor replying by text can't be
 tested this way: mark such a step "could not check".
 
-If an outbox line reads "failed", the server handed the 555 text to Twilio, which refused it. Record it as
-delivered with the line above, carry on, and note it in the report.
+If an outbox line reads "failed", report the step as a fail and quote the line. Cleaner Core keeps a Scratch
+property's texts in the outbox and never hands them to Twilio (#288), so a failed line is a fault. On a server
+older than #288, a failed line only means Twilio refused the 555 number: say so in the report.
 
 ## Checks outside the chat
 
@@ -123,4 +130,6 @@ if asked, and post it only if asked.
 
 - You can't see which tool Grok called, only what it said and what changed.
 - Clock waits are real time.
-- No real phone or Twilio send is exercised. A hand check with a real phone covers that.
+- No real phone is exercised. Cleaner Core's Scratch texts never reach Twilio, but the hosted lock and visitor
+  texts do: a step that saves a visit or a pro texts their 555 number through Twilio, which refuses it and may
+  charge a small fee for the failed text. Scripts mark those steps. A hand check with a real phone covers delivery.
