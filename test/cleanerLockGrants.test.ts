@@ -21,7 +21,8 @@ afterEach(() => {
 
 // The harness's turnover: checkout Oct 18 at 11:00 New York, next check-in the same day.
 const CHECKOUT = "2026-10-18T15:00:00.000Z";
-const UNTIL = "2026-10-19T04:00:00.000Z";
+// The next guests check in at 4 PM that day, so the cleaner's code stops then.
+const UNTIL = "2026-10-18T20:00:00.000Z";
 
 async function connected(options: { locks?: boolean; doors?: number } = {}) {
   const clock = testClock();

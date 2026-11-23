@@ -75,10 +75,22 @@ async function scheduled(job: ReturnType<typeof engine>): Promise<void> {
 const pins = (sent: CleanerText[]) => sent.filter((text) => text.kind === "pin");
 
 describe("the cleaning window", () => {
-  it("runs from checkout to the end of the next check-in day", () => {
-    expect(cleaningWindow({ checkoutDate: "2026-11-07", checkoutTime: "10:00", nextCheckInDate: "2026-11-10", timeZone: "America/New_York" })).toEqual({
+  it("runs from checkout to the next guests' check-in time", () => {
+    expect(cleaningWindow({ checkoutDate: "2026-11-07", checkoutTime: "10:00", nextCheckInDate: "2026-11-10", nextCheckInTime: "15:30", timeZone: "America/New_York" })).toEqual({
       from: "2026-11-07T15:00:00.000Z",
-      until: "2026-11-11T05:00:00.000Z",
+      until: "2026-11-10T20:30:00.000Z",
+    });
+  });
+
+  it("with no check-in time, ends at 4 PM on the check-in day, never at midnight", () => {
+    // Found live: a Dec 13 cleaning's code ran to Dec 18 at 12 AM though the next guests checked in Dec 17 at 4 PM.
+    expect(cleaningWindow({ checkoutDate: "2026-12-13", checkoutTime: "10:00", nextCheckInDate: "2026-12-17", timeZone: "America/New_York" }).until).toBe("2026-12-17T21:00:00.000Z");
+  });
+
+  it("on a same-day turnover, ends at that afternoon's check-in", () => {
+    expect(cleaningWindow({ checkoutDate: "2026-11-28", checkoutTime: "11:00", nextCheckInDate: "2026-11-28", nextCheckInTime: "16:00", timeZone: "America/New_York" })).toEqual({
+      from: "2026-11-28T16:00:00.000Z",
+      until: "2026-11-28T21:00:00.000Z",
     });
   });
 
@@ -100,8 +112,26 @@ describe("the engine asks the hub at release", () => {
     expect(pins(sent)[0]!.body).toContain(OTHER);
     expect(pins(sent)[0]!.body).toContain("side gate");
     expect(pins(sent)[0]!.body).not.toContain(CODE);
-    // The fixture's turnover is same-day: checkout Oct 18 11:00 AM, next guest Oct 18.
-    expect(access.asked).toEqual([{ person: CLEANER, purpose: "cleaning", jobId: expect.any(String), window: { from: "2026-10-18T15:00:00.000Z", until: "2026-10-19T04:00:00.000Z" } }]);
+    // The fixture's turnover is same-day: checkout Oct 18 11:00 AM, next guests in at 4 PM, when the code stops.
+    expect(access.asked).toEqual([{ person: CLEANER, purpose: "cleaning", jobId: expect.any(String), window: { from: "2026-10-18T15:00:00.000Z", until: "2026-10-18T20:00:00.000Z" } }]);
+  });
+
+  it("ends the code at the next guests' own check-in time, and at the property's usual one without it", async () => {
+    const run = async (inReply: string, property: Partial<Parameters<typeof openCleanerCore>[0]["property"]> = {}) => {
+      const clock = { at: NOW };
+      const access = port((input) => ({ ok: true, kind: "code", code: OTHER, until: input.window.until }));
+      const job = engine([], clock, access, { property: { id: "prop_12_scratch_lane", address: ADDRESS, timeZone: "America/New_York", ...property } });
+      await job.pollFeed(feed("guesty-lite-scratch.ics"));
+      await job.receive({ id: "opt", from: CLEANER, text: "YES" });
+      await job.receive({ id: "out", from: OWNER, text: "YES" });
+      await job.receive({ id: "in", from: OWNER, text: inReply });
+      await job.receive({ id: "yes", from: CLEANER, text: "YES" });
+      clock.at = AFTER;
+      await job.receive({ id: "left", from: OWNER, text: "guests have left" });
+      return access.asked[0]?.window.until;
+    };
+    expect(await run("3 PM")).toBe("2026-10-18T19:00:00.000Z");
+    expect(await run("YES", { defaultCheckIn: "17:00" })).toBe("2026-10-18T21:00:00.000Z");
   });
 
   it("a refused grant sends the cleaner nothing and notes the host once", async () => {
@@ -118,7 +148,7 @@ describe("the engine asks the hub at release", () => {
     expect(job.hostNotes().filter((note) => note === "Enter the code again.")).toHaveLength(1);
   });
 
-  it("a same-day turnover released in the evening still sends", async () => {
+  it("a same-day turnover released before the next check-in still sends", async () => {
     const root = folder();
     const key = randomBytes(32);
     const hub = hubFor(root, { now: () => new Date(clock.at) });
@@ -129,10 +159,26 @@ describe("the engine asks the hub at release", () => {
     const sent: CleanerText[] = [];
     const job = engine(sent, clock, access);
     await scheduled(job);
-    clock.at = "2026-10-18T23:30:00.000Z";
+    clock.at = "2026-10-18T19:30:00.000Z";
     await job.receive({ id: "left", from: OWNER, text: "guests have left" });
     expect(pins(sent)).toHaveLength(1);
     expect(pins(sent)[0]!.body).toContain(CODE);
+  });
+
+  it("a same-day turnover released after the next guests checked in sends no code, and the host hears it once", async () => {
+    const root = folder();
+    const key = randomBytes(32);
+    const clock = { at: NOW };
+    const door = hubFor(root, { now: () => new Date(clock.at) }).doorAccess(() => ({}));
+    door.save(CODE, undefined, key);
+    const access: DoorAccessPort = { request: async (input) => door.request({ ...input, key }), codeForChecks: () => door.codeForChecks(key) };
+    const sent: CleanerText[] = [];
+    const job = engine(sent, clock, access);
+    await scheduled(job);
+    clock.at = "2026-10-18T23:30:00.000Z";
+    await job.receive({ id: "left", from: OWNER, text: "guests have left" });
+    expect(pins(sent)).toEqual([]);
+    expect(job.hostNotes().filter((note) => note === DOOR_WINDOW_OVER)).toHaveLength(1);
   });
 
   it("days late, the hub refuses the window and the host hears it once", async () => {
