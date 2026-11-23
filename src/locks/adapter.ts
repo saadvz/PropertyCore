@@ -31,7 +31,8 @@ export interface LockDevice {
 }
 
 /** Where one code is on one device. */
-export type CodeStatus = "programming" | "set" | "failed" | "removed";
+/** scheduled: made on the partner, waiting for its window to open before it goes on the lock. */
+export type CodeStatus = "programming" | "scheduled" | "set" | "failed" | "removed";
 
 export interface CodeOnDevice {
   /** The partner's id for this code on this device. */
