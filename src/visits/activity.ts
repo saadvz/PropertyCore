@@ -62,7 +62,32 @@ export function doorActivity(events: readonly VisitEvent[], codeNames: CodeNames
     }
     out.push(entry);
   }
-  return out.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  return mergeEchoes(out.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)));
+}
+
+/** Two reports of one turn of the lock land this close together. */
+const ECHO_MS = 90_000;
+
+/**
+ * The lock partner can report one unlock twice, under two event ids (23 Nov Grok run). The same door doing the same
+ * thing the same way within 90 seconds is told once.
+ */
+function mergeEchoes(sorted: ActivityEntry[]): ActivityEntry[] {
+  const out: ActivityEntry[] = [];
+  for (const entry of sorted) {
+    const last = out.at(-1);
+    const same =
+      last &&
+      last.door === entry.door &&
+      last.action === entry.action &&
+      last.withCode === entry.withCode &&
+      last.who === entry.who &&
+      last.how === entry.how &&
+      last.party === entry.party &&
+      Date.parse(entry.at) - Date.parse(last.at) <= ECHO_MS;
+    if (!same) out.push(entry);
+  }
+  return out;
 }
 
 /** One plain sentence, like "The Front door was unlocked at 1:13 AM, without a code (from the app)." */
