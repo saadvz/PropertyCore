@@ -111,7 +111,9 @@ Limits: test texts can only come from the host, the cleaner or the observer, so 
 text can't be tested this way. The outbox never shows a door code, so a code text is checked by its outbox line.
 
 A Scratch property's texts must never be handed to Twilio, even with live texts on. That is a small server change,
-separate from the skill.
+separate from the skill (#288). It covers Cleaner Core's texts. The hosted lock and visitor texts on Adélie Cottage
+still go to Twilio, which refuses a 555 number and may charge a small fee for the failed text, so scripts mark the
+steps that send one and keep them few.
 
 ## Where it lives
 
