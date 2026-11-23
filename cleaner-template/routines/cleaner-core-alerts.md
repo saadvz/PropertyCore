@@ -54,7 +54,10 @@ routine runs, it wakes once, and `check_now` returns all of them.
 2. Otherwise call `check_now` without `googleEvents`. A webhook can't read the
    host's Google Calendar. The Cleaner Core Check routine does that. With more
    than one property, `check_now` checks every property and names each one:
-   say which property each line is about.
+   say which property each line is about. Never name one property in this
+   routine or its prompt: a wake-up can come from any property. When a
+   `check_now` that named one property returns `newsElsewhere`, call
+   `check_now` again with no property.
 3. Post each line in `alerts` in your own short words. Post nothing when
    `alerts` is empty. A new booking asks the host to confirm the usual times.
    "Have the guests left?" asks the host about the checkout. Only the host's
