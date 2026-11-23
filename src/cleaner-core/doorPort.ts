@@ -33,12 +33,17 @@ export function fixedCodePort(code: string | undefined, lockLocation?: string): 
 }
 
 /**
- * A cleaning's door window: from the checkout instant to the end of the next check-in day in the
- * property's time zone, or with no next booking, to the end of the day after checkout.
+ * A cleaning's door window: from the checkout instant to the next guests' check-in in the property's
+ * time zone (their confirmed time, else the property's usual check-in time, else 4 PM), so the code
+ * never works once they're in. With no next booking, to the end of the day after checkout.
  */
-export function cleaningWindow(input: { checkoutDate: string; checkoutTime: string; nextCheckInDate: string | null; timeZone: string }): { from: string; until: string } {
+export function cleaningWindow(input: { checkoutDate: string; checkoutTime: string; nextCheckInDate: string | null; nextCheckInTime?: string; timeZone: string }): { from: string; until: string } {
   const from = new Date(Date.parse(zonedInstant(input.checkoutDate, input.checkoutTime, input.timeZone))).toISOString();
-  const lastDay = input.nextCheckInDate ?? addCalendarDays(input.checkoutDate, 1);
-  const until = new Date(Date.parse(zonedInstant(addCalendarDays(lastDay, 1), "00:00", input.timeZone))).toISOString();
-  return { from, until };
+  const end = input.nextCheckInDate
+    ? zonedInstant(input.nextCheckInDate, input.nextCheckInTime ?? DEFAULT_NEXT_CHECK_IN, input.timeZone)
+    : zonedInstant(addCalendarDays(input.checkoutDate, 2), "00:00", input.timeZone);
+  return { from, until: new Date(Date.parse(end)).toISOString() };
 }
+
+/** The check-in time a cleaning window ends at when neither the booking nor the property gives one. */
+export const DEFAULT_NEXT_CHECK_IN = "16:00";
