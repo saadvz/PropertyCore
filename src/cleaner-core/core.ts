@@ -2399,14 +2399,22 @@ class Engine implements CleanerCore {
   }
 
   /**
-   * The cleaning's door window: checkout to the end of the next check-in day. Once the host cleared
+   * The cleaning's door window: checkout to the next guests' check-in (their confirmed time, else the
+   * property's usual one), or with no next booking to the end of the day after checkout. Once the host cleared
    * the guests, it starts at that moment when that's earlier than checkout (the cleaner may come early).
    */
   private codeWindow(job: Job): { from: string; until: string } | undefined {
     const checkout = this.latestFact(job.id, "checkout");
     if (!checkout) return undefined;
-    const window = cleaningWindow({ checkoutDate: job.checkoutDate, checkoutTime: hm(checkout.minutes), nextCheckInDate: job.nextCheckInDate, timeZone: this.options.property.timeZone });
-    // A moved cleaning's code works from its moved start to the end of that day, and never past the usual window.
+    const checkin = job.nextCheckInDate ? (this.latestFact(job.id, "checkin")?.minutes ?? this.defaultCheckIn) : undefined;
+    const window = cleaningWindow({
+      checkoutDate: job.checkoutDate,
+      checkoutTime: hm(checkout.minutes),
+      nextCheckInDate: job.nextCheckInDate,
+      ...(checkin !== undefined ? { nextCheckInTime: hm(checkin) } : {}),
+      timeZone: this.options.property.timeZone,
+    });
+    // A moved cleaning's code works from its moved start to the end of that day, and never past the next check-in.
     if (job.cleanOn) {
       const zone = this.options.property.timeZone;
       const from = new Date(Date.parse(zonedInstant(job.cleanOn.date, hm(job.cleanOn.minutes), zone))).toISOString();
