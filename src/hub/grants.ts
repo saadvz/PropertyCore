@@ -213,6 +213,7 @@ export class GrantBook {
         const live = this.liveOf(flow).find((grant) => grant.jobId === want.jobId);
         if (live) {
           await this.coverSavedDoors(adapter, live);
+          await this.recheckRemoved(adapter, live);
           await this.retryDoors(adapter, live);
           if (live.devices.some((device) => !device.codeId)) notes.push(issueFailedNote(flow, want));
           continue;
@@ -353,7 +354,7 @@ export class GrantBook {
       if (!grant) return this.fallback(input, saved, who, []);
       await this.refresh(adapter, grant);
       const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-      for (let polls = 0; polls < PROGRAMMING_WAIT_MS / POLL_MS && grant.devices.some((device) => device.status === "programming"); polls++) {
+      for (let polls = 0; polls < PROGRAMMING_WAIT_MS / POLL_MS && grant.devices.some((device) => device.status === "programming" || device.status === "scheduled"); polls++) {
         await sleep(POLL_MS);
         await this.refresh(adapter, grant);
       }
@@ -534,6 +535,21 @@ export class GrantBook {
     grant.devices = [...kept, ...missing.map((deviceId) => ({ deviceId, status: "programming" as const }))];
     grant.backups = grant.backups?.filter((backup) => saved.includes(backup.deviceId));
     grant.failTold = grant.failTold?.filter((id) => saved.includes(id));
+  }
+
+  /**
+   * A live code kept as removed from a door is asked about again: before the partner's "unset" meant scheduled, a code
+   * waiting for its window was saved as removed and never looked at again (23 Nov Grok retest). Unknown stays as it was.
+   */
+  private async recheckRemoved(adapter: LockAdapter, grant: StoredGrant): Promise<void> {
+    for (const device of grant.devices) {
+      if (!device.codeId || device.status !== "removed") continue;
+      try {
+        device.status = (await adapter.codeStatus({ deviceId: device.deviceId, codeId: device.codeId })).status;
+      } catch {
+        // Asked again on the next sync.
+      }
+    }
   }
 
   /** A door with no code on it (it didn't answer at issue) gets the same value again. */

@@ -53,5 +53,7 @@ describe("a test turnover after the cleaner already said YES", () => {
     expect((await lines()).some((line) => line.startsWith("Decline note"))).toBe(true);
     const check = JSON.stringify((await s.tool("check_now", { property: id })).structured);
     expect(check).toContain("whoever cleans");
+    // The host hears the decline note went, so nobody says nothing was sent (23 Nov Grok retest).
+    expect(check).toContain("A note that it isn't scheduled went to the group.");
   });
 });

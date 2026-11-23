@@ -13,7 +13,7 @@ const GET = {
   name: "get_locks",
   title: "Connected locks",
   description:
-    "The property's connected locks and sensors: online, battery, which locks the cleaner and pros use, how codes go out, standing codes, each per-visit code's status by door, and any problem. After the host signs in: whether their lock account is connected (account), and its devices not yet on a property (available), whose ids save_locks takes. Never a code: you never see or pass one.",
+    "The property's connected locks and sensors: online, battery, which locks the cleaner and pros use, how codes go out, standing codes, each per-visit code's status by door (scheduled: waiting for its window to open, which is normal before a visit), and any problem. After the host signs in: whether their lock account is connected (account), and its devices not yet on a property (available), whose ids save_locks takes. Never a code: you never see or pass one.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
 };
 

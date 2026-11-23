@@ -55,6 +55,13 @@ describe("house facts are learned as guests ask (#16)", () => {
     expect(GUEST_MESSAGES_INSTRUCTION).toMatch(/Don't ask the host for house facts up front/);
   });
 
+  it("a question the host pastes in, with nothing saved, is asked about first, never drafted with blanks (23 Nov Grok retest)", () => {
+    for (const text of [LEARN_FACTS, GUEST_MESSAGES_INSTRUCTION]) {
+      expect(text).toMatch(/pastes/);
+      expect(text).toMatch(/never drafting with blanks|don't draft with blanks/i);
+    }
+  });
+
   it("a question nothing answers goes to the host with how to keep the answer, and the next guest gets a draft from it", () => {
     const { root, desk } = property();
     const first = ok(desk.readMessage({ email: guestEmail("Hi! What's the wifi password?", "first") }));

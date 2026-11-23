@@ -52,6 +52,8 @@ const RECENT_DAYS = 7;
 const APPROVAL_MS = 10 * 60_000;
 const APPROVAL_STALE = "That approval has expired or doesn't match. Ask the host again.";
 const NOTHING_SENT = "Nothing is sent to anyone from here.";
+/** Code states where a visit's door code was made, so a cancel takes it off the lock. */
+const CODE_MADE: ReadonlySet<VisitCodeState> = new Set(["texted", "not-sent", "on-lock", "failed", "programming"]);
 
 const ok = (structured: Record<string, unknown>): OversightReply => ({ text: JSON.stringify(structured), structured, isError: false });
 const fail = (text: string): OversightReply => ({ text, isError: true });
@@ -247,9 +249,12 @@ export class OversightDesk {
       const visit = file.visits.find((v) => v.id === input.id);
       if (!visit) return fail("There's no expected visit with that id. List the visits to find it.");
       if (visit.cancelledAt) return ok({ cancelled: true, visit: shownVisit(visit), next: "That visit was already cancelled." });
+      // Read before the cancel: only a code that was made comes off the lock (23 Nov Grok run).
+      const made = visit.phone ? CODE_MADE.has(this.codeState(file, visit)) : false;
       const cancelled = { ...visit, cancelledAt: this.deps.now().toISOString() };
       writeOversight(this.root, { ...file, visits: file.visits.map((v) => (v.id === visit.id ? cancelled : v)) });
-      return ok({ cancelled: true, visit: shownVisit(cancelled), next: `Cancelled. It won't be checked.${visit.phone ? ` ${visit.who}'s door code for it comes off the lock.` : ` ${NOTHING_SENT}`}` });
+      const code = made ? ` ${visit.who}'s door code for it comes off the lock.` : visit.phone ? ` No door code was made for it, so none comes off the lock. ${NOTHING_SENT}` : ` ${NOTHING_SENT}`;
+      return ok({ cancelled: true, visit: shownVisit(cancelled), next: `Cancelled. It won't be checked.${code}` });
     });
   }
 

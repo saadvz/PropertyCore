@@ -44,7 +44,7 @@ const MAX_REPLY = 2000;
  * are saved, and on every get_guest_facts.
  */
 export const LEARN_FACTS =
-  "Don't ask the host for house facts up front. They're learned as guests ask: when a guest's question has nothing saved, read_guest_message sends it to the host, and once the host answers, you offer to keep that answer for the next guest who asks. If the host gives you a fact themselves, save it with save_guest_facts in their words. House rules are one list, kept with get_house_rules and save_house_rules, and every rule there is used for replies. Never save a door code: guest codes come with the smart-lock connection.";
+  "Don't ask the host for house facts up front. They're learned as guests ask: when a guest's question has nothing saved, read_guest_message sends it to the host, and once the host answers, you offer to keep that answer for the next guest who asks. When the host pastes or tells you a guest's question that nothing saved answers, don't draft with blanks or made-up details: ask the host what to say first, then offer to keep their answer. If the host gives you a fact themselves, save it with save_guest_facts in their words. House rules are one list, kept with get_house_rules and save_house_rules, and every rule there is used for replies. Never save a door code: guest codes come with the smart-lock connection.";
 
 /** The house rules are one list now (#15): a rules fact goes there instead. */
 export const RULES_ARE_ONE_LIST =

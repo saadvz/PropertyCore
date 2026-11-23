@@ -48,6 +48,8 @@ interface SeamAccessCode {
   access_code_id: string;
   status?: string;
   code?: string;
+  /** A time-bound code's start. Before it, the partner lists the code as "unset": made, not on the lock yet. */
+  starts_at?: string;
   errors?: { error_code?: string }[];
 }
 
@@ -89,9 +91,11 @@ function deviceKind(device: SeamDevice): DeviceKind {
   return "other";
 }
 
-function codeStatusOf(code: SeamAccessCode): CodeStatus {
+function codeStatusOf(code: SeamAccessCode, now: Date): CodeStatus {
   if ((code.errors ?? []).some((error) => /fail|error/.test(error.error_code ?? ""))) return "failed";
   if (code.status === "set") return "set";
+  // A time-bound code waits as "unset" until its window opens: it is scheduled, not gone (23 Nov Grok retest).
+  if (code.status === "unset" && code.starts_at && Date.parse(code.starts_at) > now.getTime()) return "scheduled";
   if (code.status === "removing" || code.status === "unset") return "removed";
   return "programming";
 }
@@ -191,7 +195,7 @@ export class SeamLockAdapter implements LockAdapter {
         // The partner's backup codes are for time-bound codes only: a standing (ongoing) code asks for none (#180 sandbox run).
         ...(this.ongoing(input.window) ? {} : { use_backup_access_code_pool: true }),
       });
-      return { codeId: reply.access_code.access_code_id, status: codeStatusOf(reply.access_code) };
+      return { codeId: reply.access_code.access_code_id, status: codeStatusOf(reply.access_code, this.now()) };
     } catch (error) {
       // A code value the lock already holds is a clash, not a failure: the caller tries a new value.
       if (error instanceof SeamError && /duplicate|already|code_in_use/.test(error.type ?? "")) throw new CodeValueRefused(input.deviceId);
@@ -217,7 +221,7 @@ export class SeamLockAdapter implements LockAdapter {
   async codeStatus(input: { deviceId: string; codeId: string }): Promise<CodeOnDevice> {
     try {
       const reply = await this.call<{ access_code: SeamAccessCode }>("/access_codes/get", { access_code_id: input.codeId });
-      return { codeId: input.codeId, status: codeStatusOf(reply.access_code) };
+      return { codeId: input.codeId, status: codeStatusOf(reply.access_code, this.now()) };
     } catch (error) {
       if (error instanceof SeamError && error.status === 404) return { codeId: input.codeId, status: "removed" };
       throw error;

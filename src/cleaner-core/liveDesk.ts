@@ -3676,7 +3676,10 @@ export class LiveDesk {
       const line = declinedLine(name, job.movedTo ? { checkoutDate: job.movedTo.date, nextCheckInAt: job.nextCheckInAt } : job, this.place.timeZone ?? "UTC");
       // With a next check-in, the cleaning can move to another time before it (finding #8).
       const move = job.nextCheckInAt ? ` It can also move to another day or time before then, if ${name === "The cleaner" ? "the cleaner" : name} can do it.` : "";
-      engine.keepHostNote(`cleaner-no:${job.id}${round}`, `${line}${move}`);
+      // Says when the decline note went, so the host isn't told nothing was sent (23 Nov Grok retest).
+      const note = engine.outbox().find((item) => item.kind === "declined" && item.jobId === job.id && item.status === "sent");
+      const told = note ? (note.group ? " A note that it isn't scheduled went to the group." : ` A note that it isn't scheduled went to ${name === "The cleaner" ? "the cleaner" : name}.`) : "";
+      engine.keepHostNote(`cleaner-no:${job.id}${round}`, `${line}${told}${move}`);
     }
   }
 

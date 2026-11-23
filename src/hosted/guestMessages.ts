@@ -21,7 +21,7 @@ export const GUEST_FRONT_NAMES: ReadonlySet<string> = GUEST_TOOL_NAMES;
 
 /** Said on initialize after Property Core's own line, while the account's switch is on. */
 export const GUEST_MESSAGES_INSTRUCTION =
-  "When the host's email is connected, pass each Airbnb guest-message email to read_guest_message as it arrives, exactly as received, and follow its next. Never pass a reservation email there. Don't ask the host for house facts up front: when a guest asks something nothing saved answers, ask the host, and on their okay keep the answer with save_guest_facts so the next guest gets a draft. House rules are one list, in get_house_rules. Nothing reaches a guest from Property Core: the host pastes each approved reply into Airbnb.";
+  "When the host's email is connected, pass each Airbnb guest-message email to read_guest_message as it arrives, exactly as received, and follow its next. Never pass a reservation email there. Don't ask the host for house facts up front: when a guest asks something nothing saved answers, ask the host what to say, never drafting with blanks or made-up details, also for a question the host pastes in, and on their okay keep the answer with save_guest_facts so the next guest gets a draft. House rules are one list, in get_house_rules. Nothing reaches a guest from Property Core: the host pastes each approved reply into Airbnb.";
 
 const anyFlowOn = (property: Property) => property.flows.cleaning.on || property.flows.supplies.on || property.flows.fixer.on;
 

@@ -131,6 +131,17 @@ describe("the lock partner's adapter", () => {
     await gone.adapter.removeCode({ deviceId: "d1", codeId: "ac_1" });
   });
 
+  it("reads a code waiting for its window as scheduled, and an unset code past its start as removed (23 Nov Grok retest)", async () => {
+    const later = stub({ "/access_codes/get": { body: { access_code: { access_code_id: "ac_1", status: "unset", starts_at: "2026-12-05T15:00:00.000Z" } } } });
+    expect((await later.adapter.codeStatus({ deviceId: "d1", codeId: "ac_1" })).status).toBe("scheduled");
+    const made = stub({ "/access_codes/create": { body: { access_code: { access_code_id: "ac_2", status: "unset", starts_at: "2026-12-05T15:00:00.000Z" } } } });
+    expect(await made.adapter.createCode({ deviceId: "d1", code: CODE, name: "Cleaning abcd", window: { from: "2026-12-05T15:00:00.000Z", until: "2026-12-06T05:00:00.000Z" } })).toEqual({ codeId: "ac_2", status: "scheduled" });
+    const past = stub({ "/access_codes/get": { body: { access_code: { access_code_id: "ac_1", status: "unset", starts_at: "2026-11-30T15:00:00.000Z" } } } });
+    expect((await past.adapter.codeStatus({ deviceId: "d1", codeId: "ac_1" })).status).toBe("removed");
+    const noStart = stub({ "/access_codes/get": { body: { access_code: { access_code_id: "ac_1", status: "unset" } } } });
+    expect((await noStart.adapter.codeStatus({ deviceId: "d1", codeId: "ac_1" })).status).toBe("removed");
+  });
+
   it("pulls a backup code for the failed code, and none without one", async () => {
     const { adapter, calls } = stub({ "/access_codes/pull_backup_access_code": { body: { backup_access_code: { access_code_id: "ac_b", code: CODE } } } });
     expect(await adapter.backupCode({ deviceId: "d1", codeId: "ac_1", name: "x", window: { from: "a", until: "b" } })).toEqual({ codeId: "ac_b", code: CODE });
