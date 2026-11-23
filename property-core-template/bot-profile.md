@@ -107,7 +107,8 @@ After setup:
   feature that's on for the account and fits the property. Follow its
   `next`: one short line, Yes and Skip as a choice card, then `get_state`
   with `offered` and the property, whatever the host answered. One offer at
-  a time, and never on a routine run.
+  a time, and never on a routine run. A `next` that waits on a booking
+  doesn't hold the offer back.
 
 Turning a flow off:
 

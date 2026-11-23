@@ -123,7 +123,7 @@ describe("the setup question", () => {
 
 describe("the review before Activate", () => {
   /** A setup at its review, with the account's booking platforms on or off. */
-  async function atReview(on: boolean, platforms?: { platform: "airbnb" | "vrbo" | "direct"; sender?: string }[]) {
+  async function atReview(on: boolean, platforms?: { platform: "airbnb" | "vrbo" | "booking" | "direct"; sender?: string }[]) {
     const opened = openDesk([HOST, CLEANER], "0");
     if (on) Object.assign(opened.env, deskFeatures("booking-platforms"));
     const live = opened.desk;
@@ -137,8 +137,10 @@ describe("the review before Activate", () => {
     ok(await live.savePayments({ on: false }));
     ok(await live.saveAlertRoutine(ROUTINE, () => undefined));
     const state = ok(await live.getState());
+    lastNext = String(state.next);
     return (state.setup as { sources: Record<string, unknown> }).sources;
   }
+  let lastNext = "";
 
   it("says which platforms' bookings wait for the host's yes", async () => {
     const sources = await atReview(true, [{ platform: "airbnb" }, { platform: "vrbo" }, { platform: "direct", sender: "bookings@example.test" }]);
@@ -147,6 +149,16 @@ describe("the review before Activate", () => {
       waitForYes: ["Vrbo", "your booking site"],
       tellHost: "Each booking from Vrbo and your booking site waits for your yes in chat before it changes a cleaning. Airbnb's are read as they come.",
     });
+  });
+
+  it("puts that line in next itself, so an own-words summary can't drop it (#280 item 3)", async () => {
+    await atReview(true, [{ platform: "airbnb" }, { platform: "vrbo" }, { platform: "booking" }]);
+    expect(lastNext).toBe(
+      'Summarize this setup for the host in your own words, and in it say this line about their bookings exactly as written: "Each booking from Vrbo and Booking.com waits for your yes in chat before it changes a cleaning. Airbnb\'s are read as they come." Then ask them to reply Activate.',
+    );
+    cleanupDesks();
+    await atReview(true, [{ platform: "airbnb" }]);
+    expect(lastNext).toBe("Summarize this setup for the host in your own words, then ask them to reply Activate.");
   });
 
   it("has nothing to add for Airbnb alone, or with booking platforms off", async () => {

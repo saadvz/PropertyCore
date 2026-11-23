@@ -58,7 +58,8 @@ Once a property's setup is done, `get_state` may return `offer`: one feature
 that's on for the account and fits the property. Follow its `next`: one short
 line, Yes and Skip as a choice card, then `get_state` with `offered` and the
 property, whatever the host answered. One offer at a time, and never on a
-recurring task run.
+recurring task run. A `next` that waits on a booking doesn't hold the offer
+back.
 
 ## Run each flow
 

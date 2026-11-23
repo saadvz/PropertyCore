@@ -84,6 +84,20 @@ const CLEANER_PICK = "That's Cleaner Core. It schedules cleaners between guest s
 const ROUTINE_ASK =
   "Create the Cleaner Core Check and Cleaner Core Alerts routines. Only the host can see the Alerts routine's webhook address and key. Right after you create it, without waiting to be asked, send the host a link that opens the Alerts routine's Webhook URL field directly and one that opens its Webhook key field directly, with one secure card for each, the address first. Never send a link to the Routines page, and never tell the host to open Routines and pick the routine: opening the routine from there doesn't show its Webhook URL. Keep it to three short steps: open the link, copy the value, paste it in the card. Then call save_alert_routine with no arguments to get a one-time upload link, and send both values to that link from your own computer. Never put them in chat.";
 const REVIEW_ASK = "Summarize this setup for the host in your own words, then ask them to reply Activate.";
+
+/**
+ * The review's next, with a line the summary must carry word for word (#263, #282). A line left nested in setup is
+ * dropped from an own-words summary (the live Grok retest of 23 Nov), so it rides in next itself.
+ */
+function reviewAsk(mustSay: string | undefined): string {
+  if (!mustSay) return REVIEW_ASK;
+  return `Summarize this setup for the host in your own words, and in it say this line about their bookings exactly as written: "${mustSay}" Then ask them to reply Activate.`;
+}
+
+/** True for the review's next, with or without a line to say. */
+function isReviewAsk(next: unknown): boolean {
+  return next === REVIEW_ASK || (typeof next === "string" && next.startsWith("Summarize this setup for the host in your own words, and in it say this line"));
+}
 const PICK_FIRST = "Tell me which job you want help with first.";
 
 /** "a, b, and c" */
@@ -814,7 +828,7 @@ export class LiveDesk {
     if (!url && !token) return this.issueUpload(pinKey);
     if (this.routineRefused(url, token, pinKey)) return this.fail(this.words().routineNeeded);
     this.connectRoutine(url, token, save);
-    return this.reply({ next: this.cleaningState().next === REVIEW_ASK ? ROUTINE_SAVED_IN_SETUP : ROUTINE_SAVED });
+    return this.reply({ next: isReviewAsk(this.cleaningState().next) ? ROUTINE_SAVED_IN_SETUP : ROUTINE_SAVED });
   }
 
   /** Connects a ChatGPT or Muse deployment's hourly task. There is no test wake-up: nothing can wake it. */
@@ -822,7 +836,7 @@ export class LiveDesk {
     this.file.routineConnected = true;
     this.noteRoutineConnection();
     this.persist();
-    const inSetup = this.cleaningState().next === REVIEW_ASK;
+    const inSetup = isReviewAsk(this.cleaningState().next);
     const connected = this.assistant() === "muse" ? MUSE_TASK_CONNECTED : CHATGPT_TASK_CONNECTED;
     return this.reply({ next: inSetup ? `${connected} Then call get_state for the review.` : connected });
   }
@@ -3782,7 +3796,7 @@ export class LiveDesk {
     else if (ask) next = askNext(ask.tool);
     // The routines come before the review, so the cleaner's first reply already wakes Grok.
     else if (!this.file.texting && !this.routineReady()) next = this.words().routineAsk;
-    else if (!this.file.texting) next = REVIEW_ASK;
+    else if (!this.file.texting) next = reviewAsk(this.reviewTellHost());
     else if (!this.file.checked) next = "Run the checks. I'll read the calendar and I won't text anyone while I do.";
     // A setup that went live before the routines were asked at setup still needs them.
     else if (!this.routineReady()) next = this.words().routineAsk;
@@ -3794,7 +3808,7 @@ export class LiveDesk {
         next = askNext(ask.tool);
       } else next = "Tell me the checkout time and the next check-in time before I text the cleaner.";
     }
-    const review = next === REVIEW_ASK;
+    const reviewNext = isReviewAsk(next) ? next : undefined;
     const drafting = next === DRAFT_NEXT;
     if (this.held) next = this.holdLine();
     const notes = this.engine ? this.visibleNotes(this.engine).map((note) => note.body) : [];
@@ -3812,7 +3826,7 @@ export class LiveDesk {
       ...(draft && drafting && next === DRAFT_NEXT ? { draft } : {}),
       ...(task && (next === this.words().routineAsk || warning) ? { routine: task } : {}),
       ...(warning ? { warning } : {}),
-      ...(review && next === REVIEW_ASK ? { setup: this.reviewSetup() } : {}),
+      ...(reviewNext && next === reviewNext ? { setup: this.reviewSetup() } : {}),
       ...(this.file.checked ? { turns: this.turns() } : {}),
       ...(notes.length > 0 ? { notes } : {}),
       ...this.setAsideReply(),
@@ -4005,6 +4019,12 @@ export class LiveDesk {
           : {}),
       },
     };
+  }
+
+  /** The review's line on which platforms' bookings wait for the host's yes, when any do. */
+  private reviewTellHost(): string | undefined {
+    const emails = this.reviewBookingEmails().bookingEmails;
+    return typeof emails?.tellHost === "string" ? emails.tellHost : undefined;
   }
 
   /** Payments for the review (#166): on with the pay per cleaning and the Venmo username, off, or not answered. */

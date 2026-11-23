@@ -11,6 +11,7 @@ import type { Feature } from "../src/features/features";
 import { closeHostedApps } from "./cleanerOauthHarness";
 import { credentialsFor, switchOn } from "./featureEnv";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
+import { CLEANER, LANE, sharedAccount, type SharedAccount } from "./sharedHarness";
 
 /**
  * After core setup, get_state offers each feature that's on for the account and fits the property, one at a time,
@@ -47,6 +48,10 @@ describe("the feature offers", () => {
     expect(String(first.next)).toContain("Yes and Skip as a choice card");
     expect(String(first.next)).toContain('offered: "locks"');
     expect(String(first.next)).toContain("never on a routine run");
+    // A next that waits on a booking must not hold the offer back (the live Grok retest of 23 Nov, #280 item 4).
+    expect(String(first.next)).toContain("make this offer in this reply");
+    expect(String(first.next)).not.toContain("only after everything in next is done");
+    expect(String(first.next)).toContain("don't call the property fully set up while an offer is left");
     expect(String(nextOffer(ctx(), "claude")!.next)).toContain("a short list of choices");
     expect(nextOffer(ctx({ answered: ["locks", "house-rules"] }), "grok")!.offer).toBe("expected-visits");
     expect(nextOffer(ctx({ answered: ["locks", "house-rules", "expected-visits", "hours", "visits"] }), "grok")).toBeUndefined();
@@ -65,9 +70,12 @@ describe("the feature offers", () => {
 
 const NOW = new Date("2026-11-22T15:00:00.000Z");
 let open: MultiTenantApp | undefined;
+let shared: SharedAccount | undefined;
 afterEach(() => {
   open?.close();
   open = undefined;
+  shared?.m.close();
+  shared = undefined;
   closeHostedApps();
   resetFixerDesks();
   resetHubs();
@@ -113,7 +121,9 @@ describe("get_state's feature offers on the shared service", () => {
       expect(state.isError).toBe(false);
       const offer = state.structured?.offer as { offer: string; next: string } | undefined;
       if (!offer) break;
-      if (offer.offer === "locks") expect((state.structured?.locks as { next?: string }).next).toBeDefined();
+      // The offer leads next, and the lock status leaves the smart-lock ask to the offer (#280 item 4).
+      expect(String(state.structured?.next)).toMatch(/^In a chat with the host, never on a routine run, first make the feature offer in offer/);
+      if (offer.offer === "locks") expect((state.structured?.locks as { next?: string }).next).toBeUndefined();
       seen.push(offer.offer);
       expect((await w.m.toolAt("/mcp", w.token, "get_state", { property: w.property, offered: offer.offer })).isError).toBe(false);
     }
@@ -131,4 +141,21 @@ describe("get_state's feature offers on the shared service", () => {
     const wrong = await w.m.toolAt("/mcp", w.token, "get_state", { property: w.property, offered: "tours" });
     expect(wrong.isError).toBe(true);
   });
+});
+
+describe("the offers on a live Cleaner Core property (the live Grok retest of 23 Nov, #280 item 4)", () => {
+  it("leads get_state's next with the offer once the checks ran, past a next that waits on a booking", async () => {
+    const features: Feature[] = ["locks", "hours", "visits"];
+    const s = await sharedAccount({ now: () => NOW, env: credentialsFor(features) });
+    shared = s;
+    setLockAdapter(new FakeLockAdapter());
+    switchOn(s.m.registry, s.accountId, ...features);
+    const lane = await s.liveProperty("Scratch Lane", LANE, { cleaner: CLEANER, cleanerName: "Ana", groupChat: "cleaner-only" });
+    const state = await s.tool("get_state", { property: lane });
+    const offer = state.structured?.offer as { offer: string; next: string } | undefined;
+    expect(offer?.offer).toBe("locks");
+    expect(String(state.structured?.next)).toMatch(/^In a chat with the host, never on a routine run, first make the feature offer in offer, as its next says\. Then: /);
+    expect((state.structured?.locks as { next?: string } | undefined)?.next).toBeUndefined();
+    expect(offer?.next).toContain("make this offer in this reply");
+  }, 180_000);
 });
