@@ -6,7 +6,7 @@ import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { CLEANER_MCP_PATH, CLEANER_TOOL_NAMES, cleanerInstructions } from "../cleaner-core/mcp";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { FlowName, Property } from "../cleaner-core/hosted/properties";
-import { promoteRoutineOwner, propertyContext, shareRoutine, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
+import { carryRoutines, promoteRoutineOwner, propertyContext, shareRoutine, type HostedCleaner, type HostedRequest } from "../cleaner-core/hosted/router";
 import { sweepHeldTexts } from "./lineRouter";
 import { bookingEmailProperty } from "./bookingEmailRoute";
 import { signUpFlag } from "./signUp";
@@ -105,11 +105,14 @@ export async function handleTenantMcp(h: HostedCleaner, r: HostedRequest, path: 
   const auth = await r.authenticate(path);
   if (!auth) return;
   const extra = (auth.extra ?? {}) as { grantId?: string; tenantId?: string; assistant?: CleanerAssistant };
-  const tenant = extra.tenantId ? h.registry.get(extra.tenantId) : undefined;
-  if (!tenant || tenant.disabled || !extra.grantId || !extra.assistant) {
+  const signedIn = extra.tenantId ? h.registry.get(extra.tenantId) : undefined;
+  if (!signedIn || signedIn.disabled || !extra.grantId || !extra.assistant) {
     const message = signUpFlag(h.baseEnv()) ? UNLINKED_SIGN_IN : (UNLINKED[path] ?? UNLINKED.shared);
     return r.send(403, JSON_TYPE, JSON.stringify({ error: { message } }));
   }
+  // A chat that signed in again keeps the alert routine of its ended sign-in, before this call reads it.
+  if (toolsFor(signedIn) === "properties") await carryRoutines(h, signedIn.id).marked.catch(() => h.log(`Couldn't keep ${signedIn.id}'s alert routine connected this time.`));
+  const tenant = h.registry.get(signedIn.id) ?? signedIn;
   // A core's own bot (#250): the job is the address's, which the grant is bound to. Nothing a chat sends can change it.
   const job = jobOfPath(path);
   const properties = toolsFor(tenant) === "properties";
