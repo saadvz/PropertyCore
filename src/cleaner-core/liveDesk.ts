@@ -479,6 +479,8 @@ interface LiveFile {
   alertsQueued?: string[];
   /** The failed wake-up check_now already told the host about, so each problem is told once. */
   wakeProblemShown?: string;
+  /** The chat that check_now last told its alerts were connected through an earlier sign-in, not this one. */
+  routineDropShown?: string;
   /** The last 200 inbound messages, oldest first. */
   messages?: Message[];
   /** Ids of the messages `check_now` has already returned. */
@@ -1019,6 +1021,24 @@ export class LiveDesk {
     if (this.file.wakeProblemShown === problem.eventId) return undefined;
     this.file.wakeProblemShown = problem.eventId;
     return `Cleaner Core couldn't wake your alerts, so a text from the cleaner waits for the next scheduled check. ${problem.error} Ask ${this.hostWords().helper} to reconnect Cleaner Core's alerts.`;
+  }
+
+  /**
+   * check_now's one line for the host when the alert routine was connected through a sign-in that has ended and
+   * the chat alerts now follow has none of its own, once for that chat. Nothing told the host before (Adélie
+   * Cottage, 2026-11-23). The scheduled check reads it, so it names the chat, not a tool. The caller persists.
+   */
+  private routineDropAlert(): string | undefined {
+    const primary = this.env().CLEANER_CORE_PRIMARY_CONNECTION?.trim();
+    const ids = this.file.routineConnections ?? [];
+    const own = this.polledTask(this.primaryAssistant()) ? false : Boolean(this.env().CLEANER_CORE_ROUTINE_URL?.trim());
+    if (!primary || !this.file.routineConnected || ids.length === 0 || ids.includes(primary) || own) {
+      delete this.file.routineDropShown;
+      return undefined;
+    }
+    if (this.file.routineDropShown === primary) return undefined;
+    this.file.routineDropShown = primary;
+    return `Cleaner Core's alerts aren't reaching this chat: they were connected through an earlier sign-in that has ended. Until they're connected again, a text from the cleaner waits for the next scheduled check. Ask ${this.hostWords().helper} to reconnect Cleaner Core's alerts.`;
   }
 
   /** Ids of the host notes visible now. Taken before a path Grok doesn't see, so only that path's notes wake the routine. */
@@ -2003,12 +2023,13 @@ export class LiveDesk {
     const drafts = this.waitingDrafts();
     const savedAnswers = this.savedAnswersOut();
     const wake = this.wakeAlert();
+    const dropped = this.routineDropAlert();
     prunePhotos(this.root, jobs, this.now());
     this.pruneMessagePhotos();
     this.noteCheck();
     this.persist();
     return this.reply({
-      alerts: [...fresh.map((note) => note.body), ...(wake ? [wake] : [])],
+      alerts: [...fresh.map((note) => note.body), ...(wake ? [wake] : []), ...(dropped ? [dropped] : [])],
       messages: this.messagesOut(newMessages, save),
       ...(read.held ? { calendarsHeld: calendarsHeld(read.held) } : {}),
       ...this.setAsideReply(),
