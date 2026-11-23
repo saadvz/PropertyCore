@@ -1624,7 +1624,8 @@ describe("Cleaner Core Grok demo: Scratch rehearsal", () => {
     expect(door[0]?.body).toContain("Door code: [redacted].");
     expect(door[0]?.body).not.toContain(DOOR_CODE);
     expect(wired.cleanerSent.filter((sms) => sms.body.includes(DOOR_CODE))).toEqual([]);
-    expect(group.posts.filter((post) => post.body.includes(DOOR_CODE)).map((post) => [...post.to].sort())).toEqual([[LANE.ownerPhone, LANE.cleanerPhone].sort()]);
+    // A Scratch property's texts stay in the outbox: nothing reaches Twilio, so no group post carries the code.
+    expect(group.posts).toEqual([]);
     await safe("6 guests left");
 
     // 7. The cleaner says DONE. The host's ready note comes back to Grok.

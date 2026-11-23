@@ -641,9 +641,13 @@ describe("group texting: a Scratch reset", () => {
   const scratchAddress = scratch.property.address;
   const lane = { ownerPhone: scratch.ownerPhone, cleanerPhone: scratch.cleanerPhone };
 
-  /** Scratch Lane set up through Grok's tools, both phones joined, and the offer posted to the group. */
+  /**
+   * Scratch Lane set up through Grok's tools, both phones joined, and the offer posted to the group. With the
+   * Scratch tools on, a Scratch property's texts never reach Twilio, so the group is made with them off: a group
+   * an earlier Scratch run left on Twilio. The tools come on before the reset.
+   */
   async function scratchGroup(fake: FakeConversations) {
-    const wired = await startWiredApp({ groupChat: true, scratchTools: true, allowlist: `${lane.ownerPhone},${lane.cleanerPhone}` });
+    const wired = await startWiredApp({ groupChat: true, scratchTools: false, allowlist: `${lane.ownerPhone},${lane.cleanerPhone}` });
     open.push(wired);
     await must(wired, "get_state", { choice: "cleaners" });
     await must(wired, "save_property", { business: "Scratch", address: scratchAddress, timeZone: "America/New_York" });
@@ -657,6 +661,7 @@ describe("group texting: a Scratch reset", () => {
     expect((await sms(wired, lane.cleanerPhone, "YES")).status).toBe(200);
     const conversationSid = fake.posts[0]?.conversationSid ?? "";
     expect(conversationSid).toMatch(/^CH/);
+    wired.setEnv({ CLEANER_CORE_SCRATCH_TOOLS: "1" });
     return { wired, conversationSid };
   }
 
