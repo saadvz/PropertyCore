@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { runsFixer, runsSupplies, type CleanerAssistant } from "../cleaner-core/assistant";
 import { supplyReplyFor } from "./supplyWording";
 import { handleCleanerMcpHttp } from "../cleaner-core/http";
@@ -415,7 +416,30 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
   }
   const reply = await cleaningTool(h, r, tenant, property, caller, name, resolved.args);
   if (name === "save_people" && !reply.isError) await afterPeopleSaved(h, tenant, property);
+  if (name === "check_now" && !reply.isError && tenant.properties.length > 1) return withNewsElsewhere(h, tenant, property, reply);
   return reply;
+}
+
+/**
+ * check_now that names one property, on an account of two or more, names every other property with a note or a
+ * message check_now hasn't returned yet. An alerts routine whose prompt names one property otherwise never reads
+ * the others' (23 Nov Grok run: the cleaner's progress at 12 Scratch Lane never reached the chat).
+ */
+async function withNewsElsewhere(h: HostedCleaner, tenant: Tenant, checked: Property, reply: FrontReply): Promise<FrontReply> {
+  if (!reply.structured) return reply;
+  const waiting: string[] = [];
+  for (const other of tenant.properties.filter((p) => p.id !== checked.id && p.flows.cleaning.on)) {
+    const ctx = propertyContext(h, tenant, other);
+    if (!existsSync(ctx.root)) continue;
+    try {
+      if (await liveDeskFor(ctx.root, ctx.env, () => h.now()).newsWaiting()) waiting.push(other.label);
+    } catch {
+      // A desk that can't be read now is read by the next check.
+    }
+  }
+  if (waiting.length === 0) return reply;
+  const line = `New notes or messages are waiting at ${waiting.join(", ")}. Call check_now with no property to read every property, and tell the host about each by its label.`;
+  return withField(reply, "newsElsewhere", line);
 }
 
 /**
