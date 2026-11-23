@@ -117,7 +117,9 @@ export function offerNext(offer: Offer, assistant: string): string {
     offer.kind === "tell"
       ? "Say the pitch in one short line, with nothing to answer."
       : `Say the pitch in one short line in your own words, with Yes and Skip as ${cards}. Skip is always there, and the host can set it up later. On yes: ${offer.onYes}`;
-  return `Only in a chat with the host, never on a routine run, and only after everything in next is done. ${answer} Then call get_state with offered: "${offer.offer}" and the property, whatever they answered, for the next one. Never offer two at once.`;
+  // "Only after next is done" kept the offer back on the live Grok retest of 23 Nov: after setup, next waits on a
+  // booking that may be weeks away, so Grok called the property fully set up and never made the offer (#280 item 4).
+  return `Only in a chat with the host, never on a routine run. Setup is done, so make this offer in this reply: a next that waits on a booking, a check-in or someone's reply doesn't hold it back. ${answer} Then call get_state with offered: "${offer.offer}" and the property, whatever they answered, for the next one. Never offer two at once, and don't call the property fully set up while an offer is left.`;
 }
 
 /** The next offer the host hasn't answered on this property, with its instruction and how many more follow. */

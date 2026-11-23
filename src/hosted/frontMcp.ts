@@ -548,7 +548,16 @@ function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, call
     if (property.flows.cleaning.on && !("turns" in s)) return reply;
     if ([s.supplies, s.repairs].some((line) => typeof line === "string" && line.endsWith("setup not finished."))) return reply;
     const offer = nextOffer(offerContext(h, tenant, property, caller), caller.assistant);
-    return offer ? withField(reply, "offer", offer) : reply;
+    return offer ? offerFirst(reply, offer) : reply;
+  };
+  // The offer leads next, so it isn't read as an extra after a next that waits on a booking (#280 item 4), and the
+  // lock status drops its own smart-lock ask, which the offer makes with Yes and Skip.
+  const offerFirst = (reply: FrontReply, offer: Record<string, unknown>): FrontReply => {
+    const s = reply.structured!;
+    const locks = s.locks && typeof s.locks === "object" ? Object.fromEntries(Object.entries(s.locks as Record<string, unknown>).filter(([key]) => key !== "next")) : undefined;
+    const lead = `In a chat with the host, never on a routine run, first make the feature offer in offer, as its next says.${typeof s.next === "string" && s.next ? ` Then: ${s.next}` : ""}`;
+    const structured = { ...s, ...(locks ? { locks } : {}), next: lead, offer };
+    return { ...reply, text: JSON.stringify(structured), structured };
   };
   const supplies = async (property: Property): Promise<FrontReply> => withOffers(property, withRepairs(property, supplyReplyFor(caller.assistant, "get_supply_state", await supplyDesk(h, tenant, property).state())));
   const fixer = async (property: Property): Promise<FrontReply> => withOffers(property, withLocks(property, await fixerDesk(h, tenant, property).state()));
