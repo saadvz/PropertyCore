@@ -1,3 +1,4 @@
+import { propertyUpdateEvent, suppliesUpdateEvent } from "../alerts/operatorEvents";
 import { featureOn } from "../features/features";
 import { liveDeskFor } from "../cleaner-core/liveDesk";
 import { propertyFolder, type Property } from "../cleaner-core/hosted/properties";
@@ -6,20 +7,24 @@ import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/rout
 import { readCameras } from "../cameras/accounts";
 import { runHostAlerts, type AlertSink, type AlertSource, type HostAlert } from "../host-alerts/clock";
 import { HostAlertLedger } from "../host-alerts/ledger";
-import { routineFor, type AlertKind, type RoutineId } from "../host-alerts/routes";
+import { ALERT_KINDS, routineFor, type AlertKind, type BotRoutine, type RoutineId } from "../host-alerts/routes";
 import { cameraHealthSource, localHour, localToday, oversightSource, packageSource, stayNightSource } from "../host-alerts/sources";
 import { readHubFile } from "../hub/store";
 import { PackageDesk } from "../package-arrivals/desk";
 import { cameraDeskFor } from "./cameras";
+import { noteQuiet } from "./botTools";
 import { fixerDesk } from "./fixer";
+import { holder, team } from "./jobDeps";
+import { retryKeptWakes, WAKE_RETRY_MS, wakeHolder } from "./jobWake";
 import { oversightDeskOf } from "./oversight";
 
 /**
  * Host alerts on a clock (#250): for each property, the same-day check (#240), the nightly stay check (#239),
  * packages not seen by 9 PM (#241) and camera health (#239), each behind its own feature's flag. Every alert that's
- * due goes to the routine its kind is routed to, which today is always the account's Alerts routine: a note in
- * Cleaner Core's check_now when cleaning runs at the property, else in Fixer Core's check_fixes. Both wake the same
- * routine. Nothing here texts anyone, and nothing is logged but ids and kinds.
+ * due goes to the routine its kind is routed to. On an account with one bot that is the account's Alerts routine: a
+ * note in Cleaner Core's check_now when cleaning runs at the property, else in Fixer Core's check_fixes. On a team,
+ * where a core has its own bot, it is one wake-up for the Property Core bot or the Supply Core bot, which reads the
+ * alert with check_alerts. Nothing here texts anyone, and nothing is logged but ids and kinds.
  */
 
 /** The same-day check runs from 7 AM to midnight at the property (a miss is due by 8 PM, or an hour after a late window). */
@@ -27,13 +32,36 @@ export const OVERSIGHT_FROM_HOUR = 7;
 /** How often each kind runs per property. Camera health runs every tick, as it did on the camera clock. */
 export const EVERY_MS: Record<AlertKind, number> = { oversight: 15 * 60_000, packages: 15 * 60_000, "stay-night": 5 * 60_000, "camera-health": 0 };
 
+export { WAKE_RETRY_MS };
+
 const lastRun = new Map<string, number>();
+const wakeFailed = new Map<string, number>();
 let round = false;
 
-/** Tests only: forget when each kind last ran. */
+/** Tests only: forget when each kind last ran, as a restart does. */
 export function resetHostAlertClock(): void {
   lastRun.clear();
+  wakeFailed.clear();
   round = false;
+}
+
+/**
+ * Which routine each kind goes to for this account now. A team is an account where a core holds its job with its
+ * own bot; everything else is today's one Alerts routine.
+ */
+export function alertRoutes(h: HostedCleaner, tenant: Tenant): (kind: AlertKind) => RoutineId {
+  const account = h.registry.get(tenant.id) ?? tenant;
+  const onTeam = team(h, account) ? { suppliesOwnBot: Boolean(holder(h, account, "supplies")?.job) } : undefined;
+  const accountRoot = tenantFolder(h.dataRoot, tenant.id);
+  return (kind) => routineFor(accountRoot, kind, onTeam);
+}
+
+/**
+ * True when the clock tells the host about `kind` at this property. A kind that goes to the one Alerts routine needs
+ * a host-note path there; one a bot reads with check_alerts needs only a flow on.
+ */
+export function clockTells(h: HostedCleaner, tenant: Tenant, property: Property, kind: AlertKind): boolean {
+  return alertRoutes(h, tenant)(kind) === "alerts" ? hostNotePath(property) : anyFlowOn(property);
 }
 
 /** True when the property has a host-note path today: Cleaner Core or Fixer Core runs there. */
@@ -75,9 +103,32 @@ function alertsRoutineSink(h: HostedCleaner, tenant: Tenant, property: Property)
   };
 }
 
-/** One sink per routine id. #250 adds an entry here when it adds a routine. */
-function sinks(h: HostedCleaner, tenant: Tenant, property: Property): Record<RoutineId, AlertSink> {
-  return { alerts: alertsRoutineSink(h, tenant, property) };
+/**
+ * The Property Core bot's or the Supply Core bot's routine: the alert stays in the ledger, where check_alerts reads
+ * it, and the bot gets one wake-up per pass however many alerts the pass has. Not sent, the alert stays pending and
+ * is tried again on a later pass, until a wake-up goes through or the bot reads it on its own schedule.
+ */
+function botSink(h: HostedCleaner, tenant: Tenant, job: BotRoutine, now: Date): AlertSink {
+  let sent: Promise<boolean> | undefined;
+  const key = `${tenant.id}|${job}`;
+  return async () => {
+    sent ??= (async () => {
+      const failed = wakeFailed.get(key);
+      if (failed !== undefined && now.getTime() - failed < WAKE_RETRY_MS) return false;
+      const woken = await wakeHolder(h, tenant, job, job === "supplies" ? suppliesUpdateEvent(now) : propertyUpdateEvent(now));
+      // A Supply Core bot gone quiet is told about once, as the desks' own wake-ups do for theirs.
+      if (job === "supplies") await noteQuiet(h, tenant.id, "supplies").catch(() => undefined);
+      if (woken) wakeFailed.delete(key);
+      else wakeFailed.set(key, now.getTime());
+      return woken;
+    })();
+    return (await sent) ? job : undefined;
+  };
+}
+
+/** One sink per routine id. */
+function sinks(h: HostedCleaner, tenant: Tenant, property: Property, now: Date): Record<RoutineId, AlertSink> {
+  return { alerts: alertsRoutineSink(h, tenant, property), property: botSink(h, tenant, "property", now), supplies: botSink(h, tenant, "supplies", now) };
 }
 
 /** Today's behaviour kept for camera notes no routine took: they wait for list_cameras. */
@@ -107,7 +158,7 @@ function camerasPicked(root: string): boolean {
 }
 
 /** The sources that run at this property on this pass, each behind the account's own switch for its feature (featureOn). */
-function sourcesFor(h: HostedCleaner, tenant: Tenant, property: Property, root: string, ledger: HostAlertLedger, now: Date): AlertSource[] {
+function sourcesFor(h: HostedCleaner, tenant: Tenant, property: Property, root: string, ledger: HostAlertLedger, now: Date, routes: (kind: AlertKind) => RoutineId): AlertSource[] {
   const env = h.baseEnv();
   const on = (feature: "cameras" | "oversight" | "packages" | "stay-check") => featureOn(tenant, feature, env);
   if (!on("cameras") && !on("oversight") && !on("packages")) return [];
@@ -119,15 +170,17 @@ function sourcesFor(h: HostedCleaner, tenant: Tenant, property: Property, root: 
   const label = property.label;
   // Camera notes ran on the camera clock for every property with cameras picked: they still do, with or without a path.
   if (cameras) sources.push(cameraHealthSource(cameraDeskFor(h, tenant, property)));
-  // The rest have no host-note path without Cleaner Core or Fixer Core: they stay as they are today.
-  if (!path || !timeZone) return sources;
-  if (on("oversight") && anyFlowOn(property) && localHour(now, timeZone) >= OVERSIGHT_FROM_HOUR && dueToRun(root, "oversight", at)) {
+  if (!timeZone) return sources;
+  // A kind that goes to the one Alerts routine has no host-note path without Cleaner Core or Fixer Core, and stays
+  // as it is today. One a bot reads with check_alerts runs wherever a flow is on.
+  const tells = (kind: AlertKind) => (routes(kind) === "alerts" ? path : anyFlowOn(property));
+  if (tells("oversight") && on("oversight") && anyFlowOn(property) && localHour(now, timeZone) >= OVERSIGHT_FROM_HOUR && dueToRun(root, "oversight", at)) {
     sources.push(oversightSource(oversightDeskOf(h, tenant, property, () => now), localToday(now, timeZone), label));
   }
-  if (cameras && on("stay-check") && dueToRun(root, "stay-night", at)) {
+  if (tells("stay-night") && cameras && on("stay-check") && dueToRun(root, "stay-night", at)) {
     sources.push(stayNightSource(cameraDeskFor(h, tenant, property), ledger, now, timeZone));
   }
-  if (on("packages") && property.flows.supplies.on && dueToRun(root, "packages", at)) {
+  if (tells("packages") && on("packages") && property.flows.supplies.on && dueToRun(root, "packages", at)) {
     // Its own desk, not packageDeskFor's cached one: that one keeps the deps it was first made with.
     sources.push(packageSource(new PackageDesk(root, { now: () => now }), label));
   }
@@ -139,14 +192,17 @@ export async function tickHostAlerts(h: HostedCleaner, tenant: Tenant, property:
   const root = propertyFolder(h.dataRoot, tenant.id, property);
   const now = h.now();
   const ledger = new HostAlertLedger(root, () => now);
-  const sources = sourcesFor(h, tenant, property, root, ledger, now);
+  const routes = alertRoutes(h, tenant);
+  const sources = sourcesFor(h, tenant, property, root, ledger, now, routes);
+  // An alert a bot was woken for and never read, whose kind is the one Alerts routine's again: the desk's notes take it.
+  ledger.reopen(ALERT_KINDS.filter((kind) => routes(kind) === "alerts"));
   // Kept alerts still waiting for a routine are tried on every pass, even when nothing new is due.
   if (!sources.length && !ledger.pending().length) return;
-  const accountRoot = tenantFolder(h.dataRoot, tenant.id);
-  const bySink = sinks(h, tenant, property);
+  const bySink = sinks(h, tenant, property, now);
   const sinkFor = (kind: AlertKind): AlertSink => {
-    const sink = bySink[routineFor(accountRoot, kind)];
-    return kind === "camera-health" ? withCameraFallback(h, tenant, property, sink) : sink;
+    const routine = routes(kind);
+    // Only the one Alerts routine falls back to list_cameras: a camera note a bot reads waits for check_alerts.
+    return kind === "camera-health" && routine === "alerts" ? withCameraFallback(h, tenant, property, bySink[routine]) : bySink[routine];
   };
   const result = await runHostAlerts({ sources, ledger, sinkFor, now, label: property.label });
   for (const withheld of result.withheld) h.log(`A ${withheld.kind} alert for ${tenant.id}/${property.id} was withheld: its text looked like it held a code or a phone number.`);
@@ -161,6 +217,8 @@ export async function tickAllHostAlerts(h: HostedCleaner): Promise<void> {
     for (const listed of h.registry.list()) {
       const tenant = h.registry.get(listed.id);
       if (!tenant || tenant.disabled) continue;
+      // A filing's wake-up that didn't go through (#250) is tried again here, whatever the account's alert switches say.
+      await retryKeptWakes(h, tenant).catch(() => h.log(`The kept wake-ups for ${tenant.id} couldn't be tried this round.`));
       for (const property of tenant.properties) {
         try {
           await tickHostAlerts(h, tenant, property);

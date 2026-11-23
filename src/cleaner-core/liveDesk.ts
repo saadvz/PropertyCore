@@ -7,6 +7,7 @@ import { ASSISTANT_PROFILES, CHATGPT_CHECK_GAP_MS, CHATGPT_DESK_WORDING, CHATGPT
 import { currentCaller, withCaller, type CleanerCaller } from "./callerContext";
 import { OperatorEventOutbox } from "../alerts/outbox";
 import { parsePhone } from "../core/phone";
+import { woke } from "../jobs/wakeListeners";
 import { FileRuntimeStore } from "../storage/runtimeStore";
 import { ConfirmationBook } from "../operator/confirmations";
 import { supplyAskOn, supplyAskOnArrival } from "../supply-core/store";
@@ -94,7 +95,7 @@ function listText(items: string[]): string {
 const PIN_SENT = "I sent the door code to the cleaner. I'll tell you if it doesn't go through.";
 const UPDATE_HELD = "Times saved. I'll send the cleaner the new time in about a minute. If the time changes again before then, they get only the last one.";
 const PIN_SENT_GROUP = "I posted the door code in the cleaning group for the cleaner. I'll tell you if it doesn't go through.";
-const PIN_FAILED = "The door code didn't reach the cleaner. Tell your Grok Bot the guests have left and I'll resend it.";
+export const PIN_FAILED = "The door code didn't reach the cleaner. Tell your Grok Bot the guests have left and I'll resend it.";
 const PIN_REPEAT = "I already sent the door code to the cleaner.";
 const PIN_REENTER = "Please enter the door code again in the private box. Don't text it here.";
 export { DOOR_CODE_IN_CHAT };
@@ -1028,6 +1029,8 @@ export class LiveDesk {
     if (fresh.length > 0) this.file.alertsQueued = [...queued, ...fresh.map((note) => note.id)];
     this.persist();
     this.startDrain();
+    // On the shared service, a quiet Cleaner Core bot is told about once (#250).
+    woke(this.root, "cleaning");
   }
 
   /** True when `text` contains a guarded door code (saved or per-visit), or the server's door-code key. */
@@ -1151,6 +1154,22 @@ export class LiveDesk {
       if (this.file.choice) return;
       this.file.choice = "cleaners";
       this.persist();
+    });
+  }
+
+  /**
+   * The name of setup's next step as get_state gives it ("draft" while the setup draft waits), and nothing else.
+   * It uses nothing up: the one-time line about a door code that didn't reach the cleaner stays for the chat that
+   * runs Cleaner Core (#250).
+   */
+  peekStep(): Promise<string | undefined> {
+    return this.serial(async () => {
+      if (this.file.choice !== "cleaners") return undefined;
+      this.resume();
+      const state = this.cleaningState();
+      if (state.draft) return "draft";
+      const ask = state.ask as { step?: unknown } | undefined;
+      return typeof ask?.step === "string" ? ask.step : undefined;
     });
   }
 

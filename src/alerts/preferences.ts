@@ -1,4 +1,4 @@
-import type { OperatorEvent, OperatorEventType } from "./operatorEvents";
+import { isJobUpdate, type JobUpdateEvent, type OperatorEvent, type OperatorEventType } from "./operatorEvents";
 
 /**
  * Which operator updates the landlord wants. Stored with the installation
@@ -24,7 +24,7 @@ export const UPDATE_LABELS: Record<UpdateKind, string> = {
   VERIFICATION_PROBLEM: "a visitor's identity check doesn't pass",
 };
 
-export const KIND_OF: Record<Exclude<OperatorEventType, "installation.test" | "tour.time_requested" | "cleaning.update" | "repairs.update">, UpdateKind> = {
+export const KIND_OF: Record<Exclude<OperatorEventType, "installation.test" | "tour.time_requested" | JobUpdateEvent>, UpdateKind> = {
   "tour.booked": "TOUR_BOOKED",
   "tour.started": "TOUR_STARTED",
   "tour.completed": "TOUR_COMPLETED",
@@ -52,8 +52,8 @@ export function enabledUpdates(prefs: NotificationPreferences | undefined): Upda
 /** Whether this event is one the landlord asked to hear about, and happened after they asked. */
 export function wants(prefs: NotificationPreferences | undefined, event: OperatorEvent): boolean {
   if (event.eventType === "installation.test" || event.eventType === "tour.time_requested") return true;
-  // Cleaner Core's own outbox carries these. Tour Core never announces one.
-  if (event.eventType === "cleaning.update" || event.eventType === "repairs.update") return false;
+  // The properties service's own outboxes carry these. Tour Core never announces one.
+  if (isJobUpdate(event.eventType)) return false;
   const kind = KIND_OF[event.eventType];
   if (!enabledUpdates(prefs).includes(kind)) return false;
   const since = prefs?.since[kind];

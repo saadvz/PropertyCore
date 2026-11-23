@@ -93,6 +93,22 @@ describe("Fixer Core's alerts", () => {
     expect(outbox(w.root).records()).toEqual([]);
   });
 
+  it("with Cleaner Core on but held by another bot, the note stays Fixer Core's and its own routine is woken (#250)", async () => {
+    const w = await setup({ cleaningOn: () => true, sharesNotes: () => false, notifyHost: async () => false });
+    await w.desk.proInbound(text("Running 10 minutes late"));
+    await vi.waitFor(() => expect(w.posts).toHaveLength(1));
+    expect(JSON.parse(w.posts[0]!.body).eventType).toBe("repairs.update");
+    expect((readFixer(w.root).jobs.flatMap((job) => job.news).length + (readFixer(w.root).news ?? []).length)).toBeGreaterThan(0);
+  });
+
+  it("Fixer Core's own bot gets an alerts link even where Cleaner Core runs (#250)", async () => {
+    const w = await setup({ cleaningOn: () => true, ownBot: () => true, assistant: () => "grok", publicBase: () => "https://fixer.example.com" });
+    const link = await w.desk.issueAlertUpload();
+    expect(link.isError).toBe(false);
+    const other = await setup({ cleaningOn: () => true, assistant: () => "grok", publicBase: () => "https://fixer.example.com" });
+    expect((await other.desk.issueAlertUpload()).isError).toBe(true);
+  });
+
   it("with no routine, the note waits in check_fixes news and nothing is sent", async () => {
     const w = await setup({ routine: () => undefined });
     await w.desk.proInbound(text("Running late"));

@@ -28,6 +28,13 @@ describe("featureOn", () => {
     }
   });
 
+  it("has a Separate bots switch that needs nothing else, and FEATURES_OFF can name it", () => {
+    expect(FEATURES).toContain("bots");
+    expect(featureOn({}, "bots", {})).toBe(false);
+    expect(featureOn(on("bots"), "bots", {})).toBe(true);
+    expect(featureState(on("bots"), "bots", { FEATURES_OFF: "bots" })).toEqual({ on: false, why: "emergency-off" });
+  });
+
   it("is on only for the switches that are on, and a switch turned off is off", () => {
     const account = on("hours", "visits");
     expect(featureOn(account, "hours", {})).toBe(true);
@@ -143,7 +150,7 @@ describe("switches in the registry and the desk environment", () => {
     // An account's saved secrets can't stand in for the service's credentials or switches.
     secrets.set(court.id, { [ACCOUNT_FEATURES]: "visits,locks", SEAM_API_KEY: "test-seam-key-not-real", SEAM_WEBHOOK_SECRET: "test-seam-webhook-not-real", FEATURES_OFF: "" });
     const base = { [ACCOUNT_FEATURES]: "hours,visits", FEATURES_OFF: "cameras" };
-    const envOf = (id: string) => buildTenantEnv({ base, tenant: reg.get(id)!, secrets, primary: undefined, origin: "https://core.example.test" });
+    const envOf = (id: string) => buildTenantEnv({ base, tenant: reg.get(id)!, secrets, alerts: undefined, origin: "https://core.example.test" });
     const laneEnv = envOf(lane.id);
     const courtEnv = envOf(court.id);
     expect(laneEnv[ACCOUNT_FEATURES]).toBe("visits");

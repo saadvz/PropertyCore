@@ -40,6 +40,9 @@ import type { Tenant } from "../cleaner-core/hosted/registry";
 import { TenantSecrets } from "../cleaner-core/hosted/tenantSecrets";
 import { handleAdmin } from "../cleaner-core/hosted/admin";
 import { INVITE_REFUSALS } from "../mcp/oauth/pages";
+import { CORE_JOBS, JOB_NAMES, JOB_PATHS, jobOfPath } from "../jobs/jobs";
+import { admitBot, dropConnection } from "../hosted/jobDeps";
+import { JOB_SCOPES, type ResourceLabel } from "../mcp/oauth/provider";
 import { phoneCodesFor } from "../hosted/phoneCodes";
 import { accountDoor, SignUpDesk } from "../hosted/signUp";
 import { openAccount, pointVoiceOnce } from "../cleaner-core/hosted/lines";
@@ -186,7 +189,7 @@ export interface TourCoreServer extends Server {
 
 const LOCAL_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
 /** Every MCP path OAuth protects. Tour Core's /mcp is first: the bare origin names it. */
-const OAUTH_RESOURCE_PATHS = [MCP_PATH, CLEANER_MCP_PATH];
+const OAUTH_RESOURCE_PATHS = [MCP_PATH, CLEANER_MCP_PATH, ...CORE_JOBS.map((job) => JOB_PATHS[job])];
 
 export const operatorTokenFromEnv = () => process.env.TOURCORE_OPERATOR_TOKEN?.trim() || undefined;
 
@@ -226,6 +229,8 @@ function publicRouteAllowed(method: string, path: string, oauth: boolean, hosted
   // The camera connection (#239): Ring's signed webhook, the one-time consent link and Ring's sign-in return. The router answers 404 unless an account has cameras on.
   if (multiTenant && (path === "/webhooks/ring" || path === "/cameras/ring/linked" || /^\/cameras\/connect\/[A-Za-z0-9_-]{32,100}$/.test(path))) return true;
   if (path === MCP_PATH || path === MCP_OPS_PATH || path === MCP_QA_PATH || path === CLEANER_MCP_PATH) return true;
+  // A core's own bot (#250), on the shared service only. Each account's "bots" switch still decides.
+  if (multiTenant && jobOfPath(path)) return true;
   if (method === "GET" && path === HEALTH_PATH) return true;
   if (method === "GET" && path === "/google/oauth/callback") return true;
   if (/^\/portable\/(?:artifacts|uploads)\/art_[A-Za-z0-9_-]{20,80}$/.test(path)) {
@@ -499,6 +504,7 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
       const store = new OAuthGrantStore(installation.runtime, options.authNow);
       return new Set(store.list().filter((grant) => store.isLive(grant)).map((grant) => grant.id));
     },
+    revokeGrant: (grantId) => void new OAuthGrantStore(installation.runtime, options.authNow).revokeGrant(grantId),
     now: clock,
     log,
   });
@@ -537,6 +543,8 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
             // On the multi-tenant service /mcp is the one address for both services.
             { path: MCP_PATH, scope: OPERATOR_SCOPE, label: cleanerMultiTenant(installation.env()) ? "Property Core" : "Tour Core" },
             { path: CLEANER_MCP_PATH, scope: CLEANER_SCOPE, label: "Cleaner Core", enabled: cleanerOn },
+            // A bot for each core (#250): one address per job, on the shared service only.
+            ...CORE_JOBS.map((job) => ({ path: JOB_PATHS[job], scope: JOB_SCOPES[job], label: JOB_NAMES[job] as ResourceLabel, enabled: () => multiTenant() && cleanerOn(), job })),
           ],
           endpoints: (path) => {
             const base = installation.publicBaseUrl();
@@ -566,8 +574,14 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
             ? {
                 invites: {
                   claim: (code: string) => tenants.claimInvite(code),
-                  connected: (tenantId: string, grantId: string, assistant: CleanerAssistant) =>
-                    tenants.connect(tenantId, { grantId, assistant, connectedAt: clock().toISOString() }),
+                  connected: (tenantId: string, grantId: string, assistant: CleanerAssistant, resourcePath: string) => {
+                    const job = jobOfPath(resourcePath);
+                    const { replaced } = tenants.connect(tenantId, { grantId, assistant, connectedAt: clock().toISOString(), ...(job ? { job } : {}) });
+                    // One bot per core job: the bot this one replaced is disconnected, and its routine goes with it.
+                    for (const old of replaced) dropConnection(hostedCleanerService, tenantId, old);
+                  },
+                  owner: (code: string) => tenants.inviteOwner(code),
+                  admit: (tenantId: string, assistant: CleanerAssistant, resourcePath: string) => admitBot(hostedCleanerService, tenants.get(tenantId), assistant, resourcePath),
                   refusal: (reason: InviteRefusal) => INVITE_REFUSALS[reason],
                   accounts: accountDoor(signUp),
                 },

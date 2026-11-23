@@ -63,21 +63,21 @@ describe("buildTenantEnv with a property", () => {
   const property: Property = { id: "prp_court00001", label: "8 Scratch Court", createdAt: "2026-11-01T00:00:00.000Z", flows: { cleaning: { on: true }, supplies: { on: false }, fixer: { on: false } } };
 
   it("a legacy property's links stay under /t/<id>", () => {
-    const env = buildTenantEnv({ base: {}, tenant, secrets: new TenantSecrets("/nonexistent"), primary: undefined, origin: BASE, property: { ...property, legacyPaths: true }, propertyCount: 1 });
+    const env = buildTenantEnv({ base: {}, tenant, secrets: new TenantSecrets("/nonexistent"), alerts: undefined, origin: BASE, property: { ...property, legacyPaths: true }, propertyCount: 1 });
     expect(env.PUBLIC_BASE_URL).toBe(`${BASE}/t/${tenant.id}`);
   });
 
   it("a new property's links are under /t/<id>/p/<pid>", () => {
-    const env = buildTenantEnv({ base: {}, tenant, secrets: new TenantSecrets("/nonexistent"), primary: undefined, origin: BASE, property, propertyCount: 2 });
+    const env = buildTenantEnv({ base: {}, tenant, secrets: new TenantSecrets("/nonexistent"), alerts: undefined, origin: BASE, property, propertyCount: 2 });
     expect(env.PUBLIC_BASE_URL).toBe(`${BASE}/t/${tenant.id}/p/${property.id}`);
   });
 
   it("the property's id, label and count reach the desk, and the process values for them never do", () => {
     const base = { CLEANER_CORE_PROPERTY_ID: "leak", CLEANER_CORE_PROPERTY_LABEL: "leak", CLEANER_CORE_PROPERTY_COUNT: "leak" };
     for (const name of Object.keys(base)) expect(PER_TENANT_NAMES).toContain(name);
-    const env = buildTenantEnv({ base, tenant, secrets: new TenantSecrets("/nonexistent"), primary: undefined, origin: BASE, property, propertyCount: 2 });
+    const env = buildTenantEnv({ base, tenant, secrets: new TenantSecrets("/nonexistent"), alerts: undefined, origin: BASE, property, propertyCount: 2 });
     expect(env).toMatchObject({ CLEANER_CORE_PROPERTY_ID: property.id, CLEANER_CORE_PROPERTY_LABEL: "8 Scratch Court", CLEANER_CORE_PROPERTY_COUNT: "2" });
-    const none = buildTenantEnv({ base, tenant, secrets: new TenantSecrets("/nonexistent"), primary: undefined, origin: BASE });
+    const none = buildTenantEnv({ base, tenant, secrets: new TenantSecrets("/nonexistent"), alerts: undefined, origin: BASE });
     expect(Object.values(none)).not.toContain("leak");
   });
 });

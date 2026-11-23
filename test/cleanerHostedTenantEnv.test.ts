@@ -25,7 +25,7 @@ describe("buildTenantEnv", () => {
   it("strips every per-tenant name from the process env and adds this tenant's own", () => {
     const base = Object.fromEntries(PER_TENANT_NAMES.map((n) => [n, `leak-${n}`]));
     secrets.set(t.id, { CLEANER_CORE_PIN_KEY: "pin-a", CLEANER_CORE_PHOTO_KEY: "photo-a" });
-    const env = buildTenantEnv({ base: { ...base, CLEANER_CORE_ENABLED: "1" }, tenant: t, secrets, primary: undefined, origin: ORIGIN });
+    const env = buildTenantEnv({ base: { ...base, CLEANER_CORE_ENABLED: "1" }, tenant: t, secrets, alerts: undefined, origin: ORIGIN });
     expect(Object.values(env).join("\n")).not.toContain("leak-");
     expect(env).toMatchObject({
       CLEANER_CORE_ENABLED: "1",
@@ -41,7 +41,7 @@ describe("buildTenantEnv", () => {
   it("carries the primary's assistant, grant id and routine, never another connection's", () => {
     secrets.setForConnection(t.id, "g1", { CLEANER_CORE_ROUTINE_URL: "https://grok.example/hook", CLEANER_CORE_ROUTINE_KEY: "key-g1-xxxx" });
     secrets.setForConnection(t.id, "g2", { CLEANER_CORE_ROUTINE_URL: "https://claude.example/fire", CLEANER_CORE_ROUTINE_KEY: "key-g2-xxxx" });
-    const env = buildTenantEnv({ base: {}, tenant: t, secrets, primary: { grantId: "g2", assistant: "claude", connectedAt: NOW }, origin: ORIGIN });
+    const env = buildTenantEnv({ base: {}, tenant: t, secrets, alerts: { grantId: "g2", assistant: "claude", connectedAt: NOW }, origin: ORIGIN });
     expect(env).toMatchObject({
       CLEANER_CORE_ASSISTANT: "claude",
       CLEANER_CORE_PRIMARY_CONNECTION: "g2",
@@ -55,17 +55,17 @@ describe("buildTenantEnv", () => {
     const owner = { phone: "+15555550160", email: "host@example.com", phoneVerifiedAt: NOW, terms: { version: "1", acceptedAt: NOW } };
     const base = { CLEANER_CORE_LANDLORD_PHONE: "+15555550199" };
     secrets.set(t.id, { CLEANER_CORE_LANDLORD_PHONE: "+15555550198" });
-    expect(buildTenantEnv({ base, tenant: t, secrets, primary: undefined, origin: ORIGIN }).CLEANER_CORE_LANDLORD_PHONE).toBeUndefined();
+    expect(buildTenantEnv({ base, tenant: t, secrets, alerts: undefined, origin: ORIGIN }).CLEANER_CORE_LANDLORD_PHONE).toBeUndefined();
     const { phoneVerifiedAt: _unverified, ...pending } = owner;
     const unconfirmed = { ...t, owner: pending as typeof owner };
     // An owner whose code hasn't checked out is still a landlord record, so it fails closed instead of falling back to the allowlist.
-    expect(buildTenantEnv({ base, tenant: unconfirmed, secrets, primary: undefined, origin: ORIGIN }).CLEANER_CORE_LANDLORD_PHONE).toBe("unconfirmed");
-    expect(buildTenantEnv({ base, tenant: { ...t, owner }, secrets, primary: undefined, origin: ORIGIN }).CLEANER_CORE_LANDLORD_PHONE).toBe("+15555550160");
+    expect(buildTenantEnv({ base, tenant: unconfirmed, secrets, alerts: undefined, origin: ORIGIN }).CLEANER_CORE_LANDLORD_PHONE).toBe("unconfirmed");
+    expect(buildTenantEnv({ base, tenant: { ...t, owner }, secrets, alerts: undefined, origin: ORIGIN }).CLEANER_CORE_LANDLORD_PHONE).toBe("+15555550160");
   });
 
   it("never lets a tenant-level value stand in for the primary's routine", () => {
     secrets.set(t.id, { CLEANER_CORE_ROUTINE_URL: "https://stale.example/hook", CLEANER_CORE_ROUTINE_KEY: "stale-key" });
-    const env = buildTenantEnv({ base: {}, tenant: t, secrets, primary: { grantId: "g1", assistant: "grok", connectedAt: NOW }, origin: ORIGIN });
+    const env = buildTenantEnv({ base: {}, tenant: t, secrets, alerts: { grantId: "g1", assistant: "grok", connectedAt: NOW }, origin: ORIGIN });
     expect(env.CLEANER_CORE_ROUTINE_URL).toBeUndefined();
     expect(env.CLEANER_CORE_ROUTINE_KEY).toBeUndefined();
   });

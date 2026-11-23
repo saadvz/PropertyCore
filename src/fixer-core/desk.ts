@@ -6,6 +6,7 @@ import { recordHostStep } from "../hours-log/hostSteps";
 import type { CleanerAssistant } from "../cleaner-core/assistant";
 import { currentCaller, withCaller } from "../cleaner-core/callerContext";
 import { OperatorEventOutbox } from "../alerts/outbox";
+import { woke } from "../jobs/wakeListeners";
 import { FileRuntimeStore } from "../storage/runtimeStore";
 import { localDateOf } from "../core/timezone";
 import { isDone, isYes } from "../cleaner-core/core";
@@ -62,6 +63,13 @@ export interface FixerDeps {
   people?(): People | undefined;
   /** True while Cleaner Core runs on the property. */
   cleaningOn?(): boolean;
+  /**
+   * Whether Cleaner Core takes this desk's notes for the host: it runs at the property and one chat holds both
+   * cores. With a bot for each core (#250) it doesn't, and the notes stay Fixer Core's own. Unset: as cleaningOn.
+   */
+  sharesNotes?(): boolean;
+  /** True while the calling chat is Fixer Core's own bot (#250): it connects its own Alerts routine, wherever Cleaner Core runs. */
+  ownBot?(): boolean;
   /** Cleaner Core's cleaning for a checkout date. */
   cleanings?(checkoutYmd: string): Promise<{ doneAt?: string; cleared: boolean } | undefined>;
   env?(): NodeJS.ProcessEnv;
@@ -418,6 +426,8 @@ export class FixerDesk {
     const waiting = this.alerts.records().some((record) => record.event.eventType === "repairs.update" && record.status === "pending");
     if (!waiting) this.alerts.enqueue(repairsUpdateEvent(this.deps.now()));
     void this.alerts.drain().catch(() => undefined);
+    // On the shared service, a quiet Fixer Core bot is told about once (#250).
+    woke(this.root, "fixer");
   }
 
   /** Runs calls one at a time, so two tools never write the record at once. */
@@ -663,7 +673,7 @@ export class FixerDesk {
   issueAlertUpload(): Promise<FixerReply> {
     return this.guarded({}, () => {
       const file = this.read();
-      if (this.deps.cleaningOn?.()) return fail("Cleaner Core runs at this property: connect alerts with its save_alert_routine.");
+      if (this.deps.cleaningOn?.() && !this.deps.ownBot?.()) return fail("Cleaner Core runs at this property: connect alerts with its save_alert_routine.");
       // Only a Grok Bot's routine can be woken; Muse's hourly task reads the news itself.
       if ((currentCaller()?.assistant ?? this.deps.assistant?.()) !== "grok") return fail("Repair alerts are for Grok Bot. Your hourly Fixer Core task already reads the news.");
       const base = this.deps.publicBase?.();
@@ -2381,8 +2391,8 @@ export class FixerDesk {
 
   /** Sends the host notes. A note that fails to go is still in check_fixes' news. */
   private async tell(notes: readonly HostNote[]): Promise<boolean> {
-    // Without Cleaner Core here, nothing takes the note: it waits in check_fixes' news, and the routine is woken.
-    if (notes.length > 0 && this.deps.cleaningOn?.() !== true) this.wake();
+    // Unless Cleaner Core takes the note, it waits in check_fixes' news, and the routine is woken.
+    if (notes.length > 0 && (this.deps.sharesNotes ?? this.deps.cleaningOn)?.() !== true) this.wake();
     let taken = notes.length > 0;
     for (const note of notes) {
       try {

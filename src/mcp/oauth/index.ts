@@ -14,7 +14,7 @@ import { PAGE_HEADERS, problemPage } from "./pages";
 import { TourCoreOAuthProvider, type OAuthEndpoints, type PageRefusal, type OAuthResource, type ProviderOptions, type ResourceEndpoints } from "./provider";
 import { hashSecret, OAuthGrantStore } from "./store";
 
-export { CLEANER_SCOPE, endpointsFor, OPERATOR_SCOPE, type OAuthEndpoints, type OAuthResource, type ResourceEndpoints } from "./provider";
+export { CLEANER_SCOPE, endpointsFor, JOB_SCOPES, OPERATOR_SCOPE, type OAuthEndpoints, type OAuthResource, type ResourceEndpoints } from "./provider";
 export { OAuthGrantStore } from "./store";
 
 /**
@@ -133,7 +133,7 @@ export class McpOAuth {
       if (i > 0 && r.enabled && !r.enabled()) continue;
       const ep = this.options.endpoints(r.path);
       if (!ep) return undefined;
-      list.push({ ...ep, path: r.path, scope: r.scope, label: r.label });
+      list.push({ ...ep, path: r.path, scope: r.scope, label: r.label, ...(r.job ? { job: r.job } : {}) });
     }
     return list;
   }

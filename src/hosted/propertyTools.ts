@@ -3,6 +3,8 @@ import { runsFixer, runsSupplies, type CleanerAssistant } from "../cleaner-core/
 import { findProperty, propertyFolder, type FlowName, type Property } from "../cleaner-core/hosted/properties";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner } from "../cleaner-core/hosted/router";
+import type { Job } from "../jobs/jobs";
+import type { TeamEntry } from "./botTools";
 import type { FrontReply } from "./serviceTools";
 import { OFFER_IDS } from "./featureOffers";
 
@@ -109,21 +111,56 @@ export interface PropertyStates {
   cleaning(property: Property, args: Record<string, unknown>): Promise<FrontReply>;
   supplies(property: Property): Promise<FrontReply>;
   fixer(property: Property): Promise<FrontReply>;
-  /** The next step of one property, for the overview: its Cleaner Core ask, else Supply Core's, else Fixer Core's. */
+  /** The next step of one property, for the overview: its Cleaner Core ask, else Supply Core's, else Fixer Core's, among the flows the caller runs. */
   next(property: Property): Promise<string | undefined>;
+  /** The name of one flow's next step at a property, and nothing else of that flow's state. */
+  step(property: Property, flow: FlowName): Promise<string | undefined>;
 }
 
+/**
+ * How get_state is cut for this caller on an account where a core has its own bot (#250). Left out on an account with
+ * one bot, which gets what it always got.
+ */
+export interface StateView {
+  /** The jobs the caller has now. A caller without "property" is a core's own bot. */
+  jobs: readonly Job[];
+  /** The Property Core chat's view of the account's bots. */
+  team?: TeamEntry[];
+  /** True on a team: each property's line carries one next step per flow, by name only. */
+  perFlow?: boolean;
+  /** For a core's own bot that hasn't saved its Alerts routine yet. */
+  alertsNote?: string;
+  /** The line that sends the host to the bots that run these cores. */
+  sendTo(flows: FlowName[]): string;
+}
+
+const FLOWS: readonly FlowName[] = ["cleaning", "supplies", "fixer"];
+
 /** get_state: the overview, or one property's own state when the call names it or there's only one. */
-export async function accountState(tenant: Tenant, args: unknown, states: PropertyStates, assistant: CleanerAssistant): Promise<FrontReply> {
-  const reply = await stateOf(tenant, args, states, assistant);
+export async function accountState(tenant: Tenant, args: unknown, states: PropertyStates, assistant: CleanerAssistant, view?: StateView): Promise<FrontReply> {
+  const reply = await stateOf(tenant, args, states, assistant, view);
   if (reply.isError || !reply.structured) return reply;
   // The account's line, so the host can ask for their agent's number.
-  const structured = { ...reply.structured, ...(tenant.twilioNumber ? { agentNumber: tenant.twilioNumber } : {}) };
+  const structured = { ...reply.structured, ...(tenant.twilioNumber ? { agentNumber: tenant.twilioNumber } : {}), ...(view?.team ? { team: view.team } : {}), ...(view?.alertsNote ? { alertsNote: view.alertsNote } : {}) };
   return { ...reply, text: JSON.stringify(structured), structured };
 }
 
-async function stateOf(tenant: Tenant, args: unknown, states: PropertyStates, assistant: CleanerAssistant): Promise<FrontReply> {
-  const list = tenant.properties.map(propertyLine);
+async function stateOf(tenant: Tenant, args: unknown, states: PropertyStates, assistant: CleanerAssistant, view?: StateView): Promise<FrontReply> {
+  // A core's own bot sees only its own flow; the Property Core chat only the flows it still runs.
+  const core = view && !view.jobs.includes("property") ? (view.jobs[0] as FlowName | undefined) : undefined;
+  const has = (flow: FlowName) => !view || view.jobs.includes(flow);
+  /** A property as this caller lists it. A core's bot is told only whether its own flow runs there. */
+  const line = async (property: Property): Promise<Record<string, unknown>> => {
+    if (core) return { id: property.id, label: property.label, flow: property.flows[core].on ? "on" : "off" };
+    if (!view?.perFlow) return propertyLine(property);
+    // On a team, which flow waits on what, by the step's name only: never another core's question, code or token.
+    const next: Partial<Record<FlowName, string>> = {};
+    for (const flow of FLOWS) {
+      const step = property.flows[flow].on ? await states.step(property, flow) : undefined;
+      if (step) next[flow] = step;
+    }
+    return { ...propertyLine(property), ...(Object.keys(next).length > 0 ? { next } : {}) };
+  };
   if (tenant.properties.length === 0) return done({ properties: [], next: FIRST_PROPERTY });
   const named = args && typeof args === "object" && typeof (args as { property?: unknown }).property === "string";
   // Each property has its own draft (#166), so drafted: true names the property it's for.
@@ -132,21 +169,30 @@ async function stateOf(tenant: Tenant, args: unknown, states: PropertyStates, as
     const resolved = resolveProperty(tenant, args);
     if ("refusal" in resolved) return fail(resolved.refusal);
     const { property } = resolved;
-    const reply = property.flows.cleaning.on
-      ? await states.cleaning(property, resolved.args)
-      : property.flows.supplies.on && runsSupplies(assistant)
-        ? await states.supplies(property)
-        : property.flows.fixer.on && runsFixer(assistant)
-          ? await states.fixer(property)
-          : done({ next: TURN_A_FLOW_ON });
+    const runs = (flow: FlowName) => property.flows[flow].on && has(flow);
+    const elsewhere = FLOWS.filter((flow) => property.flows[flow].on && !has(flow));
+    const reply =
+      core && !property.flows[core].on
+        ? done({ flow: "off", note: `${flowOff(core, property.label)} The host turns it on in the Property Core bot's chat.` })
+        : runs("cleaning")
+          ? await states.cleaning(property, resolved.args)
+          : runs("supplies") && runsSupplies(assistant)
+            ? await states.supplies(property)
+            : runs("fixer") && runsFixer(assistant)
+              ? await states.fixer(property)
+              : view && elsewhere.length > 0
+                ? done({ next: view.sendTo(elsewhere) })
+                : done({ next: TURN_A_FLOW_ON });
     if (reply.isError || !reply.structured) return reply;
-    const structured = { ...reply.structured, properties: list };
+    const structured = { ...reply.structured, properties: await Promise.all(tenant.properties.map(line)) };
     return { ...reply, text: JSON.stringify(structured), structured };
   }
   const properties = await Promise.all(
     tenant.properties.map(async (property) => {
-      const next = await states.next(property);
-      return { ...propertyLine(property), ...(next ? { next } : {}) };
+      const listed = await line(property);
+      if (view?.perFlow && !core) return listed;
+      const next = !core || property.flows[core].on ? await states.next(property) : undefined;
+      return { ...listed, ...(next ? { next } : {}) };
     }),
   );
   return done({ properties, next: "Name the property in every property tool call. Call get_state with property for one property's own next step." });

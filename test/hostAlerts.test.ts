@@ -46,6 +46,52 @@ describe("the routing point", () => {
     writeFileSync(join(account, ROUTES_FILE), "{nope");
     expect(routineFor(account, "oversight")).toBe("alerts");
   });
+
+  it("routes by team (#250)", () => {
+    const root = folder();
+    expect(routineFor(root, "packages")).toBe("alerts");
+    expect(routineFor(root, "packages", { suppliesOwnBot: true })).toBe("supplies");
+    expect(routineFor(root, "packages", { suppliesOwnBot: false })).toBe("property");
+    for (const kind of ["stay-night", "camera-health", "oversight"] as const) expect(routineFor(root, kind, { suppliesOwnBot: true })).toBe("property");
+  });
+
+  it("a saved route still wins on a team", () => {
+    const root = folder();
+    writeFileSync(join(root, ROUTES_FILE), JSON.stringify({ routes: { packages: "property", oversight: "alerts" } }));
+    expect(routineFor(root, "packages", { suppliesOwnBot: true })).toBe("property");
+    expect(routineFor(root, "oversight", { suppliesOwnBot: true })).toBe("alerts");
+    expect(routineFor(root, "stay-night", { suppliesOwnBot: true })).toBe("property");
+  });
+});
+
+describe("the ledger's shown mark (#250)", () => {
+  const NOW = new Date("2026-11-21T22:00:00.000Z");
+
+  it("shown is separate from delivered, and a shown alert is no longer pending", () => {
+    const root = folder();
+    const ledger = new HostAlertLedger(root, () => NOW);
+    ledger.keep({ id: "a1", kind: "packages", text: "A package for Scratch Lane arrived." });
+    expect(ledger.unshown(["packages"]).map((a) => a.id)).toEqual(["a1"]);
+    expect(ledger.unshown(["oversight"])).toEqual([]);
+    ledger.shown("a1");
+    expect(ledger.unshown(["packages"])).toEqual([]);
+    expect(ledger.pending()).toEqual([]);
+    expect(readHostAlerts(root).alerts[0]!.deliveredAt).toBeUndefined();
+    expect(readHostAlerts(root).alerts[0]!.shownAt).toBe(NOW.toISOString());
+  });
+
+  it("an alert a wake-up was sent for is still unshown, and one a desk's notes took is not", () => {
+    const root = folder();
+    const ledger = new HostAlertLedger(root, () => NOW);
+    ledger.keep({ id: "woken", kind: "packages", text: "A made-up package note." });
+    ledger.keep({ id: "noted", kind: "packages", text: "A second made-up package note." });
+    ledger.keep({ id: "withheld-twin", kind: "oversight", text: "A made-up visit note." });
+    ledger.delivered("woken", "supplies");
+    ledger.delivered("noted", "fixer");
+    expect(ledger.unshown(["packages"]).map((a) => a.id)).toEqual(["woken"]);
+    ledger.withhold({ id: "held", kind: "packages" });
+    expect(ledger.unshown(["packages", "oversight"]).map((a) => a.id)).toEqual(["woken", "withheld-twin"]);
+  });
 });
 
 describe("the leak guard", () => {
