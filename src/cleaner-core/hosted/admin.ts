@@ -12,7 +12,7 @@ import { ADMIN_HEADERS, type FeatureRow, invitePage, loginPage, messagePage, poo
 import { attachTypedLine, closeLine, numberPool, openAccount, recordAccountLines, releasePooled, repointLine, topUp, type CloseLine, type LineClosed, type TopUpRefusal } from "./lines";
 import { PoolError } from "./numberPool";
 import { RegistryError, tenantFolder, type Tenant } from "./registry";
-import { propertyContext, type HostedCleaner } from "./router";
+import { carryRoutines, propertyContext, type HostedCleaner } from "./router";
 import { findIncomingNumber } from "./twilioNumbers";
 
 /**
@@ -295,6 +295,8 @@ function tenantFrom(deps: AdminDeps, path: string): Tenant | undefined {
 function prune(deps: AdminDeps): void {
   const live = deps.grantIds();
   for (const tenant of deps.h.registry.list()) {
+    // An ended grant's routine moves to its chat's new sign-in first, so pruning the grant doesn't take the alerts with it.
+    void carryRoutines(deps.h, tenant.id).marked.catch(() => deps.h.log(`Couldn't keep ${tenant.id}'s alert routine connected.`));
     for (const connection of tenant.connections) {
       if (live.has(connection.grantId)) continue;
       deps.h.secrets.deleteConnection(tenant.id, connection.grantId);
