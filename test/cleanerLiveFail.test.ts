@@ -10,7 +10,7 @@ import {
   type WiredApp,
   startWiredApp,
 } from "./wiringProof";
-import { isTo, newTexts, outboxTexts, type OutboxText } from "./scratchOutbox";
+import { codeSends, isTo, newTexts, outboxTexts, type OutboxText } from "./scratchOutbox";
 
 const LANE = SCRATCH_TENANTS[0];
 const HOST = "+15555550115";
@@ -122,6 +122,7 @@ describe("failed reports, holds, and STOP on the live Scratch lane", () => {
     const left = await call(wired, "mark_guests_left", { confirmed: true });
     expect(nextOf(left)).toBe(PIN_SENT);
     expect(pairs(await codeTexts(wired))).toEqual([["Door code text to the cleaner", CODE_TEXT]]);
+    expect(codeSends(wired.root)).toBe(1);
 
     expect(nextOf(await call(wired, "report_delivery", { which: "Door code text to the cleaner", status: "failed" }))).toBe("Door code text to the cleaner: failed.");
     const failed = await call(wired, "get_state");
@@ -140,8 +141,9 @@ describe("failed reports, holds, and STOP on the live Scratch lane", () => {
 
     const resent = await call(wired, "mark_guests_left", { confirmed: true });
     expect(nextOf(resent)).toBe(PIN_SENT);
-    // The resent code takes the same outbox line, back to sent.
+    // The resent code takes the same outbox line, back to sent. The saved transcript counts the sends themselves.
     expect((await codeTexts(wired)).map((item) => item.status)).toEqual(["sent"]);
+    expect(codeSends(wired.root)).toBe(2);
 
     expect(nextOf(await call(wired, "report_delivery", { which: "Door code text to the cleaner", status: "undelivered" }))).toBe("Door code text to the cleaner: undelivered.");
     expect(nextOf(await call(wired, "get_state"))).toBe(PIN_FAILED);
@@ -152,9 +154,11 @@ describe("failed reports, holds, and STOP on the live Scratch lane", () => {
     const again = await call(wired, "mark_guests_left", { confirmed: true });
     expect(nextOf(again)).toBe(PIN_SENT);
     expect((await codeTexts(wired)).map((item) => item.status)).toEqual(["sent"]);
+    expect(codeSends(wired.root)).toBe(3);
     expect(nextOf(await call(wired, "report_delivery", { which: "Door code text to the cleaner", status: "delivered" }))).toBe("Door code text to the cleaner: delivered.");
     expect(nextOf(await call(wired, "mark_guests_left", { confirmed: true }))).toBe(PIN_REPEAT);
     expect((await codeTexts(wired)).map((item) => item.status)).toEqual(["delivered"]);
+    expect(codeSends(wired.root)).toBe(3);
     expect(JSON.stringify(await out(wired))).not.toContain(LANE.pin);
   }, 40_000);
 
@@ -290,7 +294,7 @@ describe("failed reports, holds, and STOP on the live Scratch lane", () => {
     expect(pairs(newTexts(beforeStop, await out(wired)))).toEqual([["Hold note to the host", HOST_STOP]]);
     const afterStop = await out(wired);
     expect(nextOf(await call(wired, "report_delivery", { which: "Door code text to the cleaner", status: "failed" }))).toBe("Door code text to the cleaner: failed.");
-    expect(newTexts(afterStop, await out(wired)).filter((item) => item.status !== "unsent")).toEqual([]);
+    expect(newTexts(afterStop, await out(wired)).filter((item) => isTo(item, "host") && item.status !== "unsent")).toEqual([]);
     expect(nextOf(await call(wired, "get_state"))).toBe(PIN_FAILED);
     expect(await codeTexts(wired)).toHaveLength(1);
     expect(JSON.stringify(await out(wired))).not.toContain(LANE.pin);
