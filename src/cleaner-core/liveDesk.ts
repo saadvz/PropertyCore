@@ -141,6 +141,8 @@ const GROK_DESK_WORDING: DeskWording = {
 const DESK_WORDING: Record<CleanerAssistant, DeskWording> = { grok: GROK_DESK_WORDING, claude: CLAUDE_DESK_WORDING, chatgpt: CHATGPT_DESK_WORDING, muse: MUSE_DESK_WORDING };
 const UPLOAD_CONNECTED = "Alerts are connected.";
 const UPLOAD_REFUSED = "Send the routine's https webhook address as url and its key as token.";
+/** add_test_turn when the cleaner already said YES, so the offer went with the turnover. */
+const TEST_TURN_OFFERED = "Test turnover saved. The cleaning offer went out.";
 const UPLOAD_GONE = "This upload link isn't valid anymore. Call save_alert_routine with no arguments for a new one.";
 const GOOGLE_UNREAD = "I couldn't read those Google Calendar events. Read Google Calendar again and pass its events.";
 const NO_OPEN_CLEANING = "There's no open cleaning to save an arrival time for.";
@@ -2588,6 +2590,18 @@ export class LiveDesk {
     return this.serial(async () => this.savedPhones());
   }
 
+  /**
+   * True when a host note woke the routine, or a message came in, that check_now hasn't returned yet.
+   * Reads only what is saved, so it marks nothing shown and reads no calendar.
+   */
+  newsWaiting(): Promise<boolean> {
+    return this.serial(async () => {
+      const shown = new Set(this.file.alertsShown ?? []);
+      const seen = new Set(this.file.messagesShown ?? []);
+      return (this.file.alertsQueued ?? []).some((id) => !shown.has(id)) || (this.file.messages ?? []).some((message) => !seen.has(message.id));
+    });
+  }
+
   private savedPhones(): string[] {
     const raw = [this.file.host, this.file.cleaner, this.file.observer, ...(this.file.contacts ?? []).map((contact) => contact.phone)];
     return raw.map((phone) => (phone ? parsePhone(phone) : undefined)).filter((phone): phone is string => !!phone);
@@ -3304,6 +3318,9 @@ export class LiveDesk {
     this.resume();
     if (!this.engine) return this.fail("Set up texting first.");
     if (this.pin) this.engine.rememberPin(this.pin);
+    // A reset opens a fresh engine. The account's YES is applied first, so the offer can go with the turnover.
+    await this.applyAccount();
+    const sentBefore = new Set(this.engine.outbox().filter((item) => item.status === "sent").map((item) => item.id));
     const created = await this.engine.addTestTurn({ checkout, checkIn });
     if (!created.created) {
       if (created.reason === "exists") return this.reply({ next: "That test turnover is already saved.", turns: this.turns() });
@@ -3311,8 +3328,10 @@ export class LiveDesk {
       return this.fail("Tell me the checkout time and the next check-in time, like 10:30 AM and 3:00 PM.");
     }
     const invited = this.engine.outbox().some((item) => item.kind === "opt-in" && item.status === "sent");
+    // Said from what went now, so a cleaner who already said YES isn't told nothing was sent (23 Nov Grok run).
+    const offered = this.engine.outbox().some((item) => item.kind === "offer" && item.status === "sent" && !sentBefore.has(item.id));
     return this.reply({
-      next: invited ? "Test turnover saved. Anyone who has not replied YES got only the opt-in text." : "Test turnover saved. Nothing was sent.",
+      next: offered ? TEST_TURN_OFFERED : invited ? "Test turnover saved. Anyone who has not replied YES got only the opt-in text." : "Test turnover saved. Nothing was sent.",
       turns: this.turns(),
     });
   }
