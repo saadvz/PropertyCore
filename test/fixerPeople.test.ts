@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { fixerDeskFor, resetFixerDesks, type FixerDeps } from "../src/fixer-core/desk";
-import { proRoute } from "../src/fixer-core/proLine";
+import { alsoProRoute, proRoute, proWaitingJob } from "../src/fixer-core/proLine";
 import { PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proInvite, proTextFailed } from "../src/fixer-core/texts";
 import { readFixer, writeFixer, type Job } from "../src/fixer-core/store";
 import { randomBytes } from "node:crypto";
@@ -211,11 +211,25 @@ describe("the invite", () => {
     expect(yes.sent).toEqual([]);
   });
 
-  it("is not sent to a pro who is also the property's cleaner", async () => {
+  it("is sent to a pro who is also the property's cleaner, once", async () => {
     const w = lineSetup();
     w.people.savePropertyPeople(A, HOST, [{ phone: JOE, role: "cleaner", name: "Joe" }]);
     await w.desk.savePro({ ...joe, prefersText: true });
+    await w.desk.savePro({ ...joe, prefersText: true, id: readFixer(w.root).pros[0]!.id });
+    expect(w.sent.map((m) => m.to)).toEqual([JOE]);
+  });
+
+  it("is not sent to a pro whose YES the cleaner's invite already asked for, nor to one who said it", async () => {
+    const w = lineSetup();
+    w.people.savePropertyPeople(A, HOST, [{ phone: JOE, role: "cleaner", name: "Joe" }]);
+    w.people.markInvited(JOE, A);
+    await w.desk.savePro({ ...joe, prefersText: true });
     expect(w.sent).toEqual([]);
+    const yes = lineSetup();
+    yes.people.savePropertyPeople(A, HOST, [{ phone: JOE, role: "cleaner", name: "Joe" }]);
+    yes.people.optIn(JOE, A);
+    await yes.desk.savePro({ ...joe, prefersText: true });
+    expect(yes.sent).toEqual([]);
   });
 
   it("never lets a text contact reach a pro who has not said YES", async () => {
@@ -250,6 +264,59 @@ describe("proRoute", () => {
     cleaner.people.savePropertyPeople(A, HOST, [{ phone: JOE, role: "cleaner", name: "Joe" }]);
     await cleaner.desk.savePro(joe);
     expect(proRoute({ properties: [prop(A, true)] }, cleaner.people, JOE)).toBeUndefined();
+  });
+});
+
+describe("a pro who also holds another role", () => {
+  const prop = (id: string, fixer: boolean): Property => ({ id, label: id, createdAt: "x", flows: { cleaning: { on: true }, supplies: { on: false }, fixer: { on: fixer } } }) as Property;
+
+  it("alsoProRoute lists their Fixer properties; a pro-only phone and the host get none", async () => {
+    const w = setup();
+    await w.desk.savePro(joe);
+    expect(alsoProRoute({ properties: [prop(A, true)] }, w.people, JOE)).toBeUndefined();
+    w.people.savePropertyPeople(B, "+15555550101", [{ phone: JOE, role: "cleaner", name: "Joe" }]);
+    expect(alsoProRoute({ properties: [prop(A, true), prop(B, true)] }, w.people, JOE)?.map((p) => p.id)).toEqual([A]);
+    expect(alsoProRoute({ properties: [prop(A, false)] }, w.people, JOE)).toBeUndefined();
+    expect(alsoProRoute({ properties: [prop(A, true)] }, w.people, HOST)).toBeUndefined();
+  });
+
+  it("proWaitingJob: a visit under way, until 12 hours past its end, and nothing once done or switched off", async () => {
+    const w = lineSetup();
+    await inProgress(w);
+    const at = (ms: number) => proWaitingJob(readFixer(w.root), JOE, ms);
+    expect(at(NOW.getTime())?.id).toBe("job_abcde12345");
+    expect(proWaitingJob(readFixer(w.root), SAM, NOW.getTime())).toBeUndefined();
+    const end = Date.parse(job0(w).booking!.until);
+    expect(at(end + 11 * 60 * MIN)?.id).toBe("job_abcde12345");
+    expect(at(end + 12 * 60 * MIN)).toBeUndefined();
+    const off = readFixer(w.root);
+    off.offAt = NOW.toISOString();
+    expect(proWaitingJob(off, JOE, NOW.getTime())).toBeUndefined();
+    await w.desk.proInbound(text(JOE, "DONE"));
+    expect(at(NOW.getTime())).toBeUndefined();
+  });
+
+  it("proWaitingJob: a booked visit not yet started waits only when it's a routine vendor's", async () => {
+    const w = lineSetup();
+    await inProgress(w, 18000, "booked");
+    const file = readFixer(w.root);
+    const later = { from: new Date(NOW.getTime() + 2 * 24 * 60 * MIN).toISOString(), until: new Date(NOW.getTime() + 2 * 24 * 60 * MIN + 120 * MIN).toISOString() };
+    Object.assign(file.jobs[0]!.booking!, later);
+    expect(proWaitingJob(file, JOE, NOW.getTime())).toBeUndefined();
+    file.jobs[0]!.booking!.vendor = { upkeepId: "upk_1", proposedAt: NOW.toISOString() };
+    expect(proWaitingJob(file, JOE, NOW.getTime())?.id).toBe("job_abcde12345");
+  });
+
+  it("noteMixedText puts one note on the waiting visit, never the text, and sends the pro nothing", async () => {
+    const w = lineSetup();
+    w.people.savePropertyPeople(A, HOST, [{ phone: JOE, role: "cleaner", name: "Joe" }]);
+    await inProgress(w);
+    w.sent.length = 0;
+    await w.desk.noteMixedText(JOE);
+    await w.desk.noteMixedText(JOE);
+    expect(w.notes.map((note) => note.text)).toEqual(["Joe's Plumbing texted while both a cleaning and their visit for sink leaks were waiting on them. I took it as about the cleaning. If it was about the visit, ask them and tell me here."]);
+    expect(job0(w).news.filter((news) => news.kind === "mixed-text")).toHaveLength(1);
+    expect(w.sent).toEqual([]);
   });
 });
 
@@ -339,12 +406,12 @@ describe("a pro's text on the line", () => {
     expect(w.sent).toHaveLength(1);
   });
 
-  it("ignores a text from someone who is a cleaner here", async () => {
+  it("takes DONE from a pro who is also the cleaner here, once the line router sends it", async () => {
     const w = lineSetup();
     await inProgress(w);
     w.people.savePropertyPeople(A, HOST, [{ phone: JOE, role: "cleaner", name: "Joe" }]);
     await w.desk.proInbound(text(JOE, "DONE"));
-    expect(job0(w).state).toBe("in-progress");
+    expect(job0(w).state).toBe("done");
   });
 
   it("sends a pro nothing that names another property", async () => {
@@ -360,11 +427,12 @@ describe("review fixes: one other-role check, opt-in, photos, replays", () => {
     setCleanerPhotoFetch(async () => new Response(jpeg, { status: 200, headers: { "content-type": "image/jpeg" } }));
   const mm = (i: number) => ({ url: `https://api.twilio.com/2010-04-01/Accounts/${ENV.CLEANER_CORE_TWILIO_ACCOUNT_SID}/Messages/MM${i}/Media/ME${i}`, contentType: "image/jpeg" });
 
-  it("gives a pro who is the cleaner on another property no invite and no code text", async () => {
+  it("gives a pro who is the cleaner on another property the invite and the code text, as any pro", async () => {
     const w = lineSetup();
     w.people.savePropertyPeople(B, "+15555550101", [{ phone: JOE, role: "cleaner", name: "Joe" }]);
     await w.desk.savePro({ ...joe, shared: true, prefersText: true });
-    expect(w.sent).toEqual([]);
+    expect(w.sent.map((m) => m.to)).toEqual([JOE]);
+    w.sent.length = 0;
     w.people.optIn(JOE, A);
     // The same visit, once with the cleaner role elsewhere and once without it.
     const book = async (x: Line) => {
@@ -376,8 +444,8 @@ describe("review fixes: one other-role check, opt-in, photos, replays", () => {
       await x.desk.tick();
     };
     await book(w);
-    expect(job0(w).codeTextAt).toBeUndefined();
-    expect(w.sent).toEqual([]);
+    expect(job0(w).codeTextAt).toBeDefined();
+    expect(w.sent.map((m) => m.to)).toEqual([JOE]);
     const control = lineSetup();
     await control.desk.savePro({ ...joe, prefersText: true });
     control.people.optIn(JOE, A);

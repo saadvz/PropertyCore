@@ -10,6 +10,8 @@ import { FixerDesk, resetFixerDesks } from "../src/fixer-core/desk";
 import { readFixer } from "../src/fixer-core/store";
 import { resetVisitLookups, VISIT_LOOKUPS_PER_MINUTE, VISIT_LOOKUPS_PER_PROPERTY } from "../src/hosted/fixerVisit";
 import { hubFor } from "../src/hub/hub";
+import { peopleFor } from "../src/hub/people";
+import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { BASE, closeHostedApps, DOMAIN } from "./cleanerOauthHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 import { CALENDAR_URL } from "./wiringProof";
@@ -413,6 +415,63 @@ describe("the pro's texts on the shared line", () => {
     expect((await m.text(LANE, JOE, "DONE", "SMcleanerpro01")).status).toBe(200);
     expect(readFixer(propertyFolder(m.app.root, tenant.id, property)).seenInbound ?? []).toEqual([]);
     expect(cleanerInbound.mock.calls.map(([input]) => input.id)).toEqual(["SMcleanerpro01"]);
+  });
+});
+
+/** Lane with Cleaner Core and Fixer Core on, Joe its cleaner and also its plumber, opted in, at his Tuesday visit. */
+async function cleanerAndPro(m: MultiTenantApp) {
+  const { tenant, property, token } = await account(m);
+  const w = watcher(m, token, property);
+  await w.call("set_flows", { cleaning: true });
+  await w.call("save_property", { business: "Lane Stays", ...PLACE });
+  await w.call("save_people", { host: "+15555550101", cleaner: JOE });
+  const visit = await bookedVisit(m, tenant, property, w);
+  const people = peopleFor(tenantFolder(m.app.root, tenant.id), { now: () => clock });
+  expect(people.rolesOn(JOE, property.id).sort()).toEqual(["cleaner", "pro"]);
+  people.optIn(JOE, property.id);
+  clock = new Date(Date.parse(TUE.from) + 30 * 60_000);
+  await tickAllFixers(m.hosted());
+  const file = () => readFixer(propertyFolder(m.app.root, tenant.id, property));
+  expect(file().jobs[0]!.state).toBe("in-progress");
+  return { tenant, property, visit, file };
+}
+
+describe("texts from a cleaner who is also a pro", () => {
+  it("go to Fixer Core while only their visit waits on them", SLOW, async () => {
+    const m = await start();
+    const { file } = await cleanerAndPro(m);
+    vi.spyOn(LiveDesk.prototype, "waitingOn").mockResolvedValue(false);
+    const cleanerInbound = vi.spyOn(LiveDesk.prototype, "inbound");
+    expect((await m.text(LANE, JOE, "DONE", "SMbothdone01")).status).toBe(200);
+    expect(file().jobs[0]!.state).toBe("done");
+    expect(file().seenInbound).toContain("SMbothdone01");
+    expect(cleanerInbound).not.toHaveBeenCalled();
+  });
+
+  it("go to Cleaner Core while the cleaning waits on them too, and the host gets one note on the visit", SLOW, async () => {
+    const m = await start();
+    const { file } = await cleanerAndPro(m);
+    vi.spyOn(LiveDesk.prototype, "waitingOn").mockResolvedValue(true);
+    const cleanerInbound = vi.spyOn(LiveDesk.prototype, "inbound");
+    expect((await m.text(LANE, JOE, "DONE", "SMbothdone02")).status).toBe(200);
+    expect((await m.text(LANE, JOE, "running late", "SMbothlate02")).status).toBe(200);
+    expect(cleanerInbound.mock.calls.map(([input]) => input.id)).toEqual(["SMbothdone02", "SMbothlate02"]);
+    expect(file().jobs[0]!.state).toBe("in-progress");
+    expect(file().seenInbound ?? []).toEqual([]);
+    const notes = file().jobs[0]!.news.filter((news) => news.kind === "mixed-text");
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.text).not.toContain("running late");
+  });
+
+  it("send STOP the usual way for the whole account, even while their visit waits", SLOW, async () => {
+    const m = await start();
+    const { tenant, file } = await cleanerAndPro(m);
+    vi.spyOn(LiveDesk.prototype, "waitingOn").mockResolvedValue(false);
+    const cleanerInbound = vi.spyOn(LiveDesk.prototype, "inbound");
+    expect((await m.text(LANE, JOE, "STOP", "SMbothstop01")).status).toBe(200);
+    expect(cleanerInbound.mock.calls.map(([input]) => input.id)).toEqual(["SMbothstop01"]);
+    expect(file().seenInbound ?? []).toEqual([]);
+    expect(peopleFor(tenantFolder(m.app.root, tenant.id), { now: () => clock }).stopped(JOE)).toBe(true);
   });
 });
 
