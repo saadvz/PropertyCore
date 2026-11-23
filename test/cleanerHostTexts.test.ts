@@ -9,12 +9,12 @@ import { SCRATCH_TENANTS } from "../src/cleaner-core/tenants";
 import {
   CALENDAR_URL,
   CLEANER_TOKEN,
-  type SentSms,
   type ToolResult,
   type WiredApp,
   fakeSms,
   startWiredApp,
 } from "./wiringProof";
+import { isTo, newTexts, outboxTexts, type OutboxText } from "./scratchOutbox";
 
 const LANE = SCRATCH_TENANTS[0];
 const ADDRESS = "12 Scratch Lane, Teaneck, NJ 07666";
@@ -49,10 +49,6 @@ afterEach(async () => {
     if (root) rmSync(root, { recursive: true, force: true });
   }
 });
-
-function redact(sent: SentSms[], pin: string): { to: string; body: string }[] {
-  return sent.map((item) => ({ to: item.to, body: item.body.split(pin).join("[redacted]") }));
-}
 
 function nextOf(result: ToolResult): string {
   const next = result.structured?.next;
@@ -102,8 +98,13 @@ async function confirmJob(wired: WiredApp): Promise<void> {
   expect(nextOf(await call(wired, "send_test_text", { from: LANE.cleanerPhone, text: "YES" }))).toBe("The test text went through.");
 }
 
-function hostBodies(sent: SentSms[], pin: string): string[] {
-  return redact(sent, pin).filter((item) => item.to === HOST).map((item) => item.body);
+/** What went out so far. A Scratch property's texts stay in the outbox and never reach Twilio. */
+async function out(wired: WiredApp): Promise<OutboxText[]> {
+  return outboxTexts(await call(wired, "read_outbox"));
+}
+
+function bodiesTo(texts: OutboxText[], role: "host" | "cleaner"): string[] {
+  return texts.filter((item) => isTo(item, role) && item.status !== "unsent").map((item) => item.body);
 }
 
 function assertHostWording(body: string): void {
@@ -146,33 +147,31 @@ describe("host STOP, START, resume, and ready texts", () => {
       { to: LANE.cleanerPhone, body: CLEANER_START_EARLY },
     ]);
 
+    // On Scratch the same texts stay in the outbox, so it shows them instead of Twilio.
     const wired = await scratchApp();
     await saveLane(wired);
     await confirmJob(wired);
-    const stopAt = wired.cleanerSent.length;
+    const stopAt = await out(wired);
     expect(nextOf(await call(wired, "send_test_text", { from: HOST, text: "STOP" }))).toBe("The test text went through.");
-    expect(hostBodies(wired.cleanerSent.slice(stopAt), LANE.pin)).toEqual([HOST_STOP_HELD]);
+    expect(bodiesTo(newTexts(stopAt, await out(wired)), "host")).toEqual([HOST_STOP_HELD]);
     expect((await call(wired, "get_turns")).text).toContain("\"held\":true");
-    const startAt = wired.cleanerSent.length;
+    const startAt = await out(wired);
     expect(nextOf(await call(wired, "send_test_text", { from: HOST, text: "START" }))).toBe("The test text went through.");
-    expect(hostBodies(wired.cleanerSent.slice(startAt), LANE.pin)).toEqual([HOST_START_HELD]);
+    expect(bodiesTo(newTexts(startAt, await out(wired)), "host")).toEqual([HOST_START_HELD]);
     expect((await call(wired, "get_turns")).text).toContain("\"held\":true");
     expect(nextOf(await call(wired, "mark_guests_left", { confirmed: true }))).not.toBe(PIN_SENT);
     expect((await approvedTool((args) => call(wired, "resume_job", args))).isError).toBe(false);
     expect((await call(wired, "get_turns")).text).not.toContain("\"held\":true");
-    const cleanerHeld = wired.cleanerSent.length;
+    const cleanerHeld = await out(wired);
     expect(nextOf(await call(wired, "send_test_text", { from: LANE.cleanerPhone, text: "STOP" }))).toBe("The test text went through.");
-    expect(redact(wired.cleanerSent.slice(cleanerHeld), LANE.pin).filter((item) => item.to === LANE.cleanerPhone)).toEqual([
-      { to: LANE.cleanerPhone, body: CLEANER_STOP },
-    ]);
-    const cleanerBack = wired.cleanerSent.length;
+    expect(bodiesTo(newTexts(cleanerHeld, await out(wired)), "cleaner")).toEqual([CLEANER_STOP]);
+    const cleanerBack = await out(wired);
     expect(nextOf(await call(wired, "send_test_text", { from: LANE.cleanerPhone, text: "START" }))).toBe("The test text went through.");
-    expect(redact(wired.cleanerSent.slice(cleanerBack), LANE.pin).filter((item) => item.to === LANE.cleanerPhone)).toEqual([
-      { to: LANE.cleanerPhone, body: CLEANER_START },
-    ]);
+    expect(bodiesTo(newTexts(cleanerBack, await out(wired)), "cleaner")).toEqual([CLEANER_START]);
     expect((await call(wired, "get_turns")).text).toContain("\"held\":true");
     for (const body of [HOST_STOP_HELD, HOST_STOP_OPEN, HOST_START_HELD, HOST_START_OPEN]) assertHostWording(body);
-    expect(JSON.stringify(redact(wired.cleanerSent, LANE.pin)).includes(LANE.pin)).toBe(false);
+    expect(JSON.stringify(await out(wired)).includes(LANE.pin)).toBe(false);
+    expect(wired.cleanerSent).toEqual([]);
   }, 60_000);
 
   it("logs the resume note unsent while Cory is opted out, sends one ready text, and the cleaner still gets the door code", async () => {
@@ -181,7 +180,7 @@ describe("host STOP, START, resume, and ready texts", () => {
     await saveLane(wired);
     await confirmJob(wired);
     expect(nextOf(await call(wired, "send_test_text", { from: HOST, text: "STOP" }))).toBe("The test text went through.");
-    const afterStop = wired.cleanerSent.length;
+    const afterStop = await out(wired);
     expect((await approvedTool((args) => call(wired, "resume_job", args))).isError).toBe(false);
     expect(nextOf(await call(wired, "mark_guests_left", { confirmed: true }))).toBe(PIN_SENT);
     expect(nextOf(await call(wired, "send_test_text", { from: LANE.cleanerPhone, text: "START" }))).toBe("The test text went through.");
@@ -189,10 +188,10 @@ describe("host STOP, START, resume, and ready texts", () => {
     expect(nextOf(await call(wired, "send_test_text", { from: LANE.cleanerPhone, text: "DONE" }))).toBe("The test text went through.");
     expect(nextOf(await call(wired, "send_test_text", { from: LANE.cleanerPhone, text: "DONE" }))).toBe("The test text went through.");
     expect(nextOf(await call(wired, "mark_guests_left", { confirmed: true }))).not.toBe(PIN_SENT);
-    const after = redact(wired.cleanerSent.slice(afterStop), LANE.pin);
-    expect(after.filter((item) => item.to === HOST)).toEqual([{ to: HOST, body: HOST_DONE }]);
-    expect(after.filter((item) => item.body.includes("Door code:"))).toEqual([
-      { to: LANE.cleanerPhone, body: `Guests have left ${ADDRESS}. Door code: [redacted]. This code is only for you. Reply DONE when the cleaning is finished.` },
+    const after = newTexts(afterStop, await out(wired));
+    expect(after.filter((item) => item.label === "Done note to the host").map((item) => [item.status, item.body])).toEqual([["sent", HOST_DONE]]);
+    expect(after.filter((item) => item.body.includes("Door code:")).map((item) => [item.label, item.body])).toEqual([
+      ["Door code text to the cleaner", `Guests have left ${ADDRESS}. Door code: [redacted]. This code is only for you. Reply DONE when the cleaning is finished.`],
     ]);
     const lines = linesOf(await call(wired, "read_outbox"));
     expect(lines).toContain("Resume note to the host: unsent.");
@@ -201,10 +200,11 @@ describe("host STOP, START, resume, and ready texts", () => {
     expect(lines.filter((line) => line === "Resume note to the host: sent.")).toEqual([]);
     expect((await call(wired, "get_turns")).text).toContain("\"status\":\"done\"");
     expect((await call(wired, "get_turns")).text).not.toContain("\"held\":true");
-    const beforeHurt = wired.cleanerSent.length;
+    const beforeHurt = await out(wired);
     expect(nextOf(await call(wired, "send_test_text", { from: LANE.cleanerPhone, text: "I fell and I'm hurt" }))).toBe("The test text went through.");
-    expect(hostBodies(wired.cleanerSent.slice(beforeHurt), LANE.pin)).toContain(INJURY_ALERT);
-    expect(JSON.stringify(redact(wired.cleanerSent, LANE.pin)).includes(LANE.pin)).toBe(false);
+    expect(bodiesTo(newTexts(beforeHurt, await out(wired)), "host")).toContain(INJURY_ALERT);
+    expect(JSON.stringify(await out(wired)).includes(LANE.pin)).toBe(false);
+    expect(wired.cleanerSent).toEqual([]);
   }, 60_000);
 
   it("sends Cory one ready text when the cleaner texts DONE, and a retry sends no duplicate", async () => {
@@ -214,22 +214,21 @@ describe("host STOP, START, resume, and ready texts", () => {
     await confirmJob(wired);
     expect(nextOf(await call(wired, "mark_guests_left", { confirmed: true }))).toBe(PIN_SENT);
     expect(nextOf(await call(wired, "send_test_text", { from: LANE.cleanerPhone, text: "START" }))).toBe("The test text went through.");
-    const beforeDone = wired.cleanerSent.length;
+    const beforeDone = await out(wired);
     expect(nextOf(await call(wired, "send_test_text", { from: LANE.cleanerPhone, text: "DONE" }))).toBe("The test text went through.");
-    expect(redact(wired.cleanerSent.slice(beforeDone), LANE.pin)).toEqual([
-      { to: LANE.cleanerPhone, body: CLEANER_DONE },
-      { to: HOST, body: HOST_DONE },
+    expect(newTexts(beforeDone, await out(wired)).map((item) => [item.label, item.body])).toEqual([
+      ["Done note to the cleaner", CLEANER_DONE],
+      ["Done note to the host", HOST_DONE],
     ]);
     expect(linesOf(await call(wired, "read_outbox")).filter((line) => line === "Done note to the host: sent.")).toEqual([
       "Done note to the host: sent.",
     ]);
-    const retry = wired.cleanerSent.length;
+    const retry = await out(wired);
     expect(nextOf(await call(wired, "send_test_text", { from: LANE.cleanerPhone, text: "DONE" }))).toBe("The test text went through.");
-    expect(redact(wired.cleanerSent.slice(retry), LANE.pin)).toEqual([
-      { to: LANE.cleanerPhone, body: "This cleaning is already marked done." },
-    ]);
+    expect(newTexts(retry, await out(wired)).map((item) => item.body)).toEqual(["This cleaning is already marked done."]);
     expect((await call(wired, "get_turns")).text).toContain("\"status\":\"done\"");
-    expect(hostBodies(wired.cleanerSent, LANE.pin).filter((body) => body === HOST_DONE)).toEqual([HOST_DONE]);
-    expect(JSON.stringify(redact(wired.cleanerSent, LANE.pin)).includes(LANE.pin)).toBe(false);
+    expect(bodiesTo(await out(wired), "host").filter((body) => body === HOST_DONE)).toEqual([HOST_DONE]);
+    expect(JSON.stringify(await out(wired)).includes(LANE.pin)).toBe(false);
+    expect(wired.cleanerSent).toEqual([]);
   }, 60_000);
 });

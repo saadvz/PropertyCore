@@ -294,10 +294,8 @@ describe("Scratch test tools", () => {
     expect(blob.includes(COURT.pin)).toBe(false);
     expect(blob).not.toMatch(/PIN_SENT|PIN_REPEAT|PIN_FAILED|CLEANER_CORE_SCRATCH_TOOLS/);
     expect(twilioCalls).toBe(0);
-    const sentBodies = wired.cleanerSent.map((item) => item.body.split(LANE.pin).join("[redacted]").split(COURT.pin).join("[redacted]"));
-    expect(sentBodies.join("\n")).not.toContain(LANE.pin);
-    expect(sentBodies.join("\n")).not.toContain(COURT.pin);
-    expect(sentBodies.filter((body) => body.includes("Door code:"))).toHaveLength(3);
+    // Scratch texts stay in the outbox: none of them reach Twilio, even with live texts on.
+    expect(wired.cleanerSent).toEqual([]);
   }, 40_000);
 
   it("outbox shows the wording with the code redacted", async () => {
@@ -354,11 +352,29 @@ describe("Scratch test tools", () => {
     expect(blob.includes(COURT.pin)).toBe(false);
     expect(blob.includes(LANE.pin)).toBe(false);
     expect(twilioCalls).toBe(0);
-    const courtSent = wired.cleanerSent.map((item) => item.body.split(COURT.pin).join("[redacted]").split(LANE.pin).join("[redacted]"));
-    expect(courtSent.join("\n")).not.toContain(COURT.pin);
-    expect(courtSent.filter((body) => body.includes("Door code:"))).toEqual([
+    expect(wired.cleanerSent).toEqual([]);
+    const texts = (await call(wired, "read_outbox")).structured?.texts as { label: string; body: string }[];
+    expect(texts.filter((item) => item.body.includes("Door code:")).map((item) => item.body)).toEqual([
       "Guests have left 8 Scratch Court, Teaneck, NJ 07666. Door code: [redacted]. This code is only for you. Reply DONE when the cleaning is finished.",
     ]);
+  }, 40_000);
+
+  it("with live texts on, a Scratch property's texts stay in the outbox and never call Twilio", async () => {
+    if (!LANE) throw new Error("missing lane");
+    const wired = await scratchApp({ blockSms: true, allowlist: `${LANE.ownerPhone},${LANE.cleanerPhone},${LANE_OBSERVER}` });
+    await saveScratch(wired, { address: LANE.property.address, host: LANE.ownerPhone, cleaner: LANE.cleanerPhone, observer: LANE_OBSERVER, pin: LANE.pin }, "Scratch");
+    expect((await call(wired, "confirm_times", { checkout: "10:30", checkIn: "15:00" })).isError).toBe(false);
+    expect(nextOf(await call(wired, "send_test_text", { from: LANE.cleanerPhone, text: "YES" }))).toBe(WENT_THROUGH);
+    expect(nextOf(await call(wired, "send_test_text", { from: LANE.cleanerPhone, text: "YES" }))).toBe(WENT_THROUGH);
+    const left = await call(wired, "mark_guests_left", { confirmed: true });
+    expect(left.text).toContain(PIN_SENT);
+    const lines = linesOf(await call(wired, "read_outbox"));
+    expect(lines).toContain("Opt-in text to the cleaner: sent.");
+    expect(lines).toContain("Cleaning offer to the cleaner: sent.");
+    expect(lines).toContain("Door code text to the cleaner: sent.");
+    expect(lines.some((line) => line.endsWith(": failed."))).toBe(false);
+    expect(twilioCalls).toBe(0);
+    expect(wired.cleanerSent).toEqual([]);
   }, 40_000);
 
   it("refuses a real number and a property that is not Scratch, and stores nothing", async () => {
@@ -461,8 +477,9 @@ describe("Scratch test tools", () => {
     expect(lines.join("\n").includes(LANE.pin)).toBe(false);
     expect(groupCalls).toBe(0);
     expect(twilioCalls).toBe(0);
-    expect(wired.cleanerSent.map((item) => item.body).join("\n").includes(LANE.pin)).toBe(false);
-    expect(wired.cleanerSent.some((item) => item.body.includes("someone is hurt"))).toBe(true);
+    expect(wired.cleanerSent).toEqual([]);
+    const texts = (await call(wired, "read_outbox")).structured?.texts as { label: string; body: string }[];
+    expect(texts.some((item) => item.body.includes("someone is hurt"))).toBe(true);
   }, 40_000);
 
   it("records an opted-out host note in the outbox and does not call Twilio", async () => {
@@ -483,8 +500,9 @@ describe("Scratch test tools", () => {
     expect(state.text.includes(LANE.pin)).toBe(false);
     expect(twilioCalls).toBe(0);
     const stopAck = `You're opted out of cleaning texts for ${LANE.property.address}, and the cleaning there is on hold. Reply START to get texts again.`;
-    expect(wired.cleanerSent.map((item) => item.body)).toContain(stopAck);
-    expect(wired.cleanerSent.some((item) => item.body.includes("is back on"))).toBe(false);
-    expect(wired.cleanerSent.map((item) => item.body).join("\n").includes(LANE.pin)).toBe(false);
+    expect(wired.cleanerSent).toEqual([]);
+    const texts = (await call(wired, "read_outbox")).structured?.texts as { label: string; status: string; body: string }[];
+    expect(texts.map((item) => item.body)).toContain(stopAck);
+    expect(texts.some((item) => item.body.includes("is back on") && item.status !== "unsent")).toBe(false);
   }, 40_000);
 });

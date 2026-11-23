@@ -303,7 +303,7 @@ describe("group chat flag", () => {
     const base: NodeJS.ProcessEnv = {
       CLEANER_CORE_ENABLED: "1",
       CLEANER_CORE_LIVE_SMS: "1",
-      CLEANER_CORE_SCRATCH_TOOLS: "1",
+      // Scratch tools stay off: with them on, a Scratch property's texts stay in the outbox and never reach Twilio.
       CLEANER_CORE_SMS_ALLOWLIST: `${OWNER},${CLEANER},${OBSERVER}`,
       CLEANER_CORE_TWILIO_ACCOUNT_SID: "ACfake",
       CLEANER_CORE_TWILIO_AUTH_TOKEN: "token",

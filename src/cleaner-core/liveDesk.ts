@@ -4253,7 +4253,8 @@ export class LiveDesk {
           if (hostLine && text.kind !== "pin-notice" && text.kind !== "pin-failed") {
             this.engine?.keepHostNote(`host:${text.kind}:${text.body}`, text.body);
           }
-          if (!liveSmsOn(env())) {
+          // A Scratch property's texts stay in the outbox even with live texts on: they never reach Twilio.
+          if (!liveSmsOn(env()) || this.scratchCapture()) {
             if (text.kind === "pin") this.noteAccepted("scratch-pin");
             if (text.channel === "group") this.noteGroupMade("scratch");
             return;
