@@ -31,5 +31,7 @@ Wait: none
 - On 12 Scratch Lane, every quoted Say line starts with "On 12 Scratch Lane only:".
 - A `## Still by hand` section at the end lists what the file leaves to a person.
 
-`test/grokTestScripts.test.ts` checks every file here: each step has all four lines, every phone number is a 555
-test number, no line holds door code digits, and Scratch steps name the property.
+`test/grokTestScripts.test.ts` checks every file here: each step has all four lines in the shapes above, every
+phone number anywhere in the file is a 555 test number, no line holds door code digits, Scratch steps name the
+property, and a heading that starts like a step has the `## <n>. <title>` shape. To check a script kept somewhere
+else, name it: `GROK_TEST_SCRIPT=<path> npx vitest run test/grokTestScripts.test.ts`.

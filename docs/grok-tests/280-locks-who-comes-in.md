@@ -36,7 +36,7 @@ Wait: none
 ## 5. Say yes
 
 Say: "Yes."
-Expect: Grok saves the visit. Nothing in the reply shows a code or the full phone number.
+Expect: Grok saves the visit. Nothing in the reply shows a code or the full phone number. Saving it texts Test Visitor's 555 number through Twilio, which refuses it: this is the one step here that reaches Twilio, and a failed text may cost a small fee.
 Check: none
 Wait: none
 
