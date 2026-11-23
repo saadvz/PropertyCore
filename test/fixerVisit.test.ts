@@ -272,16 +272,17 @@ describe("the clock pass and the code text", () => {
     expect(w.job().state).toBe("in-progress");
   });
 
-  it("never texts a pro who is also the property's cleaner: they use the visit page", async () => {
+  it("texts the code once to a pro who is also the property's cleaner, as the repair visit's code", async () => {
     const w = await setup();
     w.people().savePropertyPeople(PROPERTY_ID, HOST, [{ phone: JOE, role: "cleaner", name: "Joe" }]);
     expect(w.people().rolesOn(JOE, PROPERTY_ID)).toEqual(expect.arrayContaining(["pro", "cleaner"]));
     await book(w);
     w.at(TUE.from);
     await w.desk().tick();
-    expect(w.sent.length).toBe(0);
-    expect(w.job().codeTextAt).toBeUndefined();
-    expect(outcome(await w.desk().revealCode(w.job().id))).toBe("opened");
+    await w.desk().tick();
+    expect(w.sent.map((m) => m.to)).toEqual([JOE]);
+    expect(w.sent[0]!.body.startsWith("Hi Joe's, the door code for 12 Scratch Lane is ")).toBe(true);
+    expect(w.job().codeTextSent).toBe(true);
   });
 
   it("never texts a pro who hasn't said YES", async () => {

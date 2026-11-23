@@ -194,6 +194,19 @@ describe("proposing a routine visit", () => {
     expect(w.notes).toEqual([]);
   });
 
+  it("texts a vendor who is also the property's cleaner the same proposal, and their YES confirms it", async () => {
+    const w = await setup();
+    w.people().savePropertyPeople(PROPERTY_ID, HOST, [{ phone: BUGS, role: "cleaner", name: "Bug" }]);
+    expect(w.people().rolesOn(BUGS, PROPERTY_ID).sort()).toEqual(["cleaner", "pro"]);
+    await w.savePest();
+    w.at(LEAD);
+    await w.desk().tick();
+    expect(w.toBugs()).toEqual(["Hi Bug, pest control at 12 Scratch Lane is due. Can you come Sun, Jan 10, 9 to 11 AM? Reply YES, or send another day and time."]);
+    await w.text("YES", "m1");
+    expect(w.job()!.booking!.vendor!.confirmedAt).toBeDefined();
+    expect(w.fake.liveCodes("dev-front")).toHaveLength(1);
+  });
+
   it("never sends a second proposal across ticks and a restart", async () => {
     const w = await setup();
     await w.savePest();

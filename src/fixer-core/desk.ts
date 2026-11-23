@@ -27,10 +27,10 @@ import { ConfirmationBook } from "../operator/confirmations";
 import { nextDates, scheduleProblem, type Schedule } from "../supply-core/schedule";
 import { supplyAskOn } from "../supply-core/store";
 import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
-import { holdsOtherRole, priceCents } from "./proLine";
+import { holdsOtherRole, priceCents, proWaitingJob } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
 import { BLOCK_ON_CALENDAR_NEXT, blockCalendarNext, crewHoursOf, blockCollisionNews, blockOpenNews, BLOCK_HOST_ACCESS, CREW_HOST_ACCESS, crewScheduleQuestion, crewScheduleSentence, crewSpanRefusal, guestWithdrewNews, removeRepairBlockQuestion, repairBlockQuestion, URGENT_AGREED, URGENT_ASK_GUEST, urgentRefusal, urgentStayChangedNews } from "./texts";
-import { codeOkNews, codeOkQuestion, codeOkReminder, extendAskNews, extendedNews, noExtendNews, bookingQuestion, firstName, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, proVoicemailNews, quotesQuestion, shortDollars, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
+import { codeOkNews, codeOkQuestion, codeOkReminder, extendAskNews, extendedNews, noExtendNews, bookingQuestion, firstName, cancelQuestion, propertyQuestion, CODE_CHANGE_NEXT, dollars, codeRefusedNote, codeText, codeTextNews, codeTextUnsureNote, costNewsText, cleaningOrderQuestion, extendQuestion, hostGoQuestion, lateBeforeCheckInNews, noPhotosNews, pickQuestion, preferredQuestion, PRO_DONE_ACK, PRO_HURT, PRO_HURT_CALL, proHurtNews, proTextFailed, proInvite, proTextNews, mixedTextNews, proVoicemailNews, quotesQuestion, shortDollars, raisedPrice, raisedPriceNews, revealNews, rotationQuestion, streetOf, rescheduleQuestion, codeTextOffNote, removeBookedPro, removeContactedPro, STAY_OVER_NEXT, stayOverBookingNews, STAYS_UNREAD, STAYS_UNREAD_BOOK, VISIT_ENDED, VISIT_LINK_NEXT, VISIT_NOT_STARTED, VISIT_PAGE_OFF, VISIT_REVOKED, visitOverNews, visitTextPath } from "./texts";
 import { insideWindow, latestYmd, nextCheckIn, overlapsStay, visitWindows, type VisitWindow } from "./window";
 import { doorFor, repairBlockProblem, repairBlockStatus, staysForCrew } from "./repairBlock";
 import { crewScheduleProblem, crewWindowAt, crewWindows, type CrewSchedule, type CrewWindow } from "./crewDays";
@@ -828,7 +828,8 @@ export class FixerDesk {
 
   /**
    * The text invite, once per phone: only a saved pro who prefers text, with a phone, after the host is confirmed,
-   * and only if `claimInvite` allows it. A pro who also holds another role here is reached by the visit page only.
+   * and only if `claimInvite` allows it. A pro who also holds another role on the account (say, the cleaner) is invited
+   * like any other: their one YES covers both roles, so `claimInvite` refuses once they said it. Never the host's phone.
    * The mark is saved before the send, so a failed send is not retried.
    */
   private async inviteIfAsked(file: FixerFile, pro: Pro): Promise<void> {
@@ -836,7 +837,9 @@ export class FixerDesk {
     const people = this.deps.people?.();
     const here = this.deps.propertyId;
     if (pro.status !== "saved" || !pro.prefersText || !phone || pro.invitedPhones?.includes(phone) || !people || !here || !this.deps.send) return;
-    if (holdsOtherRole(people, phone)) return;
+    if (people.isHost(phone)) return;
+    // Someone already asked for this person's YES in their other role: that one YES covers this too.
+    if (holdsOtherRole(people, phone) && people.person(phone)?.invitedFrom) return;
     try {
       if ((await this.deps.textsAllowed?.()) !== true) return;
       const business = await this.deps.business?.();
@@ -2530,8 +2533,8 @@ export class FixerDesk {
 
   /**
    * The pro's phone when they are on the text path: a saved pro who prefers text, said YES, and hasn't
-   * stopped. A pro who holds another role here (the cleaner who is also the handyman) is reached by
-   * the visit page only, so their texts stay with that role.
+   * stopped. A pro who also holds another role (the cleaner who is also the handyman) is on it too: the
+   * line router sends their replies here only while this visit is the one waiting on them. Never the host's phone.
    */
   private textPathPhone(file: FixerFile, job: Job): string | undefined {
     const pro = file.pros.find((entry) => entry.id === job.booking?.proId && entry.status === "saved");
@@ -2539,7 +2542,7 @@ export class FixerDesk {
     const people = this.deps.people?.();
     const here = this.deps.propertyId;
     if (!pro?.prefersText || !phone || !people || !here || !this.deps.send) return undefined;
-    if (holdsOtherRole(people, phone)) return undefined;
+    if (people.isHost(phone)) return undefined;
     return people.optedIn(phone) && !people.stopped(phone) ? phone : undefined;
   }
 
@@ -2774,7 +2777,7 @@ export class FixerDesk {
       const pro = file.pros.find((entry) => entry.id === standing.proId && entry.status === "saved");
       const phone = pro?.reach.phone;
       if (!pro || !phone || !pro.prefersText) continue;
-      if (!people.optedIn(phone) || people.stopped(phone) || !people.rolesOn(phone, here).includes("pro") || holdsOtherRole(people, phone)) continue;
+      if (!people.optedIn(phone) || people.stopped(phone) || !people.rolesOn(phone, here).includes("pro") || people.isHost(phone)) continue;
       if ((await this.deps.textsAllowed?.()) !== true) continue;
       const lastDay = addCalendarDays(next.nextDate, FixerDesk.VENDOR_DAYS);
       const draft: Job = { id: newId("job_", 10), trade: item.trade, what: item.what, source: "upkeep", sourceRef: item.id, photos: [], urgency: "by-date", byDate: lastDay, state: "booked", candidates: [], picked: [], contacts: [], news: [], createdAt: now.toISOString(), standingYes: { upkeepId: item.id, at: standing.yesAt } };
@@ -3547,7 +3550,8 @@ export class FixerDesk {
       const people = this.deps.people?.();
       const here = this.deps.propertyId;
       if (!people || !here || !input.from) return;
-      if (!people.rolesOn(input.from, here).includes("pro") || holdsOtherRole(people, input.from)) return;
+      // The line router decides who a text is for: a pro who also holds another role reaches here only while Fixer Core waits on them.
+      if (!people.rolesOn(input.from, here).includes("pro") || people.isHost(input.from)) return;
       const text = input.text.trim();
       const injury = isInjuryReport(text);
       let read: FixerFile | undefined;
@@ -3636,6 +3640,23 @@ export class FixerDesk {
       this.write(fresh);
       await this.tell([note]);
     }).catch(() => this.tell([{ id: `fixer:pro-text-failed:${id}`, text: proTextFailed({ proName: who }) }]));
+  }
+
+  /**
+   * A text that went to Cleaner Core from a pro who also holds another role there, while their visit here waited on
+   * them too: one note on that visit, so the host can check which it was about. Nothing is sent to the pro.
+   */
+  noteMixedText(from: string): Promise<void> {
+    return this.serial(async () => {
+      const file = this.read();
+      const job = proWaitingJob(file, from, this.deps.now().getTime());
+      if (!job) return;
+      // Once per visit: the host needs to check with them once, not after every text.
+      if (job.news.some((news) => news.kind === "mixed-text")) return;
+      const note = this.news(job, "mixed-text", mixedTextNews({ proName: this.bookedName(file, job), what: job.what }), `fixer:${job.id}:mixed-text`);
+      this.write(file);
+      await this.tell([note]);
+    });
   }
 
   /**

@@ -495,6 +495,14 @@ export function vendorNoDayNews(f: { what: string; proName: string }): string {
   return `${f.what} is due, but ${f.proName}'s usual hours don't fit between stays in the next week, so I'll handle it the usual way.`;
 }
 
+/**
+ * A text from someone who is both a pro and, say, the cleaner, while both the cleaning and their repair visit wait on
+ * them. It went to the cleaning; the host checks whether it was about the visit. Never the text itself.
+ */
+export function mixedTextNews(f: { proName: string; what: string }): string {
+  return `${f.proName} texted while both a cleaning and their visit for ${f.what.toLowerCase()} were waiting on them. I took it as about the cleaning. If it was about the visit, ask them and tell me here.`;
+}
+
 export function vendorTimeTaken(f: { street: string }): string {
   return `Sorry, ${f.street} isn't free then. Could you send another day and time?`;
 }

@@ -13,6 +13,7 @@ import { holder } from "./jobDeps";
 import { parsePhone } from "../core/phone";
 import { CARD_REFUSAL, fixerDeskFor, type FixerDesk, type FixerReply } from "../fixer-core/desk";
 import { liveBooking } from "../fixer-core/gate";
+import { proWaitingJob } from "../fixer-core/proLine";
 import { readFixer, type FixerFile } from "../fixer-core/store";
 import { FIXER_TOOL_NAMES, handleFixerTool, listedFixerTools } from "../fixer-core/tools";
 import { refuseCards } from "../hub/cards";
@@ -308,6 +309,23 @@ function proProperty(h: HostedCleaner, tenant: Tenant, properties: Property[], f
   const now = h.now().getTime();
   const ranked = properties.map((property) => ({ property, rank: visitRank(readOrNone(propertyFolder(h.dataRoot, tenant.id, property)), from, now) }));
   return ranked.reduce((best, next) => (next.rank > best.rank ? next : best)).property;
+}
+
+/** Of `properties`, the ones whose Fixer Core is waiting on `from` now: a vendor's proposed or upcoming visit, or a visit under way. */
+export function fixerWaitingOn(h: HostedCleaner, tenant: Tenant, properties: Property[], from: string): Property[] {
+  const now = h.now().getTime();
+  return properties.filter((property) => proWaitingJob(readOrNone(propertyFolder(h.dataRoot, tenant.id, property)), from, now) !== undefined);
+}
+
+/** A text from a pro who also holds another role went to Cleaner Core while their visit on `properties` waited too: one note for the host on each. */
+export async function fixerMixedText(h: HostedCleaner, tenant: Tenant, properties: Property[], from: string): Promise<void> {
+  for (const property of properties) {
+    try {
+      await fixerDesk(h, tenant, property).noteMixedText(from);
+    } catch {
+      h.log(`Fixer Core couldn't note a shared person's text for ${tenant.id}/${property.id}.`);
+    }
+  }
 }
 
 /** A pro's voicemail transcript, for one of `properties` (proRoute's), picked as for a text. News only. */
