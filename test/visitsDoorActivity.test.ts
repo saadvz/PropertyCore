@@ -32,6 +32,22 @@ describe("door activity", () => {
     expect(activitySentence(entry!, NY)).toBe("The Front door was unlocked at 1:13 AM, without a code (from the app).");
   });
 
+  it("tells one unlock once when the lock partner reports it twice (23 Nov Grok run)", () => {
+    const events = [
+      unlock("e1", "2026-11-22T06:20:00.000Z", { method: "remote" }),
+      unlock("e2", "2026-11-22T06:20:01.000Z", { method: "remote" }),
+      { type: "lock" as const, id: "e3", at: "2026-11-22T06:20:30.000Z", device: "Front door", action: "lock" as const },
+      unlock("e4", "2026-11-22T06:30:00.000Z", { method: "remote" }),
+    ];
+    const entries = doorActivity(events, {}, {}, DAY);
+    expect(entries.map((entry) => `${entry.action} ${entry.at}`)).toEqual(["unlock 2026-11-22T06:20:00.000Z", "lock 2026-11-22T06:20:30.000Z", "unlock 2026-11-22T06:30:00.000Z"]);
+  });
+
+  it("keeps two unlocks close together when they were opened different ways", () => {
+    const events = [unlock("e1", "2026-11-22T06:20:00.000Z", { method: "remote" }), unlock("e2", "2026-11-22T06:20:20.000Z", { method: "manual" })];
+    expect(doorActivity(events, {}, {}, DAY)).toHaveLength(2);
+  });
+
   it("names how the door was opened for each of the partner's ways", () => {
     const how = (method: string) => doorActivity([unlock("e", "2026-11-22T14:00:00.000Z", { method })], {}, {}, DAY)[0]!.how;
     expect(how("mobile_key")).toBe("from the app");

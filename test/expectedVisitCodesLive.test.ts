@@ -226,6 +226,15 @@ describe("the visitor's own door code (#280 17)", () => {
     expect(w.fake.liveCodes("dev-front")).toEqual([]);
   });
 
+  it("a cancel before any code was made says none comes off (23 Nov Grok run)", async () => {
+    const w = world();
+    const id = addMike(w);
+    const next = w.visits.cancelVisit({ id }).text;
+    expect(next).toContain("No door code was made for it, so none comes off the lock.");
+    expect(next).not.toContain("door code for it comes off");
+    expect(w.fake.liveCodes("dev-front")).toEqual([]);
+  });
+
   it("doesn't text while the property's texts aren't on, and tells the host once", async () => {
     const w = world({ textsAllowed: false });
     addMike(w);
