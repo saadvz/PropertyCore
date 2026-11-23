@@ -13,10 +13,10 @@ import { hubFor } from "../hub/hub";
 import type { People } from "../hub/people";
 import { keywordOf } from "../intent/ruleBased";
 import { formParams, verifyTwilioSignature } from "../messaging/twilio/signature";
-import { proRoute } from "../fixer-core/proLine";
+import { alsoProRoute, proRoute } from "../fixer-core/proLine";
 import { writeJsonAtomic } from "../storage/atomicWrite";
 import { isStartText, isStopText, TenantOptOuts } from "./crossService";
-import { fixerProText } from "./fixer";
+import { fixerMixedText, fixerProText, fixerWaitingOn } from "./fixer";
 import { guestLineText, standingLineText, visitorLineText } from "./locks";
 import { LineAsks } from "./lineAsks";
 import { accountPeople } from "./sharedPeople";
@@ -196,6 +196,29 @@ async function personAll(h: HostedCleaner, tenant: Tenant, people: People, prope
   await sendLiveSms(deskOf(h, tenant, properties[0]!).ctx.env(), { to: from, body: stop ? lineStopText(business) : lineStartText(business) }).catch(() => undefined);
 }
 
+/**
+ * A text from a pro who also holds another role on the account (the cleaner who is also the handyman): the Fixer Core
+ * properties to take it when Fixer Core is waiting on them and Cleaner Core isn't, else undefined and it goes to
+ * Cleaner Core as for anyone in that role. STOP, START and HELP are theirs for the whole account and always go that
+ * way. When both wait on them, Cleaner Core takes it and the host gets one note on the visit to check which it was.
+ */
+async function alsoProText(h: HostedCleaner, tenant: Tenant, people: People, from: string, text: string): Promise<Property[] | undefined> {
+  const mine = alsoProRoute(tenant, people, from);
+  if (!mine) return undefined;
+  const keyword = keywordOf(text);
+  if (isStopText(text) || keyword === "start" || keyword === "help") return undefined;
+  const waiting = fixerWaitingOn(h, tenant, mine, from);
+  if (waiting.length === 0) return undefined;
+  const roles = new Set(people.propertiesOf(from));
+  for (const property of tenant.properties.filter((p) => p.flows.cleaning.on && roles.has(p.id))) {
+    if (await deskOf(h, tenant, property).desk.waitingOn(from).catch(() => true)) {
+      await fixerMixedText(h, tenant, waiting, from);
+      return undefined;
+    }
+  }
+  return waiting;
+}
+
 export async function handleLineText(h: HostedCleaner, r: HostedRequest, tenant: Tenant, rawBody: Buffer, signedUrl: string | undefined): Promise<void> {
   const fields = formParams(rawBody);
   // Checked first, so a forged text never changes an opt-out or reaches a desk.
@@ -218,8 +241,9 @@ export async function handleLineText(h: HostedCleaner, r: HostedRequest, tenant:
   }
   // Someone the host expects, given their own visit code (#280 17): their YES gets the code before the visit. Nothing else is taken here.
   const visitor = await visitorLineText(h, tenant, from, text);
-  // A pro, and nothing else on the account, texts Fixer Core: their DONE, a price, photos, or YES and STOP.
-  const pros = proRoute(tenant, people, from);
+  // A pro, and nothing else on the account, texts Fixer Core: their DONE, a price, photos, or YES and STOP. A pro who
+  // also holds another role texts it only while Fixer Core, and not Cleaner Core, is waiting on them.
+  const pros = proRoute(tenant, people, from) ?? (await alsoProText(h, tenant, people, from, text));
   // A visitor who is also a pro on the account: one YES answers both invites, so the pro route hears it too.
   if (visitor && !pros) {
     h.registry.touch(tenant.id);
