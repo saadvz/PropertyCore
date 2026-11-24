@@ -626,6 +626,12 @@ export interface CleanerCore {
   pausedReminders(): void;
   /** The new-booking question that offers the usual times, when usualTimesName is set and the stay's check-in is known. */
   newBookingAsk(jobId: string): string | undefined;
+  /**
+   * True once a job's first-text day has come: the schedule's day and time, or 9:00 AM the day before
+   * checkout when the offer goes as soon as the times are confirmed. Never later than the day before
+   * checkout. Quiet hours don't count here; they still hold the text itself.
+   */
+  offerDayReached(jobId: string): boolean;
   holdNotice(): string | undefined;
   notePrivateCodeDelivered(): void;
   /** Keeps a door code in memory after a later tool call opens the seal. Does not write it. */
@@ -3904,6 +3910,17 @@ class Engine implements CleanerCore {
     const latest = addCalendarDays(job.checkoutDate, -1);
     const day = wanted < latest ? wanted : latest;
     return this.now().getTime() >= Date.parse(zonedInstant(day, trigger.localTime, this.options.property.timeZone));
+  }
+
+  offerDayReached(jobId: string): boolean {
+    const job = this.jobsState.find((item) => item.id === jobId);
+    if (!job) return false;
+    const trigger = this.options.offerTrigger;
+    const timed = trigger && trigger.kind !== "when-confirmed" && !(trigger.kind === "days-after-check-in" && !job.checkInDate) ? trigger : undefined;
+    const latest = addCalendarDays(job.checkoutDate, -1);
+    const wanted = !timed ? latest : timed.kind === "days-before-checkout" ? addCalendarDays(job.checkoutDate, -timed.days) : addCalendarDays(job.checkInDate!, timed.days);
+    const day = wanted < latest ? wanted : latest;
+    return this.now().getTime() >= Date.parse(zonedInstant(day, timed?.localTime ?? "09:00", this.options.property.timeZone));
   }
 
   private triggerDue(trigger: ReminderTrigger, checkoutDate: string): boolean {
