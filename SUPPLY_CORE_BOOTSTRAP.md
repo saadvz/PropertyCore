@@ -19,6 +19,7 @@ In chat, call this connection Supply Core.
 Read `supply-template/template.json`. If `hostedSupplyCoreUrl` is an https address, that service is the product.
 
 - **On its own:** connect to `<hostedSupplyCoreUrl>/mcp` as a custom MCP server. The host types the invite code from Saad on the page and clicks Allow. Call `get_state`. With no property yet, ask for the delivery address, call `add_property` with it, then `set_flows` with that property and `supplies` true.
+- **As its own bot,** on an account that runs separate bots (`supply-template/bot-profile.md`): connect to `<hostedSupplyCoreUrl>/mcp/supply` instead, and skip `add_property` and `set_flows`: the Property Core bot adds properties and turns flows on. Create the Supply Core Alerts routine from `supply-template/routines/supply-core-alerts.md` before Activate, and save it with `check_alerts` and `connect: true`.
 - **With Cleaner Core:** you're already connected. When the host asks for supplies to be reordered at a property, call `set_flows` with the property and `supplies` true, then `get_supply_state`.
 - **Several properties:** each property has its own list, stores, and orders. Name the property in every Supply Core call with its id from `get_state`: as `property`, or as `propertyId` in `save_supply_settings`, whose own `property` field is the delivery address.
 

@@ -76,6 +76,21 @@ Without the template, open a new Grok Bot and paste the prompt in
 A host can turn a flow on or off for any property later, or add another
 property, by asking the agent.
 
+## A bot for each flow (Grok Bot)
+
+With an account's **Separate bots** switch on in `/admin` (`bots`, off by
+default), the host still starts with the one Property Core bot. Once they pick
+their flows, it asks whether each flow should get its own bot. On yes it
+creates a Cleaner Core, Supply Core or Fixer Core bot and sends it that flow's
+first message ([cleaner](../cleaner-template/BOT_PROMPT.md),
+[supply](../supply-template/BOT_PROMPT.md), [fixer](../fixer-template/BOT_PROMPT.md)).
+The host opens each new bot, clicks Allow once, and answers its setup there.
+Each bot takes its flow over when it saves its Alerts routine, and the
+Property Core bot keeps the properties, locks, cameras and guests. Its
+instructions are the Your team section of [`bot-profile.md`](bot-profile.md).
+If the Property Core bot can't create a bot, the host makes one with that name
+and pastes the same message.
+
 ## Tour Core is parked
 
 New accounts don't get touring. Only Saad makes an account a touring account,

@@ -25,6 +25,7 @@ that skips a gate.
 | Door code, calendar link | Grok's secure card, posted from its cloud computer | The private page, opened in Muse's browser; the host types there | The private page, from a link | The private page, from a link |
 | How it hears the cleaner | The Alerts routine's webhook wakes it | One recurring task, as often as the host picks (every 5 minutes suggested) | An hourly task plus an API trigger that wakes it | An hourly task |
 | Cleaning photos | Signed links | Signed links, opened in its browser | Images | Signed links |
+| Separate bots | Yes: with the account's `bots` switch on, the Property Core bot makes a bot for each flow ([Your team](../property-core-template/bot-profile.md)) | No | No | No |
 | **Cleaner Core** | Yes | Yes | Yes | Yes |
 | **Supply Core** | Yes | Yes | No | No |
 | Where it shops | Grok's shopping tools and product cards | Its own cloud browser | | |

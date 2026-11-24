@@ -10,3 +10,6 @@ host wants it.
 A bot that already runs Supply Core doesn't need to change anything. It keeps
 reading [`SUPPLY_CORE_BOOTSTRAP.md`](../SUPPLY_CORE_BOOTSTRAP.md) and the
 routine doc in this folder, which stay where they are.
+
+On an account that runs separate bots, each flow gets a bot of its own, which
+the Property Core bot creates and starts with [`BOT_PROMPT.md`](BOT_PROMPT.md).

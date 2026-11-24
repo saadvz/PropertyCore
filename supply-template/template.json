@@ -33,11 +33,44 @@
       "doc": "routines/supply-core-check.md",
       "trigger": "scheduled",
       "schedule": "Daily at the check time the host picked (10:00 unless they chose another).",
-      "allowedTools": ["get_supply_state", "check_supplies", "check_cart", "approve_cart", "record_order", "record_problem", "mark_delivered"],
+      "allowedTools": [
+        "check_alerts",
+        "get_supply_state",
+        "check_supplies",
+        "check_cart",
+        "approve_cart",
+        "record_order",
+        "record_problem",
+        "mark_delivered"
+      ],
       "credentialsTravelWithTemplate": false
+    },
+    {
+      "name": "Supply Core Alerts",
+      "doc": "routines/supply-core-alerts.md",
+      "trigger": "authenticated-webhook",
+      "allowedTools": [
+        "check_alerts",
+        "get_state",
+        "get_supply_state",
+        "check_supplies",
+        "check_cart",
+        "approve_cart",
+        "record_order",
+        "record_problem",
+        "mark_delivered"
+      ],
+      "credentialsTravelWithTemplate": false,
+      "note": "Supply Core's own bot only, on an account with separate bots. Saved with check_alerts and connect: true."
     }
   ],
-  "suggestedPrompts": ["Set up Supply Core", "What's due?", "We're low on paper towels", "Show this month's spending", "Change my spending cap"],
+  "suggestedPrompts": [
+    "Set up Supply Core",
+    "What's due?",
+    "We're low on paper towels",
+    "Show this month's spending",
+    "Change my spending cap"
+  ],
   "neverIncluded": [
     "card numbers, expiry dates, or security codes",
     "Vault contents: saved cards, Shop Pay, Link, or X Money",

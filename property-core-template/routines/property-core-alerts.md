@@ -35,7 +35,8 @@ credentials:
 ```
 
 `eventType` is `repairs.update` when Fixer Core has news for the host,
-`cleaning.update` when Cleaner Core does, or `installation.test` for the test
+`cleaning.update` when Cleaner Core does, `property.update` when the clock
+or a quiet bot does on an account with separate bots, or `installation.test` for the test
 sent when the routine is saved. Several things before the routine runs make
 one wake-up.
 
@@ -53,9 +54,12 @@ one wake-up.
    `cleaner-template/routines/cleaner-core-alerts.md` after its first, except
    its `repairs.update` step: call `check_now` and act on its `alerts`,
    `messages`, `completed` and `needsTimes`.
-4. Never show a door code, an id, or the webhook payload. Never approve, book,
+4. If `eventType` is `property.update`, the account runs separate bots and
+   the clock or a quiet bot has news for this chat: call `check_alerts` and
+   tell the host each item in `alerts` and `notes` once, in your own words.
+5. Never show a door code, an id, or the webhook payload. Never approve, book,
    or pay anything from this routine: only the host's yes in chat does.
-5. Never pause, edit, or delete this routine, even when a tool answers with an
+6. Never pause, edit, or delete this routine, even when a tool answers with an
    error. Post the error in one line and stop.
 
 ## Connecting it

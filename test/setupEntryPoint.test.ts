@@ -65,6 +65,7 @@ describe("the Grok template's Fixer Core", () => {
     const routines = template.routines.filter((r) => r.service === "fixer").map((r) => [r.name, r.doc]);
     expect(routines).toEqual([
       ["Fixer Core Check", "../fixer-template/routines/fixer-core-check.md"],
+      ["Fixer Core Alerts", "../fixer-template/routines/fixer-core-alerts.md"],
       ["Property Core Alerts", "routines/property-core-alerts.md"],
     ]);
     for (const [, doc] of routines) expect(existsSync(join(REPO_ROOT, ENTRY, doc!)), doc).toBe(true);
@@ -170,7 +171,7 @@ describe("the entry folder", () => {
     expect(m.repository.bootstrap.supplies).toBe("SUPPLY_CORE_BOOTSTRAP.md");
     expect(m.services.filter((s) => !s.parked).map((s) => s.service)).toEqual(["cleaning", "supplies", "fixer"]);
     expect(m.services.find((s) => s.service === "touring")?.parked).toBeTruthy();
-    expect(m.routines.filter((r) => r.service === "supplies").map((r) => r.name)).toEqual(["Supply Core Check"]);
+    expect(m.routines.filter((r) => r.service === "supplies").map((r) => r.name)).toEqual(["Supply Core Check", "Supply Core Alerts"]);
     expect(m.integrations).toContainEqual(expect.objectContaining({ name: "Grok shopping and Vault", service: "supplies" }));
     expect(m.suggestedPrompts.join(" ")).not.toMatch(/tour/i);
     const profile = read(`${ENTRY}/bot-profile.md`).replace(/\s+/g, " ");
