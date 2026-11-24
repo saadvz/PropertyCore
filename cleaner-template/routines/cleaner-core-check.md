@@ -32,9 +32,10 @@ webhook address, no key, and no secret.
    `alerts` is empty.
    - A new booking names the stay and the usual times. When the host says yes,
      call `confirm_times` with those times. It's asked again each day until
-     the host answers. On the offer day an unanswered booking takes the usual
-     times, and an alert says so: tell the host, and call `confirm_times` if
-     they give other times.
+     the host answers. On the offer day a cleaning still missing times (a new
+     booking, or one a calendar change wiped) takes the usual times, and an
+     alert says so: tell the host, and call `confirm_times` if they give
+     other times.
    - "Have the guests left?" is the checkout nudge. Ask the host. Only the
      host's yes in chat sends the door code, with `mark_guests_left`. The nudge
      arrives at the next Check routine run after checkout time.
