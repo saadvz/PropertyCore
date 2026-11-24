@@ -632,6 +632,8 @@ export interface CleanerCore {
    * checkout. Quiet hours don't count here; they still hold the text itself.
    */
   offerDayReached(jobId: string): boolean;
+  /** Marks a job that took the usual times without the host: its code waits for "guests have left". */
+  markUsualTimes(jobId: string): void;
   holdNotice(): string | undefined;
   notePrivateCodeDelivered(): void;
   /** Keeps a door code in memory after a later tool call opens the seal. Does not write it. */
@@ -769,6 +771,11 @@ interface Job {
   autoReleaseOff?: boolean;
   /** When the code went out at checkout time without the host's "guests have left". */
   autoReleasedAt?: string;
+  /**
+   * The job took the property's usual times because the host never gave any. Its code then waits for
+   * the host's "guests have left" even with codeAtCheckout on, until the host sets the times.
+   */
+  usualTimes?: boolean;
   /** Bumped when a hold revoked a code already sent, so the release makes and sends a new one. */
   releaseRound?: number;
   /**
@@ -1505,8 +1512,12 @@ class Engine implements CleanerCore {
 
   async setHostTimes(input: { checkout: number; checkIn: number; keepCheckIn?: boolean }): Promise<CleanerText[]> {
     if (!this.enabled || !this.everConsented) return [];
-    const job = this.ordered().find((item) => !item.canceled && !item.declined && !item.done && !item.started);
+    // The first open cleaning whose checkout day hasn't passed: an old one left untimed is not the one the
+    // host is timing (a real host's times would have gone to it, 24 Nov). With none upcoming, the first open one.
+    const open = this.ordered().filter((item) => !item.canceled && !item.declined && !item.done && !item.started);
+    const job = open.find((item) => !this.beforeToday(item.checkoutDate)) ?? open[0];
     if (!job) return [];
+    delete job.usualTimes;
     this.addFact(job.id, "checkout", input.checkout);
     if (job.nextCheckInDate && !(input.keepCheckIn && this.latestFact(job.id, "checkin"))) this.addFact(job.id, "checkin", input.checkIn);
     const sent = this.optedOut || this.problemHold ? [] : await this.drainOne();
@@ -1534,6 +1545,7 @@ class Engine implements CleanerCore {
     if (!job) return { applied: false, reason: "unknown", sent: [] };
     if (job.canceled || job.declined || job.done || job.started) return { applied: false, reason: "closed", sent: [] };
     if (this.pinDelivered(job)) return { applied: false, reason: "code-sent", sent: [] };
+    delete job.usualTimes;
     const before = JSON.stringify([this.latestFact(job.id, "checkout")?.minutes, this.latestFact(job.id, "checkin")?.minutes]);
     if (input.checkout !== undefined) this.addFact(job.id, "checkout", input.checkout);
     if (input.checkIn !== undefined && job.nextCheckInDate) this.addFact(job.id, "checkin", input.checkIn);
@@ -2468,7 +2480,7 @@ class Engine implements CleanerCore {
     const now = this.now().getTime();
     const sent: CleanerText[] = [];
     for (const job of this.ordered()) {
-      if (job.autoReleaseOff || job.canceled || job.declined || job.done || job.started) continue;
+      if (job.autoReleaseOff || job.usualTimes || job.canceled || job.declined || job.done || job.started) continue;
       const status = this.derive(job);
       if (status !== "confirmed" && status !== "awaiting_departure") continue;
       const checkout = this.latestFact(job.id, "checkout");
@@ -2842,6 +2854,9 @@ class Engine implements CleanerCore {
       }
       const status = this.derive(job);
       if (status === "confirmed" || status === "awaiting_departure" || status === "cleared" || status === "in_progress" || status === "done") continue;
+      // A cleaning whose checkout day has passed gets no new offer or update, and must not hold back the
+      // offers after it (a real host's later offers waited behind one with no times, 24 Nov).
+      if (this.beforeToday(job.checkoutDate)) continue;
       const draft = this.noticeFor(job);
       if (!draft) return [];
       if ((draft.kind === "offer" || draft.kind === "corrected" || draft.kind === "held") && this.sourceFeedStale()) {
@@ -3910,6 +3925,13 @@ class Engine implements CleanerCore {
     const latest = addCalendarDays(job.checkoutDate, -1);
     const day = wanted < latest ? wanted : latest;
     return this.now().getTime() >= Date.parse(zonedInstant(day, trigger.localTime, this.options.property.timeZone));
+  }
+
+  markUsualTimes(jobId: string): void {
+    const job = this.jobsState.find((item) => item.id === jobId);
+    if (!job) return;
+    job.usualTimes = true;
+    this.save();
   }
 
   offerDayReached(jobId: string): boolean {
