@@ -28,6 +28,18 @@ function once(file: DoorLocksFile, key: string): boolean {
 
 /** The notes not yet told, each marked told in door-locks.json by its id (#280 22). */
 /**
+ * The lock account dropped: a partner disconnect event, or a saved account that no longer shows up at all.
+ * Records when, and pauses the checkout-time code while it's down. Changes `file`; the caller saves it.
+ */
+export function markDisconnected(file: DoorLocksFile, at: string, key: string): GrantNote[] {
+  file.disconnectedAt ??= at;
+  if (file.release.cleaners !== "automatic") return [];
+  file.release.cleaners = "ask";
+  file.pausedByDisconnect = true;
+  return [{ id: `lock:auto-off:${key}`, text: "While your lock account is disconnected, the cleaner's code won't go out at checkout. Tell me when the guests have left, like before." }];
+}
+
+/**
  * The lock account is back after a disconnect the host heard about (#280 21): clears the disconnect, turns the
  * checkout-time code back on if the disconnect paused it, and gives the host's note once. A first connect (no
  * disconnect on file) says nothing. Changes `file`; the caller saves it.
@@ -153,12 +165,7 @@ export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, eve
       break;
     }
     case "account-disconnected": {
-      file.disconnectedAt ??= event.at;
-      if (file.release.cleaners === "automatic") {
-        file.release.cleaners = "ask";
-        file.pausedByDisconnect = true;
-        notes.push({ id: `lock:auto-off:${event.id}`, text: "While your lock account is disconnected, the cleaner's code won't go out at checkout. Tell me when the guests have left, like before." });
-      }
+      notes.push(...markDisconnected(file, event.at, event.id));
       if (once(file, `disconnected:${event.id}`)) {
         let link = "";
         try {

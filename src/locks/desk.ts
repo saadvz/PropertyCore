@@ -7,7 +7,7 @@ import { issueFailedNote } from "../hub/grants";
 import { sameHash } from "../hub/uploadCode";
 import { ConfirmationBook } from "../operator/confirmations";
 import { recordLockConnection } from "./eventLog";
-import { markReconnected, onceNotes } from "./inbound";
+import { markDisconnected, markReconnected, onceNotes } from "./inbound";
 import type { DeviceKind, LockDevice } from "./adapter";
 import { lockAdapter } from "./registry";
 import { deskFeatureOn } from "../features/features";
@@ -151,8 +151,9 @@ export class LockDesk {
     }
     if (file.blockedBy === "mixed-doors") problems.push("Not every door the cleaner and pros use is a connected lock, so the saved door code is used.");
     if (file.blockedBy === "no-alerts") problems.push("Connected locks wait for a working alerts routine.");
+    if (file.activeAt && file.disconnectedAt) problems.unshift("The host's lock account is disconnected, so codes can't be made or changed. connect_lock gives the host a sign-in link.");
     return ok({
-      connected: door.connected(),
+      connected: door.connected() && !file.disconnectedAt,
       devices: file.devices.map((device) => ({ id: device.id, name: device.name, kind: device.kind, online: device.online, ...(typeof device.battery === "number" ? { battery: Math.round(device.battery * 100) } : {}), door: file.doors.includes(device.id) })),
       release: file.release,
       extend: file.extend,
@@ -226,12 +227,18 @@ export class LockDesk {
     } catch {
       account = "unknown";
     }
+    // A saved lock account that no longer shows up at all (removed in the partner's console, with its devices and
+    // codes) is a disconnect too: the host hears it and gets a sign-in link. Signing in again re-homes the codes.
+    const vanished = account === "none" ? await this.accountVanished() : undefined;
     const base = this.status();
     if (base.isError || !base.structured) return base;
     const file = this.door().locks();
     const taken = new Set([...file.devices.map((device) => device.id), ...this.deps.otherDevices()]);
     const available = inAccount.filter((device) => !taken.has(device.id)).map((device) => ({ id: device.id, name: device.name, kind: device.kind, online: device.online }));
     const structured = { ...base.structured, account, available };
+    if (vanished) {
+      return ok({ ...structured, ...(vanished.url ? { url: vanished.url } : {}), next: vanished.url ? `The host's lock account is gone: it no longer shows up, so codes can't be made or changed. Send the host this sign-in link: ${vanished.url} They sign in there, never in chat. Once they do, call get_locks again: everyone's codes go back on the doors with the same times.` : "The host's lock account is gone: it no longer shows up, so codes can't be made or changed. I couldn't make a sign-in link just now. Call connect_lock in a minute for one." });
+    }
     if (account === "disconnected") {
       return ok({ ...structured, next: "The host's lock account is still disconnected, so codes can't be made or changed. Send a fresh sign-in link with connect_lock. If they signed in and it still shows disconnected, call connect_lock with fresh: true: it removes the stuck connection, with the host's yes, and gives a new link. Codes already made go back on the doors once they show up." });
     }
@@ -241,6 +248,27 @@ export class LockDesk {
     }
     if (base.structured.connected === true || (base.structured.problems as string[]).length > 0) return ok(structured);
     return ok({ ...structured, next: setupNext(account === "connected" ? "connected" : account, available, inAccount.length) });
+  }
+
+  /**
+   * get_locks found no lock account on a property that was on connected locks: marks the disconnect (so the lock
+   * clock re-homes once the account is back, and the host hears that), tells the host any pause once, and makes a
+   * sign-in link. Undefined when the property never had connected locks.
+   */
+  private async accountVanished(): Promise<{ url?: string } | undefined> {
+    const door = this.door();
+    const file = door.locks();
+    if (!file.activeAt || file.devices.length === 0) return undefined;
+    const at = file.disconnectedAt ?? this.deps.now().toISOString();
+    const notes = markDisconnected(file, at, `vanished:${at}`);
+    door.saveLocks(file);
+    const told = onceNotes(door, notes);
+    if (told.length > 0) await this.deps.tell?.(told);
+    try {
+      return { url: (await lockAdapter()!.connectLink({ customerKey: this.deps.customerKey, kind: "locks" })).url };
+    } catch {
+      return {};
+    }
   }
 
   /**

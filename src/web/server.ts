@@ -42,6 +42,7 @@ import { handleAdmin } from "../cleaner-core/hosted/admin";
 import { INVITE_REFUSALS } from "../mcp/oauth/pages";
 import { CORE_JOBS, JOB_NAMES, JOB_PATHS, jobOfPath } from "../jobs/jobs";
 import { admitBot, dropConnection } from "../hosted/jobDeps";
+import { carryConnection } from "../hosted/routineCarry";
 import { JOB_SCOPES, type ResourceLabel } from "../mcp/oauth/provider";
 import { phoneCodesFor } from "../hosted/phoneCodes";
 import { accountDoor, SignUpDesk } from "../hosted/signUp";
@@ -577,8 +578,12 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
                   connected: (tenantId: string, grantId: string, assistant: CleanerAssistant, resourcePath: string) => {
                     const job = jobOfPath(resourcePath);
                     const { replaced } = tenants.connect(tenantId, { grantId, assistant, connectedAt: clock().toISOString(), ...(job ? { job } : {}) });
-                    // One bot per core job: the bot this one replaced is disconnected, and its routine goes with it.
-                    for (const old of replaced) dropConnection(hostedCleanerService, tenantId, old);
+                    // One bot per core job: the bot this one replaced is disconnected. Its routine stays with the new sign-in,
+                    // which is the same bot signing in again unless the host saves another routine.
+                    for (const old of replaced) {
+                      carryConnection(hostedCleanerService, tenantId, old, grantId);
+                      dropConnection(hostedCleanerService, tenantId, old);
+                    }
                   },
                   owner: (code: string) => tenants.inviteOwner(code),
                   admit: (tenantId: string, assistant: CleanerAssistant, resourcePath: string) => admitBot(hostedCleanerService, tenants.get(tenantId), assistant, resourcePath),
