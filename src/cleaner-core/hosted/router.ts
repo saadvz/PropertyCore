@@ -46,6 +46,7 @@ import { jobOfPath } from "../../jobs/jobs";
 import { listenForQuiet } from "../../hosted/botTools";
 import { holder, noteTeamChanged } from "../../hosted/jobDeps";
 import { handleJobRoutineUpload } from "../../hosted/jobRoutineLink";
+import { carryEndedRoutines, type Carried } from "../../hosted/routineCarry";
 import { TWILIO_WEBHOOK_PATH } from "../../messaging/twilio/provider";
 import { formParams, verifyTwilioSignature } from "../../messaging/twilio/signature";
 import { serviceLines } from "./lines";
@@ -541,19 +542,50 @@ async function handleHubCalendar(h: HostedCleaner, r: HostedRequest, tenant: Ten
  * that will never connect one. A primary with a connected routine is never changed here.
  */
 export function promoteRoutineOwner(h: HostedCleaner, tenantId: string): void {
-  void shareRoutine(h, tenantId).catch(() => h.log(`Couldn't share ${tenantId}'s alert routine with its properties this time.`));
+  const { carried, marked } = carryRoutines(h, tenantId);
+  void marked
+    .then(() => shareRoutine(h, tenantId))
+    .catch(() => h.log(`Couldn't share ${tenantId}'s alert routine with its properties this time.`));
   const tenant = h.registry.get(tenantId);
   if (!tenant || tenant.disabled) return;
   // Only a /mcp chat can become primary: a core's own bot (#250) holds its job through the rule, not by being primary.
   const live = (grantId: string) => h.grantLive(grantId) && tenant.connections.some((c) => c.grantId === grantId && !c.job);
-  // A routine connected through any of the account's properties counts, in the order they were connected.
-  const ids = cleaningDesks(h, tenant).flatMap((desk) => desk.routineConnectionIds());
+  // A routine connected through any of the account's properties counts, in the order they were connected. A routine
+  // just carried to a new sign-in counts before its desks have written it down.
+  const ids = [...cleaningDesks(h, tenant).flatMap((desk) => desk.routineConnectionIds()), ...carried.map((c) => c.to)];
   const connected = [...new Set(ids)].filter(live);
   const primary = h.registry.primary(tenantId, (grantId) => h.grantLive(grantId));
   if (connected.length === 0 || (primary && connected.includes(primary.grantId))) return;
   const next = connected.at(-1)!;
   h.registry.setPrimary(tenantId, next);
   h.log(`${tenantId}'s primary chat is now the one that connected its alert routine.`);
+}
+
+/**
+ * A chat that signed in again keeps the alert routine its ended sign-in connected (see src/hosted/routineCarry.ts).
+ * The saved address and key move at once; `marked` settles once every property's desk counts the new sign-in too.
+ */
+export function carryRoutines(h: HostedCleaner, tenantId: string): { carried: Carried[]; marked: Promise<void> } {
+  const tenant = h.registry.get(tenantId);
+  if (!tenant || tenant.disabled) return { carried: [], marked: Promise.resolve() };
+  let desks: LiveDesk[];
+  try {
+    desks = cleaningDesks(h, tenant);
+  } catch {
+    // One property's unreadable desk never stops the call or the round that asked.
+    return { carried: [], marked: Promise.reject(new Error("unreadable desk")) };
+  }
+  const listed = new Set(desks.flatMap((desk) => desk.routineConnectionIds()));
+  const carried = carryEndedRoutines(h, tenant, listed);
+  if (carried.length === 0) return { carried, marked: Promise.resolve() };
+  const marked = Promise.all(
+    desks.map((desk) => {
+      const ids = desk.routineConnectionIds();
+      const to = carried.filter((c) => ids.includes(c.from)).map((c) => c.to);
+      return to.length > 0 ? desk.markRoutineConnected(to) : undefined;
+    }),
+  ).then(() => undefined);
+  return { carried, marked };
 }
 
 /** Makes `grantId` the primary chat when the primary has no saved routine, so Fixer Core's alerts reach the chat that saved one. */
@@ -596,6 +628,8 @@ export async function drainAllTenants(h: HostedCleaner): Promise<void> {
     // Read again: a tenant deleted or turned off, or a property whose cleaning went off, while this round runs is skipped.
     const tenant = h.registry.get(listed.id);
     if (!tenant || tenant.disabled) continue;
+    // A chat that signed in again keeps its routine before this round's wake-ups go out.
+    await carryRoutines(h, tenant.id).marked.catch(() => h.log(`Couldn't keep ${tenant.id}'s alert routine connected this round.`));
     for (const property of tenant.properties) {
       if (!property.flows.cleaning.on) continue;
       const ctx = propertyContext(h, tenant, property);
