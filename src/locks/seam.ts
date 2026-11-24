@@ -73,6 +73,8 @@ const EVENT_KINDS: Record<string, LockEventKind> = {
   "device.connected": "online",
   "connected_account.connected": "account-connected",
   "connected_account.disconnected": "account-disconnected",
+  // The host or the partner's console removed the account, with its devices and codes: the same fix, a fresh sign-in.
+  "connected_account.deleted": "account-disconnected",
   "connected_account.completed_first_sync_after_reconnection": "account-synced",
 };
 

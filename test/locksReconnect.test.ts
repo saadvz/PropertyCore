@@ -264,3 +264,47 @@ describe("a fresh sign-in after a stuck reconnect (final review)", () => {
     expect(door.locks().rehomeNeeded).toEqual(["dev-front"]);
   });
 });
+
+describe("a lock account that vanished (live test, Nov 24)", () => {
+  it("get_locks flags a saved lock whose account no longer shows up, and gives the host a sign-in link", async () => {
+    const { desk, fake, door } = deskWorld();
+    await door.syncGrants("cleaning", [{ jobId: "job-1", person: "+15555550101", window: WINDOW, label: "Maria" }]);
+    await fake.removeAccount({ customerKey: "acct-1", accountId: "acct-acct-1" });
+    const listed = await desk.list();
+    expect(listed.structured?.account).toBe("none");
+    expect(listed.structured?.connected).toBe(false);
+    expect(listed.structured?.problems).toContain("The host's lock account is disconnected, so codes can't be made or changed. connect_lock gives the host a sign-in link.");
+    expect(String(listed.structured?.url)).toMatch(/^https:\/\/connect\.example\.com\/locks\//);
+    expect(listed.text).toContain("The host's lock account is gone");
+    expect(listed.text).not.toContain("The locks are connected.");
+    expect(door.locks().disconnectedAt).toBe(NOW.toISOString());
+  });
+
+  it("pauses the checkout-time code once, and signing in again puts the codes back and turns it back on", async () => {
+    const { desk, fake, door, told } = deskWorld({ cleaners: "automatic" });
+    await door.syncGrants("cleaning", [{ jobId: "job-1", person: "+15555550101", window: WINDOW, label: "Maria" }]);
+    const before = fake.liveCodes("dev-front").map((code) => code.code);
+    await fake.removeAccount({ customerKey: "acct-1", accountId: "acct-acct-1" });
+    await desk.list();
+    await desk.list();
+    expect(door.locks().release.cleaners).toBe("ask");
+    expect(told).toEqual(["While your lock account is disconnected, the cleaner's code won't go out at checkout. Tell me when the guests have left, like before."]);
+    told.splice(0);
+    fake.addDevice("acct-1", { id: "dev-9", name: "Front door", accountId: "acct-new" });
+    const back = await desk.list();
+    expect(back.text).not.toContain("is gone");
+    expect(back.structured?.connected).toBe(true);
+    expect(fake.liveCodes("dev-9").map((code) => code.code)).toEqual(before);
+    expect(door.locks().release.cleaners).toBe("automatic");
+    expect(told).toContain("Your lock account is connected again, so I can make and change codes. The cleaner's code goes out at checkout again, like before.");
+  });
+
+  it("a property that never had connected locks still gets the first-setup step", async () => {
+    const { desk, door, fake } = deskWorld();
+    await fake.removeAccount({ customerKey: "acct-1", accountId: "acct-acct-1" });
+    door.saveLocks({ ...emptyLocks(), customerKey: "acct-1" });
+    const listed = await desk.list();
+    expect(listed.text).toContain("No lock account is connected here yet.");
+    expect(door.locks().disconnectedAt).toBeUndefined();
+  });
+});
