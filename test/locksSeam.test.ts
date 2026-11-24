@@ -202,6 +202,7 @@ describe("the lock partner's webhook check", () => {
     expect(kind("device.disconnected")).toBe("offline");
     expect(kind("device.connected")).toBe("online");
     expect(kind("connected_account.disconnected")).toBe("account-disconnected");
+    expect(kind("connected_account.deleted")).toBe("account-disconnected");
     expect(kind("something.new")).toBe("other");
   });
 
