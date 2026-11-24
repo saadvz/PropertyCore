@@ -160,6 +160,14 @@ const TEST_TURN_OFFERED = "Test turnover saved. The cleaning offer went out.";
 const UPLOAD_GONE = "This upload link isn't valid anymore. Call save_alert_routine with no arguments for a new one.";
 const GOOGLE_UNREAD = "I couldn't read those Google Calendar events. Read Google Calendar again and pass its events.";
 const NO_OPEN_CLEANING = "There's no open cleaning to save an arrival time for.";
+/** How long a new booking waits for the host's times, at least, before its offer day uses the usual times. */
+const USUAL_TIMES_GRACE_MS = 2 * 60 * 60 * 1000;
+
+/** The host note when a booking's offer went with the usual times because nobody confirmed them. */
+function usualTimesUsedNote(name: string, day: string, checkout: string, checkIn: string, helper: string): string {
+  return `Nobody confirmed the times for the booking at ${name} checking out ${day}, so I'm offering the cleaner the cleaning with the usual times filled in: checkout ${checkout}, next check-in ${checkIn}. If either is different, tell ${helper} the right times and I'll update the cleaner.`;
+}
+
 const TIMES_NEEDED = "Send the checkout time and the next check-in time the host stated, as 24-hour HH:MM, like 10:30 and 15:00.";
 const DEPARTURE_NEEDED = "Ask the host whether the guests have left. Call again with confirmed true only after the host says yes. I won't guess from the calendar.";
 const NO_DEPARTURE_JOB = "There's no confirmed cleaning waiting for the door code right now.";
@@ -492,8 +500,10 @@ interface LiveFile {
   /** Ids of the finished cleanings `check_now` has already returned as completed. */
   completedShown?: string[];
   released?: boolean;
-  /** Ids of the jobs the host gave both times for through confirm_times. */
+  /** Ids of the jobs the host gave both times for through confirm_times, or that took the usual times on their offer day. */
   timedJobs?: string[];
+  /** When check_now first saw each open booking with no times, so the usual times wait a while for the host. */
+  untimedSince?: Record<string, string>;
   cleanerOut?: boolean;
   hostOut?: boolean;
   /**
@@ -708,8 +718,10 @@ const CLOSED_STATUSES = new Set(["canceled", "declined", "in_progress", "done"])
  * The job confirm_times would time: the first one that is not called off, declined, started, or done.
  * A finished cleaning is never timed again, so a later booking is the one asked about.
  */
-function timesTarget(engine: CleanerCore): JobView | undefined {
-  return engine.jobs().find((job) => !CLOSED_STATUSES.has(job.status));
+function timesTarget(engine: CleanerCore, today?: string): JobView | undefined {
+  // The first open one whose checkout day hasn't passed, as the engine times it; with none upcoming, the first open one.
+  const open = engine.jobs().filter((job) => !CLOSED_STATUSES.has(job.status));
+  return open.find((job) => !today || job.checkoutDate >= today) ?? open[0];
 }
 
 export class LiveDesk {
@@ -2000,6 +2012,7 @@ export class LiveDesk {
     const read = await this.readCalendars(input.googleEvents);
     // Airbnb emails whose stay wasn't on the calendar yet get their times now, or a question after 3 hours.
     await retryPendingEmails(this.emailDesk(input.googleEvents));
+    await this.useUsualTimesWhenDue(engine);
     await engine.runReminders();
     await engine.checkoutRelease();
     this.syncHold();
@@ -2159,11 +2172,67 @@ export class LiveDesk {
    */
   private newBookingAlert(engine: CleanerCore): { id: string; body: string }[] {
     if (!this.groupOn() || !this.place.address || !this.place.timeZone) return [];
-    const job = timesTarget(engine);
+    const job = timesTarget(engine, this.today());
     if (!job || job.status !== "discovered" || job.checkoutTime || (this.file.timedJobs ?? []).includes(job.id)) return [];
     const day = this.checkoutDay(job.checkoutDate);
     const body = engine.newBookingAsk(job.id) ?? `New booking at ${this.place.address}, checking out ${day}. What are the checkout time and the next check-in time?`;
-    return [{ id: `new-booking:${job.id}`, body }];
+    // Asked again each day (the property's day) until the host answers: one ask a routine run didn't post must not hold the offer.
+    return [{ id: `new-booking:${job.id}:${this.today()}`, body }];
+  }
+
+  /** Today's date at the property, as YYYY-MM-DD. Undefined before the property's time zone is saved. */
+  private today(): string | undefined {
+    const zone = this.place.timeZone;
+    return zone ? new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(this.now()) : undefined;
+  }
+
+  /**
+   * With a group text, a cleaning's offer waits for the host's times: a new booking's, and one whose
+   * times a calendar change wiped. When the usual times are saved and the host still hasn't given them
+   * by the cleaning's offer day (and at least two hours after check_now first saw it untimed), the
+   * missing times take the usual ones so the offer goes, and the host gets one note saying so. Its door
+   * code waits for the host's "guests have left" even with codeAtCheckout on, and the host can correct
+   * either time. A cleaning whose checkout day has passed is left alone.
+   */
+  private async useUsualTimesWhenDue(engine: CleanerCore): Promise<void> {
+    const checkoutHm = this.place.checkoutTime;
+    const checkInHm = this.place.checkInTime;
+    const today = this.today();
+    if (!this.groupOn() || !checkoutHm || !checkInHm || !today || this.held) return;
+    const now = this.now();
+    const open = engine.jobs().filter((job) => (job.status === "discovered" || job.status === "awaiting_checkin") && job.checkoutDate >= today);
+    const openIds = new Set(open.map((job) => job.id));
+    const since = Object.fromEntries(Object.entries(this.file.untimedSince ?? {}).filter(([id]) => openIds.has(id)));
+    const used: string[] = [];
+    for (const job of open) {
+      const first = (since[job.id] ??= now.toISOString());
+      if (now.getTime() - Date.parse(first) < USUAL_TIMES_GRACE_MS || !engine.offerDayReached(job.id)) continue;
+      // Only the missing times: a checkout the host already gave stays.
+      const { applied } = await engine.setJobTimes({
+        jobId: job.id,
+        ...(job.checkoutTime ? {} : { checkout: minutesOfDay(checkoutHm) }),
+        ...(job.nextCheckInTime ? {} : { checkIn: minutesOfDay(checkInHm) }),
+      });
+      const timed = engine.jobs().find((item) => item.id === job.id);
+      if (!applied || !timed || !hasTimes(timed)) continue;
+      engine.markUsualTimes(job.id);
+      used.push(job.id);
+      delete since[job.id];
+      const name = this.place.nickname ?? this.place.address ?? "the property";
+      engine.keepHostNote(
+        `usual-times:${job.id}:${timed.checkoutDate}:${timed.nextCheckInDate ?? ""}`,
+        usualTimesUsedNote(name, this.checkoutDay(job.checkoutDate), timed.checkoutTime ?? clockText(checkoutHm), timed.nextCheckInTime ?? clockText(checkInHm), this.hostWords().helper),
+      );
+    }
+    if (Object.keys(since).length > 0) this.file.untimedSince = since;
+    else delete this.file.untimedSince;
+    if (used.length > 0) {
+      this.file.timedJobs = [...new Set([...(this.file.timedJobs ?? []), ...used])];
+      this.file.released = true;
+      // The cleaner's opt-in and the offer waited for the times, as they do after confirm_times.
+      await engine.releaseCleanerTexts();
+    }
+    this.persist();
   }
 
   /**
@@ -2442,7 +2511,7 @@ export class LiveDesk {
     const engine = this.engine;
     const times = { checkout: minutesOfDay(checkout), checkIn: minutesOfDay(checkIn) };
     if (input.all === true) return this.confirmAllTimes(engine, times);
-    const target = timesTarget(engine);
+    const target = timesTarget(engine, this.today());
     const sentBefore = new Set(engine.outbox().filter((item) => item.status === "sent").map((item) => item.id));
     // A check-in the host already set stays, as the tool description says.
     await engine.setHostTimes({ ...times, keepCheckIn: true });
@@ -3281,6 +3350,7 @@ export class LiveDesk {
     delete this.file.savedAnswers;
     delete this.file.completedShown;
     delete this.file.timedJobs;
+    delete this.file.untimedSince;
     this.approvals.clear();
     this.draftApprovals.clear();
     this.held = false;
@@ -4154,7 +4224,8 @@ export class LiveDesk {
    */
   private needsTimes(engine: CleanerCore): boolean {
     const timed = new Set(this.file.timedJobs ?? []);
-    return engine.jobs().some((job) => timed.has(job.id) && job.status !== "canceled" && job.status !== "done" && !hasTimes(job));
+    const today = this.today();
+    return engine.jobs().some((job) => timed.has(job.id) && job.status !== "canceled" && job.status !== "done" && !hasTimes(job) && (!today || job.checkoutDate >= today));
   }
 
   /** The host notes the host may see now. A private-code line waits for delivery, and PIN_SENT for the accepted text. */
