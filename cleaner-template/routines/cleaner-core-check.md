@@ -12,6 +12,8 @@ webhook address, no key, and no secret.
 
 ## Instructions for the routine
 
+In the Cleaner Core bot of an account that runs separate bots, add `bot: "cleaning"` to every call below. The Property Core bot never adds it.
+
 1. If the host uses Google Calendar, read it with your own Google Calendar
    connector. Read only the calendar the host named at setup when you asked
    which Google calendar holds the bookings. Never the primary calendar unless

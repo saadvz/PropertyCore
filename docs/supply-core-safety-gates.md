@@ -15,7 +15,7 @@ These gates have to stay green before Supply Core places a live order for anyone
 
 ## Separate bots (#250)
 
-Behind the account's Separate bots switch on `/admin` (`bots`), off by default, on Grok Bot only. Each connection carries the job of the address it signed in at (`/mcp`, `/mcp/cleaner`, `/mcp/supply`, `/mcp/fixer`), and the server lists, refuses and wakes by job. A core's job is held by its own bot once that bot is connected and has saved its Alerts routine. Until then, and whenever that bot goes away, the Property Core connection holds it. The tests use made-up properties, 555 numbers, made-up codes and keys and a stubbed routine; none reaches a lock, a store, a pro or a phone. Design: `docs/superpowers/specs/2026-11-22-bot-per-core-design.md`.
+Behind the account's Separate bots switch on `/admin` (`bots`), off by default, on Grok Bot only. Each connection carries a job: the job of the address it signed in at (`/mcp`, `/mcp/cleaner`, `/mcp/supply`, `/mcp/fixer`), or, for a core's bot on the account's shared Property Core connector, the job its calls name with `bot` (Grok Bot shares one connector across an account's bots, so these bots never sign in again). The server lists, refuses and wakes by job. A core's job is held by its own bot once that bot is connected and has saved its Alerts routine. Until then, and whenever that bot goes away, the Property Core connection holds it. The tests use made-up properties, 555 numbers, made-up codes and keys and a stubbed routine; none reaches a lock, a store, a pro or a phone. Design: `docs/superpowers/specs/2026-11-22-bot-per-core-design.md`.
 
 | Gate | What it holds | Proof |
 | --- | --- | --- |

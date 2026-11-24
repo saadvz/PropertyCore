@@ -42,6 +42,8 @@ before the routine runs make one wake-up.
 
 ## Instructions for the routine
 
+In the Fixer Core bot of an account that runs separate bots, add `bot: "fixer"` to every call below. The Property Core bot never adds it.
+
 1. If `eventType` is `installation.test`, post: "Fixer Core alerts are
    connected." and stop.
 2. Call `get_state`, then `check_fixes` for each property whose flow is on,

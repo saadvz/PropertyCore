@@ -49,6 +49,8 @@ routine runs, it wakes once, and `check_now` returns all of them.
 
 ## Instructions for the routine
 
+In the Cleaner Core bot of an account that runs separate bots, add `bot: "cleaning"` to every call below. The Property Core bot never adds it.
+
 1. If `eventType` is `installation.test`, post:
    "Cleaner Core alerts are connected." and stop.
 2. Otherwise call `check_now` without `googleEvents`. A webhook can't read the

@@ -34,8 +34,8 @@ import { featureOn } from "../features/features";
 import { BOOKING_PLATFORMS_INSTRUCTION } from "../cleaner-core/bookingEmailDesk";
 import { FIXER_FRONT_NAMES, fixerCall, fixerDesk, fixerPhotos, fixerPreview, listedFixerFront, namesRepairJob, repairsLine } from "./fixer";
 import { taskWarning } from "./touringAlerts";
-import { CORE_JOBS, jobOfPath, type CoreJob, type Job } from "../jobs/jobs";
-import { BOTS_NEED_MAIN, callerJobs, hasCoreBot, holder, newBots, team } from "./jobDeps";
+import { CORE_JOBS, jobOfPath, jobsFor, type CoreJob, type Job } from "../jobs/jobs";
+import { BOT_ARG, BOTS_NEED_MAIN, callerJobs, hasCoreBot, holder, jobDeps, newBots, seatFor, sharedJobs, takesBotArg, team } from "./jobDeps";
 import { elsewhereLine, isFiling, jobInstructions, leftBehindLine, mayCall, NO_JOBS, ownerFor, routineCheckOf, teamLine } from "./jobTools";
 import { isOfferId, nextOffer, OFFER_IDS, offersFor, type OfferContext } from "./featureOffers";
 import { callWorkerMcp, forwardMcp, type WorkerTarget } from "./touringForward";
@@ -194,11 +194,42 @@ async function propertiesAnswer(h: HostedCleaner, r: HostedRequest, tenant: Tena
     return r.send(200, JSON_TYPE, rpcResult(message.id, { protocolVersion: version, capabilities: { tools: { listChanged: true } }, serverInfo: { name: "property-core", title: "Property Core", version: "0.1.0" }, instructions: instructionsFor(h, tenant, caller) }));
   }
   if (message.method === "ping") return r.send(200, JSON_TYPE, rpcResult(message.id, {}));
-  if (message.method === "tools/list") return r.send(200, JSON_TYPE, rpcResult(message.id, { tools: await propertyToolList(h, r, tenant, caller) }));
+  if (message.method === "tools/list") return r.send(200, JSON_TYPE, rpcResult(message.id, { tools: await sharedToolList(h, r, tenant, caller) }));
   if (message.method !== "tools/call") return r.send(200, JSON_TYPE, rpcError(message.id, -32601, "I don't support that."));
   const name = typeof message.params?.name === "string" ? message.params.name : "";
-  const reply = await propertyToolCall(h, r, tenant, caller, sessionKey, name, message.params?.arguments);
+  const call = botCall(h, tenant, caller, name, message.params?.arguments);
+  if ("refusal" in call) return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult({ text: call.refusal, isError: true })));
+  const reply = await propertyToolCall(h, r, h.registry.get(tenant.id) ?? tenant, call.caller, sessionKey, name, call.args);
   return r.send(200, JSON_TYPE, rpcResult(message.id, toolResult(reply)));
+}
+
+/**
+ * Grok Bot shares one connector across the account's bots (#250), so a core's bot the Property Core bot made calls
+ * over the Property Core connection and names its job with `bot`. Such a call is that core bot's, as if it had
+ * signed in at the core's own address; `bot` is taken off before anything else reads the arguments. remove_bot's
+ * own `bot` names the bot to remove and is left alone.
+ */
+function botCall(h: HostedCleaner, tenant: Tenant, caller: Caller, name: string, args: unknown): { caller: Caller; args: unknown } | { refusal: string } {
+  if (name === REMOVE_BOT || caller.job || !args || typeof args !== "object" || Array.isArray(args) || !("bot" in args)) return { caller, args };
+  const { bot, ...rest } = args as Record<string, unknown>;
+  const seat = seatFor(h, tenant, caller, bot);
+  if ("refusal" in seat) return seat;
+  const now = h.registry.get(tenant.id) ?? tenant;
+  const job = seat.connection.job!;
+  h.registry.seen(tenant.id, seat.connection.grantId);
+  return { caller: { grantId: seat.connection.grantId, assistant: caller.assistant, job, jobs: jobsFor(now, seat.connection, jobDeps(h, now)) }, args: rest };
+}
+
+/** The tool list of a connection. A shared Grok connector lists its core bots' tools too, and every tool takes `bot`. */
+async function sharedToolList(h: HostedCleaner, r: HostedRequest, tenant: Tenant, caller: Caller): Promise<Record<string, unknown>[]> {
+  if (!takesBotArg(h, tenant, caller)) return propertyToolList(h, r, tenant, caller);
+  const tools = await propertyToolList(h, r, tenant, { ...caller, jobs: sharedJobs(h, tenant, caller.grantId, caller.jobs) });
+  return tools.map((tool) => (tool.name === REMOVE_BOT ? tool : withBotArg(tool)));
+}
+
+function withBotArg(tool: Record<string, unknown>): Record<string, unknown> {
+  const schema = (tool.inputSchema ?? { type: "object" }) as { properties?: Record<string, unknown> };
+  return { ...tool, inputSchema: { ...schema, properties: { ...(schema.properties ?? {}), bot: BOT_ARG } } };
 }
 
 /**

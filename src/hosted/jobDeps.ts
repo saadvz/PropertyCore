@@ -3,7 +3,8 @@ import type { HostedCleaner } from "../cleaner-core/hosted/router";
 import type { Tenant, TenantConnection } from "../cleaner-core/hosted/registry";
 import { ROUTINE_NAMES } from "../cleaner-core/hosted/tenantEnv";
 import { featureOn } from "../features/features";
-import { CORE_JOBS, coreBot, holderOf, isTeam, JOB_NAMES, JOB_PATHS, jobOfPath, jobsFor, mainConnection, type CoreJob, type Job, type JobDeps } from "../jobs/jobs";
+import { CORE_JOBS, coreBot, holderOf, isSeat, isTeam, JOB_NAMES, jobOfPath, jobsFor, mainConnection, seatId, type CoreJob, type Job, type JobDeps } from "../jobs/jobs";
+import { carryConnection } from "./routineCarry";
 import { noteInitialized } from "../mcp/toolListChanged";
 import { toolsFor } from "./serviceTools";
 
@@ -45,11 +46,11 @@ export function hasCoreBot(h: HostedCleaner, tenant: Tenant): boolean {
   return CORE_JOBS.some((job) => coreBot(tenant, job, deps) !== undefined);
 }
 
-/** A core the Property Core chat should make its own bot for: its job, its name, and the address that bot connects to. */
+/** A core the Property Core chat should make its own bot for: its job, its name, and the `bot` value that bot sends on every call. */
 export interface NewBot {
   job: CoreJob;
   name: string;
-  address: string;
+  bot: CoreJob;
 }
 
 /**
@@ -61,7 +62,7 @@ export function newBots(h: HostedCleaner, tenant: Tenant, caller: { job?: CoreJo
   const deps = jobDeps(h, tenant);
   if (!deps.botsOn) return undefined;
   const due = CORE_JOBS.filter((job) => tenant.properties.some((property) => property.flows[job].on) && coreBot(tenant, job, deps) === undefined);
-  return due.length > 0 ? due.map((job) => ({ job, name: JOB_NAMES[job], address: JOB_PATHS[job] })) : undefined;
+  return due.length > 0 ? due.map((job) => ({ job, name: JOB_NAMES[job], bot: job })) : undefined;
 }
 
 /**
@@ -99,9 +100,58 @@ export function noteTeamChanged(tenant: Tenant, exceptGrantId?: string): void {
 
 /** What /admin's Disconnect does, in one place: end the grant, delete the connection's saved values, and drop it from the account. */
 export function dropConnection(h: HostedCleaner, tenantId: string, grantId: string): void {
-  h.revokeGrant?.(grantId);
+  // A core's bot on the shared connector has no grant of its own: the Property Core bot's sign-in stays.
+  if (!isSeat(grantId)) h.revokeGrant?.(grantId);
   h.secrets.deleteConnection(tenantId, grantId);
   if (h.registry.get(tenantId)?.connections.some((c) => c.grantId === grantId)) h.registry.disconnect(tenantId, grantId);
   const left = h.registry.get(tenantId);
   if (left) noteTeamChanged(left);
+}
+
+/** What a core's bot on the shared connector is told when `bot` names no core. */
+export const BOT_ARG_VALUES = "bot is cleaning, supplies or fixer, sent only by a Cleaner Core, Supply Core or Fixer Core bot. The Property Core bot leaves it out.";
+
+/** The `bot` argument every tool takes on a Grok account with the switch on: how a core's bot on the shared connector says which it is. */
+export const BOT_ARG = {
+  type: "string",
+  enum: [...CORE_JOBS],
+  description: "Only for a Cleaner Core, Supply Core or Fixer Core bot: your own flow, cleaning, supplies or fixer, on every call. The Property Core bot leaves it out.",
+} as const;
+
+/** Whether this /mcp caller's tools take `bot`: Grok Bot, a properties account, and the account's `bots` switch on. */
+export function takesBotArg(h: HostedCleaner, tenant: Tenant, caller: { job?: CoreJob; assistant: CleanerAssistant }): boolean {
+  return !caller.job && caller.assistant === "grok" && toolsFor(tenant) === "properties" && featureOn(tenant, "bots", h.baseEnv());
+}
+
+/**
+ * The connection a call with `bot` is for (#250): the core's bot on the account's shared Property Core connector. The
+ * first call records it, so it is a core connection like one that signed in at the core's own address, and it takes
+ * that one's place. Its routine and saved values are kept under its own id. Refused off Grok, with the switch off,
+ * or for a value that isn't a core.
+ */
+export function seatFor(h: HostedCleaner, tenant: Tenant, caller: { grantId: string; assistant: CleanerAssistant; job?: CoreJob }, bot: unknown): { connection: TenantConnection } | { refusal: string } {
+  if (!featureOn(tenant, "bots", h.baseEnv())) return { refusal: BOTS_OFF };
+  if (caller.assistant !== "grok") return { refusal: BOTS_GROK_ONLY };
+  if (caller.job || toolsFor(tenant) !== "properties") return { refusal: BOT_ARG_VALUES };
+  const job = CORE_JOBS.find((one) => one === bot);
+  if (!job) return { refusal: BOT_ARG_VALUES };
+  const id = seatId(caller.grantId, job);
+  const known = tenant.connections.find((c) => c.grantId === id);
+  if (known) return { connection: known };
+  const connection: TenantConnection = { grantId: id, assistant: caller.assistant, job, connectedAt: h.now().toISOString() };
+  const { replaced } = h.registry.connect(tenant.id, connection);
+  // The same bot after the host signed in again, or one that signed in at the core's address: its routine stays with this one.
+  for (const old of replaced) {
+    carryConnection(h, tenant.id, old, id);
+    dropConnection(h, tenant.id, old);
+  }
+  return { connection };
+}
+
+/** The jobs a shared connector lists: its own, and those of the core bots that call over it. */
+export function sharedJobs(h: HostedCleaner, tenant: Tenant, grantId: string, own: Job[]): Job[] {
+  const deps = jobDeps(h, tenant);
+  const seats = tenant.connections.filter((c) => c.job && c.grantId.startsWith(`${grantId}#`));
+  const jobs = new Set<Job>([...own, ...seats.flatMap((seat) => jobsFor(tenant, seat, deps))]);
+  return (["property", ...CORE_JOBS] as Job[]).filter((job) => jobs.has(job));
 }

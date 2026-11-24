@@ -298,11 +298,11 @@ describe("each bot lists and calls only its job's tools", () => {
     const { m, tenant, main } = await account({ flows: ["supplies", "fixer"] });
     const newBots = async (path: string, token: string) => (await m.toolAt(path, token, "get_state", {})).structured!.newBots;
     expect(await newBots(P, main)).toEqual([
-      { job: "supplies", name: "Supply Core", address: S },
-      { job: "fixer", name: "Fixer Core", address: F },
+      { job: "supplies", name: "Supply Core", bot: "supplies" },
+      { job: "fixer", name: "Fixer Core", bot: "fixer" },
     ]);
     const fixer = await m.joinAt(tenant.id, "grok", F);
-    expect(await newBots(P, main)).toEqual([{ job: "supplies", name: "Supply Core", address: S }]);
+    expect(await newBots(P, main)).toEqual([{ job: "supplies", name: "Supply Core", bot: "supplies" }]);
     expect(await newBots(F, fixer)).toBeUndefined();
   });
 
@@ -1400,5 +1400,75 @@ describe("get_state by job, and the team view", () => {
     expect(await without()).toEqual(before.all);
     expect(await without({ property: property.id })).toEqual(before.one);
     expect(await without({ property: second.id })).toEqual(before.empty);
+  });
+});
+
+describe("a core's bot on the Property Core connection (shared connector, no sign-in of its own)", () => {
+  /** Grok shares one connector across the account's bots, so a core's bot sends `bot` on every call. */
+  const seatOf = (m: MultiTenantApp, tenant: Tenant, token: string, job: string) => m.registry.get(tenant.id)!.connections.find((c) => c.grantId === `${grantOf(m, token)}#${job}`);
+  const schemaOf = async (m: MultiTenantApp, token: string, name: string) => {
+    const { json } = await m.rpcAt(P, token, "tools/list");
+    return ((json.result?.tools ?? []) as { name: string; inputSchema?: { properties?: Record<string, unknown> } }[]).find((t) => t.name === name)?.inputSchema;
+  };
+
+  it("every tool on a Grok account with the switch on takes bot, and none does with it off", SLOW, async () => {
+    const { m, main } = await account({ flows: ALL_FLOWS });
+    expect((await schemaOf(m, main, "get_state"))?.properties?.bot).toEqual(expect.objectContaining({ enum: ["cleaning", "supplies", "fixer"] }));
+    expect((await schemaOf(m, main, "check_fixes"))?.properties?.bot).toBeDefined();
+    const off = await account({ bots: false, label: "Court", line: COURT, flows: ALL_FLOWS });
+    expect((await schemaOf(off.m, off.main, "get_state"))?.properties?.bot).toBeUndefined();
+  });
+
+  it("the first call with bot gives that core its own bot, with no new sign-in", SLOW, async () => {
+    const { m, tenant, main } = await account({ flows: ["supplies", "fixer"] });
+    const reply = await m.toolAt(P, main, "get_state", { bot: "fixer" });
+    expect(reply.isError, reply.text).toBe(false);
+    expect(seatOf(m, tenant, main, "fixer")).toEqual(expect.objectContaining({ job: "fixer", assistant: "grok" }));
+    expect((await m.toolAt(P, main, "get_state", {})).structured!.newBots).toEqual([{ job: "supplies", name: "Supply Core", bot: "supplies" }]);
+    expect(m.registry.get(tenant.id)!.primaryGrantId).toBe(grantOf(m, main));
+    expect(new OAuthGrantStore(m.app.inst.runtime).list()).toHaveLength(1);
+  });
+
+  it("a call with bot is that core's: other flows' tools and the Property Core tools are refused", SLOW, async () => {
+    const { m, property, main } = await account({ flows: ALL_FLOWS });
+    expect((await m.toolAt(P, main, "set_flows", { property: property.id, fixer: false, bot: "fixer" })).isError).toBe(true);
+    expect((await m.toolAt(P, main, "set_flows", { property: property.id, supplies: true })).isError).toBe(false);
+  });
+
+  it("saving its routine with bot hands the job over, and the shared list keeps the tools", SLOW, async () => {
+    const { m, tenant, property, main } = await account();
+    await activeFixer(m, main, property);
+    await saveRoutine(m, P, main, "save_repair_alerts", FIX_HOOK, { property: property.id, bot: "fixer" });
+    // One connector for every bot: the list keeps Fixer Core's tools, and a call without bot is the Property Core bot's.
+    expect(await m.toolNames(P, main)).toContain("check_fixes");
+    await pushFixerNews(m, tenant, property, "note-shared", "A made-up repair note for the shared Fixer bot.");
+    await vi.waitFor(() => expect(wakesTo(m, FIX_HOOK.url, "repairs.update")).toBe(1));
+    const refused = await m.toolAt(P, main, "check_fixes", { property: property.id });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toBe(`${elsewhereLine("fixer", true)} ${leftBehindLine("fixer")}`);
+    expect(JSON.stringify((await m.toolAt(P, main, "check_fixes", { property: property.id, bot: "fixer" })).structured)).toContain("A made-up repair note for the shared Fixer bot.");
+    for (const wake of m.wakes) expect(wake.body).not.toMatch(/made-up repair note/);
+  });
+
+  it("remove_bot hands the core back and leaves the Property Core sign-in alone", SLOW, async () => {
+    const { m, tenant, property, main } = await account();
+    await activeFixer(m, main, property);
+    await saveRoutine(m, P, main, "save_repair_alerts", FIX_HOOK, { property: property.id, bot: "fixer" });
+    const first = await m.toolAt(P, main, "remove_bot", { bot: "fixer" });
+    const done = await m.toolAt(P, main, "remove_bot", { bot: "fixer", confirmation: codeOf(first) });
+    expect(done.isError, done.text).toBe(false);
+    expect(seatOf(m, tenant, main, "fixer")).toBeUndefined();
+    expect((await m.rpcAt(P, main, "tools/list")).status).toBe(200);
+    expect((await m.toolAt(P, main, "check_fixes", { property: property.id })).isError).toBe(false);
+  });
+
+  it("bot is refused with the switch off, off Grok, and for a name that isn't a core", SLOW, async () => {
+    const off = await account({ bots: false, flows: ["fixer"] });
+    expect((await off.m.toolAt(P, off.main, "get_state", { bot: "fixer" })).text).toBe(BOTS_OFF);
+    const claude = await account({ label: "Court", line: COURT, flows: ["fixer"], main: "claude" });
+    expect((await claude.m.toolAt(P, claude.main, "get_state", { bot: "fixer" })).text).toBe(BOTS_GROK_ONLY);
+    const lane = await account({ label: "Mill", line: "+15555550182", flows: ["fixer"] });
+    expect((await lane.m.toolAt(P, lane.main, "get_state", { bot: "property" })).isError).toBe(true);
+    expect(lane.m.registry.get(lane.tenant.id)!.connections.some((c) => c.job)).toBe(false);
   });
 });

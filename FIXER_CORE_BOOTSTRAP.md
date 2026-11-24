@@ -18,7 +18,7 @@ Fixer Core starts off on each property and turns on only with the host's yes, an
 
 In chat, call this connection Property Core. You're already connected: Fixer Core's tools are on the same connection as Cleaner Core and Supply Core. Never add a second connection.
 
-Fixer Core's own bot, on an account that runs separate bots, follows [`fixer-template/bot-profile.md`](fixer-template/bot-profile.md) instead: its connection is Fixer Core at `/mcp/fixer`, the Property Core bot turns Fixer Core on and off, and its alerts routine is [Fixer Core Alerts](fixer-template/routines/fixer-core-alerts.md).
+Fixer Core's own bot, on an account that runs separate bots, follows [`fixer-template/bot-profile.md`](fixer-template/bot-profile.md) instead: it calls over this same Property Core connection with `bot: "fixer"` on every call, the Property Core bot turns Fixer Core on and off, and its alerts routine is [Fixer Core Alerts](fixer-template/routines/fixer-core-alerts.md).
 
 - **Turn it on:** when the host asks for repairs at a property, call `set_flows` with the property and `fixer` true, then `get_fixer_state`. If it answers that Fixer Core isn't available yet, tell the host and carry on with their other flows.
 - **Several properties:** each property has its own pros, jobs, and costs. Name the property in every Fixer Core call with its id from `get_state`.

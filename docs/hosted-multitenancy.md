@@ -25,6 +25,7 @@ Every request resolves exactly one tenant before it reads or writes anything:
 | --- | --- |
 | `/mcp/cleaner-core` | The OAuth grant. The host's invite code, sign-in, or new account on the Allow page bound it to a tenant |
 | `/mcp/cleaner`, `/mcp/supply`, `/mcp/fixer` | The OAuth grant, as above, bound to that one address and its job. Only with the account's Separate bots switch on (see Chats) |
+| A `/mcp` call with `bot` | The shared grant's tenant, as for `/mcp`. A core's bot made by the Property Core bot uses the account's shared connector and names its job with `bot`; the server keeps it as a connection of its own (`<grant>#<job>`), live while that grant is |
 | A text to `/webhooks/twilio/cleaner-core` | The `To` number. Each tenant has its own Twilio number |
 | A call to `/webhooks/twilio/voice`, and its transcript to `/webhooks/twilio/voice/transcript` | The `To` number, as for a text. Both are signed by Twilio. Only a known caller is recorded; see the Voicemail gate in `docs/fixer-core-safety-gates.md` |
 | Everything Cleaner Core hands out: group webhooks, status callbacks, upload pages, photo links | The `/t/<tenantId>/` path prefix, and `/p/<propertyId>/` after it for every property but a migrated one. Twilio signs the full URL, and photo links are signed with the tenant's own key |
@@ -334,8 +335,9 @@ Behind each account's switch:
   pick are read. `cameras.json` keeps the picks, the consent time and notes waiting for the host. No image is
   kept; a clip is copied to `evidence/` only when the host pins it. Camera offline and back-online notes go out on the
   host-alert clock (#250) through the account's Alerts routine, else wait for `list_cameras`. It texts nobody.
-- **Separate bots (`bots`).** A Grok bot for each of Cleaner Core, Supply Core and Fixer Core, at `/mcp/cleaner`,
-  `/mcp/supply` and `/mcp/fixer`, managed by the Property Core bot (see Chats). Grok Bot only. `check_alerts` and
+- **Separate bots (`bots`).** A Grok bot for each of Cleaner Core, Supply Core and Fixer Core, managed by the Property Core bot (see
+  Chats). Each uses the account's shared Property Core connector with `bot` on every call, and every tool there takes
+  `bot`; a bot that signs in at `/mcp/cleaner`, `/mcp/supply` or `/mcp/fixer` works the same way. Grok Bot only. `check_alerts` and
   `remove_bot` are listed, and `get_state` carries `team`, only once a core has its own bot connected. With it off,
   the three addresses are refused, a core's connection made earlier lists nothing, and every job is the Property
   Core chat's again, exactly as before.

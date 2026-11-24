@@ -24,7 +24,7 @@
       "choice": "Cleaner Core: a cleaner for a property",
       "profile": "../cleaner-template/bot-profile.md",
       "ownBot": {
-        "address": "hostedPropertyCoreUrl/mcp/cleaner",
+        "bot": "cleaning",
         "profile": "../cleaner-template/bot-profile.md",
         "firstMessage": "../cleaner-template/BOT_PROMPT.md",
         "routines": [
@@ -32,7 +32,7 @@
           "Cleaner Core Alerts"
         ],
         "templateLink": null,
-        "note": "Only on an account with the Separate bots switch (bots) on, on Grok Bot. The Property Core bot creates this bot from get_state's newBots and sends it firstMessage. No template is published for it yet, so templateLink is null."
+        "note": "Only on an account with the Separate bots switch (bots) on, on Grok Bot. The Property Core bot creates this bot from get_state's newBots and sends it firstMessage. It uses the account's shared Property Core connector with bot on every call, so the host never signs in again. No template is published for it yet, so templateLink is null."
       }
     },
     {
@@ -41,7 +41,7 @@
       "choice": "Supply Core: supplies reordered for a property",
       "profile": "../supply-template/bot-profile.md",
       "ownBot": {
-        "address": "hostedPropertyCoreUrl/mcp/supply",
+        "bot": "supplies",
         "profile": "../supply-template/bot-profile.md",
         "firstMessage": "../supply-template/BOT_PROMPT.md",
         "routines": [
@@ -49,7 +49,7 @@
           "Supply Core Alerts"
         ],
         "templateLink": null,
-        "note": "Only on an account with the Separate bots switch (bots) on, on Grok Bot. The Property Core bot creates this bot from get_state's newBots and sends it firstMessage. No template is published for it yet, so templateLink is null."
+        "note": "Only on an account with the Separate bots switch (bots) on, on Grok Bot. The Property Core bot creates this bot from get_state's newBots and sends it firstMessage. It uses the account's shared Property Core connector with bot on every call, so the host never signs in again. No template is published for it yet, so templateLink is null."
       }
     },
     {
@@ -59,7 +59,7 @@
       "profile": "../FIXER_CORE_BOOTSTRAP.md",
       "note": "Off on each property until the host says yes. Grok Bot and Muse only; on Claude and ChatGPT set_flows answers with the plain-chat line.",
       "ownBot": {
-        "address": "hostedPropertyCoreUrl/mcp/fixer",
+        "bot": "fixer",
         "profile": "../fixer-template/bot-profile.md",
         "firstMessage": "../fixer-template/BOT_PROMPT.md",
         "routines": [
@@ -67,7 +67,7 @@
           "Fixer Core Alerts"
         ],
         "templateLink": null,
-        "note": "Only on an account with the Separate bots switch (bots) on, on Grok Bot. The Property Core bot creates this bot from get_state's newBots and sends it firstMessage. No template is published for it yet, so templateLink is null."
+        "note": "Only on an account with the Separate bots switch (bots) on, on Grok Bot. The Property Core bot creates this bot from get_state's newBots and sends it firstMessage. It uses the account's shared Property Core connector with bot on every call, so the host never signs in again. No template is published for it yet, so templateLink is null."
       }
     },
     {
@@ -85,31 +85,7 @@
       "name": "Property Core",
       "type": "custom-mcp-server",
       "url": "hostedPropertyCoreUrl/mcp",
-      "auth": "OAuth 2.1 discovered from the hosted service. The host signs in or types the invite code from Saad on the approval page and clicks Allow. Grok cannot approve itself. One connection serves every flow.",
-      "travelsWithTemplate": false
-    },
-    {
-      "name": "Cleaner Core",
-      "type": "custom-mcp-server-own-bot",
-      "service": "cleaning",
-      "url": "hostedPropertyCoreUrl/mcp/cleaner",
-      "auth": "Added by that flow's own bot, never by the Property Core bot. The host signs in on the approval page, which names the flow, and clicks Allow. Refused unless the account's bots switch is on and the Property Core bot is on Grok Bot.",
-      "travelsWithTemplate": false
-    },
-    {
-      "name": "Supply Core",
-      "type": "custom-mcp-server-own-bot",
-      "service": "supplies",
-      "url": "hostedPropertyCoreUrl/mcp/supply",
-      "auth": "Added by that flow's own bot, never by the Property Core bot. The host signs in on the approval page, which names the flow, and clicks Allow. Refused unless the account's bots switch is on and the Property Core bot is on Grok Bot.",
-      "travelsWithTemplate": false
-    },
-    {
-      "name": "Fixer Core",
-      "type": "custom-mcp-server-own-bot",
-      "service": "fixer",
-      "url": "hostedPropertyCoreUrl/mcp/fixer",
-      "auth": "Added by that flow's own bot, never by the Property Core bot. The host signs in on the approval page, which names the flow, and clicks Allow. Refused unless the account's bots switch is on and the Property Core bot is on Grok Bot.",
+      "auth": "OAuth 2.1 discovered from the hosted service. The host signs in or types the invite code from Saad on the approval page and clicks Allow. Grok cannot approve itself. One connection serves every flow. A flow's own bot (Separate bots) uses this same connector, which Grok Bot shares across the account's bots, and names its flow with bot on every call.",
       "travelsWithTemplate": false
     },
     {
