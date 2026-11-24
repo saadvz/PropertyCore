@@ -294,6 +294,27 @@ describe("each bot lists and calls only its job's tools", () => {
     expect(await instructionsAt(m, P, main)).toContain("This connection runs Property Core for the host's properties");
   });
 
+  it("the Property Core chat on Grok is told which cores still need their own bot", SLOW, async () => {
+    const { m, tenant, main } = await account({ flows: ["supplies", "fixer"] });
+    const newBots = async (path: string, token: string) => (await m.toolAt(path, token, "get_state", {})).structured!.newBots;
+    expect(await newBots(P, main)).toEqual([
+      { job: "supplies", name: "Supply Core", address: S },
+      { job: "fixer", name: "Fixer Core", address: F },
+    ]);
+    const fixer = await m.joinAt(tenant.id, "grok", F);
+    expect(await newBots(P, main)).toEqual([{ job: "supplies", name: "Supply Core", address: S }]);
+    expect(await newBots(F, fixer)).toBeUndefined();
+  });
+
+  it("no core is offered its own bot with the switch off, on an agent other than Grok, or with no flow on", SLOW, async () => {
+    const off = await account({ bots: false, flows: ["fixer"] });
+    expect((await off.m.toolAt(P, off.main, "get_state", {})).structured!.newBots).toBeUndefined();
+    const claude = await account({ label: "Court", line: COURT, flows: ["fixer"], main: "claude" });
+    expect((await claude.m.toolAt(P, claude.main, "get_state", {})).structured!.newBots).toBeUndefined();
+    const none = await account({ label: "Bare", line: "+15555550182" });
+    expect((await none.m.toolAt(P, none.main, "get_state", {})).structured!.newBots).toBeUndefined();
+  });
+
   it("one account's bot never reaches another account", SLOW, async () => {
     const lane = await account({ flows: ["fixer"] });
     const court = await account({ label: "Court", line: COURT, flows: ["fixer"] });
@@ -1369,9 +1390,15 @@ describe("get_state by job, and the team view", () => {
     const second = m.registry.addProperty(tenant.id, "9 Made-up Road");
     const before = { all: await stateAt(m, P, main), one: await stateAt(m, P, main, { property: property.id }), empty: await stateAt(m, P, main, { property: second.id }) };
     expect(before.all.team).toBeUndefined();
+    expect(before.all.newBots).toBeUndefined();
     switchOn(m.registry, tenant.id, "bots");
-    expect(await stateAt(m, P, main)).toEqual(before.all);
-    expect(await stateAt(m, P, main, { property: property.id })).toEqual(before.one);
-    expect(await stateAt(m, P, main, { property: second.id })).toEqual(before.empty);
+    const without = async (args?: Record<string, unknown>) => {
+      const { newBots, ...rest } = await stateAt(m, P, main, args);
+      expect(newBots).toEqual(ALL_FLOWS.map((job) => expect.objectContaining({ job })));
+      return rest;
+    };
+    expect(await without()).toEqual(before.all);
+    expect(await without({ property: property.id })).toEqual(before.one);
+    expect(await without({ property: second.id })).toEqual(before.empty);
   });
 });

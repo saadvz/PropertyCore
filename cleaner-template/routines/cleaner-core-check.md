@@ -86,6 +86,9 @@ webhook address, no key, and no secret.
    is on, call `open_job` with `source: "cleaner"`, their words, and the
    message's photo ids, and `report_low` for any supplies they named when
    Supply Core is on. Never open a job for NONE.
+   When `report_low` or `open_job` answers that it was filed, Supply Core or
+   Fixer Core has its own bot: tell the host in one line which bot takes it
+   from here, and skip the Supply Core Check steps.
 9. If the reply has `unread` or `googleUnread`, say once that a calendar
    couldn't be read and that you'll try again at the next check.
 10. If the reply has `needsTimes`, ask the host for the checkout time and the

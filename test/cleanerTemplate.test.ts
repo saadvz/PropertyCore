@@ -18,6 +18,7 @@ import { GUEST_TOOL_NAMES } from "../src/locks/guestTools";
 import { STAY_CHECK_TOOL_NAMES } from "../src/stay-check/tools";
 import { VISIT_TOOL_NAMES } from "../src/visits/tools";
 import { accountTools } from "../src/hosted/propertyTools";
+import { CHECK_ALERTS } from "../src/hosted/checkAlerts";
 
 /** The Cleaner Core paste-in prompt, setup guide, and Grok Bot template: pinned, consistent with the tools, and free of secrets. */
 
@@ -351,8 +352,8 @@ describe("Cleaner Core template docs", () => {
   const docs = () => [BOOTSTRAP, ...filesUnder(TEMPLATE)].map((f) => ({ f, text: read(f) }));
 
   it("name only real Cleaner Core tools, the account's tools, or Supply Core's and Fixer Core's when they're on", async () => {
-    // The house rules and guest-message tools (#15, #16) are the account's, named only where they're listed; so is door_activity (#280 20).
-    const tools = [...(await toolNames()), ...SUPPLY_FRONT_NAMES, ...FIXER_TOOL_NAMES, ...LOCK_TOOL_NAMES, ...GUEST_TOOL_NAMES, ...GUEST_MESSAGE_TOOL_NAMES, ...STAY_CHECK_TOOL_NAMES, ...VISIT_TOOL_NAMES, ...accountTools().map((tool) => String(tool.name))];
+    // The house rules and guest-message tools (#15, #16) are the account's, named only where they're listed; so is door_activity (#280 20), and check_alerts on an account with separate bots (#250).
+    const tools = [...(await toolNames()), ...SUPPLY_FRONT_NAMES, ...FIXER_TOOL_NAMES, ...LOCK_TOOL_NAMES, ...GUEST_TOOL_NAMES, ...GUEST_MESSAGE_TOOL_NAMES, ...STAY_CHECK_TOOL_NAMES, ...VISIT_TOOL_NAMES, ...accountTools().map((tool) => String(tool.name)), CHECK_ALERTS];
     for (const { f, text } of docs()) {
       for (const m of text.matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) expect(tools, `${f}: ${m[1]}`).toContain(m[1]);
     }

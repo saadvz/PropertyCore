@@ -22,20 +22,53 @@
       "service": "cleaning",
       "name": "Cleaner Core",
       "choice": "Cleaner Core: a cleaner for a property",
-      "profile": "../cleaner-template/bot-profile.md"
+      "profile": "../cleaner-template/bot-profile.md",
+      "ownBot": {
+        "address": "hostedPropertyCoreUrl/mcp/cleaner",
+        "profile": "../cleaner-template/bot-profile.md",
+        "firstMessage": "../cleaner-template/BOT_PROMPT.md",
+        "routines": [
+          "Cleaner Core Check",
+          "Cleaner Core Alerts"
+        ],
+        "templateLink": null,
+        "note": "Only on an account with the Separate bots switch (bots) on, on Grok Bot. The Property Core bot creates this bot from get_state's newBots and sends it firstMessage. No template is published for it yet, so templateLink is null."
+      }
     },
     {
       "service": "supplies",
       "name": "Supply Core",
       "choice": "Supply Core: supplies reordered for a property",
-      "profile": "../supply-template/bot-profile.md"
+      "profile": "../supply-template/bot-profile.md",
+      "ownBot": {
+        "address": "hostedPropertyCoreUrl/mcp/supply",
+        "profile": "../supply-template/bot-profile.md",
+        "firstMessage": "../supply-template/BOT_PROMPT.md",
+        "routines": [
+          "Supply Core Check",
+          "Supply Core Alerts"
+        ],
+        "templateLink": null,
+        "note": "Only on an account with the Separate bots switch (bots) on, on Grok Bot. The Property Core bot creates this bot from get_state's newBots and sends it firstMessage. No template is published for it yet, so templateLink is null."
+      }
     },
     {
       "service": "fixer",
       "name": "Fixer Core",
       "choice": "Fixer Core: repairs and upkeep for a property",
       "profile": "../FIXER_CORE_BOOTSTRAP.md",
-      "note": "Off on each property until the host says yes. Grok Bot and Muse only; on Claude and ChatGPT set_flows answers with the plain-chat line."
+      "note": "Off on each property until the host says yes. Grok Bot and Muse only; on Claude and ChatGPT set_flows answers with the plain-chat line.",
+      "ownBot": {
+        "address": "hostedPropertyCoreUrl/mcp/fixer",
+        "profile": "../fixer-template/bot-profile.md",
+        "firstMessage": "../fixer-template/BOT_PROMPT.md",
+        "routines": [
+          "Fixer Core Check",
+          "Fixer Core Alerts"
+        ],
+        "templateLink": null,
+        "note": "Only on an account with the Separate bots switch (bots) on, on Grok Bot. The Property Core bot creates this bot from get_state's newBots and sends it firstMessage. No template is published for it yet, so templateLink is null."
+      }
     },
     {
       "service": "touring",
@@ -53,6 +86,30 @@
       "type": "custom-mcp-server",
       "url": "hostedPropertyCoreUrl/mcp",
       "auth": "OAuth 2.1 discovered from the hosted service. The host signs in or types the invite code from Saad on the approval page and clicks Allow. Grok cannot approve itself. One connection serves every flow.",
+      "travelsWithTemplate": false
+    },
+    {
+      "name": "Cleaner Core",
+      "type": "custom-mcp-server-own-bot",
+      "service": "cleaning",
+      "url": "hostedPropertyCoreUrl/mcp/cleaner",
+      "auth": "Added by that flow's own bot, never by the Property Core bot. The host signs in on the approval page, which names the flow, and clicks Allow. Refused unless the account's bots switch is on and the Property Core bot is on Grok Bot.",
+      "travelsWithTemplate": false
+    },
+    {
+      "name": "Supply Core",
+      "type": "custom-mcp-server-own-bot",
+      "service": "supplies",
+      "url": "hostedPropertyCoreUrl/mcp/supply",
+      "auth": "Added by that flow's own bot, never by the Property Core bot. The host signs in on the approval page, which names the flow, and clicks Allow. Refused unless the account's bots switch is on and the Property Core bot is on Grok Bot.",
+      "travelsWithTemplate": false
+    },
+    {
+      "name": "Fixer Core",
+      "type": "custom-mcp-server-own-bot",
+      "service": "fixer",
+      "url": "hostedPropertyCoreUrl/mcp/fixer",
+      "auth": "Added by that flow's own bot, never by the Property Core bot. The host signs in on the approval page, which names the flow, and clicks Allow. Refused unless the account's bots switch is on and the Property Core bot is on Grok Bot.",
       "travelsWithTemplate": false
     },
     {
@@ -104,7 +161,8 @@
         "record_order",
         "record_problem",
         "mark_delivered"
-      ]
+      ],
+      "bot": "Cleaner Core's own bot when it has one, else the Property Core bot"
     },
     {
       "name": "Cleaner Core Alerts",
@@ -129,7 +187,8 @@
         "record_order",
         "record_problem",
         "mark_delivered"
-      ]
+      ],
+      "bot": "Cleaner Core's own bot when it has one, else the Property Core bot"
     },
     {
       "name": "Supply Core Check",
@@ -138,6 +197,7 @@
       "trigger": "scheduled",
       "schedule": "Daily at the check time the host picked (10:00 unless they chose another).",
       "allowedTools": [
+        "check_alerts",
         "get_supply_state",
         "check_supplies",
         "check_cart",
@@ -146,7 +206,27 @@
         "record_problem",
         "mark_delivered"
       ],
-      "credentialsTravelWithTemplate": false
+      "credentialsTravelWithTemplate": false,
+      "bot": "Supply Core's own bot when it has one, else the Property Core bot"
+    },
+    {
+      "name": "Supply Core Alerts",
+      "service": "supplies",
+      "doc": "../supply-template/routines/supply-core-alerts.md",
+      "trigger": "authenticated-webhook",
+      "allowedTools": [
+        "check_alerts",
+        "get_state",
+        "get_supply_state",
+        "check_supplies",
+        "check_cart",
+        "approve_cart",
+        "record_order",
+        "record_problem",
+        "mark_delivered"
+      ],
+      "credentialsTravelWithTemplate": false,
+      "bot": "Supply Core's own bot only. Saved with check_alerts and connect: true."
     },
     {
       "name": "Fixer Core Check",
@@ -169,7 +249,21 @@
         "skip_question",
         "change_door_code"
       ],
-      "credentialsTravelWithTemplate": false
+      "credentialsTravelWithTemplate": false,
+      "bot": "Fixer Core's own bot when it has one, else the Property Core bot"
+    },
+    {
+      "name": "Fixer Core Alerts",
+      "service": "fixer",
+      "doc": "../fixer-template/routines/fixer-core-alerts.md",
+      "trigger": "authenticated-webhook",
+      "allowedTools": [
+        "get_state",
+        "get_fixer_state",
+        "check_fixes"
+      ],
+      "credentialsTravelWithTemplate": false,
+      "bot": "Fixer Core's own bot only. Saved with save_repair_alerts."
     },
     {
       "name": "Property Core Alerts",
@@ -183,10 +277,25 @@
         "confirm_times",
         "save_arrival",
         "get_job_photos",
-        "save_draft"
+        "save_draft",
+        "check_alerts"
       ],
       "credentialsTravelWithTemplate": false,
-      "note": "Fixer Core's setup creates it when the account has no alerts routine yet. It handles repairs.update and cleaning.update."
+      "note": "Fixer Core's setup creates it when the account has no alerts routine yet. It handles repairs.update and cleaning.update.",
+      "bot": "The Property Core bot"
+    },
+    {
+      "name": "Property Core Check",
+      "service": "property",
+      "doc": "routines/property-core-check.md",
+      "trigger": "scheduled",
+      "schedule": "Hourly, once a flow has its own bot.",
+      "allowedTools": [
+        "get_state",
+        "check_alerts"
+      ],
+      "credentialsTravelWithTemplate": false,
+      "bot": "The Property Core bot, only on an account with separate bots."
     },
     {
       "name": "Tour Core Operator Updates",
@@ -210,7 +319,7 @@
     ],
     "neverShips": [
       "memories from a real setup",
-    "Tour Core's skills: touring is parked, and a touring account reads them from the clone",
+      "Tour Core's skills: touring is parked, and a touring account reads them from the clone",
       "any routine's webhook address or key",
       "OAuth tokens",
       "Google OAuth tokens",
@@ -241,5 +350,13 @@
     "calendar links",
     "live booking, cleaning, order, message, photo, or tour records",
     "a private repository address"
-  ]
+  ],
+  "separateBots": {
+    "switch": "bots",
+    "agents": [
+      "grok"
+    ],
+    "how": "With the account's bots switch on, get_state gives the Property Core bot newBots: each flow that runs at a property with no bot of its own. The Property Core bot asks the host once, then creates a bot for each and sends it that flow's firstMessage. Each bot connects at its own address, runs its flow's setup in its own chat, and takes the flow over when it saves its Alerts routine. Every connector on a Grok account shows in every bot, so each bot's instructions name the one connector it uses.",
+    "profileSection": "bot-profile.md, Your team"
+  }
 }

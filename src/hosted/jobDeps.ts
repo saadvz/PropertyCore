@@ -3,7 +3,7 @@ import type { HostedCleaner } from "../cleaner-core/hosted/router";
 import type { Tenant, TenantConnection } from "../cleaner-core/hosted/registry";
 import { ROUTINE_NAMES } from "../cleaner-core/hosted/tenantEnv";
 import { featureOn } from "../features/features";
-import { CORE_JOBS, coreBot, holderOf, isTeam, jobOfPath, jobsFor, mainConnection, type Job, type JobDeps } from "../jobs/jobs";
+import { CORE_JOBS, coreBot, holderOf, isTeam, JOB_NAMES, JOB_PATHS, jobOfPath, jobsFor, mainConnection, type CoreJob, type Job, type JobDeps } from "../jobs/jobs";
 import { noteInitialized } from "../mcp/toolListChanged";
 import { toolsFor } from "./serviceTools";
 
@@ -43,6 +43,25 @@ export function team(h: HostedCleaner, tenant: Tenant): boolean {
 export function hasCoreBot(h: HostedCleaner, tenant: Tenant): boolean {
   const deps = jobDeps(h, tenant);
   return CORE_JOBS.some((job) => coreBot(tenant, job, deps) !== undefined);
+}
+
+/** A core the Property Core chat should make its own bot for: its job, its name, and the address that bot connects to. */
+export interface NewBot {
+  job: CoreJob;
+  name: string;
+  address: string;
+}
+
+/**
+ * The cores that run at some property and have no bot of their own connected yet, for the Property Core chat on Grok
+ * Bot with the account's `bots` switch on. Undefined anywhere else, and when there are none, so get_state is unchanged.
+ */
+export function newBots(h: HostedCleaner, tenant: Tenant, caller: { job?: CoreJob; assistant: CleanerAssistant }): NewBot[] | undefined {
+  if (caller.job || caller.assistant !== "grok" || toolsFor(tenant) !== "properties") return undefined;
+  const deps = jobDeps(h, tenant);
+  if (!deps.botsOn) return undefined;
+  const due = CORE_JOBS.filter((job) => tenant.properties.some((property) => property.flows[job].on) && coreBot(tenant, job, deps) === undefined);
+  return due.length > 0 ? due.map((job) => ({ job, name: JOB_NAMES[job], address: JOB_PATHS[job] })) : undefined;
 }
 
 /**

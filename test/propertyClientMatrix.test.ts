@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ASSISTANT_PROFILES, CHATGPT_INSTRUCTIONS, CLAUDE_INSTRUCTIONS, runsFixer, runsSupplies, type CleanerAssistant } from "../src/cleaner-core/assistant";
 import { listedFixerFront } from "../src/hosted/fixer";
 import { listedChooseSupplies, listedSupplyFront } from "../src/hosted/supplies";
+import { BOTS_GROK_ONLY } from "../src/hosted/jobDeps";
 import { REPO_ROOT } from "./files";
 
 /** docs/client-matrix.md says what the code does: which agents run which flows, and each agent's profile. */
@@ -45,6 +46,13 @@ describe("the client matrix", () => {
     for (const agent of AGENTS) expect(listedFixerFront(agent).length > 0, agent).toBe(runsFixer(agent));
     const flows = table(doc, "Property Core flows");
     expect(flows.find((row) => row[0] === "**Fixer Core**")).toEqual(["**Fixer Core**", "Yes", "Yes", "No", "No"]);
+  });
+
+  it("names Grok Bot as the only agent that runs separate bots (#250)", () => {
+    const row = table(doc, "Property Core flows").find((cells) => cells[0] === "Separate bots");
+    expect(row?.slice(2)).toEqual(["No", "No", "No"]);
+    expect(row?.[1]).toMatch(/^Yes: with the account's `bots` switch on/);
+    expect(BOTS_GROK_ONLY).toContain("Grok Bot only");
   });
 
   it("never tells a plain chat to set up or run Supply Core or Fixer Core", () => {

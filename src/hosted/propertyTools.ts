@@ -137,11 +137,11 @@ export interface StateView {
 const FLOWS: readonly FlowName[] = ["cleaning", "supplies", "fixer"];
 
 /** get_state: the overview, or one property's own state when the call names it or there's only one. */
-export async function accountState(tenant: Tenant, args: unknown, states: PropertyStates, assistant: CleanerAssistant, view?: StateView): Promise<FrontReply> {
+export async function accountState(tenant: Tenant, args: unknown, states: PropertyStates, assistant: CleanerAssistant, view?: StateView, newBots?: readonly unknown[]): Promise<FrontReply> {
   const reply = await stateOf(tenant, args, states, assistant, view);
   if (reply.isError || !reply.structured) return reply;
   // The account's line, so the host can ask for their agent's number.
-  const structured = { ...reply.structured, ...(tenant.twilioNumber ? { agentNumber: tenant.twilioNumber } : {}), ...(view?.team ? { team: view.team } : {}), ...(view?.alertsNote ? { alertsNote: view.alertsNote } : {}) };
+  const structured = { ...reply.structured, ...(tenant.twilioNumber ? { agentNumber: tenant.twilioNumber } : {}), ...(view?.team ? { team: view.team } : {}), ...(view?.alertsNote ? { alertsNote: view.alertsNote } : {}), ...(newBots ? { newBots } : {}) };
   return { ...reply, text: JSON.stringify(structured), structured };
 }
 

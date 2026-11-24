@@ -122,6 +122,13 @@ What follows from the rule:
   a core has its own bot connected, the Property Core bot also gets `team`:
   per core, who holds it, when its bot last called, and whether its alerts are
   connected. On a team, each property's next step is given per flow, by name.
+- **`newBots`.** With the switch on, `get_state` gives the Property Core chat on
+  Grok Bot `newBots`: each core that runs at some property and has no bot of
+  its own connected yet, with its name and address. The Property Core bot asks
+  the host once, then creates a bot for each and sends it that core's
+  `BOT_PROMPT.md` (`property-core-template/bot-profile.md`, Your team). Every
+  connector on a Grok account shows in every bot, so each bot's instructions
+  name the one connector it uses; the job still comes only from the address.
 - **Feature offers.** After setup, `get_state` offers a feature only to a chat
   whose jobs can run that feature's tools, and takes an answer only from such
   a chat. A core's own bot is offered only its own (package arrivals, for the

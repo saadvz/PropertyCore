@@ -38,13 +38,15 @@ describe("Supply Core template", () => {
     for (const file of [m.profile, m.setupPrompt, m.readme]) expect(existsSync(join(TEMPLATE, file)), file).toBe(true);
     expect(m.repository.bootstrap).toBe("SUPPLY_CORE_BOOTSTRAP.md");
     expect(m.hostedSupplyCoreUrl).toBe("https://tourcore-production-8b80.up.railway.app");
-    expect(m.routines.map((r) => r.name)).toEqual(["Supply Core Check"]);
+    expect(m.routines.map((r) => r.name)).toEqual(["Supply Core Check", "Supply Core Alerts"]);
     for (const routine of m.routines) {
       expect(existsSync(join(TEMPLATE, routine.doc)), routine.doc).toBe(true);
       expect(routine.credentialsTravelWithTemplate).toBe(false);
       expect(read(join(TEMPLATE, routine.doc))).toContain(`# Routine: ${routine.name}`);
-      for (const tool of routine.allowedTools) expect(SUPPLY_TOOL_NAMES.has(tool), tool).toBe(true);
-      expect(routine.allowedTools).toEqual(["get_supply_state", "check_supplies", "check_cart", "approve_cart", "record_order", "record_problem", "mark_delivered"]);
+      // check_alerts reads Supply Core's host alerts on an account with separate bots (#250); get_state is the account's.
+      for (const tool of routine.allowedTools) expect(SUPPLY_TOOL_NAMES.has(tool) || ["check_alerts", "get_state"].includes(tool), tool).toBe(true);
+      const own = ["get_supply_state", "check_supplies", "check_cart", "approve_cart", "record_order", "record_problem", "mark_delivered"];
+      expect(routine.allowedTools).toEqual(routine.name === "Supply Core Alerts" ? ["check_alerts", "get_state", ...own] : ["check_alerts", ...own]);
     }
   });
 

@@ -35,7 +35,7 @@ import { BOOKING_PLATFORMS_INSTRUCTION } from "../cleaner-core/bookingEmailDesk"
 import { FIXER_FRONT_NAMES, fixerCall, fixerDesk, fixerPhotos, fixerPreview, listedFixerFront, namesRepairJob, repairsLine } from "./fixer";
 import { taskWarning } from "./touringAlerts";
 import { CORE_JOBS, jobOfPath, type CoreJob, type Job } from "../jobs/jobs";
-import { BOTS_NEED_MAIN, callerJobs, hasCoreBot, holder, team } from "./jobDeps";
+import { BOTS_NEED_MAIN, callerJobs, hasCoreBot, holder, newBots, team } from "./jobDeps";
 import { elsewhereLine, isFiling, jobInstructions, leftBehindLine, mayCall, NO_JOBS, ownerFor, routineCheckOf, teamLine } from "./jobTools";
 import { isOfferId, nextOffer, OFFER_IDS, offersFor, type OfferContext } from "./featureOffers";
 import { callWorkerMcp, forwardMcp, type WorkerTarget } from "./touringForward";
@@ -300,7 +300,7 @@ async function propertyToolCall(h: HostedCleaner, r: HostedRequest, tenant: Tena
     const answered = answerOffer(h, tenant, caller, args);
     if (answered.refusal) return { text: answered.refusal, isError: true };
     const now = h.registry.get(tenant.id) ?? tenant;
-    return accountState(now, answered.args, propertyStates(h, r, now, caller), caller.assistant, stateView(h, now, caller));
+    return accountState(now, answered.args, propertyStates(h, r, now, caller), caller.assistant, stateView(h, now, caller), newBots(h, now, caller));
   }
   if (isFiling(name, caller)) {
     const resolved = resolveProperty(tenant, args);
