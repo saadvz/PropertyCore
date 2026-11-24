@@ -11,7 +11,7 @@ import { supplyDesk } from "../src/hosted/supplies";
 import { BASE, closeHostedApps } from "./cleanerOauthHarness";
 import { ROUTINE, setUp } from "./cleanerDeskHarness";
 import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
-import { CLEANER, HOST, TEST_PIN_KEY } from "./wiringProof";
+import { CLEANER, FROZEN, HOST, TEST_PIN_KEY } from "./wiringProof";
 
 /** set_flows on one property of an account: on, off with a stand-down, and Fixer Core, offered on every account. Only 555 numbers. */
 
@@ -27,13 +27,14 @@ afterEach(() => {
 });
 
 async function start(env: NodeJS.ProcessEnv = {}) {
-  open = await multiTenantApp({ env: { SUPPLY_CORE: "1", ...env } });
+  // A fixed day before the fixture stays, so their cleanings are still ahead.
+  open = await multiTenantApp({ env: { SUPPLY_CORE: "1", ...env }, now: () => new Date(FROZEN) });
   const m = open;
   const account = m.registry.create({ label: "Lane", twilioNumber: LINE }).tenant;
   const lane = m.registry.addProperty(account.id, "12 Scratch Lane");
   const court = m.registry.addProperty(account.id, "8 Scratch Court");
   const token = await m.join(account.id, "grok");
-  const h = hostedCleaner({ registry: m.registry, secrets: new TenantSecrets(m.app.root), dataRoot: m.app.root, origin: () => BASE, baseEnv: () => m.app.inst.env(), grantLive: () => true, now: () => new Date(), log: () => undefined });
+  const h = hostedCleaner({ registry: m.registry, secrets: new TenantSecrets(m.app.root), dataRoot: m.app.root, origin: () => BASE, baseEnv: () => m.app.inst.env(), grantLive: () => true, now: () => new Date(FROZEN), log: () => undefined });
   const prop = (id: string) => m.registry.get(account.id)!.properties.find((p) => p.id === id)!;
   return { m, h, account, token, lane: () => prop(lane.id), court: () => prop(court.id) };
 }
@@ -46,7 +47,7 @@ async function confirmedJob(s: Awaited<ReturnType<typeof start>>) {
   // The service's door-code key, as on the live service, so a reopened desk opens the saved code.
   s.h.secrets.set(s.account.id, { CLEANER_CORE_PIN_KEY: TEST_PIN_KEY });
   const ctx = propertyContext(s.h, s.m.registry.get(s.account.id)!, s.lane());
-  const desk = liveDeskFor(ctx.root, ctx.env, () => new Date());
+  const desk = liveDeskFor(ctx.root, ctx.env, () => new Date(FROZEN));
   // As the account's Grok chat, so its routine counts as the primary's own.
   await withCaller({ assistant: "grok", connectionId: primary.grantId }, () => setUp(desk, { groupChat: "cleaner-only" }));
   await desk.inbound({ id: "yes-cleaner", from: CLEANER, text: "YES" });
