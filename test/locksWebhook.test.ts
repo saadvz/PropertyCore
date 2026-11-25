@@ -212,6 +212,11 @@ describe("the lock webhook", () => {
     await send({ id: "evt-25", kind: "account-disconnected", partnerType: "connected_account.disconnected", at: NOW.toISOString(), accountId: `acct-${a.tenant.id}`, customerKey: a.tenant.id });
     expect(door.locks().release.cleaners).toBe("ask");
     expect(lockNews(a.root)[0]).toBe("While your lock account is disconnected, the cleaner's code won't go out at checkout. Tell me when the guests have left, like before.");
+    // get_state reads the dropped account as disconnected, never as a property without a smart lock (#180).
+    const token = await m.joinAt(a.tenant.id, "grok", "/mcp");
+    const state = await m.toolAt("/mcp", token, "get_state", { property: a.property.id });
+    expect(state.structured?.locks).toMatchObject({ connected: false, disconnected: true });
+    expect(JSON.stringify(state.structured?.locks)).not.toContain("Ask the host whether they have a smart lock");
   });
 
   it("serves a standing code's page only on its property's path: no code on GET, the code once on POST", async () => {
