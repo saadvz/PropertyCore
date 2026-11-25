@@ -224,6 +224,14 @@ describe("the sandbox entry command", () => {
     expect(keypad.entered).toEqual([{ deviceId: "d1", codeId: "ac-a" }]);
   });
 
+  it("on an error from the partner, says to check door activity, since the unlock can still arrive", async () => {
+    const keypad = new FakeKeypad(true, { status: "error", errorType: "UnknownError" });
+    const outcome = await sandboxEntry({ root: propertyFolder(), who: "host", keypad, now: () => NOW, timeZone: "America/New_York" });
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.lines).toEqual(["The lock partner reported an error entering the host's code on the Front door keypad at Nov 28, 11:30 AM EST (UnknownError), but the unlock can still arrive. Check door activity before you try again."]);
+    noDigits(outcome.lines);
+  });
+
   it("says when nobody of that kind has a code, and skips revoked ones", async () => {
     const root = propertyFolder();
     writeFileSync(join(root, "door-grants.json"), JSON.stringify({ schemaVersion: 1, grants: [] }));
