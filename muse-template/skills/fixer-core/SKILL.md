@@ -116,7 +116,7 @@ You search in your own browser and call, email or message pros yourself.
 
 The Fixer Core recurring task runs this every hour, and you run it whenever
 the host mentions something broken. Call `check_fixes` on every run and act on everything it returns:
-`needsGo`, `upkeepDue`, `contactNext`, `quotesReady`, `unconfirmed`, `followUps`, `held`, `delays`,
+`needsGo`, `upkeepDue`, `routineVisits`, `contactNext`, `quotesReady`, `unconfirmed`, `followUps`, `held`, `delays`,
 `preferredAsk`, `rotationAsk`, `news`. When Google Calendar is saved for the
 property, read the calendar's events and pass them as `googleEvents` to
 `check_fixes` and to `approve_booking`.
@@ -131,6 +131,12 @@ property, read the calendar's events and pass them as `googleEvents` to
   `byDate`, source `upkeep`, and its `upkeepId` as `sourceRef`. The job waits
   for the host's go: ask the question `open_job` gives, then handle it as
   `needsGo`. An item with an open job isn't listed again.
+- **routineVisits:** upkeep that a vendor's standing yes covers. Fixer Core
+  texts the vendor the visit itself, and `next` says what it waits on, if
+  anything. Never open a job for it, and never ask the host for a go or a
+  cost line: `open_job` refuses it. Tell the host only if they ask. It's in
+  `upkeepDue` instead only when the vendor can't be texted or no day fits,
+  and then the host is asked as usual.
 - **Cost line, once per repair:** setup never asks for one. When a repair
   starts, ask "Want a cost line for this repair? An estimate over it, or a
   price raised on site, needs your yes." as a choice card with three options,
@@ -229,7 +235,7 @@ what it cost. Costs are logged, not paid.
 
 **Repair blocks.** When the host closes days for repairs (a month-long job, a crew), call `save_repair_block` with `firstDay`, `lastDay` and the jobs it's for, in two calls with the host's yes. Pros can then be booked inside those days, but the door code never goes out inside a block on the booking calendar, since a calendar can label a real booking that way: the host lets pros in there. Fixer Core can't write to the booking calendar yet: when the reply lists `openNights`, tell the host to close them on every booking calendar now, since a booking can still land there. `check_fixes` news says once if nights are still open, and once, urgently, if a guest booking lands inside the block. `get_fixer_state` lists the blocks and `doorNow`. `remove_repair_block` reopens the days, with the host's yes.
 
-**Routine vendors.** For upkeep a vendor does on their own schedule (pest control, say), the host can give a standing yes once instead of being asked every time: `save_upkeep` with `standing` (the vendor, who has to text on the line; their usual hours `from` and `until` as HH:MM, at most 4 hours; `access`; and the usual price as `usualCents`). It always takes two calls: ask the host the question it gives. After that, Fixer Core texts the vendor each visit's date when it comes due, and they reply YES or another day and time. A time that fits moves the visit, and a code is made only once they confirm. You'll see news when they confirm or move, when a time they asked for needs the host, and when they haven't answered. When the news shows the vendor's words and a time the line couldn't read, or a time waiting for the host, call `move_vendor_visit` with the time they asked for. It moves the visit when the time fits, and otherwise asks the host in two calls. Never send the vendor a code yourself. `standing: null` takes the standing yes back.
+**Routine vendors.** For upkeep a vendor does on their own schedule (pest control, say), the host can give a standing yes once instead of being asked every time: `save_upkeep` with `standing` (the vendor, who has to text on the line; their usual hours `from` and `until` as HH:MM, at most 4 hours; `access`; and the usual price as `usualCents`). It always takes two calls: ask the host the question it gives. After that, Fixer Core texts the vendor each visit's date when it comes due, and they reply YES or another day and time. A time that fits moves the visit, and a code is made only once they confirm. You'll see news when they confirm or move, when a time they asked for needs the host, and when they haven't answered. When the news shows the vendor's words and a time the line couldn't read, or a time waiting for the host, call `move_vendor_visit` with the time they asked for. It moves the visit when the time fits, and otherwise asks the host in two calls. Never send the vendor a code yourself. `standing: null` takes the standing yes back. To start a schedule today or on another day, pass `firstDate` (YYYY-MM-DD) to `save_upkeep`: the first visit falls on it, and the schedule runs on from there. Without it, the first visit is a full period from today ("every 90 days" saved today is 90 days out). Read the dates `save_upkeep` returns back to the host.
 
 **Service notices.** Only if the host says you may read their vendors' emails: turn it on with `save_fixer_settings` and `serviceNotices: true`. When a vendor emails that a visit is done (a service report or a completed-service notice), call `save_service_notice` with the email as you received it (`from`, `subject`, `body`, `messageId`, `receivedAt`), and `jobId` when you know the visit. It's kept as evidence on the visit and never changes the visit's times. Don't pass any other email.
 
