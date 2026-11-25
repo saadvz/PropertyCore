@@ -75,6 +75,18 @@ describe("the cleaner's code at checkout time", () => {
     expect(w.codeTexts().length).toBe(1);
   });
 
+  it("sends no arrival reminder once checkout has passed: the code text goes on its own (#180 live run)", async () => {
+    const w = await world({ take: false });
+    const reminders = () => w.sms.sent.filter((text) => text.to === CLEANER && text.body.startsWith("Reminder:"));
+    w.at(CHECKOUT + MIN);
+    await w.desk.inbound({ id: "take-late", from: CLEANER, text: "YES" });
+    await w.notes();
+    await w.desk.lockClock();
+    await w.notes();
+    expect(w.codeTexts().length).toBe(1);
+    expect(reminders()).toEqual([]);
+  });
+
   it("keeps every other check: no YES from the cleaner, nothing goes", async () => {
     const w = await world({ take: false });
     w.at(CHECKOUT + MIN);

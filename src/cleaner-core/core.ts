@@ -1264,6 +1264,10 @@ class Engine implements CleanerCore {
       if (!fact) continue;
       // A moved cleaning is reminded on its own day, at its own time.
       const start = this.cleaningStart(job, fact);
+      // With a door code, a reminder still unsent once the cleaning's start (checkout, or the moved start) has passed
+      // would land right beside the code text (#180 live run, Nov 23): the code text already tells the cleaner to
+      // come, so the late reminder and its arrival question are skipped.
+      if (this.pin && this.now().getTime() >= Date.parse(zonedInstant(start.date, hm(start.minutes), this.options.property.timeZone))) continue;
       for (const trigger of this.triggers) {
         if (!this.triggerDue(trigger, start.date)) continue;
         const id = `reminder:${job.id}:${trigger.id}:${start.date}:${fact.version}:${start.minutes}`;

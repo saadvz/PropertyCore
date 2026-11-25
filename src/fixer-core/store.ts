@@ -56,6 +56,11 @@ export interface Upkeep {
   proId?: string;
   lastDoneAt?: string;
   /**
+   * The first visit's date as the host gave it (#237), today or later, and when it was saved. Until a visit is done
+   * after that save, the first visit falls on this date and the schedule runs on from it, so a schedule can start today.
+   */
+  firstVisit?: { date: string; at: string };
+  /**
    * The host's standing yes for a routine vendor (#237): each visit is proposed to this pro by text at their usual
    * local hours, and they confirm or move it, with no host question. Withdrawn by saving the item with none.
    */

@@ -564,9 +564,12 @@ function propertyStates(h: HostedCleaner, r: HostedRequest, tenant: Tenant, call
     if (!status) return reply;
     // A host who answered the locks offer isn't asked again here.
     const asked = (property.offersAnswered ?? []).includes("locks");
+    // A lock account that dropped reads as disconnected, with its problems, never as a property without locks (#180).
     const summary = status.connected
       ? { connected: true, devices: status.devices, problems: status.problems }
-      : { connected: false, ...(asked ? {} : { next: "Ask the host whether they have a smart lock that works with an app. connect_lock connects it, so each cleaner and pro gets their own code." }) };
+      : status.disconnected
+        ? { connected: false, disconnected: true, devices: status.devices, problems: status.problems }
+        : { connected: false, ...(asked ? {} : { next: "Ask the host whether they have a smart lock that works with an app. connect_lock connects it, so each cleaner and pro gets their own code." }) };
     return withField(reply, "locks", summary);
   };
   // Cleaner Core's and Supply Core's get_state carry one Fixer Core line while Fixer Core is on for the property.
