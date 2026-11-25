@@ -68,7 +68,7 @@ function world(options: { textsAllowed?: boolean; sendWorks?: boolean; optedIn?:
     told.push(...notes);
     return notes;
   };
-  return { root, fake, door, sent, told, state, stopped, codes, visits, tick, at: (when: Date) => (clock = new Date(when)) };
+  return { root, fake, door, sent, told, state, stopped, codes, visits, tick, now: () => clock, at: (when: Date) => (clock = new Date(when)) };
 }
 
 function approved(call: (confirmation?: string) => OversightReply): OversightReply {
@@ -315,5 +315,214 @@ describe("the visitor's own door code (#280 17)", () => {
     w.visits.cancelVisit({ id });
     await pass;
     expect(w.sent.filter((text) => text.body.startsWith("Hi Mike"))).toEqual([]);
+  });
+});
+
+/** The host's yes for one visit, as confirm_expected_visit writes it. */
+function hostYes(w: ReturnType<typeof world>, id: string, via: "email" | "call" | "host-arranged" = "call"): void {
+  const file = readOversight(w.root);
+  const visit = file.visits.find((item) => item.id === id)!;
+  visit.confirmed = { at: NOW.toISOString(), by: "host", via };
+  writeFileSync(join(w.root, "oversight.json"), JSON.stringify(file));
+}
+
+const HOST_PAGE_NOTE = "Mike Doyle's door code works from now for today's visit. They don't get texts from this line, so ask me for a private page with their code to read to them.";
+
+describe("a visitor's yes the host passes on (25 Nov)", () => {
+  it("makes the code for that visit with no text YES, texts no code, and tells the host once at the window", async () => {
+    const w = world();
+    const id = addMike(w);
+    hostYes(w, id);
+    await w.tick();
+    expect(w.fake.liveCodes("dev-front")).toHaveLength(1);
+    w.at(ny("11:30"));
+    await w.tick();
+    await w.tick();
+    // Only the one opt-in text: no code text without their own YES.
+    expect(w.sent.map((text) => text.body)).toEqual([INVITE]);
+    expect(w.told.filter((note) => note.text === HOST_PAGE_NOTE)).toHaveLength(1);
+    const code = w.fake.liveCodes("dev-front")[0]!.code;
+    expect(JSON.stringify(w.told)).not.toContain(code);
+    expect(w.visits.listVisits().structured?.open).toEqual([expect.objectContaining({ id, code: "on-lock", confirmedVia: "call" })]);
+  });
+
+  it("covers that one visit only: a later visit for the same phone waits for its own yes", async () => {
+    const w = world();
+    const id = addMike(w);
+    approved((confirmation) => w.visits.addVisit({ who: "Mike Doyle", date: "2026-11-20", from: "12:00", to: "17:00", phone: MIKE, ...(confirmation ? { confirmation } : {}) }));
+    hostYes(w, id);
+    await w.tick();
+    const live = w.fake.liveCodes("dev-front");
+    expect(live).toHaveLength(1);
+    expect(live[0]!.window).toEqual({ from: ny("11:30").toISOString(), until: ny("17:00").toISOString() });
+  });
+
+  it("a visitor who also replies YES gets their code by text once, and the host no page note", async () => {
+    const w = world();
+    const id = addMike(w);
+    hostYes(w, id);
+    await w.tick();
+    await w.codes.visitorText(MIKE, "YES");
+    w.at(ny("11:30"));
+    await w.tick();
+    await w.tick();
+    expect(w.sent.filter((text) => text.body.startsWith("Hi Mike"))).toHaveLength(1);
+    expect(w.told.filter((note) => note.text === HOST_PAGE_NOTE)).toEqual([]);
+    expect(w.fake.liveCodes("dev-front")).toHaveLength(1);
+  });
+
+  it("STOP means no texts, not no entry: the host's yes keeps the code on, and nothing is texted", async () => {
+    const w = world();
+    const id = addMike(w);
+    await w.tick();
+    expect(await w.codes.visitorText(MIKE, "STOP")).toBe(false);
+    w.stopped.add(MIKE);
+    hostYes(w, id);
+    await w.tick();
+    expect(w.fake.liveCodes("dev-front")).toHaveLength(1);
+    w.at(ny("11:30"));
+    await w.tick();
+    expect(w.sent.map((text) => text.body)).toEqual([INVITE]);
+    expect(w.told.filter((note) => note.text === HOST_PAGE_NOTE)).toHaveLength(1);
+  });
+
+  it("a cancel still takes a host-confirmed code off", async () => {
+    const w = world();
+    const id = addMike(w);
+    hostYes(w, id);
+    await w.tick();
+    expect(w.visits.cancelVisit({ id }).text).toContain("Mike Doyle's door code for it comes off the lock.");
+    await w.tick();
+    expect(w.fake.liveCodes("dev-front")).toEqual([]);
+  });
+});
+
+describe("the host's page with a visitor's code, and the one 'no yes' note (25 Nov)", () => {
+  function linked(extra: { textsYes?: boolean } = {}) {
+    const w = world();
+    const visits = new OversightDesk(w.root, { now: () => w.now(), codes: () => true, hostPhone: () => HOST, publicBase: () => "https://pc.example.com/p/lane", codeStatus: (visit) => w.codes.codeStatus(visit) });
+    const id = addMike(w);
+    return { ...w, visits, id, extra };
+  }
+  const tokenOf = (url: string) => url.slice("https://pc.example.com/p/lane/oversight/visit-code/".length);
+
+  it("is refused before the host's yes, and for a visitor who gets the code by text", async () => {
+    const w = linked();
+    expect(w.visits.codeLink({ id: w.id }).text).toBe("Mike Doyle's visit isn't confirmed yet, so there's no code. Call confirm_expected_visit once they've told you yes.");
+    await w.tick();
+    await w.codes.visitorText(MIKE, "YES");
+    expect(w.visits.codeLink({ id: w.id }).text).toBe("Mike Doyle gets their own door code by text 30 minutes before the visit, so no page is needed.");
+  });
+
+  it("shows the visitor's own code once, after the host's two-call yes, only once it's on the lock, and keeps only the hash", async () => {
+    const w = linked();
+    hostYes(w, w.id);
+    const asked = w.visits.codeLink({ id: w.id });
+    expect(asked.structured?.question).toBe("Get a private page with Mike Doyle's door code, to read to them? It opens once.");
+    const done = approved((confirmation) => w.visits.codeLink({ id: w.id, ...(confirmation ? { confirmation } : {}) }));
+    const url = done.structured?.url as string;
+    expect(url).toMatch(/^https:\/\/pc\.example\.com\/p\/lane\/oversight\/visit-code\/[a-p]{40}$/);
+    const token = tokenOf(url);
+    expect(JSON.stringify(readOversight(w.root))).not.toContain(token);
+    expect(w.codes.pageOpen(token)).toEqual({ who: "Mike Doyle", street: "12 Scratch Lane" });
+    // Not on the lock yet: the link keeps working.
+    expect(await w.codes.showHostCode(token)).toEqual({ ok: false, reason: "pending" });
+    await w.tick();
+    const live = w.fake.liveCodes("dev-front");
+    expect(live).toHaveLength(1);
+    const shown = await w.codes.showHostCode(token);
+    expect(shown).toEqual({ ok: true, code: live[0]!.code });
+    expect(await w.codes.showHostCode(token)).toEqual({ ok: false, reason: "gone" });
+    expect(w.codes.pageOpen(token)).toBeUndefined();
+    // Once the host has it, no "ask me for a page" note at the window.
+    w.at(ny("11:30"));
+    await w.tick();
+    expect(w.told.filter((note) => note.id.startsWith("visit:host-page:"))).toEqual([]);
+    expect(JSON.stringify(w.told)).not.toContain(live[0]!.code);
+  });
+
+  it("ends with a cancel, and a wrong token opens nothing", async () => {
+    const w = linked();
+    hostYes(w, w.id);
+    const url = approved((confirmation) => w.visits.codeLink({ id: w.id, ...(confirmation ? { confirmation } : {}) })).structured?.url as string;
+    await w.tick();
+    expect(w.codes.pageOpen("a".repeat(40))).toBeUndefined();
+    w.visits.cancelVisit({ id: w.id });
+    expect(w.codes.pageOpen(tokenOf(url))).toBeUndefined();
+    expect(await w.codes.showHostCode(tokenOf(url))).toEqual({ ok: false, reason: "gone" });
+  });
+
+  it("the no-yes note comes once, 2 hours before the code's window, and never for a visit with a yes", async () => {
+    const w = world();
+    addMike(w);
+    approved((confirmation) => w.visits.addVisit({ who: "Ana Ruiz", date: "2026-11-19", from: "12:00", to: "17:00", phone: "+15555550162", confirmedVia: "call", ...(confirmation ? { confirmation } : {}) }));
+    await w.tick();
+    w.at(ny("09:29"));
+    await w.tick();
+    expect(w.told.filter((note) => note.id.startsWith("visit:no-yes:"))).toEqual([]);
+    w.at(ny("09:30"));
+    await w.tick();
+    await w.tick();
+    const noYes = w.told.filter((note) => note.id.startsWith("visit:no-yes:"));
+    expect(noYes.map((note) => note.text)).toEqual(["Mike Doyle hasn't said yes to their visit, so no door code is made for it. If they told you yes another way, tell me and I'll make it."]);
+  });
+
+  it("a visit saved inside 2 hours gets the note 30 minutes after the save, not at once", async () => {
+    const w = world();
+    w.at(ny("10:30"));
+    addMike(w);
+    await w.tick();
+    expect(w.told.filter((note) => note.id.startsWith("visit:no-yes:"))).toEqual([]);
+    w.at(ny("11:00"));
+    await w.tick();
+    expect(w.told.filter((note) => note.id.startsWith("visit:no-yes:"))).toHaveLength(1);
+  });
+});
+
+describe("the host's visitor code page under races (final review, 25 Nov)", () => {
+  function pageWorld() {
+    const w = world();
+    const visits = new OversightDesk(w.root, { now: () => w.now(), codes: () => true, hostPhone: () => HOST, publicBase: () => "https://pc.example.com/p/lane", codeStatus: (visit) => w.codes.codeStatus(visit) });
+    const id = addMike(w);
+    hostYes(w, id);
+    const url = approved((confirmation) => visits.codeLink({ id, ...(confirmation ? { confirmation } : {}) })).structured?.url as string;
+    return { ...w, visits, id, token: url.slice(url.lastIndexOf("/") + 1) };
+  }
+
+  /** A desk whose door runs `between` after the grant check and before the release, as a cancel and a sync would. */
+  function racing(w: ReturnType<typeof pageWorld>, between: () => Promise<void>) {
+    const door = Object.create(w.door) as typeof w.door;
+    door.checkGrant = async (flow, jobId) => {
+      const state = await w.door.checkGrant(flow, jobId);
+      await between();
+      return state;
+    };
+    return new VisitCodeDesk(w.root, { now: () => w.now(), door: () => door, textsAllowed: async () => true, stopped: () => false, send: async () => true, optedInHere: () => false });
+  }
+
+  it("a cancel during the tap shows no code and puts no new code on the lock", async () => {
+    const w = pageWorld();
+    await w.tick();
+    expect(w.fake.liveCodes("dev-front")).toHaveLength(1);
+    const desk = racing(w, async () => {
+      w.visits.cancelVisit({ id: w.id });
+      await w.tick();
+    });
+    expect(await desk.showHostCode(w.token)).toEqual({ ok: false, reason: "gone" });
+    expect(w.fake.liveCodes("dev-front")).toEqual([]);
+  });
+
+  it("never shows the host's saved code, even when the visitor's own code is gone by the release", async () => {
+    const w = pageWorld();
+    const saved = ["7", "3", "0", "6"].join("");
+    expect(w.door.save(saved, undefined, undefined).ok).toBe(true);
+    await w.tick();
+    const desk = racing(w, async () => {
+      await w.door.revokeGrant("visit", w.id);
+    });
+    const shown = await desk.showHostCode(w.token);
+    expect(shown.ok).toBe(false);
+    expect(JSON.stringify(shown)).not.toContain(saved);
+    expect(w.fake.liveCodes("dev-front")).toEqual([]);
   });
 });

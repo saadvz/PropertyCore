@@ -373,7 +373,7 @@ describe("the vendor's reply", () => {
     w.at(Date.parse(DUE_VISIT.from) - 48 * 60 * MIN);
     await w.desk().tick();
     await w.desk().tick();
-    expect(w.news().filter((t) => t === "Bug Busters hasn't answered about pest control on Sun, Jan 10, 9 to 11 AM. No code goes out until they confirm.")).toHaveLength(1);
+    expect(w.news().filter((t) => t.startsWith("Bug Busters hasn't answered about pest control on Sun, Jan 10, 9 to 11 AM. No code goes out until they confirm."))).toHaveLength(1);
     expect(w.fake.liveCodes("dev-front")).toEqual([]);
   });
 
@@ -671,5 +671,68 @@ describe("a schedule that starts today", () => {
     expect((await saveFrom(w, "2026-12-19")).isError).toBe(true);
     expect((await saveFrom(w, "2027-12-22")).isError).toBe(true);
     expect(readFixer(w.root).upkeep).toEqual([]);
+  });
+});
+
+describe("the host passes on a vendor's yes (#243 ruling, extended 25 Nov)", () => {
+  it("confirm_visit takes the host's two-call yes on a proposed visit, records the host and how, and makes the code", async () => {
+    const w = await proposed();
+    const jobId = w.job()!.id;
+    const asked = await w.desk().confirmVisit({ jobId, via: "call" });
+    expect(asked.isError).toBe(false);
+    expect(codeOf(asked)).toBeDefined();
+    expect(w.job()!.booking!.vendor!.confirmedAt).toBeUndefined();
+    expect(w.fake.liveCodes("dev-front")).toEqual([]);
+    const done = await approved((confirmation) => w.desk().confirmVisit({ jobId, via: "call", ...(confirmation ? { confirmation } : {}) }));
+    expect(done.structured).toMatchObject({ confirmed: true, by: "host", via: "call" });
+    const booking = w.job()!.booking!;
+    expect(booking.vendor!.confirmedAt).toBeDefined();
+    expect(booking.confirmed).toMatchObject({ by: "host", via: "call" });
+    // The standing yes is the host's OK for the code, as with the vendor's own YES.
+    expect(booking.codeYes).toBeDefined();
+    await w.desk().tick();
+    expect(w.fake.liveCodes("dev-front")).toHaveLength(1);
+    const code = w.fake.liveCodes("dev-front")[0]!.code;
+    expect(JSON.stringify(done)).not.toContain(code);
+    expect(w.sent.some((s) => s.body.includes(code) || s.body.includes(SAVED))).toBe(false);
+  });
+
+  it("the vendor's text YES after the host's changes nothing and sends nothing", async () => {
+    const w = await proposed();
+    const jobId = w.job()!.id;
+    await approved((confirmation) => w.desk().confirmVisit({ jobId, via: "email", ...(confirmation ? { confirmation } : {}) }));
+    const before = w.toBugs().length;
+    await w.text("YES", "after-host");
+    expect(w.toBugs().length).toBe(before);
+    expect(w.job()!.booking!.confirmed).toMatchObject({ by: "host", via: "email" });
+    expect(w.news().filter((t) => t.includes("confirmed pest control"))).toHaveLength(0);
+  });
+
+  it("a visit the vendor already confirmed by text answers already, with nothing new on record", async () => {
+    const w = await proposed();
+    await w.text("Yes", "m1");
+    const confirmedAt = w.job()!.booking!.vendor!.confirmedAt;
+    const reply = await w.desk().confirmVisit({ jobId: w.job()!.id, via: "call" });
+    expect(reply.structured).toMatchObject({ confirmed: true, already: true });
+    expect(w.job()!.booking!.confirmed).toBeUndefined();
+    expect(w.job()!.booking!.vendor!.confirmedAt).toBe(confirmedAt);
+  });
+
+  it("a vendor who replied STOP can still be confirmed by the host, and gets no text", async () => {
+    const w = await proposed();
+    await w.text("STOP");
+    const before = w.toBugs().length;
+    await approved((confirmation) => w.desk().confirmVisit({ jobId: w.job()!.id, via: "call", ...(confirmation ? { confirmation } : {}) }));
+    await w.desk().tick();
+    expect(w.job()!.booking!.vendor!.confirmedAt).toBeDefined();
+    expect(w.fake.liveCodes("dev-front")).toHaveLength(1);
+    expect(w.toBugs().length).toBe(before);
+  });
+
+  it("the 48-hour note offers the host's way", async () => {
+    const w = await proposed();
+    w.at(Date.parse(DUE_VISIT.from) - 48 * 60 * MIN);
+    await w.desk().tick();
+    expect(w.news()).toContain("Bug Busters hasn't answered about pest control on Sun, Jan 10, 9 to 11 AM. No code goes out until they confirm. If they told you yes another way, tell me and I'll make their code.");
   });
 });

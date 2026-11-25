@@ -119,3 +119,39 @@ describe("visit codes on the shared service (#280 17)", () => {
     expect((await accountPeople(m.hosted(), m.registry.get(a.tenant.id)!)).optedIn(MIKE)).toBe(true);
   });
 });
+
+describe("the host's page with a visitor's code on the shared service (25 Nov)", () => {
+  it("confirm_expected_visit and visit_code_link make a page on its own property's path only: no code on GET, the code once on POST", async () => {
+    const { m, fake, a, b } = await world();
+    invited(a.root);
+    const call = (name: string, args: Record<string, unknown>) => oversightCall(m.hosted(), a.tenant, a.property, name, args);
+    const twice = (name: string, args: Record<string, unknown>) => {
+      const first = call(name, args);
+      const code = (first.structured?.confirmation as { code?: string } | undefined)?.code;
+      return code ? call(name, { ...args, confirmation: code }) : first;
+    };
+    expect(twice("confirm_expected_visit", { id: "v-0000aaaa", via: "call" }).isError).toBe(false);
+    await tickAllLocks(m.hosted());
+    expect(fake.liveCodes("dev-a")).toHaveLength(1);
+    const code = fake.liveCodes("dev-a")[0]!.code;
+    const made = twice("visit_code_link", { id: "v-0000aaaa" });
+    expect(made.isError, made.text).toBe(false);
+    expect(made.text.includes(code)).toBe(false);
+    const url = String(made.structured!.url);
+    const prefix = "/oversight/visit-code/";
+    const pageToken = url.slice(url.indexOf(prefix) + prefix.length);
+    const path = (tenant: { id: string }, property: { id: string }) => `/t/${tenant.id}/p/${property.id}${prefix}${pageToken}`;
+    const page = await m.app.http(path(a.tenant, a.property), { method: "GET" });
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain("Door code for Mike Doyle at 1 Lane Lane");
+    expect(html.includes(code)).toBe(false);
+    expect((await m.app.http(path(b.tenant, b.property), { method: "GET" })).status).toBe(404);
+    const post = () => m.app.http(`${path(a.tenant, a.property)}/show`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    const shown = await post();
+    expect(shown.status).toBe(200);
+    expect(((await shown.json()) as { code?: string }).code === code).toBe(true);
+    expect((await post()).status).toBe(404);
+    expect(m.app.logs.some((line) => line.includes(code) || line.includes(pageToken))).toBe(false);
+  });
+});
