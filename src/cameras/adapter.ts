@@ -35,6 +35,8 @@ export interface CameraDevice {
   id: string;
   /** The name the host gave it in the provider's app. */
   name: string;
+  /** Online or offline, when the provider said so with the list. Unset when it didn't. */
+  online?: boolean;
 }
 
 /** One event as the provider reports it, before it is a stored line. */
