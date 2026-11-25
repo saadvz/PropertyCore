@@ -50,8 +50,8 @@ export function visitWindow(visit: Pick<ExpectedVisit, "date" | "from" | "to">, 
 
 export interface WantedVisitInput extends VisitWindowInput {
   now: Date;
-  /** Whether this phone may have a code here now: the visitor's YES (or opted in on the property), no STOP. */
-  mayHaveCode(phone: string): boolean;
+  /** Whether this visit's person may have a code for it now: the host's yes for the visit, or the visitor's YES (or opted in on the property) with no STOP. */
+  mayHaveCode(visit: ExpectedVisit): boolean;
 }
 
 /** The visit codes wanted now, and the visits whose window falls inside a stay (no code for those). */
@@ -59,7 +59,7 @@ export function wantedVisitCodes(file: OversightFile, input: WantedVisitInput): 
   const wanted: WantedCode[] = [];
   const duringStay: string[] = [];
   for (const visit of file.visits) {
-    if (visit.cancelledAt || !visit.phone || !input.mayHaveCode(visit.phone)) continue;
+    if (visit.cancelledAt || !visit.phone || !input.mayHaveCode(visit)) continue;
     let window: CodeWindow | "during-stay";
     try {
       window = visitWindow(visit, input);

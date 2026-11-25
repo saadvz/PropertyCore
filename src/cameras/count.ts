@@ -3,7 +3,7 @@ import type { Counter } from "./counter";
 import { isCameraEvent, isCountLine, type CameraEventLine, type EventLog, type StoredLine } from "./lines";
 
 /**
- * The counting pass (#239): for each stored motion event inside a stay, fetch the snapshot at its time, count it,
+ * The counting pass (#239): for each stored motion event inside a stay (or the counting week), fetch the snapshot at its time, count it,
  * append a count line, and drop the image. Run on the clock tick and after a webhook is stored. An event is
  * tried three times in all, then left uncounted for the night's check to list. At most `cap` events are counted a
  * night; the rest wait for the next pass.
@@ -23,13 +23,15 @@ export interface CountingDeps {
   account: AccountRef;
   counter: Counter;
   log: EventLog;
-  /** Whether a time falls inside a stay with a house rule the cameras can watch. */
+  /** Whether an event at a time is counted: inside a stay with a house rule the cameras can watch, or in the counting week. */
   inStay(at: string): boolean;
   /** The stay night a time belongs to, for the nightly cap. */
   nightOf(at: string): string;
   /** The local time for the counter's hint, like "9:14 PM". */
   localTime?(at: string): string;
   cap?: number;
+  /** A night's cap for an event's time, when it differs from `cap` (the counting week's is higher). */
+  capAt?(at: string): number | undefined;
 }
 
 export interface CountingRun {
@@ -62,7 +64,7 @@ export class CameraCounting {
 
   private async pass(): Promise<CountingRun> {
     const lines = this.deps.log.read();
-    const cap = this.deps.cap ?? NIGHT_CAP;
+    const cap = (at: string) => this.deps.capAt?.(at) ?? this.deps.cap ?? NIGHT_CAP;
     const used = new Map<string, number>();
     const eventNight = new Map(lines.filter(isCameraEvent).map((line) => [line.id, this.deps.nightOf(line.at)]));
     for (const line of lines.filter(isCountLine).filter((count) => count.counter === this.deps.counter.name)) {
@@ -72,7 +74,7 @@ export class CameraCounting {
     const result: CountingRun = { counted: 0, failed: 0, waiting: 0 };
     for (const line of this.pending(lines)) {
       const night = this.deps.nightOf(line.at);
-      if ((used.get(night) ?? 0) >= cap) {
+      if ((used.get(night) ?? 0) >= cap(line.at)) {
         result.waiting += 1;
         continue;
       }

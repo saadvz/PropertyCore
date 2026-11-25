@@ -1,13 +1,14 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { readFixer, FIXER_FILE } from "../fixer-core/store";
+import { readFixer, FIXER_FILE, tokenHash } from "../fixer-core/store";
+import { sameHash } from "../hub/uploadCode";
 import type { OccupyInput } from "../fixer-core/window";
 import type { DoorAccess, GrantNote } from "../hub/doorAccess";
 import { streetOf } from "../hub/people";
 import { readHubFile, type Stay } from "../hub/store";
 import { readOversight, writeOversight, type OversightFile } from "./store";
 import { visitWindow, wantedVisitCodes } from "./visitCodes";
-import { visitCodeText, visitDuringStayNote, visitHostPhoneNote, visitInviteFailedNote, visitInviteText, visitNotSentNote, visitRefusedNote, visitTextedNote, visitTrimmedNote, visitTextsOffNote, visitUnsureNote } from "./visitCodeTexts";
+import { visitCodeText, visitDuringStayNote, visitHostPageNote, visitHostPhoneNote, visitInviteFailedNote, visitInviteText, visitNoYesNote, visitNotSentNote, visitRefusedNote, visitTextedNote, visitTrimmedNote, visitTextsOffNote, visitUnsureNote } from "./visitCodeTexts";
 import type { ExpectedVisit, Visitor } from "./visits";
 
 /**
@@ -19,6 +20,9 @@ import type { ExpectedVisit, Visitor } from "./visits";
 const MINUTE_MS = 60_000;
 const INVITE_RETRY_MS = 10 * MINUTE_MS;
 const INVITE_TRIES = 6;
+/** The one "no yes" note: this long before the code's window, and at least this long after the save. */
+const NO_YES_BEFORE_MS = 120 * MINUTE_MS;
+const NO_YES_AFTER_SAVE_MS = 30 * MINUTE_MS;
 const DEFAULT_BUFFER_MINUTES = 60;
 const STOP_WORDS = ["stop", "stopall", "unsubscribe", "cancel", "end", "quit"];
 const START_WORDS = ["start", "unstop"];
@@ -42,6 +46,8 @@ export interface VisitCodeDeps {
 export class VisitCodeDesk {
   /** The host's confirmed phone as this pass read it. */
   private host: string | undefined;
+  /** Lock notes from a code page tap, for the host on the next pass. */
+  private held: GrantNote[] = [];
 
   constructor(
     private readonly root: string,
@@ -104,12 +110,21 @@ export class VisitCodeDesk {
     return file.visitors?.find((item) => item.phone === phone);
   }
 
-  /** The visitor said YES here or on the property, and nobody said STOP. */
-  private mayHaveCode(file: OversightFile, phone: string): boolean {
+  /** The visitor said YES here or on the property, and nobody said STOP: their code may go by text. */
+  private textable(file: OversightFile, phone: string): boolean {
     if (phone === this.host) return false;
     const visitor = this.visitorOf(file, phone);
     if (visitor?.stoppedAt || this.deps.stopped(phone)) return false;
     return Boolean(visitor?.yesAt) || this.deps.optedInHere(phone);
+  }
+
+  /**
+   * This visit may have its code: the host passed on the visitor's yes for it, or the visitor may get texts. A STOP
+   * means no texts, not no entry, so the host's yes stands through one (25 Nov). Never the host's own phone.
+   */
+  private mayHaveCode(file: OversightFile, visit: ExpectedVisit): boolean {
+    if (!visit.phone || visit.phone === this.host) return false;
+    return Boolean(visit.confirmed) || this.textable(file, visit.phone);
   }
 
   /** A visit still ahead: not cancelled, with a phone, its own window (without stays) not over. */
@@ -144,13 +159,14 @@ export class VisitCodeDesk {
     } catch {
       // The host's phone unknown just now: the people-list check at add_expected_visit still stands.
     }
-    const notes: GrantNote[] = [];
+    const notes: GrantNote[] = this.held.splice(0);
     for (const visit of start.visits) {
       if (this.host && visit.phone === this.host && this.upcoming(visit, timeZone)) notes.push(...this.once(visit, "host-phone", visitHostPhoneNote(visit.who)));
     }
     notes.push(...(await this.invites(start, timeZone)));
     const file = this.read() ?? start;
-    const { wanted, duringStay } = wantedVisitCodes(file, { now: this.deps.now(), timeZone, stays: this.stays(), occupy: this.occupy(timeZone), mayHaveCode: (phone) => this.mayHaveCode(file, phone) });
+    notes.push(...this.noYes(file, timeZone));
+    const { wanted, duringStay } = wantedVisitCodes(file, { now: this.deps.now(), timeZone, stays: this.stays(), occupy: this.occupy(timeZone), mayHaveCode: (visit) => this.mayHaveCode(file, visit) });
     try {
       notes.push(...(await door.syncGrants("visit", wanted)));
     } catch {
@@ -173,6 +189,87 @@ export class VisitCodeDesk {
       notes.push(...(await this.release(door, visit, want.window, timeZone)));
     }
     return notes;
+  }
+
+  /**
+   * One host note for each visit with a phone and no yes on record (25 Nov): 2 hours before its code's window, or 30
+   * minutes after the save when that's later, never past the window's start. Never for the host's own phone.
+   */
+  private noYes(file: OversightFile, timeZone: string): GrantNote[] {
+    const notes: GrantNote[] = [];
+    const now = this.deps.now().getTime();
+    for (const visit of file.visits) {
+      if (!this.upcoming(visit, timeZone) || visit.phone === this.host || this.mayHaveCode(file, visit) || visit.code?.told?.includes("no-yes")) continue;
+      const window = visitWindow(visit, { timeZone, stays: [], occupy: { timeZone, checkInBufferMinutes: 0 } });
+      if (window === "during-stay") continue;
+      const from = Date.parse(window.from);
+      const askAt = Math.max(from - NO_YES_BEFORE_MS, Math.min(Date.parse(visit.savedAt) + NO_YES_AFTER_SAVE_MS, from));
+      if (now >= askAt) notes.push(...this.once(visit, "no-yes", visitNoYesNote(visit.who)));
+    }
+    return notes;
+  }
+
+  /** The visit a host code page token opens: confirmed by the host, live, unused, not expired. Reads only. */
+  private hostLinkVisit(file: OversightFile, token: string): ExpectedVisit | undefined {
+    if (!/^[a-p]{40}$/.test(token)) return undefined;
+    const hash = tokenHash(token);
+    const now = this.deps.now().getTime();
+    return file.visits.find((visit) => {
+      const link = visit.hostLink;
+      return Boolean(link && !link.usedAt && !visit.cancelledAt && visit.confirmed && now < Date.parse(link.expiresAt) && sameHash(hash, link.hash));
+    });
+  }
+
+  /** Whether a host code page token is live, for showing the page: the visitor's name and the street. Reads only. */
+  pageOpen(token: string): { who: string; street: string } | undefined {
+    const file = this.read();
+    const visit = file ? this.hostLinkVisit(file, token) : undefined;
+    return visit ? { who: visit.who, street: this.street() } : undefined;
+  }
+
+  /**
+   * The host code page's "show the code": the visitor's own code, once. Only a code already on the lock shows (never
+   * the host's saved code); while it's still going on, the link keeps working. Never logged or kept.
+   */
+  async showHostCode(token: string): Promise<{ ok: true; code: string; doors?: { door: string; code: string }[] } | { ok: false; reason: "gone" | "pending" | "failed" }> {
+    const door = this.connected();
+    const timeZone = this.timeZone();
+    const file = this.read();
+    const visit = file ? this.hostLinkVisit(file, token) : undefined;
+    if (!door || !timeZone || !file || !visit || !this.mayHaveCode(file, visit)) return { ok: false, reason: "gone" };
+    let window;
+    try {
+      window = visitWindow(visit, { timeZone, stays: this.stays(), occupy: this.occupy(timeZone) });
+    } catch {
+      return { ok: false, reason: "gone" };
+    }
+    if (window === "during-stay" || this.deps.now().getTime() >= Date.parse(window.until)) return { ok: false, reason: "gone" };
+    const state = await door.checkGrant("visit", visit.id);
+    if (state !== "set") return { ok: false, reason: state === "failed" ? "failed" : "pending" };
+    // Claimed on a fresh read before the release, so two taps can't both show it, and a cancel, a changed phone or
+    // a lost yes in between shows nothing; given back when nothing shows.
+    let claimed = false;
+    const at = this.deps.now().toISOString();
+    this.patch((current) => {
+      const mine = current.visits.find((item) => item.id === visit.id);
+      if (!mine?.hostLink || mine.hostLink.usedAt || mine.hostLink.hash !== visit.hostLink!.hash) return;
+      if (mine.cancelledAt || !mine.confirmed || mine.phone !== visit.phone || !this.mayHaveCode(current, mine)) return;
+      mine.hostLink.usedAt = at;
+      claimed = true;
+    });
+    if (!claimed) return { ok: false, reason: "gone" };
+    // Only the visitor's own code already on the lock: never a new one, and never the host's saved code.
+    const grant = await door.request({ person: visit.phone!, window, purpose: "visit", jobId: visit.id, label: visit.who, ownOnly: true });
+    // Lock notes (a backup code, a door that failed) reach the host on the next pass.
+    this.held.push(...(grant.notes ?? []));
+    if (!grant.ok || grant.kind !== "code" || !/^\d{4,8}$/.test(grant.code)) {
+      this.patch((current) => {
+        const mine = current.visits.find((item) => item.id === visit.id);
+        if (mine?.hostLink) delete mine.hostLink.usedAt;
+      });
+      return { ok: false, reason: "failed" };
+    }
+    return { ok: true, code: grant.code, ...(grant.doors ? { doors: grant.doors } : {}) };
   }
 
   /** The one opt-in text to each visitor with a visit ahead who hasn't said YES. Marked only once it went. */
@@ -223,6 +320,9 @@ export class VisitCodeDesk {
   /** One visit's code text: at most once, the mark saved before the send. */
   private async release(door: DoorAccess, visit: ExpectedVisit, window: { from: string; until: string }, timeZone: string): Promise<GrantNote[]> {
     if (visit.code?.textAt) return visit.code.sent || visit.code.notSent ? [] : this.once(visit, "unsure", visitUnsureNote(visit.who));
+    // A yes the host passed on, with no text YES: no code text. The host reads it from their own page.
+    const file = this.read();
+    if (!file || !this.textable(file, visit.phone!)) return visit.hostLink?.usedAt ? [] : this.once(visit, "host-page", visitHostPageNote(visit.who));
     let allowed = false;
     try {
       allowed = await this.deps.textsAllowed();
@@ -236,7 +336,7 @@ export class VisitCodeDesk {
     let go = false;
     this.patch((file) => {
       const current = file.visits.find((item) => item.id === visit.id);
-      if (!current || current.cancelledAt || current.code?.textAt || current.phone !== visit.phone || !this.mayHaveCode(file, visit.phone!)) return;
+      if (!current || current.cancelledAt || current.code?.textAt || current.phone !== visit.phone || !this.textable(file, visit.phone!)) return;
       (current.code ??= {}).textAt = at;
       go = true;
     });
@@ -276,7 +376,7 @@ export class VisitCodeDesk {
 
   /**
    * A visitor's text on the shared line. Their YES (after the invite) is taken and their code follows on this
-   * sync; STOP takes their codes off and returns false, so the usual routing still records it. After a STOP, their
+   * sync; STOP takes off the codes that rested on their text YES (a visit the host confirmed keeps its code: no texts, not no entry) and returns false, so the usual routing still records it. After a STOP, their
    * START or YES puts them back (a YES after the invite is their YES too) and returns false, so the line's own START
    * handling lifts the account-wide opt-out; their codes come back on the next pass.
    */

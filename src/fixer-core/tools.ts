@@ -252,7 +252,7 @@ export const FIXER_TOOLS: FixerTool[] = [
   {
     name: "confirm_visit",
     title: "The pro confirmed the visit",
-    description: `A pro's door code is made only once their yes to the booked visit is on record. A pro who texts on the line confirms by replying YES to the one text they get. Otherwise the host passes it on: via email or call when the pro confirmed that way, or host-arranged when the host set the visit up with the pro themselves. ${TWO_CALL}`,
+    description: `A pro's door code is made only once their yes to the booked visit is on record. A pro who texts on the line confirms by replying YES to the one text they get. Otherwise the host passes it on: via email or call when the pro confirmed that way, or host-arranged when the host set the visit up with the pro themselves. A routine vendor's proposed visit takes it the same way when the vendor told the host yes off the text line. ${TWO_CALL}`,
     input: z.object({ jobId: Id, via: z.enum(["email", "call", "host-arranged"]), confirmation: Confirmation }).strict(),
   },
   {

@@ -188,7 +188,25 @@ function featuresSection(t: Tenant, base: string, csrf: string, rows: FeatureRow
       </table>`;
 }
 
-export function tenantPage(t: Tenant, csrf: string, error: string | undefined, health: TenantHealth, touringOffered: boolean, features: FeatureRow[] = []): string {
+/** A property's counting week (#239), for its review sheet's link. */
+export interface CountingWeekLink {
+  propertyId: string;
+  label: string;
+  from: string;
+  until: string;
+}
+
+function countingSection(base: string, weeks: readonly CountingWeekLink[]): string {
+  if (!weeks.length) return "";
+  const rows = weeks
+    .map((week) => `<li>${escape(week.label)}: ${escape(week.from.slice(0, 10))} to ${escape(week.until.slice(0, 10))}. <a href="${escape(`${base}/count-sheet?property=${encodeURIComponent(week.propertyId)}`)}">Download the review sheet</a></li>`)
+    .join("\n");
+  return `<h2>Counting week</h2>
+      <p>One row per counted camera event. Fill in host_people, host_vehicles and host_animals from the Ring app, then score it.</p>
+      <ul>${rows}</ul>`;
+}
+
+export function tenantPage(t: Tenant, csrf: string, error: string | undefined, health: TenantHealth, touringOffered: boolean, features: FeatureRow[] = [], countingWeeks: readonly CountingWeekLink[] = []): string {
   const base = `/admin/tenants/${t.id}`;
   const connections = t.connections
     .map((c) => {
@@ -208,6 +226,7 @@ export function tenantPage(t: Tenant, csrf: string, error: string | undefined, h
       ${propertiesSection(t, base, csrf, health, touringOffered)}
       <h2>Features</h2>
       ${featuresSection(t, base, csrf, features)}
+      ${countingSection(base, countingWeeks)}
       <h2>Connections</h2>
       <table>
         <tr><th>Chat</th><th>Runs</th><th>Connected</th><th></th><th></th></tr>

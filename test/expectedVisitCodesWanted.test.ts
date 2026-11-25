@@ -62,7 +62,14 @@ describe("wantedVisitCodes", () => {
     expect(wantedVisitCodes(file(visit({ cancelledAt: iso("10:00", "18") })), base).wanted).toEqual([]);
     expect(wantedVisitCodes(file(visit({ phone: undefined })), base).wanted).toEqual([]);
     expect(wantedVisitCodes(file(visit()), { ...base, now: new Date(iso("17:00")) }).wanted).toEqual([]);
-    expect(wantedVisitCodes(file(visit()), { ...base, mayHaveCode: (phone) => phone !== MIKE }).wanted).toEqual([]);
+    expect(wantedVisitCodes(file(visit()), { ...base, mayHaveCode: (item) => item.phone !== MIKE }).wanted).toEqual([]);
+  });
+
+  it("asks per visit, so a host's yes for one visit never opens another for the same phone", () => {
+    const yes = visit({ id: "v-0000bbbb", confirmed: { at: iso("09:10", "17"), by: "host", via: "call" } });
+    const other = visit({ id: "v-0000cccc", date: "2026-11-20" });
+    const wanted = wantedVisitCodes(file(yes, other), { ...base, mayHaveCode: (item) => Boolean(item.confirmed) }).wanted;
+    expect(wanted.map((item) => item.jobId)).toEqual(["v-0000bbbb"]);
   });
 
   it("a visit that falls inside a stay is listed, with no code", () => {

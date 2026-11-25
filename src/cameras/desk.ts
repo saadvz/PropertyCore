@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { zonedParts } from "../core/timezone";
 import { stayForNight } from "../hub/bookingEmails";
-import { addCalendarDays, zonedInstant } from "../hub/calendar";
+import { addCalendarDays, formatWhen, zonedInstant } from "../hub/calendar";
 import { readHubFile, type HubFile } from "../hub/store";
 import type { NightResult } from "../stay-check/check";
 import { stayCheckDeskFor, type StayCheckDesk } from "../stay-check/desk";
@@ -42,6 +42,10 @@ const ok = (structured: Record<string, unknown>): CameraReply => ({ text: JSON.s
 const fail = (text: string): CameraReply => ({ text, isError: true });
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_TOLD = 200;
+/** The counting test runs one week (#239). */
+export const COUNTING_WEEK_MS = 7 * 24 * 3600_000;
+/** Counted events a night in the counting week: every event is wanted there, but Ring's snapshots still need a bound. */
+export const COUNTING_WEEK_CAP = 200;
 
 export class CameraDesk {
   private readonly stays: StayCheckDesk;
@@ -116,6 +120,63 @@ export class CameraDesk {
     }
     writeCameras(this.root, { ...file, cameras: picked });
     return ok({ saved: true, cameras: picked.map(({ deviceId, name }) => ({ deviceId, name })), next: picked.length ? "Saved. Events from these cameras are kept from now on, and the nightly check reads them." : "Saved. No camera is read for this property now." });
+  }
+
+  /**
+   * The one-week counting test (#239), started only after the host agreed in chat: for 7 days from now, every motion
+   * event on the picked cameras is counted, day and night, whether or not a guest is staying. The host's own nightly
+   * review is scored against these counts. Starting again while a week runs changes nothing; `stop` ends it early.
+   */
+  countingWeek(input: { action?: unknown; hostAgreed?: unknown }): CameraReply {
+    const file = this.cameras();
+    const now = this.deps.now();
+    const running = file.countingWeek && Date.parse(file.countingWeek.until) > now.getTime() ? file.countingWeek : undefined;
+    if (input.action === "stop") {
+      if (!running) return ok({ running: false, next: "No counting week is running." });
+      writeCameras(this.root, { ...file, countingWeek: { from: running.from, until: now.toISOString() } });
+      return ok({ running: false, stopped: true, next: "The counting week is stopped. Motion events are counted only during a guest's stay again." });
+    }
+    if (input.action !== "start") return fail('Give action "start" or "stop".');
+    if (running) return ok({ running: true, from: running.from, until: running.until, next: `The counting week is already running until ${this.when(running.until)}.` });
+    if (input.hostAgreed !== true) return fail("Read the counting week back to the host first, and set hostAgreed only after they say yes.");
+    if (!file.cameras.length) return fail("No camera is picked for this property yet. Ask the host which cameras are outdoors, then call pick_cameras.");
+    const week = { from: now.toISOString(), until: new Date(now.getTime() + COUNTING_WEEK_MS).toISOString() };
+    writeCameras(this.root, { ...file, countingWeek: week });
+    return ok({
+      running: true,
+      ...week,
+      cameras: file.cameras.map(({ deviceId, name }) => ({ deviceId, name })),
+      next: `Started. Until ${this.when(week.until)}, a still from every motion event on ${file.cameras.map((camera) => camera.name).join(", ")} is counted on Property Core's server, then deleted. Tell the host to note each evening how many people, vehicles and pets they saw in the Ring app's events, so their review can be scored against ours.`,
+    });
+  }
+
+  /** The counting week's window, when one is saved (running or done). */
+  countingWindow(): { from: string; until: string } | undefined {
+    return this.cameras().countingWeek;
+  }
+
+  /** Whether a time falls in the counting week. */
+  inCountingWeek(at: string): boolean {
+    const week = this.countingWindow();
+    const when = Date.parse(at);
+    return !!week && when >= Date.parse(week.from) && when < Date.parse(week.until);
+  }
+
+  /** Whether a motion event at a time is counted: in a stay with a camera rule, or in the counting week. */
+  counts(at: string): boolean {
+    return this.inCountingWeek(at) || this.inStay(at);
+  }
+
+  /** The night's counting cap for an event's time: higher in the counting week, where every event is wanted. */
+  capAt(at: string): number | undefined {
+    return this.inCountingWeek(at) ? COUNTING_WEEK_CAP : undefined;
+  }
+
+  private when(iso: string): string {
+    const timeZone = this.timeZone();
+    if (!timeZone) return `${iso.slice(0, 16).replace("T", " ")} UTC`;
+    const { day, time } = formatWhen(iso, timeZone);
+    return `${day} at ${time}`;
   }
 
   /** Forgets the property's camera picks. Stored lines stay: the log is append-only. */

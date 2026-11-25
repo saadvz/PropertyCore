@@ -4,6 +4,7 @@ import { rmSync } from "node:fs";
 import { parsePhone } from "../../core/phone";
 import { forgetLiveDesk, liveDeskFor } from "../liveDesk";
 import { forgetPeople } from "../../hub/people";
+import { countingWeeks, countSheetFor } from "../../hosted/cameras";
 import { setFlows } from "../../hosted/service";
 import { propertyFolder } from "./properties";
 import { refreshTouringAlerts as tellTouringAlerts } from "../../hosted/touringAlerts";
@@ -177,6 +178,14 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
       return html(200, pool(h, live.csrf));
     }
     const tenant = tenantFrom(deps, path);
+    if (tenant && path === `/admin/tenants/${tenant.id}/count-sheet`) {
+      // The counting week's review sheet (#239): counted events only, never an image, link or code.
+      const sheet = countSheetFor(h, tenant, url.searchParams.get("property") ?? "", { from: url.searchParams.get("from") ?? undefined, to: url.searchParams.get("to") ?? undefined });
+      if ("error" in sheet) return html(400, messagePage("No sheet", sheet.error));
+      res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${sheet.filename}"`, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+      res.end(sheet.csv);
+      return true;
+    }
     if (!tenant || path !== `/admin/tenants/${tenant.id}`) return html(404, messagePage("Not found", "That page doesn't exist."));
     return html(200, page(h, tenant, live.csrf));
   }
@@ -375,7 +384,7 @@ function touringOffered(h: HostedCleaner): boolean {
 }
 
 function page(h: HostedCleaner, tenant: Tenant, csrf: string, error?: string): string {
-  return tenantPage(tenant, csrf, error, healthOf(h, tenant), touringOffered(h), featureRows(h, tenant));
+  return tenantPage(tenant, csrf, error, healthOf(h, tenant), touringOffered(h), featureRows(h, tenant), countingWeeks(h, tenant));
 }
 
 /** Each feature's switch on this account, and what featureOn makes of it with the service's settings. */

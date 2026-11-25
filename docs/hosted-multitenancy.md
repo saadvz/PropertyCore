@@ -301,8 +301,8 @@ Behind each account's switch:
   locks it texts nobody. With Connected locks on and the property on them, `approve_bring_in_code` is listed too,
   and the picked person (the cleaner, a co-host or an assistant who said YES) gets their own bring-in code for the
   window, by one text under the host's `release.packages` choice (ask by default).
-- **Expected visits (`oversight`).** `add_expected_visit`, `list_expected_visits` and `cancel_expected_visit`,
-  listed when any property runs a flow. The agent saves a visit only after reading it back and the host agreeing.
+- **Expected visits (`oversight`).** `add_expected_visit`, `list_expected_visits`, `cancel_expected_visit`,
+  `confirm_expected_visit` and `visit_code_link`, listed when any property runs a flow. The agent saves a visit only after reading it back and the host agreeing.
   `oversight.json` keeps the visits and when each was flagged. A visit with no entry is flagged the same day: 1 hour
   after its window, or at 8 PM for an all-day visit. It reads the visit log: unlocks and lock status only with
   Connected locks on and the property on them, camera sightings only with Cameras on; otherwise a visit is "can't
@@ -310,7 +310,11 @@ Behind each account's switch:
   15 minutes from 7 AM local and sends a new flag through the account's Alerts routine, once. With Connected locks on
   and the property on them, `add_expected_visit` also takes the visitor's `phone` (#280 17): with the host's yes the
   visitor gets one opt-in text, and after their YES their own code for the visit's window, by one text 30 minutes
-  before, on the lock clock. Never during a guest's stay; STOP or a cancel takes it off.
+  before, on the lock clock. Never during a guest's stay; STOP or a cancel takes it off. When the visitor told the
+  host yes another way (email, a call, or the host set it up), `confirm_expected_visit` or `add_expected_visit`'s
+  `confirmedVia` makes that one visit's code, through a STOP too, with no code text: `visit_code_link` gives the
+  host a single-use page at `/oversight/visit-code/` under the property's path with the visitor's own code to read
+  to them. A visit with a phone and no yes gets one host note 2 hours before its code's window.
 - **Booking platforms (`booking-platforms`).** `save_sources` takes `bookingEmails` (Airbnb, Vrbo, Booking.com,
   the host's own site or Other, with each sender) and `shareSamples`; `get_state` and `check_now` return
   `bookingEmails` and `waitingBookings`; `read_booking_email` takes `extracted` and `email.authentication`; and the
@@ -331,8 +335,10 @@ Behind each account's switch:
   a property on connected locks whose host chose automatic or ask gets guest codes; leases each take the host's
   yes. With it off, nothing changes.
 - **Cameras (`cameras`).** Needs `CAMERA_TOKEN_KEY` and the three `RING_*` secrets on the service; counting also
-  needs `CAMERA_DETECTOR_MODEL`. `connect_cameras`, `list_cameras`, `pick_cameras`, `disconnect_cameras`,
-  `check_night`, `stay_timeline` and `pin_clip`, listed when any property runs a flow. `POST /webhooks/ring`,
+  needs `CAMERA_DETECTOR_MODEL`. `connect_cameras`, `list_cameras`, `pick_cameras`, `counting_week`, `disconnect_cameras`,
+  `check_night`, `stay_timeline` and `pin_clip`, listed when any property runs a flow. Motion stills are counted
+  during a stay with a camera rule, and, once the host agrees to `counting_week`, for 7 days whatever the calendar
+  (#239's counting test). Its review sheet downloads from the account's /admin page (`/admin/tenants/<id>/count-sheet`). `POST /webhooks/ring`,
   `/cameras/connect/<link>` and Ring's account-linking addresses (`POST /cameras/ring/token`, `/cameras/ring/link`
   and the homepage `/cameras/ring`, #302) answer once some account has Cameras on, and each event or link is checked
   against its own account. The host agrees on the one-time link, then connects Property Core in Ring: Ring posts a

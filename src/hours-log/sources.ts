@@ -7,7 +7,7 @@ import { readHubFile, type Stay } from "../hub/store";
 import { effectiveSeen, PACKAGES_FILE, readPackages, supplyKey, type PackagesFile } from "../package-arrivals/store";
 import { readSupply, SUPPLY_FILE, type SupplyFile } from "../supply-core/store";
 import { buildVisits, type VisitRecord } from "../visits/derive";
-import { codePerson } from "../visits/events";
+import { codePerson, type CodeNames, type LockConnectionEvent, type LockEvent } from "../visits/events";
 import { VISIT_EVENTS_DIR, VisitLog } from "../visits/store";
 import type { RowKind } from "./codes";
 import type { RowFact } from "./fact";
@@ -72,6 +72,13 @@ export interface PropertyRecords {
   visits?: VisitRecord[];
   /** The host's own steps in the newer features (#18). Absent gives none of their rows. */
   host?: HostRecords;
+  /**
+   * The visit log's lock lines, for the month's lock check (#238): unlocks, locks and connection changes,
+   * with each code's person by the lock's name for it. Never a code. Absent when the property has no visit log.
+   */
+  lockLog?: { events: (LockEvent | LockConnectionEvent)[]; codeNames: CodeNames };
+  /** The property's usual check-in and checkout times, `HH:MM`, when saved. */
+  usualTimes?: { checkIn?: string; checkout?: string };
 }
 
 export type RowSource = (records: PropertyRecords) => RowFact[];
@@ -142,8 +149,19 @@ export function readRecords(root: string, options: { cameras?: boolean } = {}): 
     ...(packages ? { packages } : {}),
     ...(visits ? { visits } : {}),
     ...ownerEntriesOf(root, safe),
+    ...lockLogOf(root, safe),
+    ...(property.checkInTime || property.checkoutTime ? { usualTimes: { ...(property.checkInTime ? { checkIn: property.checkInTime } : {}), ...(property.checkoutTime ? { checkout: property.checkoutTime } : {}) } } : {}),
     host: readHostRecords(root),
   };
+}
+
+/** The visit log's lock and lock-connection lines, and whose each code is (#238). */
+function lockLogOf(root: string, safe: <T>(read: () => T) => T | undefined): { lockLog?: PropertyRecords["lockLog"] } {
+  if (!existsSync(join(root, VISIT_EVENTS_DIR))) return {};
+  const log = new VisitLog(root);
+  const events = (safe(() => log.read()) ?? []).flatMap((event) => (event.type === "lock" || event.type === "lock-connection" ? [event] : []));
+  if (events.length === 0) return {};
+  return { lockLog: { events, codeNames: safe(() => log.codeNames()) ?? {} } };
 }
 
 /** How long after an owner's entry a lock from outside counts as them leaving. */

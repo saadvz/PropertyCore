@@ -69,7 +69,7 @@ export function fakeCameraProvider(options: { key?: string; now?: () => Date; na
     async devices(account) {
       need(account);
       fake.calls.push({ call: "devices" });
-      return fake.cameras.map((camera) => ({ ...camera }));
+      return fake.cameras.map((camera) => ({ ...camera, online: !fake.offline.has(camera.id) }));
     },
     parseWebhook(rawBody, headers): CameraWebhook | undefined {
       const given = headers["x-signature"];

@@ -11,7 +11,7 @@ const REVIEW = {
   name: "review_hours",
   title: "Review a month of hours",
   description:
-    "The hours log for one month: one row per work session, in separate logs for the owner, the cleaner, each pro, and Property Core's own work, built fresh from the cleanings, repairs, supply orders and the host's approvals. Owner rows are only what the host did; the system never writes owner time for its own work. Gives what needs the host and each checkout with no cleaning, and a code: show the host the rows and ask the question, then call again with confirmation only after their yes. Never give tax advice, or say what counts toward any tax test: that's for the host and their advisor.",
+    "The hours log for one month: one row per work session, in separate logs for the owner, the cleaner, each pro, and Property Core's own work, built fresh from the cleanings, repairs, supply orders and the host's approvals. Owner rows are only what the host did; the system never writes owner time for its own work. Gives what needs the host: each checkout with no cleaning, each door entry at the lock that no row covers, and each on-site visit with no entry at the lock. And a code: show the host the rows and ask the question, then call again with confirmation only after their yes. Never give tax advice, or say what counts toward any tax test: that's for the host and their advisor.",
   inputSchema: { type: "object", properties: { month: MONTH_ARG, confirmation: { type: "string", maxLength: 40 } }, required: ["month"], additionalProperties: false },
 };
 

@@ -131,6 +131,37 @@ describe("Ring media and status", () => {
     expect(JSON.parse(String(calls[1]!.init!.body)).duration).toBe(900_000);
   });
 
+  it("reads every camera's online state from the device list with include=status (#302), as Ring's docs show it", async () => {
+    const { calls, fetch } = stubFetch(() =>
+      json({
+        meta: { time: "2026-11-25T19:00:00Z" },
+        data: [
+          { type: "devices", id: "dev-aaa", attributes: { name: "Front door" }, relationships: { status: { data: { type: "device-status", id: "dev-aaa.status" }, links: { related: "/v1/devices/dev-aaa/status" } } } },
+          { type: "devices", id: "dev-bbb", attributes: { name: "Driveway" }, relationships: { status: { data: { type: "device-status", id: "dev-bbb.status" } } } },
+          { type: "devices", id: "dev-ccc", attributes: { name: "Side gate" } },
+        ],
+        included: [
+          { type: "device-status", id: "dev-aaa.status", attributes: { online: true } },
+          { type: "device-status", id: "dev-bbb.status", attributes: { online: false } },
+          { type: "device-capabilities", id: "dev-aaa.capabilities", attributes: { online: false } },
+        ],
+      }),
+    );
+    expect(await make(fetch).devices({ tokens: tokens() })).toEqual([
+      { id: "dev-aaa", name: "Front door", online: true },
+      { id: "dev-bbb", name: "Driveway", online: false },
+      { id: "dev-ccc", name: "Side gate" },
+    ]);
+    expect(calls[0]!.url).toBe("https://api.amazonvision.com/v1/devices?include=status");
+  });
+
+  it("doesn't take a status answer without the online field as online", async () => {
+    const empty = stubFetch(() => json({ data: { type: "device-status", id: "dev-aaa", attributes: {} } }));
+    await expect(make(empty.fetch).status({ tokens: tokens() }, "dev-aaa")).rejects.toMatchObject({ reason: "failed" });
+    const offline = stubFetch(() => json({ data: { type: "device-status", id: "dev-aaa", attributes: { online: false } } }));
+    expect(await make(offline.fetch).status({ tokens: tokens() }, "dev-aaa")).toBe("offline");
+  });
+
   it("reads status, and a 503 as offline", async () => {
     const online = stubFetch(() => json({ data: { type: "device-status", id: "dev-aaa", attributes: { online: true } } }));
     expect(await make(online.fetch).status({ tokens: tokens() }, "dev-aaa")).toBe("online");

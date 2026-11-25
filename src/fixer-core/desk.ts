@@ -625,15 +625,17 @@ export class FixerDesk {
       const job = this.jobOf(file, input.jobId);
       const booking = job?.booking;
       if (!job || !booking?.hostYes || !liveBooking(job) || job.done) return fail("Only a booked visit can be confirmed. Call get_fixer_state for the list.");
-      if (booking.vendor) return fail("A routine vendor confirms their own visit by text. For a time they asked for, use move_vendor_visit.");
       const via = input.via;
       if (!via || !CONFIRM_VIAS.includes(via)) return fail("Say how the pro confirmed: via email, call, or host-arranged when the host set it up with them.");
       const proName = this.bookedName(file, job);
-      if (visitConfirmed(booking)) return ok({ jobId: job.id, confirmed: true, already: true, by: booking.confirmed!.by, via: booking.confirmed!.via, next: `${proName}'s visit is already confirmed.` });
+      // A routine vendor's own YES is on the vendor record only: it reads as theirs, by text.
+      if (visitConfirmed(booking)) return ok({ jobId: job.id, confirmed: true, already: true, by: booking.confirmed?.by ?? "pro", via: booking.confirmed?.via ?? "text", next: `${proName}'s visit is already confirmed.` });
       if (this.deps.now().getTime() >= this.endOf(booking)) return fail("That visit has already ended.");
       const gate = this.confirm("fixer-confirm-visit", job.id, tokenHash(JSON.stringify([booking.fingerprint, booking.hostYes.at, "confirm", via])), input.confirmation, confirmQuestion({ proName, span: this.spanOf(job, booking), via }));
       if (gate !== "go") return gate;
       const at = this.deps.now().toISOString();
+      // A routine vendor's visit (#237): the host's word confirms it like the vendor's YES, and the standing yes is the OK for the code.
+      if (booking.vendor) this.confirmVendor(booking);
       this.confirmByHost(booking, at, via);
       noteHostStep(job, { kind: "confirm-visit", at, proId: booking.proId });
       this.write(file);

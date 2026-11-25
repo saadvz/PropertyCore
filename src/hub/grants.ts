@@ -336,7 +336,7 @@ export class GrantBook {
    * programming, up to two minutes are waited first. With no backup for a door, the host's saved code
    * goes instead, else nothing does (`lock-failed`). The host is told whenever it isn't the plain code.
    */
-  release(input: { flow: GrantFlow; jobId: string; person: string; window: CodeWindow; label?: string }, saved: string | undefined): Promise<GrantRelease> {
+  release(input: { flow: GrantFlow; jobId: string; person: string; window: CodeWindow; label?: string }, saved: string | undefined, options?: { noIssue?: boolean }): Promise<GrantRelease> {
     return this.serial(async () => {
       const adapter = this.deps.adapter();
       const key = this.deps.key();
@@ -344,6 +344,8 @@ export class GrantBook {
       if (!adapter) return { ok: false, reason: "lock-failed", notes: [] };
       if (!key) return { ok: false, reason: "no-key", notes: [] };
       let grant = this.liveOf(input.flow).find((item) => item.jobId === input.jobId && item.person === input.person);
+      // A code page shows only a code already made: it never makes one.
+      if (!grant && options?.noIssue) return { ok: false, reason: "lock-failed", notes: [] };
       if (!grant) {
         const made = await this.issue(adapter, input.flow, { jobId: input.jobId, person: input.person, window: input.window, ...(input.label ? { label: input.label } : {}) });
         this.write();

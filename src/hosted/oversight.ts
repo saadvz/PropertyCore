@@ -1,5 +1,5 @@
 import { featureOn } from "../features/features";
-import { propertyFolder, type Property } from "../cleaner-core/hosted/properties";
+import { propertyBasePath, propertyFolder, type Property } from "../cleaner-core/hosted/properties";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import { propertyContext, type HostedCleaner } from "../cleaner-core/hosted/router";
 import { hubFor } from "../hub/hub";
@@ -64,5 +64,10 @@ export function oversightDeskOf(h: HostedCleaner, tenant: Tenant, property: Prop
     stopped: (phone) => safely(() => peopleFor(tenantFolder(h.dataRoot, tenant.id), { now: () => h.now() }).stopped(phone), true),
     optedInHere: (phone) => safely(() => optedInOnProperty(h, h.registry.get(tenant.id) ?? tenant, property, phone), false),
     codeStatus: (visit) => safely(() => visitCodeDesk(h, h.registry.get(tenant.id) ?? tenant, property).codeStatus(visit), undefined),
+    // The host's visit code page lives under this property's path (25 Nov).
+    publicBase: () => {
+      const origin = h.origin();
+      return origin ? `${origin}${propertyBasePath(tenant.id, property)}` : undefined;
+    },
   });
 }
