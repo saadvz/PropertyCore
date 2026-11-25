@@ -69,13 +69,20 @@ describe("Ring webhooks", () => {
 });
 
 describe("Ring tokens", () => {
-  it("trades the sign-in code for tokens with the client's own secret", async () => {
+  it("trades the code Ring posted for tokens with the client's own secret", async () => {
     const { calls, fetch } = stubFetch(() => json({ access_token: "at-1", refresh_token: "rt-1", expires_in: 14400, token_type: "Bearer", scope: "ava.v1:read" }));
-    const tokens = await make(fetch).finishLink({ code: "c-1", codeVerifier: "v-1", redirectUri: "https://pc.example/cameras/ring/linked" });
+    const tokens = await make(fetch).exchangeCode("c-1");
     expect(tokens).toEqual({ access: "at-1", refresh: "rt-1", expiresAt: NOW + 14400 * 1000 });
     expect(calls[0]!.url).toBe("https://oauth.ring.com/oauth/token");
     const form = new URLSearchParams(String(calls[0]!.init!.body));
-    expect(Object.fromEntries(form)).toMatchObject({ grant_type: "authorization_code", code: "c-1", code_verifier: "v-1", client_id: "client-x", client_secret: "secret-y" });
+    expect(Object.fromEntries(form)).toEqual({ grant_type: "authorization_code", code: "c-1", client_id: "client-x", client_secret: "secret-y" });
+  });
+
+  it("knows its own client id and no other", () => {
+    const ring = make(stubFetch(() => json({})).fetch);
+    expect(ring.ownsClient("client-x")).toBe(true);
+    expect(ring.ownsClient("client-y")).toBe(false);
+    expect(ring.ownsClient("")).toBe(false);
   });
 
   it("refreshes an expired access token and saves the new refresh token before using it", async () => {
@@ -143,11 +150,43 @@ describe("Ring media and status", () => {
     expect(calls[1]!.url).toBe("https://api.amazonvision.com/v1/history/devices/dev-aaa/events?page[key]=p2");
   });
 
-  it("builds the sign-in link on Ring's page with PKCE", () => {
-    const url = new URL(make(stubFetch(() => json({})).fetch).linkUrl({ state: "st-1", codeChallenge: "ch-1", redirectUri: "https://pc.example/cameras/ring/linked" }));
-    expect(url.origin).toBe("https://oauth.ring.com");
-    expect(Object.fromEntries(url.searchParams)).toMatchObject({ client_id: "client-x", response_type: "code", state: "st-1", code_challenge: "ch-1", code_challenge_method: "S256", scope: "ava.v1:read" });
-    expect(url.toString()).not.toContain("secret-y");
+});
+
+describe("Ring's one-way account linking (#302)", () => {
+  const live: Tokens = { access: "at-1", refresh: "rt-1", expiresAt: NOW + 3600_000 };
+
+  it("reads whose account the tokens are over the token", async () => {
+    const { calls, fetch } = stubFetch(() => json({ data: { type: "users", id: "ava1.ring.account.XXXYYY", attributes: { first_name: "Jane", email: "jane@example.com" } } }));
+    expect(await make(fetch).profile({ tokens: store(live) })).toEqual({ accountId: "ava1.ring.account.XXXYYY", email: "jane@example.com" });
+    expect(calls[0]!.url).toBe("https://api.amazonvision.com/v1/users/me");
+    expect((calls[0]!.init!.headers as Record<string, string>).authorization).toBe("Bearer at-1");
+    await expect(make(stubFetch(() => json({ data: {} })).fetch).profile({ tokens: store(live) })).rejects.toMatchObject({ reason: "failed" });
+  });
+
+  it("signs the nonce as Ring does: URL-safe base64 with no padding over time:account", () => {
+    const ring = make(stubFetch(() => json({})).fetch);
+    const nonce = ring.linkNonce("1771130906289", "ava1.ring.account.XXXYYY");
+    expect(nonce).toBe(createHmac("sha256", KEY).update("1771130906289:ava1.ring.account.XXXYYY").digest("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""));
+    expect(nonce).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(ring.linkNonce("1771130906289", "ava1.ring.account.OTHER")).not.toBe(nonce);
+  });
+
+  it("sends the nonce back to Ring, then marks the link completed", async () => {
+    const { calls, fetch } = stubFetch(() => json({ data: { type: "app-integrations", attributes: { status: "awaiting" } } }));
+    await make(fetch).confirmLink({ tokens: store(live) }, { nonce: "n-1", accountIdentifier: "L***e" });
+    expect(calls.map((call) => [call.init!.method, call.url])).toEqual([
+      ["POST", "https://api.amazonvision.com/v1/accounts/me/app-integrations"],
+      ["PATCH", "https://api.amazonvision.com/v1/accounts/me/app-integrations"],
+    ]);
+    expect(JSON.parse(String(calls[0]!.init!.body))).toEqual({ account_identifier: "L***e", nonce: "n-1" });
+    expect(JSON.parse(String(calls[1]!.init!.body))).toEqual({ status: "completed" });
+  });
+
+  it("stops at a refused nonce, with nothing of Ring's answer in the error", async () => {
+    const { calls, fetch } = stubFetch(() => json({ errors: [{ title: "Invalid Nonce", detail: "n-1 at-1" }] }, 400));
+    const error = await make(fetch).confirmLink({ tokens: store(live) }, { nonce: "n-1", accountIdentifier: "L***e" }).then(() => undefined, (caught: unknown) => caught as Error);
+    expect(calls).toHaveLength(1);
+    expect(error?.message).toBe("Ring answered 400.");
   });
 });
 
