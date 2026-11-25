@@ -265,6 +265,9 @@ Behind each account's switch:
 
 - **Visit records (`visits`).** `list_visits`, `visit_health`, `door_activity` (each unlock and lock for up to 7 days, read only) and `name_lock_code`, listed for every agent on the
   account when any property runs Cleaner Core or Fixer Core. Visit records are rebuilt from the log on every read.
+  With the account's Cameras also on, a person seen on a picked camera close to a DONE is shown on the departure
+  (`cameraCheck`, `camera`) and gives its time when no lock from outside did (`timeFrom`). A camera never makes a
+  departure without a DONE.
   Only with a connected lock: a cleaner not in 30 minutes after the expected time (15 on a same-day turnover) gets
   one text, and the host one note when the next check-in is at risk, on a no-show, on a failed arrival-day check,
   or when the cleaner's code opens the door outside a cleaning; a pro or crew not in by the start plus 30 minutes
