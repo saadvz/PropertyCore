@@ -20,9 +20,10 @@ import { multiTenantApp, type MultiTenantApp } from "./multiTenantHarness";
 const LANE = "+15555550152";
 const PATH = "/mcp";
 const SLOW = { timeout: 90_000 };
-const TOOLS = ["connect_cameras", "list_cameras", "pick_cameras", "disconnect_cameras", "check_night", "stay_timeline", "pin_clip"];
+const TOOLS = ["connect_cameras", "list_cameras", "pick_cameras", "counting_week", "disconnect_cameras", "check_night", "stay_timeline", "pin_clip"];
 const KEY = randomBytes(32).toString("base64");
 const TZ = "America/New_York";
+const ADMIN_PASSWORD = "made-up-admin-password-239";
 
 let open: MultiTenantApp | undefined;
 /** The running test's clock, so the fake provider signs its redirects at the service's time. */
@@ -45,7 +46,7 @@ async function tickBoth(m: MultiTenantApp) {
 /** Ring's made-up credentials and the token key are always on the service here: the account's switch is what decides. */
 async function account(features: Feature[], clock: { now: Date }) {
   current = clock;
-  open = await multiTenantApp({ env: { SUPPLY_CORE: "1", CAMERA_TOKEN_KEY: KEY, ...credentialsFor(["cameras"]) }, now: () => clock.now });
+  open = await multiTenantApp({ env: { SUPPLY_CORE: "1", CAMERA_TOKEN_KEY: KEY, CLEANER_CORE_ADMIN_PASSWORD: ADMIN_PASSWORD, ...credentialsFor(["cameras"]) }, now: () => clock.now });
   const m = open;
   const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
   switchOn(m.registry, tenant.id, ...features);
@@ -145,7 +146,9 @@ describe("cameras on the shared service", () => {
     expect(m.app.logs.join("\n")).not.toMatch(/fake-access|fake-refresh|good-code/);
 
     const listed = await m.toolAt(PATH, token, "list_cameras", { property: property.id });
-    expect(listed.structured).toMatchObject({ connected: true, cameras: [{ deviceId: "dev-aaa", name: "Front door", usedHere: false }, { deviceId: "dev-bbb" }] });
+    // Every camera says whether it's online, picked or not (#302), from the one list call.
+    expect(listed.structured).toMatchObject({ connected: true, cameras: [{ deviceId: "dev-aaa", name: "Front door", usedHere: false, status: "online" }, { deviceId: "dev-bbb", status: "online" }] });
+    expect(provider.calls.filter((call) => call.call === "status")).toHaveLength(0);
     expect((await m.toolAt(PATH, token, "pick_cameras", { property: property.id, cameras: [{ deviceId: "dev-aaa", outdoor: false }] })).isError).toBe(true);
     expect((await m.toolAt(PATH, token, "pick_cameras", { property: property.id, cameras: [{ deviceId: "dev-aaa", outdoor: true }] })).isError).toBe(false);
 
@@ -368,5 +371,87 @@ describe("Ring account linking on the shared service (#302)", () => {
       closeHostedApps();
     }
     open = undefined;
+  });
+  it("lists an offline camera as offline, picked or not, and says unknown when Ring can't say (#302)", SLOW, async () => {
+    const { provider } = withFake();
+    const clock = { now: new Date("2026-11-21T15:00:00.000Z") };
+    const { m, token, property } = await account(["cameras"], clock);
+    await connect(m, token, property.id, provider);
+    provider.offline.add("dev-bbb");
+    const listed = await m.toolAt(PATH, token, "list_cameras", { property: property.id });
+    expect(listed.structured?.cameras).toEqual([
+      { deviceId: "dev-aaa", name: "Front door", usedHere: false, status: "online" },
+      { deviceId: "dev-bbb", name: "Driveway", usedHere: false, status: "offline" },
+    ]);
+    // A list without the state falls back to asking each camera, and a failure there is unknown, never online.
+    const devices = provider.devices.bind(provider);
+    provider.devices = async (ref) => (await devices(ref)).map(({ id, name }) => ({ id, name }));
+    provider.status = async () => {
+      throw new Error("Ring didn't say");
+    };
+    const unsure = await m.toolAt(PATH, token, "list_cameras", { property: property.id });
+    expect((unsure.structured?.cameras as { status: string }[]).map((camera) => camera.status)).toEqual(["unknown", "unknown"]);
+  });
+
+  it("the counting week counts every motion event on the picked cameras for 7 days, with no stay, only after the host agreed", SLOW, async () => {
+    const { provider, counter } = withFake();
+    const clock = { now: new Date("2026-11-25T20:00:00.000Z") };
+    const { m, tenant, token, property, root } = await account(["cameras"], clock);
+    // No house rule and no stay this week: before the counting week, nothing is counted.
+    await connect(m, token, property.id, provider);
+    const week = (args: Record<string, unknown>) => m.toolAt(PATH, token, "counting_week", { property: property.id, ...args });
+    expect((await week({ action: "start", hostAgreed: true })).text).toContain("No camera is picked");
+    await m.toolAt(PATH, token, "pick_cameras", { property: property.id, cameras: [{ deviceId: "dev-aaa", outdoor: true }] });
+    const send = async (id: string, at: string) => {
+      const delivery = provider.webhook({ id, at, deviceId: "dev-aaa", kind: "motion", label: "human" });
+      expect((await m.app.http("/webhooks/ring", { method: "POST", headers: delivery.headers, body: delivery.body.toString() })).status).toBe(200);
+    };
+    await send("before", "2026-11-25T19:30:00.000Z");
+    await tickAllCameras(m.hosted());
+    expect(counter.seen).toBe(0);
+
+    expect((await week({ action: "start" })).isError).toBe(true);
+    expect(counter.seen).toBe(0);
+    const started = await week({ action: "start", hostAgreed: true });
+    expect(started.structured).toMatchObject({ running: true, from: "2026-11-25T20:00:00.000Z", until: "2026-12-02T20:00:00.000Z", cameras: [{ deviceId: "dev-aaa", name: "Front door" }] });
+    expect(String(started.structured?.next)).toContain("Wednesday, Dec 2 at 3:00 PM");
+    expect((await week({ action: "start", hostAgreed: true })).structured).toMatchObject({ running: true, until: "2026-12-02T20:00:00.000Z" });
+    expect((await m.toolAt(PATH, token, "list_cameras", { property: property.id })).structured).toMatchObject({ countingWeek: { from: "2026-11-25T20:00:00.000Z", until: "2026-12-02T20:00:00.000Z" } });
+
+    // An event the night after, at 3 AM local, with no guest staying: counted. The one from before the week isn't.
+    clock.now = new Date("2026-11-26T09:00:00.000Z");
+    await send("night-1", "2026-11-26T08:00:00.000Z");
+    await tickAllCameras(m.hosted());
+    expect(counter.seen).toBe(1);
+    const log = readFileSync(join(root, "visit-events", "2026-11.jsonl"), "utf8");
+    expect(log).toContain('"event":"night-1"');
+    expect(log).not.toContain('"event":"before"');
+
+    // The review sheet: the admin downloads it, one row per counted event, and it carries no image or link.
+    const login = await m.app.http("/admin/login", { method: "POST", headers: FORM, body: new URLSearchParams({ password: ADMIN_PASSWORD }).toString() });
+    expect(login.status).toBe(303);
+    const cookie = String(login.headers["set-cookie"]).split(";")[0]!;
+    const page = await (await m.app.http(`/admin/tenants/${tenant.id}`, { headers: { cookie } })).text();
+    expect(page).toContain("Counting week");
+    expect(page).toContain(`/admin/tenants/${tenant.id}/count-sheet?property=${property.id}`);
+    expect((await m.app.http(`/admin/tenants/${tenant.id}/count-sheet?property=${property.id}`)).status).toBe(303);
+    const sheet = await m.app.http(`/admin/tenants/${tenant.id}/count-sheet?property=${property.id}`, { headers: { cookie } });
+    expect(sheet.status).toBe(200);
+    expect(String(sheet.headers["content-type"])).toContain("text/csv");
+    expect(String(sheet.headers["content-disposition"])).toContain("counting-sheet-");
+    const csv = await sheet.text();
+    expect(csv.split("\n")[0]).toBe("event_id,local_date,local_time,camera,label,period,our_people,our_vehicles,our_animals,host_people,host_vehicles,host_animals,note");
+    expect(csv).toContain("night-1,2026-11-26,03:00,Front door,human,night,8,1,0,,,,");
+    expect(csv).not.toMatch(/https?:|before/);
+    expect((await m.app.http(`/admin/tenants/${tenant.id}/count-sheet?property=nope`, { headers: { cookie } })).status).toBe(400);
+
+    // Stopped early: an event after that waits for a stay again.
+    clock.now = new Date("2026-11-27T12:00:00.000Z");
+    expect((await week({ action: "stop" })).structured).toMatchObject({ running: false, stopped: true });
+    await send("after-stop", "2026-11-27T13:00:00.000Z");
+    clock.now = new Date("2026-11-27T13:30:00.000Z");
+    await tickAllCameras(m.hosted());
+    expect(counter.seen).toBe(1);
+    expect((await m.toolAt(PATH, token, "list_cameras", { property: property.id })).structured?.countingWeek).toBeUndefined();
   });
 });

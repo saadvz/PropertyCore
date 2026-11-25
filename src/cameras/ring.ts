@@ -145,13 +145,23 @@ export function ringProvider(options: RingOptions): CameraProvider {
     },
 
     async devices(account) {
-      const body = obj(await (await call(account, "/v1/devices")).json());
+      // include=status puts each camera's online state in the same answer (#302: list_cameras said nothing about it).
+      const body = obj(await (await call(account, "/v1/devices?include=status")).json());
       const data = Array.isArray(body.data) ? body.data : [];
+      const online = new Map<string, boolean>();
+      for (const item of Array.isArray(body.included) ? body.included : []) {
+        const entry = obj(item);
+        const id = str(entry.id);
+        const value = obj(entry.attributes).online;
+        if (str(entry.type) === "device-status" && id && typeof value === "boolean") online.set(id, value);
+      }
       return data.flatMap((item) => {
         const device = obj(item);
         const id = str(device.id);
         const name = str(obj(device.attributes).name);
-        return id ? [{ id, name: name ?? "Camera" }] : [];
+        const statusId = str(obj(obj(obj(device.relationships).status).data).id);
+        const state = statusId ? online.get(statusId) : undefined;
+        return id ? [{ id, name: name ?? "Camera", ...(state !== undefined ? { online: state } : {}) }] : [];
       });
     },
 
@@ -226,7 +236,10 @@ export function ringProvider(options: RingOptions): CameraProvider {
     async status(account, deviceId) {
       try {
         const body = obj(await (await call(account, `/v1/devices/${encodeURIComponent(deviceId)}/status`)).json());
-        return obj(obj(body.data).attributes).online === false ? "offline" : "online";
+        const online = obj(obj(body.data).attributes).online;
+        // An answer without the field says nothing: it isn't taken as online.
+        if (typeof online !== "boolean") throw new CameraProviderError("Ring didn't say whether the camera is online.", "failed");
+        return online ? "online" : "offline";
       } catch (error) {
         if (error instanceof CameraProviderError && error.reason === "offline") return "offline";
         throw error;
