@@ -1,13 +1,14 @@
 import { localDateOf } from "../core/timezone";
 import { zonedInstant } from "../hub/calendar";
-import { codePerson, type CodeNames, type LockEvent, type VisitEvent, type VisitKind, type VisitWho, type WindowEvent } from "./events";
+import { cameraCounts, codePerson, type CameraEvent, type CodeNames, type LockEvent, type VisitEvent, type VisitKind, type VisitWho, type WindowEvent } from "./events";
 
 /**
  * Visit records (#237), derived from the raw log by a pure function. Records are never saved: the same lines always
- * give the same records, and a rule change is a new derivation, not a rewrite. `RULES` names this derivation.
+ * give the same records, and a rule change is a new derivation, not a rewrite. `RULES` names this derivation:
+ * 2 reads camera sightings beside DONE and the lock.
  */
 
-export const RULES = 1;
+export const RULES = 2;
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -27,11 +28,23 @@ export const SAME_DAY_READY_LEAD_MS = HOUR;
 /** A lock from outside this long before DONE, to this long after, is the departure. */
 export const LOCK_BEFORE_DONE_MS = 15 * MINUTE;
 export const LOCK_AFTER_DONE_MS = HOUR;
+/** A person seen on a camera this long before DONE, to this long after, supports the departure. The lock's own numbers. */
+export const CAMERA_BEFORE_DONE_MS = LOCK_BEFORE_DONE_MS;
+export const CAMERA_AFTER_DONE_MS = LOCK_AFTER_DONE_MS;
 /** Lock events this recent count as a connected lock, when no connection event says otherwise. */
 export const LOCK_RECENT_MS = 7 * 24 * HOUR;
 
 export type ArrivalSource = "lock" | "lock-unnamed" | "cleaner-text" | "pro-text" | "visit-page";
-export type DepartureSource = "done-text" | "done-page" | "done-pro-text" | "lock" | "camera";
+/** Who or what said the visit was over. A camera is never one: it can't say who it saw, or which way they went. */
+export type DepartureSource = "done-text" | "done-page" | "done-pro-text" | "lock";
+
+/** A person seen on one of the property's picked cameras close to the departure. Support: it never makes a departure by itself. */
+export interface DepartureSighting {
+  at: string;
+  /** The camera's name. */
+  device: string;
+  eventId: string;
+}
 
 export interface Arrival {
   at: string;
@@ -47,6 +60,12 @@ export interface Departure {
   doneAt?: string;
   /** "matched": a lock from outside close to DONE; "none": no lock near it; "no-lock": no lock at the property. */
   lockCheck: "matched" | "none" | "no-lock";
+  /** Where `at` came from: a lock from outside first, else a person seen on a camera, else the DONE itself. */
+  timeFrom: "lock" | "camera" | "done";
+  /** "seen": a person on a picked camera close to it; "none": cameras read, nobody seen; "no-camera": cameras aren't read. */
+  cameraCheck: "seen" | "none" | "no-camera";
+  /** The sighting, when `cameraCheck` is "seen". */
+  camera?: DepartureSighting;
 }
 
 export type VisitFlag =
@@ -94,6 +113,8 @@ export interface DeriveContext {
   timeZone: string;
   codeNames: CodeNames;
   now: Date;
+  /** The account has cameras on, so camera lines are read. Off or unset: every record is as it was without cameras. */
+  cameras?: boolean;
 }
 
 const ms = (iso: string) => Date.parse(iso);
@@ -151,6 +172,24 @@ function isUnnamed(lock: LockEvent, codeNames: CodeNames): boolean {
   return !person || person.role === "shared";
 }
 
+/** Ring's label for a person, in any case. */
+const PERSON_LABELS = new Set(["human", "person"]);
+
+/**
+ * People seen on the property's cameras, oldest first: a motion event our own count gave 1 or more people, or with
+ * no count, one the provider labelled a person. A doorbell press isn't one: someone leaving doesn't ring.
+ */
+function peopleSeen(events: readonly VisitEvent[]): CameraEvent[] {
+  const counts = cameraCounts(events);
+  return events
+    .filter((event): event is CameraEvent => {
+      if (event.type !== "camera" || event.kind !== "motion") return false;
+      const count = counts.get(event.id);
+      return count ? count.people >= 1 : PERSON_LABELS.has((event.label ?? "").toLowerCase());
+    })
+    .sort((a, b) => ms(a.at) - ms(b.at) || a.id.localeCompare(b.id));
+}
+
 function median(values: readonly number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
@@ -165,6 +204,18 @@ export function buildVisits(events: readonly VisitEvent[], context: DeriveContex
   const locks = events.filter((event): event is LockEvent => event.type === "lock").sort((a, b) => ms(a.at) - ms(b.at) || a.id.localeCompare(b.id));
   const unlocks = locks.filter((lock) => lock.action === "unlock");
   const outsideLocks = locks.filter((lock) => lock.action === "lock" && lock.side !== "inside");
+  const sightings = context.cameras === true ? peopleSeen(events) : [];
+  /**
+   * The last person seen close to `anchor` (a DONE, or a crew day's last lock from outside): after the arrival,
+   * and before the next unlock or the next check-in, when a person outside is more likely someone coming in.
+   */
+  const sightingNear = (anchor: number, arrivedAt: number | undefined, checkIn: number | undefined): DepartureSighting | undefined => {
+    const nextUnlock = unlocks.find((u) => ms(u.at) > anchor);
+    const end = Math.min(anchor + CAMERA_AFTER_DONE_MS, nextUnlock ? ms(nextUnlock.at) : Infinity, checkIn ?? Infinity);
+    const start = Math.max(anchor - CAMERA_BEFORE_DONE_MS, arrivedAt ?? -Infinity);
+    const last = [...sightings].reverse().find((s) => ms(s.at) >= start && ms(s.at) <= end);
+    return last ? { at: last.at, device: last.device, eventId: last.id } : undefined;
+  };
   const openAt = (t: number) => windows.filter((w) => ms(w.from) - EARLY_MS <= t && t <= ms(w.until));
 
   const visits: VisitRecord[] = [];
@@ -213,16 +264,27 @@ export function buildVisits(events: readonly VisitEvent[], context: DeriveContex
       if (words) arrival = { at: words.at, source: words.type === "visit-page" ? "visit-page" : words.type === "message" && words.role === "pro" ? "pro-text" : "cleaner-text", eventId: words.id };
     }
 
+    // Departure: DONE says the person left. Its time is a lock from outside close to it, else a person seen on a
+    // camera close to it, else the DONE's own. A sighting supports a departure and never makes one (#275).
     let departure: Departure | undefined;
+    const cameras = context.cameras === true;
+    const arrivedMs = arrival ? ms(arrival.at) : undefined;
+    const windowCheckIn = window.checkIn ? ms(window.checkIn) : undefined;
+    const support = (sighting: DepartureSighting | undefined): Pick<Departure, "cameraCheck" | "camera"> =>
+      !cameras ? { cameraCheck: "no-camera" } : sighting ? { cameraCheck: "seen", camera: sighting } : { cameraCheck: "none" };
     if (done) {
       const doneAt = ms(done.at);
       const near = lock ? outsideLocks.find((l) => ms(l.at) >= doneAt - LOCK_BEFORE_DONE_MS && ms(l.at) <= doneAt + LOCK_AFTER_DONE_MS) : undefined;
+      const sighting = cameras ? sightingNear(doneAt, arrivedMs, windowCheckIn) : undefined;
+      const lockCheck = lock ? "none" : "no-lock";
       departure = near
-        ? { at: near.at, source: done.source, eventId: near.id, doneAt: done.at, lockCheck: "matched" }
-        : { at: done.at, source: done.source, eventId: done.eventId, doneAt: done.at, lockCheck: lock ? "none" : "no-lock" };
+        ? { at: near.at, source: done.source, eventId: near.id, doneAt: done.at, lockCheck: "matched", timeFrom: "lock", ...support(sighting) }
+        : sighting
+          ? { at: sighting.at, source: done.source, eventId: sighting.eventId, doneAt: done.at, lockCheck, timeFrom: "camera", ...support(sighting) }
+          : { at: done.at, source: done.source, eventId: done.eventId, doneAt: done.at, lockCheck, timeFrom: "done", ...support(undefined) };
     } else if (window.kind === "crew-day" && lock) {
       const last = [...outsideLocks].reverse().find((l) => ms(l.at) >= from && ms(l.at) <= until + LOCK_AFTER_DONE_MS);
-      if (last) departure = { at: last.at, source: "lock", eventId: last.id, lockCheck: "matched" };
+      if (last) departure = { at: last.at, source: "lock", eventId: last.id, lockCheck: "matched", timeFrom: "lock", ...support(cameras ? sightingNear(ms(last.at), arrivedMs, windowCheckIn) : undefined) };
     }
 
     const minutes = arrival && departure && ms(departure.at) > ms(arrival.at) ? Math.round((ms(departure.at) - ms(arrival.at)) / MINUTE) : undefined;

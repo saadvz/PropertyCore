@@ -33,10 +33,16 @@ const ok = (structured: Record<string, unknown>): VisitReply => ({ text: JSON.st
 const fail = (text: string): VisitReply => ({ text, isError: true });
 const isDate = (value: unknown): value is string => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`));
 
+export interface VisitDeskDeps {
+  now: () => Date;
+  /** The account has cameras on, so a person seen close to a DONE is read (#237). Off by default. */
+  cameras?: () => boolean;
+}
+
 export class VisitDesk {
   constructor(
     private readonly root: string,
-    private readonly deps: { now: () => Date },
+    private readonly deps: VisitDeskDeps,
   ) {}
 
   private timeZone(): string | undefined {
@@ -68,7 +74,7 @@ export class VisitDesk {
     if (to <= from) return fail("from must be on or before to.");
     if (to - from > (MAX_LIST_DAYS + 3) * DAY) return fail(`List at most ${MAX_LIST_DAYS} days at a time.`);
     const log = visitLogFor(this.root, this.deps.now);
-    const derived = buildVisits(log.read(), { timeZone, codeNames: log.codeNames(), now });
+    const derived = buildVisits(log.read(), { timeZone, codeNames: log.codeNames(), now, cameras: this.deps.cameras?.() === true });
     const visits = derived.visits.filter((visit) => Date.parse(visit.window.from) >= from && Date.parse(visit.window.from) < to).map((visit) => this.view(visit, timeZone));
     return ok({ visits, cleanMinutes: derived.cleanMinutes, sends: false });
   }
@@ -82,7 +88,7 @@ export class VisitDesk {
       window: { ...visit.window, local: `${local(visit.window.from)} to ${local(visit.window.until)}` },
       lock: visit.lock,
       ...(visit.arrival ? { arrival: { ...visit.arrival, local: local(visit.arrival.at) } } : {}),
-      ...(visit.departure ? { departure: { ...visit.departure, local: local(visit.departure.at) } } : {}),
+      ...(visit.departure ? { departure: { ...visit.departure, local: local(visit.departure.at), ...(visit.departure.camera ? { camera: { ...visit.departure.camera, local: local(visit.departure.camera.at) } } : {}) } } : {}),
       ...(visit.minutes !== undefined ? { minutes: visit.minutes } : {}),
       flags: visit.flags.map((flag) => flag.kind),
       rules: visit.rules,
@@ -137,6 +143,6 @@ export class VisitDesk {
   }
 }
 
-export function visitDeskFor(root: string, deps: { now: () => Date }): VisitDesk {
+export function visitDeskFor(root: string, deps: VisitDeskDeps): VisitDesk {
   return new VisitDesk(root, deps);
 }
