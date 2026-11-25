@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { zonedParts } from "../core/timezone";
 import { DEFAULT_KIND_CODES, type ActivityCode, type RowKind } from "./codes";
 import type { LogKey, RowFact, Timing } from "./fact";
+import { checkLocks, type LockCheck } from "./lockCheck";
 import { OWNER_RULES_VERSION } from "./ownerRules";
 import { DEFAULT_SOURCES, mergeMoments, rawFacts, type PropertyRecords, type RowSource } from "./sources";
 import { codeList, type HoursSettings } from "./store";
@@ -47,8 +48,8 @@ export interface Reconcile {
   checkouts: string[];
   /** Of those, the ones with no finished cleaning. */
   unmatched: string[];
-  /** The lock events check waits on the smart-lock connection (#180). */
-  lockEvents: "waiting";
+  /** The month against the lock events: every entry covered, every on-site visit with an entry. "no-lock" when there's nothing to check. */
+  lockEvents: LockCheck;
 }
 
 export interface Month {
@@ -106,7 +107,8 @@ export function buildMonth(records: PropertyRecords, month: string, settings: Ho
   const raw = rawFacts(records, options.sources ?? DEFAULT_SOURCES, options.kept ?? [], options.kinds);
   const inMonth = (fact: RowFact) => local(fact.at, timeZone).date.startsWith(`${month}-`);
   const ownerFacts = raw.filter((fact) => fact.log === "owner" && inMonth(fact));
-  for (const fact of mergeMoments(raw)) {
+  const facts = mergeMoments(raw);
+  for (const fact of facts) {
     const start = local(fact.at, timeZone);
     if (!start.date.startsWith(`${month}-`)) continue;
     const code = codeFor(fact.kind);
@@ -125,14 +127,19 @@ export function buildMonth(records: PropertyRecords, month: string, settings: Ho
   for (const { code, count } of unset.values()) {
     needs.push(`Owner minutes aren't set for ${code.code}${code.activity ? ` (${code.activity})` : ""}, so its ${count} owner row${count === 1 ? " has" : "s have"} 0 hours. Ask the host how long one usually takes, and save it with save_hours_settings.`);
   }
-  const reconcile = reconcileMonth(records, month);
+  const locks = checkLocks({ records, month, timeZone, facts, idOf: rowId });
+  const reconcile = { ...reconcileMonth(records, month), lockEvents: locks.check };
   for (const date of reconcile.unmatched) needs.push(`The ${date} checkout has no finished cleaning in the log.`);
+  needs.push(...locks.needs);
   const logs = logsOf(rows, records);
   const fingerprint = createHash("sha256")
     .update(JSON.stringify({ rulesVersion: OWNER_RULES_VERSION, columns: settings.columns ?? null, rows }))
     .digest("hex");
   return { month, rows, logs, needs, reconcile, fingerprint, rulesVersion: OWNER_RULES_VERSION, ownerFacts };
 }
+
+/** A row's id: stable across rebuilds while the record is the same. */
+const rowId = (fact: RowFact) => createHash("sha256").update(`${fact.kind}|${fact.reference}|${fact.at}`).digest("hex").slice(0, 16);
 
 function rowFor(fact: RowFact, start: { date: string; time: string }, code: ActivityCode, timeZone: string): HoursRow {
   let hours = 0;
@@ -144,9 +151,8 @@ function rowFor(fact: RowFact, start: { date: string; time: string }, code: Acti
     hours = roundHours(code.minutes * 60_000);
     end = local(new Date(Date.parse(fact.at) + code.minutes * 60_000).toISOString(), timeZone).time;
   }
-  const id = createHash("sha256").update(`${fact.kind}|${fact.reference}|${fact.at}`).digest("hex").slice(0, 16);
   return {
-    id,
+    id: rowId(fact),
     log: fact.log,
     kind: fact.kind,
     timing: fact.timing,
@@ -179,8 +185,8 @@ function logsOf(rows: HoursRow[], records: PropertyRecords): MonthLog[] {
 }
 
 /** Each checkout in the month from the booking calendar, and the ones with no finished cleaning. */
-function reconcileMonth(records: PropertyRecords, month: string): Reconcile {
+function reconcileMonth(records: PropertyRecords, month: string): Omit<Reconcile, "lockEvents"> {
   const checkouts = [...new Set(records.stays.filter((stay) => stay.kind === "stay" && stay.checkout.startsWith(`${month}-`)).map((stay) => stay.checkout))].sort();
   const cleaned = new Set(records.cleaningJobs.filter((job) => job.done && !job.canceled && !job.declined).map((job) => job.checkoutDate));
-  return { checkouts, unmatched: checkouts.filter((date) => !cleaned.has(date)), lockEvents: "waiting" };
+  return { checkouts, unmatched: checkouts.filter((date) => !cleaned.has(date)) };
 }
