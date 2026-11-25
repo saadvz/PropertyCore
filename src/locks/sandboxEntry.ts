@@ -180,7 +180,8 @@ export async function sandboxEntry(input: EntryInput): Promise<EntryOutcome> {
     case "pending":
       return say(0, `Sent ${whose} to the ${door.door} keypad at ${at}. The lock partner still had it pending after ten seconds: check door activity.${outside}`);
     case "error":
-      return say(1, `The lock partner couldn't enter ${whose} on the ${door.door} at ${at}${result.errorType ? ` (${result.errorType})` : ""}.${outside}`);
+      // The first live run (24 Nov) ended in an error from the partner, yet the unlock came through the webhook: so it isn't called a failure.
+      return say(1, `The lock partner reported an error entering ${whose} on the ${door.door} keypad at ${at}${result.errorType ? ` (${result.errorType})` : ""}, but the unlock can still arrive. Check door activity before you try again.${outside}`);
     case "refused":
       return say(
         1,
