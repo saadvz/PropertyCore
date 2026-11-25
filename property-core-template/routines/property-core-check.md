@@ -15,7 +15,7 @@ Scheduled, every hour.
 ## Instructions for the routine
 
 1. Call `get_state`. If it has no `team`, post nothing and stop.
-2. Call `check_alerts`. Tell the host each item in `alerts` and `notes` once,
+2. If `check_alerts` isn't in your tool list, refresh the Property Core connector's tool list first: it only appears once a flow has its own bot. Call `check_alerts`. Tell the host each item in `alerts` and `notes` once,
    in your own words. Each is returned only once.
 3. For each `team` entry marked `quiet`, tell the host its `note` once a day
    at most, and ask them to open that bot or say it's gone. When the host says
