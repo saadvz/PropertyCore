@@ -108,7 +108,7 @@ function streetOf(address: string | undefined): string {
 }
 
 /** The second problem while the lock account is down: why get_locks shows the doors and codes as unknown. */
-export const ACCOUNT_DOWN_UNKNOWN = "Until the host signs in again, I can't see the doors or tell whether the codes are on them. Once they do, everyone's codes go back on the doors with the same times.";
+export const ACCOUNT_DOWN_UNKNOWN = "Until the host signs in again, Property Core can't see the doors or tell whether the codes are on them. Once they do, everyone's codes go back on the doors with the same times.";
 
 export class LockDesk {
   private readonly approvals: ConfirmationBook;
