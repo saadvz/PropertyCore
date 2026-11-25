@@ -175,7 +175,30 @@ export interface Booking {
   urgentStay?: string;
   /** A routine vendor's visit under a standing yes (#237). Unconfirmed: no code, no page reveal, no visit window. */
   vendor?: VendorVisit;
+  /**
+   * The pro's yes to this visit, on record (#243 ruling): their own YES by text, or one the host passed on. No code
+   * is made for the visit until it's here. A new booking (a move, a rebook) starts without one.
+   */
+  confirmed?: VisitConfirmed;
+  /** The one text asking the pro to confirm: marked before the send, so a restart never sends it twice. */
+  confirmAsk?: { at: string; sent?: true };
+  /** The one host ask when no yes is on record 48 hours before the start (or at the booking, inside 48 hours). */
+  confirmHostAskAt?: string;
+  /** The one note at the start when still no yes is on record. */
+  confirmStartNoteAt?: string;
+  /** The host's single-use page with the pro's code, for a pro who doesn't take texts: only the link token's hash. */
+  hostCodeLink?: { hash: string; expiresAt: string; at: string; usedAt?: string };
 }
+
+/** Who said yes to a visit, when, and how it came: the pro's own text, or the host passing it on. */
+export interface VisitConfirmed {
+  at: string;
+  by: "pro" | "host";
+  via: "text" | "email" | "call" | "host-arranged";
+}
+
+/** How long before the first workday (or the visit's start) the host is asked when no yes is on record. */
+export const CONFIRM_ASK_HOURS = 48;
 
 /**
  * One of the host's approvals on a job, kept when the live field is replaced (a moved visit drops the
@@ -183,7 +206,7 @@ export interface Booking {
  * (#238) reads these so a replaced approval is still the host's. Appended, never edited.
  */
 export interface HostStep {
-  kind: "approve-repair" | "pick-quote" | "approve-booking" | "approve-price" | "record-cost" | "confirm-repair";
+  kind: "approve-repair" | "pick-quote" | "approve-booking" | "approve-price" | "record-cost" | "confirm-repair" | "confirm-visit";
   /** The same instant the live field holds. */
   at: string;
   proId?: string;

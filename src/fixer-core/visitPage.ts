@@ -62,6 +62,7 @@ const COPY = {
   hostLetsIn: "The host will let you in.",
   codeRefused: "The door code can't be shown. Ask the host to let you in.",
   codeWaiting: "Your code is waiting for the host's OK. Try again in a few minutes.",
+  notConfirmed: "Your door code is made once your visit is confirmed. Check with the host.",
   guestsHere: "The guests haven't left yet. Try again in a few minutes.",
   notSaved: "That couldn't be saved. Tell the host.",
   amount: "An amount is $0 to $20,000, in cents.",
@@ -98,6 +99,7 @@ export function visitRouteRefusal(sub: string, kind: "busy" | "too-large" | "fai
 /** The plain reason a door POST got no code. */
 function doorReason(reason: RevealRefusal): string {
   if (reason === "waiting-for-host") return COPY.codeWaiting;
+  if (reason === "not-confirmed") return COPY.notConfirmed;
   if (reason === "before-visit") return COPY.codeNotYet;
   if (reason === "outside-crew-hours") return COPY.crewHours;
   if (reason === "after-visit" || reason === "window-over") return COPY.codeOver;

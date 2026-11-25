@@ -541,3 +541,60 @@ export function vendorTooManyQuestion(f: { proName: string; what: string; when: 
 export function vendorCalledOffNews(f: { proName: string; what: string; when: string }): string {
   return `${f.proName} never confirmed ${f.what.toLowerCase()} for ${f.when}, so I called it off. I'll offer them the next date when it comes due.`;
 }
+
+// A pro's code waits for a yes on record (#243 ruling, 24 Nov): the pro's YES by text, or one the host passes on.
+
+/** How a pro's yes reached the host, as the host passes it on. */
+export type ConfirmVia = "email" | "call" | "host-arranged";
+
+/** The visit's dates in the pro's and host's words: a crew's days and hours, or one visit's day and hours. */
+export function visitSpan(f: { from: string; until: string; timeZone: string; crew?: { firstDay: string; lastDay: string; workdays: readonly string[]; start: string; end: string } }): string {
+  return f.crew ? `${daysLabel(f.crew.firstDay, f.crew.lastDay)} (${crewDays(f.crew.workdays)}, ${crewClock(f.crew.start)} to ${crewClock(f.crew.end)})` : visitWhen(f.from, f.until, f.timeZone);
+}
+
+/** The one text asking a pro who texts on the line to confirm their booked visit. */
+export function confirmAskText(f: { proName: string; what: string; street: string; span: string }): string {
+  return `Hi ${firstName(f.proName)}, you're booked at ${f.street} (${f.what.toLowerCase()}) for ${f.span}. Reply YES to confirm.`;
+}
+
+export function confirmThanks(f: { access: "code" | "host" }): string {
+  return `Thanks, you're confirmed. ${f.access === "code" ? "You'll get your door code when the visit starts." : "The host will let you in."}`;
+}
+
+export function confirmedNews(f: { proName: string; span: string; access: "code" | "host" }): string {
+  return `${f.proName} confirmed by text for ${f.span}.${f.access === "code" ? " Their door code is made now." : ""}`;
+}
+
+function viaWords(via: ConfirmVia): string {
+  return via === "email" ? "by email" : via === "call" ? "on a call" : "with you directly";
+}
+
+/** confirm_visit: the host's yes that the pro confirmed. */
+export function confirmQuestion(f: { proName: string; span: string; via: ConfirmVia }): string {
+  return f.via === "host-arranged" ? `You set up ${f.span} with ${f.proName} yourself, so it's confirmed? Their door code is made then.` : `${f.proName} confirmed ${f.span} ${viaWords(f.via)}? Their door code is made then.`;
+}
+
+/** The extra sentence on the booking question when the host passes on the pro's yes with it. */
+export function confirmedSentence(f: { proName: string; via: ConfirmVia }): string {
+  return f.via === "host-arranged" ? `You set this up with ${f.proName} yourself, so it counts as confirmed. ` : `${f.proName} confirmed it ${viaWords(f.via)}. `;
+}
+
+/** The one ask, 48 hours before the start, when no yes is on record. */
+export function confirmHostAsk(f: { proName: string; span: string }): string {
+  return `Has ${f.proName} confirmed ${f.span}? Their door code is made only once they have. Tell me how they confirmed, or if you set it up with them yourself.`;
+}
+
+/** The one note at the start when still no yes is on record. */
+export function noConfirmAtStart(f: { proName: string }): string {
+  return `No door code was made for ${f.proName}: the visit isn't confirmed. Confirm it to make the code now, or let them in.`;
+}
+
+/** The booking reply's next step when the visit starts within 48 hours and isn't confirmed. */
+export function confirmSoonNext(f: { proName: string }): string {
+  return `Tell ${f.proName} the time. Their door code is made once they confirm: ask the host if they already have, and call confirm_visit.`;
+}
+
+/** pro_code_link: the host's yes to a private page with the pro's code, for reading it to them. */
+export function proCodeLinkQuestion(f: { proName: string }): string {
+  return `Make a private link for you to ${f.proName}'s door code, so you can read it to them? It opens once.`;
+}

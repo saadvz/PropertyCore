@@ -26,7 +26,7 @@ import { sameHash, uploadHash } from "../hub/uploadCode";
 import { ConfirmationBook } from "../operator/confirmations";
 import { nextDates, scheduleProblem, type Schedule } from "../supply-core/schedule";
 import { supplyAskOn } from "../supply-core/store";
-import { accessCheck, type AccessRefusal, bookingFingerprint, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
+import { accessCheck, type AccessRefusal, bookingFingerprint, visitConfirmed, bookingHolds, type BookingHold, contactAllowed, costNews, defaultAccess, liveBooking, raisedPriceHeld } from "./gate";
 import { holdsOtherRole, priceCents, proWaitingJob } from "./proLine";
 import { activateProblems, fixerSetupAsk, proGaps } from "./setupAsk";
 import { BLOCK_ON_CALENDAR_NEXT, blockCalendarNext, crewHoursOf, blockCollisionNews, blockOpenNews, BLOCK_HOST_ACCESS, CREW_HOST_ACCESS, crewScheduleQuestion, crewScheduleSentence, crewSpanRefusal, guestWithdrewNews, removeRepairBlockQuestion, repairBlockQuestion, URGENT_AGREED, URGENT_ASK_GUEST, urgentRefusal, urgentStayChangedNews } from "./texts";
@@ -38,13 +38,14 @@ import { MAX_VENDOR_HOURS, parseVendorTime } from "./vendorTime";
 import { appendServiceNotice, cleanNoticeText, MAX_NOTICE_BODY, noticeDates, noticeHash, readServiceNotices, senderAddress, type ServiceNoticeInput } from "./serviceNotices";
 import { ROUTINE_NOTHING_TO_DO, ROUTINE_WAIT_TEXTS, routineProposedNext, routineWaitStays, routineWaitYes, standingJobRefusal } from "./texts";
 import { scheduleWords, vendorCalledOffNews, vendorTakenNews, vendorTimeTaken, vendorTooManyQuestion, standingOffQuestion, standingQuestion, vendorConfirmed, vendorConfirmedNews, vendorHeldQuestion, vendorMoved, vendorMovedNews, vendorNoAnswerNews, vendorNoDayNews, vendorProposal, visitWhen, VENDOR_ASKING_HOST } from "./texts";
+import { confirmAskText, confirmedNews, confirmedSentence, confirmHostAsk, confirmQuestion, confirmSoonNext, confirmThanks, noConfirmAtStart, proCodeLinkQuestion, visitSpan, type ConfirmVia } from "./texts";
 import { deskFeatureOn } from "../features/features";
 import { buildVisits } from "../visits/derive";
 import { fixerDue } from "../visits/due";
 import { crewVisit, repairVisit, type WindowEvent } from "../visits/events";
 import { messageEventId, visitLogFor, type VisitLog } from "../visits/store";
 import { stayKey, urgentAccessCheck, urgentStay, urgentTimeline, urgentVisitHolds, type GuestAnswer, type UrgentHold, type UrgentRefusal } from "./urgentVisit";
-import { MAX_HOST_STEPS, MAX_REPAIR_BLOCKS, TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type SavedBlock, type Booking, type HostStep, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep, type StandingYes } from "./store";
+import { CONFIRM_ASK_HOURS, MAX_HOST_STEPS, MAX_REPAIR_BLOCKS, TRADES, isTrade, letterToken, newId, readFixer, tokenHash, writeFixer, type SavedBlock, type Booking, type HostStep, type Candidate, type Contact, type FileNews, type FixerFile, type Job, type Pro, type ProReach, type Trade, type Upkeep, type StandingYes } from "./store";
 
 /**
  * Fixer Core's desk: every tool's behaviour over one property's `fixer.json`. One call at a time.
@@ -105,6 +106,11 @@ const ALERT_UPLOAD_NEXT =
 
 /** The visit page's path before its token. The page itself is in `visitPage.ts`. */
 export const FIXER_VISIT_PREFIX = "/fixer-core/visit/";
+/** The host's single-use page with a pro's door code, for a pro who doesn't take texts (#243 ruling). */
+export const FIXER_PRO_CODE_PREFIX = "/fixer-core/pro-code/";
+
+/** How a pro's yes can reach the host, as the host passes it on. */
+const CONFIRM_VIAS: readonly ConfirmVia[] = ["email", "call", "host-arranged"];
 /** Requests a visit link answers in an hour. */
 export const VISIT_HITS_PER_HOUR = 30;
 /** A visit token: `letterToken()`'s 64 letters a to p. */
@@ -476,6 +482,8 @@ export class FixerDesk {
     const settings = this.lockSettings();
     const booking = job.booking;
     if (!settings || !booking?.hostYes || booking.access !== "code" || job.done) return;
+    // An unconfirmed visit has no code to OK or extend: the confirm pass speaks for it (#243 ruling).
+    if (!visitConfirmed(booking)) return;
     const now = this.deps.now().getTime();
     const zone = this.timeZone();
     const proName = this.bookedName(file, job);
@@ -535,6 +543,190 @@ export class FixerDesk {
     });
   }
 
+  /** The visit's dates in words: a crew's days and hours, or one visit's day and hours. */
+  private spanOf(job: Job, booking: Booking): string {
+    return visitSpan({ from: booking.from, until: booking.until, timeZone: this.timeZone(), ...(job.crew ? { crew: job.crew } : {}) });
+  }
+
+  /** The host passed on the pro's yes (#243 ruling). Under ask, that same yes is their OK for the code: one question, not two. */
+  private confirmByHost(booking: Booking, at: string, via: ConfirmVia): void {
+    booking.confirmed = { at, by: "host", via };
+    if (booking.access === "code" && this.lockSettings()?.pros === "ask") booking.codeYes ??= { at };
+  }
+
+  /**
+   * A booked visit with a door code and no yes on record (#243 ruling), each clock pass: a pro who texts on the line
+   * gets one text to confirm (marked before the send, so a restart never sends it twice); the host is asked once
+   * when 48 hours are left (the booking reply already asked, inside 48 hours); and at the start, still no yes is one
+   * urgent note. No code is made meanwhile: the lock sync and the visit page both wait for the yes.
+   */
+  private async confirmPass(file: FixerFile, job: Job, notes: HostNote[]): Promise<void> {
+    const booking = job.booking!;
+    if (booking.access !== "code" || visitConfirmed(booking) || booking.vendor || job.done) return;
+    const now = this.deps.now().getTime();
+    if (now >= this.endOf(booking)) return;
+    const at = new Date(now).toISOString();
+    const proName = this.bookedName(file, job);
+    const span = this.spanOf(job, booking);
+    if (!booking.confirmAsk) {
+      const phone = await this.textPhone(file, job);
+      if (phone) {
+        booking.confirmAsk = { at };
+        this.write(file);
+        let sent = false;
+        try {
+          sent = (await this.deps.send!(phone, confirmAskText({ proName, what: job.what, street: streetOf(this.hub().property().address ?? ""), span }))) === true;
+        } catch {
+          // Whether it went is unknown, so it is never sent again. The host's ask still comes.
+        }
+        if (sent) booking.confirmAsk.sent = true;
+        this.write(file);
+      }
+    }
+    const from = Date.parse(booking.from);
+    if (!booking.confirmHostAskAt && now >= from - CONFIRM_ASK_HOURS * HOUR_MS) {
+      booking.confirmHostAskAt = at;
+      notes.push(this.news(job, "confirm-ask", confirmHostAsk({ proName, span }), `fixer:${job.id}:${visitTag(booking)}:confirm-ask`));
+    }
+    if (!booking.confirmStartNoteAt && now >= from) {
+      booking.confirmStartNoteAt = at;
+      notes.push(this.fileNews(file, { kind: "confirm-missing", jobId: job.id, text: noConfirmAtStart({ proName }), urgent: true }, `fixer:${job.id}:${visitTag(booking)}:confirm-missing`));
+    }
+  }
+
+  /** The visit a pro's YES confirms: asked by text, still unconfirmed and not over. The earliest first. */
+  private confirmJobOf(file: FixerFile, proId: string): Job | undefined {
+    const now = this.deps.now().getTime();
+    return file.jobs
+      .filter((job) => job.booking?.proId === proId && job.booking.hostYes && liveBooking(job) && !job.done && job.booking.confirmAsk?.sent && !visitConfirmed(job.booking) && now < this.endOf(job.booking))
+      .sort((a, b) => Date.parse(a.booking!.from) - Date.parse(b.booking!.from))[0];
+  }
+
+  /** The pro's own YES to the confirm text, from their own opted-in phone: the yes on record, and their code can be made. */
+  private async confirmByText(file: FixerFile, job: Job, phone: string): Promise<void> {
+    const booking = job.booking!;
+    booking.confirmed = { at: this.deps.now().toISOString(), by: "pro", via: "text" };
+    const proName = this.bookedName(file, job);
+    const note = this.news(job, "confirmed", confirmedNews({ proName, span: this.spanOf(job, booking), access: booking.access }), `fixer:${job.id}:${visitTag(booking)}:confirmed`);
+    this.write(file);
+    await this.tell([note]);
+    if ((await this.deps.textsAllowed?.()) === true) await this.deps.send?.(phone, confirmThanks({ access: booking.access })).catch(() => undefined);
+  }
+
+  /**
+   * confirm_visit (#243 ruling): the host passes on the pro's yes (by email or on a call), or says they set the visit
+   * up with the pro themselves. Two calls. It records who said it (the host), when, and how. Never returns a code.
+   */
+  confirmVisit(input: { jobId?: string; via?: ConfirmVia; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      const booking = job?.booking;
+      if (!job || !booking?.hostYes || !liveBooking(job) || job.done) return fail("Only a booked visit can be confirmed. Call get_fixer_state for the list.");
+      if (booking.vendor) return fail("A routine vendor confirms their own visit by text. For a time they asked for, use move_vendor_visit.");
+      const via = input.via;
+      if (!via || !CONFIRM_VIAS.includes(via)) return fail("Say how the pro confirmed: via email, call, or host-arranged when the host set it up with them.");
+      const proName = this.bookedName(file, job);
+      if (visitConfirmed(booking)) return ok({ jobId: job.id, confirmed: true, already: true, by: booking.confirmed!.by, via: booking.confirmed!.via, next: `${proName}'s visit is already confirmed.` });
+      if (this.deps.now().getTime() >= this.endOf(booking)) return fail("That visit has already ended.");
+      const gate = this.confirm("fixer-confirm-visit", job.id, tokenHash(JSON.stringify([booking.fingerprint, booking.hostYes.at, "confirm", via])), input.confirmation, confirmQuestion({ proName, span: this.spanOf(job, booking), via }));
+      if (gate !== "go") return gate;
+      const at = this.deps.now().toISOString();
+      this.confirmByHost(booking, at, via);
+      noteHostStep(job, { kind: "confirm-visit", at, proId: booking.proId });
+      this.write(file);
+      return ok({ jobId: job.id, confirmed: true, by: "host", via, next: booking.access === "code" ? `${proName}'s door code is made now, live only in their visit's hours. If they don't take texts or email, pro_code_link gives you a private page with it to read to them.` : `Nothing else changes: you let ${proName} in.` });
+    });
+  }
+
+  /**
+   * pro_code_link (#243 ruling): for a pro who doesn't take texts, a single-use page for the host with the pro's own
+   * code, to read to them on the phone. Two calls. Only on connected locks, once the visit is confirmed and (under ask)
+   * the host's OK is in. The link is the host's alone, opens once, and ends with the visit. Only its hash is kept.
+   */
+  proCodeLink(input: { jobId?: string; confirmation?: string }): Promise<FixerReply> {
+    return this.guarded(input, async () => {
+      const file = this.read();
+      const off = this.inactive(file);
+      if (off) return off;
+      const job = this.jobOf(file, input.jobId);
+      const booking = job?.booking;
+      if (!job || !booking?.hostYes || !liveBooking(job) || job.done) return fail("A door code page is only for a booked visit. Call get_fixer_state for the list.");
+      if (booking.access !== "code") return fail("This visit has no door code: the host lets the pro in.");
+      if (!this.lockSettings()) return fail("A door code page needs connected locks. Off them, use visit_link.");
+      const proName = this.bookedName(file, job);
+      if (!visitConfirmed(booking)) return fail(`${proName}'s visit isn't confirmed yet, so there's no code. Call confirm_visit once they've said yes.`);
+      if (this.codeWaits(job)) return fail(`${proName}'s code waits for the host's OK. Call approve_code first.`);
+      if (await this.textPhone(file, job)) return fail(visitTextPath({ proName }));
+      const end = this.endOf(booking);
+      if (this.deps.now().getTime() >= end) return fail("That visit has already ended.");
+      const base = this.deps.publicBase?.()?.replace(/\/+$/, "");
+      if (!base) return fail("The door code page needs the server's public address.");
+      const gate = this.confirm("fixer-pro-code-link", job.id, tokenHash(JSON.stringify([booking.fingerprint, booking.hostYes.at, "pro-code-link", booking.hostCodeLink?.at ?? null])), input.confirmation, proCodeLinkQuestion({ proName }));
+      if (gate !== "go") return gate;
+      const token = letterToken(20);
+      booking.hostCodeLink = { hash: tokenHash(token), expiresAt: new Date(end).toISOString(), at: this.deps.now().toISOString() };
+      this.write(file);
+      return ok({ jobId: job.id, url: `${base}${FIXER_PRO_CODE_PREFIX}${token}`, next: `Give the host this private link. It opens once and shows ${proName}'s door code, for the host to read to them. Never send it to the pro or a group.` });
+    });
+  }
+
+  /** The job whose host code page this token opens: live, unused, not expired. Reads only. */
+  private proCodeJob(file: FixerFile, token: string): Job | undefined {
+    if (!/^[a-p]{40}$/.test(token) || !file.settings.activatedAt || file.offAt) return undefined;
+    const hash = tokenHash(token);
+    const now = this.deps.now().getTime();
+    return file.jobs.find((job) => {
+      const link = job.booking?.hostCodeLink;
+      return Boolean(link && !link.usedAt && now < Date.parse(link.expiresAt) && liveBooking(job) && !job.done && sameHash(hash, link.hash));
+    });
+  }
+
+  /** Whether a host code page token is live, for showing the page: the pro's name and the street. Reads only. */
+  proCodeOpen(token: string): { proName: string; street: string } | undefined {
+    const file = this.readForPage();
+    const job = file ? this.proCodeJob(file, token) : undefined;
+    return job ? { proName: this.bookedName(file!, job), street: streetOf(this.hub().property().address ?? "") } : undefined;
+  }
+
+  /**
+   * The host code page's "show the code": the pro's own code, once. Only a code already on the lock shows (never the
+   * host's saved code); while it's still going on, the link keeps working. Never an arrival: the host is reading it.
+   */
+  showProCode(token: string): Promise<{ ok: true; code: string; doors?: { door: string; code: string }[] } | { ok: false; reason: "gone" | "pending" | "failed" }> {
+    return this.serial(async () => {
+      const file = this.readForPage();
+      const job = file ? this.proCodeJob(file, token) : undefined;
+      const booking = job?.booking;
+      if (!file || !job || !booking || booking.access !== "code" || !visitConfirmed(booking) || this.codeWaits(job)) return { ok: false as const, reason: "gone" as const };
+      const wanted = this.wantedCodes(file).find((item) => item.jobId === job.id);
+      if (!wanted) return { ok: false as const, reason: "gone" as const };
+      const door = this.door();
+      const state = await door.checkGrant("repair", job.id);
+      if (state !== "set") {
+        this.lockSync = undefined;
+        return { ok: false as const, reason: state === "failed" ? ("failed" as const) : ("pending" as const) };
+      }
+      // Claimed before the release, so two taps can't both show it; given back when nothing shows.
+      booking.hostCodeLink!.usedAt = this.deps.now().toISOString();
+      this.write(file);
+      const notes: HostNote[] = [];
+      const opened = await this.openCode(file, job, wanted.window, notes);
+      if (!opened.ok) {
+        delete booking.hostCodeLink!.usedAt;
+        this.write(file);
+        await this.tell(notes);
+        return { ok: false as const, reason: "failed" as const };
+      }
+      markShown(job);
+      this.write(file);
+      await this.tell(notes);
+      return { ok: true as const, code: opened.code, ...(opened.doors ? { doors: opened.doors } : {}) };
+    });
+  }
+
   /**
    * On connected locks, the codes Fixer wants now: the booked pro's own, for each live visit with the
    * host's yes and access by code, from Fixer's access window (30 minutes early, none for an urgent
@@ -546,7 +738,8 @@ export class FixerDesk {
     const wanted: WantedCode[] = [];
     for (const job of file.jobs) {
       const booking = job.booking;
-      if (!booking || !liveBooking(job) || !booking.hostYes || booking.access !== "code" || vendorWaiting(job)) continue;
+      // No code goes on the lock until the pro's yes is on record (#243 ruling), whoever comes through the door.
+      if (!booking || !liveBooking(job) || !booking.hostYes || booking.access !== "code" || !visitConfirmed(booking)) continue;
       const phone = this.reachOfId(file, job, booking.proId).phone;
       if (!phone) continue;
       if (job.crew) {
@@ -1577,10 +1770,11 @@ export class FixerDesk {
   }
 
   /** The question for a booking, with the holds the host's yes would accept. */
-  private questionFor(job: Job, proName: string, b: { from: string; until: string; estimateCents?: number }, access: "code" | "host", holds: readonly BookingHold[], urgent = false): string {
+  private questionFor(job: Job, proName: string, b: { from: string; until: string; estimateCents?: number }, access: "code" | "host", holds: readonly BookingHold[], urgent = false, via?: ConfirmVia): string {
     // An urgent visit the guest agreed to is during a stay by design: its overlap hold becomes one sentence.
     const shown = urgent ? holds.filter((hold) => hold !== "overlaps-stay") : holds;
-    return bookingQuestion({ proName, from: b.from, until: b.until, timeZone: this.timeZone(), ...(b.estimateCents !== undefined ? { estimateCents: b.estimateCents } : {}), access, holds: shown, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}), ...(urgent ? { extra: URGENT_AGREED } : job.crew ? { extra: crewScheduleSentence(job.crew) } : {}) });
+    const extra = `${urgent ? URGENT_AGREED : job.crew ? crewScheduleSentence(job.crew) : ""}${via ? confirmedSentence({ proName, via }) : ""}`;
+    return bookingQuestion({ proName, from: b.from, until: b.until, timeZone: this.timeZone(), ...(b.estimateCents !== undefined ? { estimateCents: b.estimateCents } : {}), access, holds: shown, ...(job.costLineCents !== undefined ? { costLineCents: job.costLineCents } : {}), ...(extra ? { extra } : {}) });
   }
 
   /** True when the span touches a block on the booking calendar, inside a repair block or not. */
@@ -1682,7 +1876,7 @@ export class FixerDesk {
   }
 
   /** The host's yes to a booking (two calls, the second with the code), or to a raised price with `revised`. */
-  approveBooking(input: { jobId?: string; access?: "code" | "host"; cleaningOrder?: "before" | "after"; revised?: true; proId?: string; googleEvents?: GoogleEventList; confirmation?: string }): Promise<FixerReply> {
+  approveBooking(input: { jobId?: string; access?: "code" | "host"; cleaningOrder?: "before" | "after"; revised?: true; proId?: string; confirmedVia?: ConfirmVia; googleEvents?: GoogleEventList; confirmation?: string }): Promise<FixerReply> {
     // Event text can hold long booking numbers. Only their dates are read, so they skip the card check.
     const { googleEvents, ...rest } = input;
     return this.guarded(rest, async () => {
@@ -1694,6 +1888,8 @@ export class FixerDesk {
       if (input.access !== undefined && input.access !== "code" && input.access !== "host") return fail("Access is code or host.");
       if (input.cleaningOrder !== undefined && input.cleaningOrder !== "before" && input.cleaningOrder !== "after") return fail("The cleaning order is before or after.");
       if (input.revised !== undefined && input.revised !== true) return fail("revised is only ever true.");
+      if (input.confirmedVia !== undefined && !CONFIRM_VIAS.includes(input.confirmedVia)) return fail("confirmedVia is email, call, or host-arranged.");
+      if (input.revised && input.confirmedVia) return fail("confirmedVia goes with a new booking, not a raised price.");
       if (input.revised) return this.approveRevised(file, job, input);
       if (liveBooking(job)) return fail("This job already has a booking.");
       const target = this.bookingTarget(file, job, input.proId);
@@ -1725,8 +1921,10 @@ export class FixerDesk {
       const urgentKey = urgent ? this.stayKeyOf(file, span) : undefined;
       const checkoutDay = localYmd(new Date(span.from), this.timeZone());
       if (!order && windows.some((w) => w.cleaning && w.checkoutYmd === checkoutDay)) return ok({ question: cleaningOrderQuestion({ proName: name }), next: "Ask the host, then call approve_booking again with cleaningOrder set to before or after." });
-      const question = this.questionFor(job, name, target, access, holds, Boolean(urgentKey));
-      const bound = tokenHash(JSON.stringify([target.fingerprint, access, order ?? null, [...holds].sort()]));
+      const via = input.confirmedVia;
+      const question = this.questionFor(job, name, target, access, holds, Boolean(urgentKey), via);
+      // The pro's yes passed on with the booking is part of what the host says yes to (#243 ruling).
+      const bound = tokenHash(JSON.stringify([target.fingerprint, access, order ?? null, [...holds].sort(), ...(via ? [via] : [])]));
       const gate = this.confirm("fixer-book", job.id, bound, input.confirmation, question);
       if (gate !== "go") return gate;
       // A new booking object, so a rebook never keeps the old visit link.
@@ -1742,13 +1940,20 @@ export class FixerDesk {
         fingerprint: fingerprintOf(target, order),
         ...(urgentKey ? { urgentStay: urgentKey } : {}),
       };
+      const yesAt = booked.hostYes!.at;
+      if (via) this.confirmByHost(booked, yesAt, via);
+      // Inside 48 hours of the start, the booking reply is the host's one ask about the pro's yes.
+      const soon = !via && access === "code" && Date.parse(booked.from) - this.deps.now().getTime() <= CONFIRM_ASK_HOURS * HOUR_MS;
+      if (soon) booked.confirmHostAskAt = yesAt;
       job.booking = booked;
-      noteHostStep(job, { kind: "approve-booking", at: booked.hostYes!.at, proId: booked.proId });
+      noteHostStep(job, { kind: "approve-booking", at: yesAt, proId: booked.proId });
+      if (via) noteHostStep(job, { kind: "confirm-visit", at: yesAt, proId: booked.proId });
       if (order) job.cleaningOrder = order;
       job.state = "booked";
       this.write(file);
       this.syncPros(file);
-      return ok({ booked: true, jobId: job.id, proId: booked.proId, from: booked.from, until: booked.until, access, ...(displaced ? { tellPro: displaced } : {}), next: access === "host" ? "Tell the pro the time. The host will let them in." : "Tell the pro the time." });
+      const next = access === "host" ? "Tell the pro the time. The host will let them in." : via ? "Tell the pro the time." : soon ? confirmSoonNext({ proName: name }) : `Tell the pro the time. Their door code is made once they confirm: by YES to the text they get, if they text on the line, or through you with confirm_visit.`;
+      return ok({ booked: true, jobId: job.id, proId: booked.proId, from: booked.from, until: booked.until, access, confirmed: visitConfirmed(booked), ...(displaced ? { tellPro: displaced } : {}), next });
     });
   }
 
@@ -2639,7 +2844,7 @@ export class FixerDesk {
       return;
     }
     // A pro given a visit link uses the page for this visit, even after an extend or a revoke, so the code never goes two ways.
-    if (booking.access !== "code" || booking.visitToken || booking.linkGivenAt || booking.visitRevokedAt) return;
+    if (booking.access !== "code" || booking.visitToken || booking.linkGivenAt || booking.visitRevokedAt || booking.hostCodeLink) return;
     // The host was told the code won't go by text for this visit: texts turning on later doesn't change that.
     if (job.codeNoteAt) return;
     const phone = await this.textPhone(file, job);
@@ -2731,6 +2936,7 @@ export class FixerDesk {
           continue;
         }
         if (job.state === "booked" && now >= Date.parse(booking.from)) job.state = "in-progress";
+        if (!file.offAt) await this.confirmPass(file, job, notes);
         if (!file.offAt) this.lockPass(file, job, notes);
         if (!file.offAt) await this.codeTextPass(file, job, notes);
         this.delayPass(file, job, notes);
@@ -3643,6 +3849,9 @@ export class FixerDesk {
       // A routine vendor's YES or new time for their own proposed or upcoming visit (#237), from their own opted-in phone.
       const vendorJob = pro && !this.inactive(file) && people.optedIn(input.from) && !people.stopped(input.from) ? this.vendorJobOf(file, pro.id) : undefined;
       if (vendorJob && (await this.vendorReply(file, vendorJob, input.from, text, id))) return;
+      // A pro's YES to the one confirm text about their booked visit (#243 ruling), from their own opted-in phone.
+      const waitingJob = pro && isYes(text) && !this.inactive(file) && people.optedIn(input.from) && !people.stopped(input.from) ? this.confirmJobOf(file, pro.id) : undefined;
+      if (waitingJob) return this.confirmByText(file, waitingJob, input.from);
       if (isYes(text)) return people.relay(people.optIn(input.from, here));
       const now = this.deps.now().getTime();
       const mine = pro && !this.inactive(file) ? file.jobs.filter((job) => job.booking?.proId === pro.id && job.booking.hostYes && liveBooking(job)) : [];

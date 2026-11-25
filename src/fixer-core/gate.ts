@@ -1,4 +1,4 @@
-import { tokenHash, type Job, type Pro } from "./store.js";
+import { tokenHash, type Booking, type Job, type Pro } from "./store.js";
 import { insideWindow, type VisitWindow } from "./window.js";
 
 /**
@@ -70,7 +70,15 @@ export function defaultAccess(job: Job, pro: { reach: { phone?: string } } | und
   return "code";
 }
 
-export type AccessRefusal = "not-booked" | "no-yes" | "host-access" | "no-phone" | "overlaps-stay" | "stays-unread" | "before-visit" | "after-visit" | "guests-not-left" | "guest-not-agreed" | "outside-crew-hours";
+/**
+ * The pro's yes to the visit is on record (#243 ruling): their own YES by text, one the host passed on, or a
+ * routine vendor's YES. No code is made, shown or texted for a visit without it.
+ */
+export function visitConfirmed(booking: Pick<Booking, "confirmed" | "vendor"> | undefined): boolean {
+  return Boolean(booking?.confirmed || booking?.vendor?.confirmedAt);
+}
+
+export type AccessRefusal = "not-booked" | "no-yes" | "not-confirmed" | "host-access" | "no-phone" | "overlaps-stay" | "stays-unread" | "before-visit" | "after-visit" | "guests-not-left" | "guest-not-agreed" | "outside-crew-hours";
 
 /** May the visit page show the door code now? The window runs from 30 minutes before the visit. */
 export function accessCheck(input: {
@@ -92,6 +100,8 @@ export function accessCheck(input: {
   // A routine vendor's visit opens only once the vendor confirmed it (#237).
   if (booking.vendor && !booking.vendor.confirmedAt) return { ok: false, reason: "no-yes" };
   if (booking.access === "host") return { ok: false, reason: "host-access" };
+  // Every pro's code waits for their yes on record (#243 ruling).
+  if (!visitConfirmed(booking)) return { ok: false, reason: "not-confirmed" };
   if (!pro?.reach.phone) return { ok: false, reason: "no-phone" };
   if (input.overlapsStay) return { ok: false, reason: "overlaps-stay" };
   if (input.staysUnread) return { ok: false, reason: "stays-unread" };
