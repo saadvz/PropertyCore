@@ -357,7 +357,7 @@ describe("Ring account linking on the shared service (#302)", () => {
     const { m } = await start();
     const home = await m.app.http("/cameras/ring");
     expect(home.status).toBe(200);
-    expect(await home.text()).toContain("managed from your assistant's chat");
+    expect(await home.text()).toContain("You manage the connection from your assistant's chat");
     open?.close();
     closeHostedApps();
     setCameraProviderForTests(undefined);

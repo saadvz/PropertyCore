@@ -295,7 +295,7 @@ describe("the vendor's reply", () => {
     const live = w.fake.liveCodes("dev-front");
     expect(live).toHaveLength(1);
     expect(live[0]!.window).toEqual({ from: new Date(Date.parse(DUE_VISIT.from) - 30 * MIN).toISOString(), until: DUE_VISIT.until });
-    expect(w.toBugs().at(-1)).toBe("Thanks, see you Sun, Jan 10, 9 to 11 AM. You'll get your door code by text when the visit starts.");
+    expect(w.toBugs().at(-1)).toBe("Thanks, see you Sun, Jan 10, 9 to 11 AM. You'll get your door code by text shortly before the visit starts.");
     expect(w.news().filter((t) => t.startsWith("Bug Busters confirmed pest control for Sun, Jan 10"))).toHaveLength(1);
     await w.desk().tick();
     const windows = w.log().read().filter((e) => e.type === "visit-window");
@@ -314,7 +314,7 @@ describe("the vendor's reply", () => {
     const booking = w.job()!.booking!;
     expect({ from: booking.from, until: booking.until }).toEqual({ from: "2027-01-12T18:00:00.000Z", until: "2027-01-12T20:00:00.000Z" });
     expect(booking.vendor!.confirmedAt).toBeDefined();
-    expect(w.toBugs().at(-1)).toBe("Done, you're moved to Tue, Jan 12, 1 to 3 PM. You'll get your door code by text when the visit starts.");
+    expect(w.toBugs().at(-1)).toBe("Done, you're moved to Tue, Jan 12, 1 to 3 PM. You'll get your door code by text shortly before the visit starts.");
     expect(w.news().filter((t) => t === "Bug Busters moved pest control to Tue, Jan 12, 1 to 3 PM.")).toHaveLength(1);
     expect(w.fake.liveCodes("dev-front")[0]!.window.until).toBe("2027-01-12T20:00:00.000Z");
   });
@@ -403,7 +403,7 @@ describe("review fixes", () => {
     const w = await proposed();
     await w.text("9 to 11 works");
     expect(w.job()!.booking!.vendor!.confirmedAt).toBeDefined();
-    expect(w.toBugs().at(-1)).toBe("Thanks, see you Sun, Jan 10, 9 to 11 AM. You'll get your door code by text when the visit starts.");
+    expect(w.toBugs().at(-1)).toBe("Thanks, see you Sun, Jan 10, 9 to 11 AM. You'll get your door code by text shortly before the visit starts.");
     expect(w.news().filter((t) => t.startsWith("Bug Busters confirmed pest control"))).toHaveLength(1);
   });
 
@@ -475,7 +475,7 @@ describe("move_vendor_visit", () => {
     expect(reply.isError).toBe(false);
     expect(w.job()!.booking!.from).toBe("2027-01-12T18:00:00.000Z");
     expect(w.job()!.booking!.vendor!.moves!.at(-1)!.by).toBe("agent");
-    expect(w.toBugs().at(-1)).toBe("Done, you're moved to Tue, Jan 12, 1 to 3 PM. You'll get your door code by text when the visit starts.");
+    expect(w.toBugs().at(-1)).toBe("Done, you're moved to Tue, Jan 12, 1 to 3 PM. You'll get your door code by text shortly before the visit starts.");
   });
 
   it("outside the open times takes the host's two-call yes", async () => {

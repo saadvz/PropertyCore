@@ -146,8 +146,8 @@ describe("a pro's code waits for their yes on record", () => {
     w.at("2026-11-08T16:00:00.000Z");
     await w.desk().proInbound({ id: "yes-1", from: JOE, text: "YES" });
     expect(w.job().booking!.confirmed).toEqual({ at: "2026-11-08T16:00:00.000Z", by: "pro", via: "text" });
-    expect(w.sent).toEqual([{ to: JOE, body: "Thanks, you're confirmed. You'll get your door code when the visit starts." }]);
-    expect(w.news().map((item) => item.text)).toContain("Joe's Builders confirmed by text for Mon, Nov 16 to Wed, Nov 18 (Mon, Tue, Wed, 8 AM to 5 PM). Their door code is made now.");
+    expect(w.sent).toEqual([{ to: JOE, body: "Thanks, you're confirmed. You'll get your door code by text shortly before the visit starts." }]);
+    expect(w.news().map((item) => item.text)).toContain("Joe's Builders confirmed Mon, Nov 16 to Wed, Nov 18 (Mon, Tue, Wed, 8 AM to 5 PM) by text. Their door code goes on the lock now, for the visit's hours only.");
     const codes = live(w.fake);
     expect(codes).toHaveLength(1);
     expect(codes[0]!.window).toEqual({ from: "2026-11-16T13:00:00.000Z", until: "2026-11-16T22:00:00.000Z" });
@@ -176,7 +176,7 @@ describe("a pro's code waits for their yes on record", () => {
     await w.book();
     const ask = await w.desk().confirmVisit({ jobId: w.job().id, via: "email" });
     expect(ask.structured?.question).toBe(confirmQuestion({ proName: "Joe's Builders", span: "Mon, Nov 16 to Wed, Nov 18 (Mon, Tue, Wed, 8 AM to 5 PM)", via: "email" }));
-    expect(ask.structured?.question).toBe("Joe's Builders confirmed Mon, Nov 16 to Wed, Nov 18 (Mon, Tue, Wed, 8 AM to 5 PM) by email? Their door code is made then.");
+    expect(ask.structured?.question).toBe("Joe's Builders confirmed Mon, Nov 16 to Wed, Nov 18 (Mon, Tue, Wed, 8 AM to 5 PM) by email, so I'll make their door code now. Okay?");
     expect(live(w.fake)).toEqual([]);
     w.at("2026-11-08T15:05:00.000Z");
     const yes = await w.desk().confirmVisit({ jobId: w.job().id, via: "email", confirmation: codeOf(ask)! });
