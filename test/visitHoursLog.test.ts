@@ -51,6 +51,21 @@ const fixer = (): FixerFile =>
   }) as unknown as FixerFile;
 
 describe("the hours log reads visit records", () => {
+  it("names the camera in the reference when the departure time came from one (#237 camera departures)", () => {
+    const events: VisitEvent[] = [
+      connected,
+      window("cleaning:j1", "cleaning", "2027-01-04T16:00:00.000Z", "2027-01-04T21:00:00.000Z", { role: "cleaner", name: "Maria Lopez" }),
+      unlock("u1", "2027-01-04T16:05:00.000Z", "Cleaner"),
+      { type: "message", id: "d1", at: "2027-01-04T18:40:00.000Z", direction: "in", role: "cleaner", visit: "cleaning:j1", label: "done" },
+      { type: "camera", id: "c1", at: "2027-01-04T18:47:00.000Z", kind: "motion", deviceId: "cam-1", provider: "ring", device: "Front porch", label: "human" },
+    ];
+    const context = { timeZone: NY, codeNames: { Cleaner: { role: "cleaner" as const } }, now: new Date("2027-01-10T00:00:00.000Z") };
+    const [withCameras] = cleanerRows(base({ visits: buildVisits(events, { ...context, cameras: true }).visits }));
+    expect(withCameras).toMatchObject({ at: "2027-01-04T16:05:00.000Z", until: "2027-01-04T18:47:00.000Z", timing: "measured", reference: "Cleaner Core job j1, arrival from lock, departure from done-text, time from the Front porch camera" });
+    const [without] = cleanerRows(base({ visits: buildVisits(events, context).visits }));
+    expect(without).toMatchObject({ until: "2027-01-04T18:40:00.000Z", reference: "Cleaner Core job j1, arrival from lock, departure from done-text" });
+  });
+
   it("names the day a moved cleaning moved to (move_cleaning, finding #8)", () => {
     const moved = base({ cleaningJobs: [{ id: "j1", checkoutDate: "2027-01-03", cleanOn: { date: "2027-01-04", minutes: 660 }, done: true, startedAt: "2027-01-04T16:30:00.000Z", doneAt: "2027-01-04T18:40:00.000Z" }] });
     const [row] = cleanerRows(moved);
