@@ -4,7 +4,7 @@ import type { HostedCleaner, HostedRequest } from "../cleaner-core/hosted/router
 import { answerVisit, FIXER_VISIT_PREFIX, openVisit, visitBodyCap, visitReadsBody, visitRouteRefusal, type VisitResponse } from "../fixer-core/visitPage";
 import { FIXER_PRO_CODE_PREFIX } from "../fixer-core/desk";
 import { fixerDesk } from "./fixer";
-import { CODE_PENDING, serveCodePage } from "./locks";
+import { serveCodePage } from "./locks";
 
 /**
  * The pro's visit page on a property's own path, /t/<id>[/p/<pid>]/fixer-core/visit/<token>[/<sub>].
@@ -94,10 +94,10 @@ export async function serveProCodePage(h: HostedCleaner, r: HostedRequest, tenan
   try {
     const desk = fixerDesk(h, tenant, property);
     const open = r.method === "GET" && sub === "" ? desk.proCodeOpen(token) : undefined;
-    const page = open ? { heading: `Door code for ${open.proName} at ${open.street}`, intro: `Tap to see ${open.proName}'s code, to read to them. It shows only once, and it works only in their visit's hours.`, button: "Show the code", shownAs: "Door code: " } : undefined;
+    const page = open ? { heading: `Door code for ${open.proName} at ${open.street}`, intro: `Tap to see ${open.proName}'s code so you can read it to them. It shows only once, and works only during their visit.`, button: "Show the code", shownAs: "Door code: " } : undefined;
     await serveCodePage(r, sub, page, () => desk.showProCode(token), {
-      gone: "This link has ended. Ask me for a new one.",
-      pending: CODE_PENDING,
+      gone: "This link has ended. Ask your assistant for a new one.",
+      pending: "The code is still being added to the lock. Try again in a minute.",
       failed: "The code couldn't be added to the lock yet. This link still works once it's there.",
     });
   } catch {
