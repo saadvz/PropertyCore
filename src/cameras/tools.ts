@@ -9,7 +9,7 @@ const CONNECT = {
   name: "connect_cameras",
   title: "Connect Ring cameras",
   description:
-    "A one-time link, good for 30 minutes, where the host agrees to what Property Core reads and then signs in to Ring on Ring's own page. Never ask for their Ring password. Give the link to the host; after they sign in, call list_cameras and ask which outdoor cameras belong to this property. Indoor cameras are never used.",
+    "A one-time link, good for 30 minutes, where the host agrees to what Property Core reads. The page then tells them how to connect Property Core in Ring, and Ring sends them back to a Property Core page to finish. Never ask for their Ring password, or for the pairing word the page shows them. Give the link to the host; after they finish, call list_cameras and ask which outdoor cameras belong to this property. Indoor cameras are never used.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
 };
 

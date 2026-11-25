@@ -2,8 +2,8 @@ import { featureOn } from "../features/features";
 import { propertyFolder, type Property } from "../cleaner-core/hosted/properties";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner, HostedRequest } from "../cleaner-core/hosted/router";
-import { CameraLinks, cameraTokenKey, readCameras, sealedTokenStore, writeCameras, type CameraPlace } from "../cameras/accounts";
-import { CameraProviderError, type AccountRef, type CameraProvider } from "../cameras/adapter";
+import { CameraLinks, cameraTokenKey, maskEmail, maskLabel, readCameras, sealedTokenStore, shownWord, WaitingTokens, writeCameras, type AgreedLink, type CameraPlace, type WaitingAccount } from "../cameras/accounts";
+import { CameraProviderError, type AccountRef, type CameraProvider, type Tokens } from "../cameras/adapter";
 import { CameraCounting } from "../cameras/count";
 import type { Counter } from "../cameras/counter";
 import { detectorFromEnv } from "../cameras/detector";
@@ -16,16 +16,22 @@ import { PackageDesk } from "../package-arrivals/desk";
 import type { FrontReply } from "./serviceTools";
 
 /**
- * The camera connection (#239) on the shared service, behind each account's "cameras" switch and Ring's credentials. The host signs in on Ring's own page from a
- * one-time link; their tokens are sealed in the account's secrets with CAMERA_TOKEN_KEY. Ring's webhooks land on
+ * The camera connection (#239) on the shared service, behind each account's "cameras" switch and Ring's credentials. The host agrees on a
+ * one-time link, then connects Property Core in Ring; Ring posts a code to us and sends their browser back with a signed
+ * nonce (#302). Their tokens are sealed in the account's secrets with CAMERA_TOKEN_KEY. Ring's webhooks land on
  * POST /webhooks/ring, are verified, and are stored in the property's shared event log. The clock counts the night's
  * events and turns a camera offline for 30 minutes into one note for the host. Nothing here texts anyone.
  */
 
 export const CAMERA_FRONT_NAMES: ReadonlySet<string> = CAMERA_TOOL_NAMES;
 export const CAMERA_WEBHOOK_PATH = "/webhooks/ring";
-export const CAMERA_LINKED_PATH = "/cameras/ring/linked";
+/** The three addresses Ring's Account linking form asks for (#302), beside the webhook's. */
+export const CAMERA_TOKEN_PATH = "/cameras/ring/token";
+export const CAMERA_LINK_PATH = "/cameras/ring/link";
+export const CAMERA_HOME_PATH = "/cameras/ring";
 const CONNECT_PREFIX = "/cameras/connect/";
+/** The browser's mark from the consent page: sent back only to the Ring pages, and on Ring's redirect (Lax). */
+const MARK_COOKIE = "pc_ring";
 const SECRET_SLOT = "cameras";
 
 let testProvider: CameraProvider | undefined;
@@ -35,10 +41,12 @@ export function setCameraProviderForTests(provider: CameraProvider | undefined, 
   testProvider = provider;
   testCounter = counter;
   links = undefined;
+  waiting = undefined;
   countings.clear();
 }
 
 let links: CameraLinks | undefined;
+let waiting: { key: string; pool: WaitingTokens } | undefined;
 const countings = new Map<string, CameraCounting>();
 
 function providerFor(h: HostedCleaner): CameraProvider | undefined {
@@ -66,6 +74,19 @@ function counterFor(h: HostedCleaner): Counter | undefined {
   return liveCounter?.counter;
 }
 const linksFor = (h: HostedCleaner) => (links ??= new CameraLinks(() => h.now()));
+/** Tokens Ring released that no host has claimed yet. Undefined without the service's sealing key. */
+function waitingFor(h: HostedCleaner): WaitingTokens | undefined {
+  const key = cameraTokenKey(h.baseEnv());
+  if (!key) return undefined;
+  const name = key.toString("base64");
+  if (waiting?.key !== name) waiting = { key: name, pool: new WaitingTokens(key, () => h.now()) };
+  return waiting.pool;
+}
+/** Tokens held in memory for one call to the provider, before they belong to any account. */
+function heldAccount(tokens: Tokens): AccountRef & { current(): Tokens } {
+  let current = tokens;
+  return { tokens: { get: () => current, save: (next) => void (current = next) }, current: () => current };
+}
 const anyFlowOn = (property: Property) => property.flows.cleaning.on || property.flows.supplies.on || property.flows.fixer.on;
 
 function account(h: HostedCleaner, tenantId: string): (AccountRef & { tokens: ReturnType<typeof sealedTokenStore> }) | undefined {
@@ -115,7 +136,7 @@ export async function camerasCall(h: HostedCleaner, tenant: Tenant, property: Pr
       const origin = h.origin();
       if (!provider || !ref || !origin) return fail("The Ring connection isn't set up on this service yet.");
       const link = linksFor(h).start({ tenantId: tenant.id, propertyId: property.id });
-      return done({ link: `${origin}${CONNECT_PREFIX}${link.state}`, expiresInMinutes: 30, next: "Give the host this link. They agree to what's read, then sign in to Ring on Ring's own page. Never ask for their Ring password. Then call list_cameras." });
+      return done({ link: `${origin}${CONNECT_PREFIX}${link.state}`, expiresInMinutes: 30, next: "Give the host this link. They agree to what's read, then the page tells them how to connect Property Core in Ring. Ring sends them back to a Property Core page to finish. Never ask for their Ring password or for the pairing word the page shows. Then call list_cameras." });
     }
     case "list_cameras": {
       const picked = desk.cameras().cameras;
@@ -191,12 +212,46 @@ const CONSENT = (label: string, counter: string) => `<h1>Connect Ring to Propert
 <li>a video clip only when you ask to keep one as evidence.</li>
 </ul>
 <p>No one is identified. Indoor cameras are never used. You sign in on Ring's own page; Property Core never sees your password. You can disconnect at any time.</p>
-<form method="post"><button type="submit" name="agree" value="yes">I agree, continue to Ring</button></form>`;
+<form method="post"><button type="submit" name="agree" value="yes">I agree</button></form>`;
 
-/** Ring's webhook and the sign-in pages, on the service's own paths. True when the request was one of them. */
+const AGREED = (label: string, word: string) => `<h1>Now connect Property Core in Ring</h1>
+<p>Thanks. You agreed to what Property Core reads for <strong>${escapeHtml(label)}</strong>.</p>
+<ol>
+<li>Open Ring and find <strong>Property Core</strong> in its apps.</li>
+<li>Choose to connect it, and pick the cameras to share.</li>
+<li>Ring sends you back to a Property Core page to finish.</li>
+</ol>
+<p>If that page asks for a pairing word, yours is <strong class="word">${shownWord(word)}</strong>. It works for 30 minutes.</p>`;
+
+const CONFIRM = (input: { label?: string; email?: string; nonce: string; time: string; wrong?: boolean }) => `<h1>Connect this Ring account?</h1>
+<p>Ring account: <strong>${escapeHtml(input.email ? maskEmail(input.email) : "the one you just used in Ring")}</strong></p>
+${input.label ? `<p>Property: <strong>${escapeHtml(input.label)}</strong></p>` : `<p>Type the pairing word from the Property Core page where you agreed. If you haven't opened that page, ask your assistant to connect Ring and start there.</p>`}
+${input.wrong ? `<p role="alert">That pairing word didn't match. Check it and try again.</p>` : ""}
+<form method="post"><input type="hidden" name="nonce" value="${escapeHtml(input.nonce)}"><input type="hidden" name="time" value="${escapeHtml(input.time)}">
+${input.label ? "" : `<p><label>Pairing word <input name="word" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="20" required></label></p>`}
+<button type="submit">Connect</button></form>
+<p>If this isn't your Ring account, close this page. Nothing is connected until you choose Connect.</p>`;
+
+const NOT_CONNECTED = "<h1>Ring wasn't connected</h1><p>This step has expired or didn't come from Ring. Ask your assistant to connect Ring again and start from the link it gives you.</p>";
+const HOME = "<h1>Property Core and Ring</h1><p>Property Core reads only the outdoor cameras a host picked, and only what they agreed to.</p><p>The connection is managed from your assistant's chat. Ask it which cameras are used, to change them, or to disconnect Ring. You can also remove Property Core in the Ring app at any time.</p>";
+
+const page = (r: HostedRequest, status: number, title: string, body: string, extra: Record<string, string> = {}) => (r.send(status, "text/html; charset=utf-8", html(title, body), { ...PAGE_HEADERS, ...extra }), true);
+const markCookie = (mark: string, maxAge: number) => `${MARK_COOKIE}=${mark}; Path=${CAMERA_HOME_PATH}; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`;
+
+function markOf(r: HostedRequest): string | undefined {
+  const header = r.req.headers.cookie;
+  for (const part of typeof header === "string" ? header.split(";") : []) {
+    const [name, ...rest] = part.trim().split("=");
+    const value = rest.join("=");
+    if (name === MARK_COOKIE && /^[A-Za-z0-9_-]{32,100}$/.test(value)) return value;
+  }
+  return undefined;
+}
+
+/** Ring's webhook, the consent link and Ring's account-linking addresses, on the service's own paths. True when the request was one of them. */
 export async function handleCameraRoutes(h: HostedCleaner, r: HostedRequest): Promise<boolean> {
   const path = r.url.pathname;
-  const isCamera = path === CAMERA_WEBHOOK_PATH || path === CAMERA_LINKED_PATH || path.startsWith(CONNECT_PREFIX);
+  const isCamera = path === CAMERA_WEBHOOK_PATH || path === CAMERA_TOKEN_PATH || path === CAMERA_LINK_PATH || path === CAMERA_HOME_PATH || path.startsWith(CONNECT_PREFIX);
   if (!isCamera) return false;
   const provider = providerFor(h);
   // Not found until some account has cameras on; each link and event is then checked against its own account.
@@ -213,38 +268,116 @@ export async function handleCameraRoutes(h: HostedCleaner, r: HostedRequest): Pr
     if (result.status === 200 && result.unlinked) h.log("A Ring account removed Property Core.");
     return true;
   }
-  const origin = h.origin();
-  const redirectUri = origin ? `${origin}${CAMERA_LINKED_PATH}` : undefined;
-  if (path.startsWith(CONNECT_PREFIX)) {
-    const state = path.slice(CONNECT_PREFIX.length);
-    const link = /^[A-Za-z0-9_-]{32,100}$/.test(state) ? linksFor(h).peek(state) : undefined;
-    const place = link && placeOf(h, link.tenantId, link.propertyId);
-    if (!link || !place || !redirectUri) return (r.send(404, "text/html; charset=utf-8", html("Link expired", "<p>This link has expired or was already used. Ask your assistant for a new one.</p>"), PAGE_HEADERS), true);
-    if (r.method === "GET") return (r.send(200, "text/html; charset=utf-8", html("Connect Ring", CONSENT(place.property.label, "Property Core's own server")), PAGE_HEADERS), true);
-    if (r.method !== "POST") return (r.send(405, "text/plain", "Method not allowed"), true);
-    const form = new URLSearchParams(((await r.readCapped(1024)) ?? Buffer.alloc(0)).toString("utf8"));
-    if (form.get("agree") !== "yes") return (r.send(400, "text/html; charset=utf-8", html("Connect Ring", "<p>Nothing was connected.</p>"), PAGE_HEADERS), true);
-    const root = propertyFolder(h.dataRoot, place.tenant.id, place.property);
-    writeCameras(root, { ...readCameras(root), consentAt: h.now().toISOString() });
-    r.send(302, "text/plain", "", { Location: provider.linkUrl({ state, codeChallenge: link.codeChallenge, redirectUri }), "Cache-Control": "no-store" });
-    return true;
+  if (path === CAMERA_HOME_PATH) {
+    if (r.method !== "GET") return (r.send(405, "text/plain", "Method not allowed"), true);
+    return page(r, 200, "Property Core and Ring", HOME);
   }
-  // Ring's return from its sign-in page.
-  const code = r.url.searchParams.get("code");
-  const state = r.url.searchParams.get("state");
-  const link = state ? linksFor(h).finish(state) : undefined;
+  if (path.startsWith(CONNECT_PREFIX)) return consentPage(h, r, path.slice(CONNECT_PREFIX.length));
+  const pool = waitingFor(h);
+  // Without the sealing key nothing can be held or saved, so Ring's linking addresses aren't there either.
+  if (!pool) return (r.send(404, "text/plain", "Not found"), true);
+  return path === CAMERA_TOKEN_PATH ? tokenExchange(h, r, provider, pool) : accountLink(h, r, provider, pool);
+}
+
+/** The one-time link from the host's assistant: what's read, the host's yes, then how to connect in Ring. */
+async function consentPage(h: HostedCleaner, r: HostedRequest, state: string): Promise<boolean> {
+  const link = /^[A-Za-z0-9_-]{32,100}$/.test(state) ? linksFor(h).peek(state) : undefined;
   const place = link && placeOf(h, link.tenantId, link.propertyId);
-  const ref = link && account(h, link.tenantId);
-  if (!code || !link || !place || !ref || !redirectUri) return (r.send(400, "text/html; charset=utf-8", html("Not connected", "<p>Ring wasn't connected. The link may have expired; ask your assistant for a new one.</p>"), PAGE_HEADERS), true);
+  if (!link || !place) return page(r, 404, "Link expired", "<p>This link has expired or was already used. Ask your assistant for a new one.</p>");
+  const agreedPage = () => {
+    const agreed = linksFor(h).agree(state);
+    if (!agreed) return page(r, 404, "Link expired", "<p>This link has expired or was already used. Ask your assistant for a new one.</p>");
+    return page(r, 200, "Connect Ring", AGREED(place.property.label, agreed.word), { "Set-Cookie": markCookie(agreed.mark, 1800) });
+  };
+  if (r.method === "GET") return link.agreed ? agreedPage() : page(r, 200, "Connect Ring", CONSENT(place.property.label, "Property Core's own server"));
+  if (r.method !== "POST") return (r.send(405, "text/plain", "Method not allowed"), true);
+  const form = new URLSearchParams(((await r.readCapped(1024)) ?? Buffer.alloc(0)).toString("utf8"));
+  if (form.get("agree") !== "yes") return page(r, 400, "Connect Ring", "<p>Nothing was connected.</p>");
+  const root = propertyFolder(h.dataRoot, place.tenant.id, place.property);
+  if (!link.agreed) writeCameras(root, { ...readCameras(root), consentAt: h.now().toISOString() });
+  return agreedPage();
+}
+
+/**
+ * Ring's Token Exchange URL (#302): Ring posts a one-time code, server to server, as a form. It can't be verified by
+ * signature; the code is useless without our client secret. We trade it inside its 60 seconds, read whose Ring account
+ * it is over the new token, hold the tokens as waiting, and only then answer 200. Any other answer fails the link at
+ * Ring, which doesn't retry. Nothing about the code or the tokens is logged.
+ */
+async function tokenExchange(h: HostedCleaner, r: HostedRequest, provider: CameraProvider, pool: WaitingTokens): Promise<boolean> {
+  if (r.method !== "POST") return (r.send(405, "text/plain", "Method not allowed"), true);
+  const form = new URLSearchParams(((await r.readCapped(8192)) ?? Buffer.alloc(0)).toString("utf8"));
+  const code = form.get("code");
+  const clientId = form.get("client_id");
+  // A client id that isn't ours gets nothing done.
+  if (!code || !clientId || code.length > 4096 || !provider.ownsClient(clientId)) return (r.send(400, "text/plain", "Bad request"), true);
   try {
-    ref.tokens.save(await provider.finishLink({ code, codeVerifier: link.codeVerifier, redirectUri }));
-  } catch (error) {
-    return (r.send(502, "text/html; charset=utf-8", html("Not connected", `<p>${escapeHtml(plain(error))} Ask your assistant for a new link.</p>`), PAGE_HEADERS), true);
+    const held = heldAccount(await provider.exchangeCode(code));
+    const profile = await provider.profile(held);
+    pool.hold({ accountId: profile.accountId, ...(profile.email ? { email: profile.email } : {}), tokens: held.current() });
+  } catch {
+    h.log("Ring posted a sign-in code that couldn't be traded.");
+    return (r.send(502, "text/plain", "Not linked"), true);
   }
+  r.send(200, "text/plain", "ok");
+  return true;
+}
+
+/**
+ * Ring's Account Link URL (#302): the host's browser, sent by Ring with a nonce and a time. The nonce finds the waiting
+ * tokens; the browser's mark from the consent page, or the pairing word, says which host this is. Tokens are saved to
+ * an account only after both, a fresh time, the host's Connect, and Ring's own check of the nonce.
+ */
+async function accountLink(h: HostedCleaner, r: HostedRequest, provider: CameraProvider, pool: WaitingTokens): Promise<boolean> {
+  if (r.method !== "GET" && r.method !== "POST") return (r.send(405, "text/plain", "Method not allowed"), true);
+  const form = r.method === "POST" ? new URLSearchParams(((await r.readCapped(2048)) ?? Buffer.alloc(0)).toString("utf8")) : r.url.searchParams;
+  const nonce = form.get("nonce") ?? "";
+  const time = form.get("time") ?? "";
+  const found = pool.match(nonce, time, (at, accountId) => provider.linkNonce(at, accountId));
+  if (!found) return page(r, 400, "Not connected", NOT_CONNECTED);
+  const mark = markOf(r);
+  const marked = mark ? linksFor(h).byMark(mark) : undefined;
+  const labelOf = (link: AgreedLink | undefined) => (link ? placeOf(h, link.tenantId, link.propertyId)?.property.label : undefined);
+  const ask = (status: number, wrong = false) => {
+    const label = labelOf(marked);
+    return page(r, status, "Connect Ring", CONFIRM({ ...(label ? { label } : {}), ...(found.email ? { email: found.email } : {}), nonce, time, wrong }));
+  };
+  if (r.method === "GET") return ask(200);
+
+  const typed = form.get("word");
+  const link = labelOf(marked) ? marked : typed ? linksFor(h).byWord(typed) : undefined;
+  if (!link) {
+    if (!typed) return ask(400);
+    // Five wrong words and these tokens are dropped: the host starts again from their assistant.
+    return pool.wrongWord(found.accountId) ? page(r, 400, "Not connected", NOT_CONNECTED) : ask(400, true);
+  }
+  const place = placeOf(h, link.tenantId, link.propertyId);
+  const ref = account(h, link.tenantId);
+  if (!place || !ref) return page(r, 400, "Not connected", NOT_CONNECTED);
+  return claim(h, r, provider, pool, { found, nonce, link, place, ref });
+}
+
+async function claim(
+  h: HostedCleaner,
+  r: HostedRequest,
+  provider: CameraProvider,
+  pool: WaitingTokens,
+  input: { found: WaitingAccount; nonce: string; link: AgreedLink; place: { tenant: Tenant; property: Property }; ref: NonNullable<ReturnType<typeof account>> },
+): Promise<boolean> {
+  const { found, nonce, link, place, ref } = input;
+  const held = heldAccount(found.tokens);
+  // Out of the pool first, so two Connects for the same tokens can't both reach Ring.
+  pool.drop(found.accountId);
+  try {
+    await provider.confirmLink(held, { nonce, accountIdentifier: maskLabel(place.tenant.label) });
+  } catch (error) {
+    return page(r, 502, "Not connected", `<h1>Ring wasn't connected</h1><p>${escapeHtml(plain(error))} Ask your assistant to connect Ring again and start from the link it gives you.</p>`);
+  }
+  linksFor(h).finish(link.state);
+  ref.tokens.save(held.current());
   const root = propertyFolder(h.dataRoot, place.tenant.id, place.property);
   writeCameras(root, { ...readCameras(root), provider: provider.name, connectedAt: h.now().toISOString() });
-  r.send(200, "text/html; charset=utf-8", html("Ring connected", "<h1>Ring is connected</h1><p>Go back to your assistant's chat to pick which outdoor cameras belong to this property.</p>"), PAGE_HEADERS);
-  return true;
+  return page(r, 200, "Ring connected", "<h1>Ring is connected</h1><p>Go back to your assistant's chat to pick which outdoor cameras belong to this property.</p>", { "Set-Cookie": markCookie("", 0) });
 }
 
 /** Some account on the service has cameras on. */

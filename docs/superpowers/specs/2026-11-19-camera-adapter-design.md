@@ -485,6 +485,8 @@ and fake counter; nothing has talked to Ring.
 - **Sign-in:** built for Ring's partner-started PKCE flow (`state` ties the
   return to the one-time link). If the private app gets only the Ring-driven
   mode, `linkUrl` and the return route change; nothing else does.
+  (25 Nov: it did. The private app gets the Ring-driven mode; see
+  `2026-11-25-ring-account-linking-design.md`, #302.)
 - **Webhook routing** is by device id to the property that picked it; the
   Ring account id isn't stored. A Ring "app removed" webhook is logged; the
   next call then says Ring needs connecting again.

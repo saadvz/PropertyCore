@@ -23,6 +23,13 @@ export interface AccountRef {
   tokens: TokenStore;
 }
 
+/** The provider's own account behind a set of tokens. */
+export interface CameraProfile {
+  accountId: string;
+  /** Shown to the host partly masked, so they can see which account is being connected. Never stored or logged. */
+  email?: string;
+}
+
 export interface CameraDevice {
   /** The provider's id. */
   id: string;
@@ -56,10 +63,16 @@ export interface ClipRef {
 
 export interface CameraProvider {
   readonly name: string;
-  /** The page the host signs in on: the provider's own. `state` ties the return to our one-time link. */
-  linkUrl(input: { state: string; codeChallenge: string; redirectUri: string }): string;
-  /** Trades the provider's code for tokens. */
-  finishLink(input: { code: string; codeVerifier: string; redirectUri: string }): Promise<Tokens>;
+  /** True when a client id the provider posted is this app's own. */
+  ownsClient(clientId: string): boolean;
+  /** Trades the code the provider posted to us for tokens (#302). The code works once, for 60 seconds. */
+  exchangeCode(code: string): Promise<Tokens>;
+  /** Who the tokens belong to at the provider, read over the token, never from a browser. */
+  profile(account: AccountRef): Promise<CameraProfile>;
+  /** The nonce the provider signs for an account at a time, to match its browser redirect to waiting tokens. */
+  linkNonce(time: string, accountId: string): string;
+  /** Tells the provider the link is ours and complete: without it, it shares no camera and sends no event. */
+  confirmLink(account: AccountRef, input: { nonce: string; accountIdentifier: string }): Promise<void>;
   devices(account: AccountRef): Promise<CameraDevice[]>;
   /** Verifies a webhook delivery before reading it. Unsigned, badly signed or unreadable: undefined. */
   parseWebhook(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): CameraWebhook | undefined;

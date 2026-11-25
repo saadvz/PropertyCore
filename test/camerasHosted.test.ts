@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { propertyFolder } from "../src/cleaner-core/hosted/properties";
 import { tenantFolder } from "../src/cleaner-core/hosted/registry";
 import { fakeCounter } from "../src/cameras/counter";
-import { fakeCameraProvider, type FakeCameraProvider } from "../src/cameras/fake";
+import { FAKE_CLIENT_ID, fakeCameraProvider, type FakeCameraProvider } from "../src/cameras/fake";
 import { setCameraProviderForTests, tickAllCameras } from "../src/hosted/cameras";
 import { resetHostAlertClock, tickAllHostAlerts } from "../src/hosted/hostAlerts";
 import { resetVisitLogCache } from "../src/visits/store";
@@ -25,6 +25,8 @@ const KEY = randomBytes(32).toString("base64");
 const TZ = "America/New_York";
 
 let open: MultiTenantApp | undefined;
+/** The running test's clock, so the fake provider signs its redirects at the service's time. */
+let current: { now: Date } | undefined;
 afterEach(() => {
   open?.close();
   open = undefined;
@@ -42,6 +44,7 @@ async function tickBoth(m: MultiTenantApp) {
 
 /** Ring's made-up credentials and the token key are always on the service here: the account's switch is what decides. */
 async function account(features: Feature[], clock: { now: Date }) {
+  current = clock;
   open = await multiTenantApp({ env: { SUPPLY_CORE: "1", CAMERA_TOKEN_KEY: KEY, ...credentialsFor(["cameras"]) }, now: () => clock.now });
   const m = open;
   const { tenant } = m.registry.create({ label: "Lane", twilioNumber: LANE });
@@ -57,7 +60,7 @@ async function account(features: Feature[], clock: { now: Date }) {
 }
 
 function withFake() {
-  const provider: FakeCameraProvider = fakeCameraProvider({ name: "ring" });
+  const provider: FakeCameraProvider = fakeCameraProvider({ name: "ring", now: () => current?.now ?? new Date() });
   provider.cameras = [
     { id: "dev-aaa", name: "Front door" },
     { id: "dev-bbb", name: "Driveway" },
@@ -67,23 +70,51 @@ function withFake() {
   return { provider, counter };
 }
 
-async function connect(m: MultiTenantApp, token: string, propertyId: string) {
+const FORM = { "content-type": "application/x-www-form-urlencoded" };
+const cookieOf = (headers: Record<string, unknown>) => String((headers["set-cookie"] as string[] | undefined)?.[0] ?? "").split(";")[0]!;
+
+/** The host's half before Ring: the one-time link, the consent page and their yes. Gives the browser's cookie and the pairing word. */
+async function agree(m: MultiTenantApp, token: string, propertyId: string) {
   const reply = await m.toolAt(PATH, token, "connect_cameras", { property: propertyId });
   expect(reply.isError).toBe(false);
   const link = new URL(String(reply.structured?.link));
   const page = await m.app.http(link.pathname);
   expect(page.status).toBe(200);
+  expect(page.headers["set-cookie"]).toBeUndefined();
   const consent = await page.text();
   expect(consent).toContain("never sees your password");
   expect(consent).toContain("Property Core's own server counts the people, vehicles and pets in it, then deletes it. The image is never sent to anyone else");
   expect(consent).not.toMatch(/Google|Gemini/);
-  const agreed = await m.app.http(link.pathname, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "agree=yes" });
-  expect(agreed.status).toBe(302);
-  const ring = new URL(String(agreed.headers.location));
-  const state = String(ring.searchParams.get("state"));
-  const back = await m.app.http(`/cameras/ring/linked?code=good-code&state=${encodeURIComponent(state)}`);
+  const agreed = await m.app.http(link.pathname, { method: "POST", headers: FORM, body: "agree=yes" });
+  expect(agreed.status).toBe(200);
+  const next = await agreed.text();
+  expect(next).toContain("Now connect Property Core in Ring");
+  const word = /class="word">([A-Z]{4}-[A-Z]{4})</.exec(next)?.[1] ?? "";
+  expect(word).not.toBe("");
+  const setCookie = String((agreed.headers["set-cookie"] as string[])[0]);
+  expect(setCookie).toMatch(/^pc_ring=[A-Za-z0-9_-]{32,}; Path=\/cameras\/ring; Max-Age=1800; HttpOnly; Secure; SameSite=Lax$/);
+  return { linkPath: link.pathname, cookie: cookieOf(agreed.headers), word };
+}
+
+/** Ring's half: its server posts the code to the Token Exchange address. */
+const ringPosts = (m: MultiTenantApp, fields: Record<string, string> = { code: "good-code", client_id: FAKE_CLIENT_ID }) =>
+  m.app.http("/cameras/ring/token", { method: "POST", headers: FORM, body: new URLSearchParams(fields).toString() });
+
+/** The whole link in one browser: agree, Ring's code, Ring's redirect, Connect. */
+async function connect(m: MultiTenantApp, token: string, propertyId: string, provider: FakeCameraProvider) {
+  const { linkPath, cookie, word } = await agree(m, token, propertyId);
+  expect((await ringPosts(m)).status).toBe(200);
+  const { nonce, time } = provider.redirect();
+  const back = await m.app.http(`/cameras/ring/link?nonce=${nonce}&time=${time}`, { headers: { cookie } });
   expect(back.status).toBe(200);
-  return { linkPath: link.pathname, state };
+  const confirm = await back.text();
+  expect(confirm).toContain("j***t@example.com");
+  expect(confirm).toContain("12 Scratch Lane");
+  expect(confirm).not.toContain('name="word"');
+  const done = await m.app.http("/cameras/ring/link", { method: "POST", headers: { ...FORM, cookie }, body: new URLSearchParams({ nonce, time }).toString() });
+  expect(done.status).toBe(200);
+  expect(await done.text()).toContain("Ring is connected");
+  return { linkPath, cookie, word, nonce, time };
 }
 
 describe("cameras on the shared service", () => {
@@ -101,13 +132,17 @@ describe("cameras on the shared service", () => {
     const { m, tenant, token, property, root } = await account(["cameras"], clock);
     expect((await m.toolNames(PATH, token)).filter((name) => TOOLS.includes(name)).sort()).toEqual([...TOOLS].sort());
 
-    const { linkPath, state } = await connect(m, token, property.id);
+    const { linkPath, cookie, nonce, time } = await connect(m, token, property.id, provider);
+    expect(provider.calls.map((call) => call.call).filter((call) => /exchangeCode|profile|confirmLink/.test(call))).toEqual(["exchangeCode", "profile", "confirmLink"]);
     const secrets = readFileSync(join(tenantFolder(m.app.root, tenant.id), "secrets.json"), "utf8");
     expect(secrets).not.toContain("fake-access");
     expect(secrets).not.toContain("fake-refresh");
-    // The one-time link is used up.
+    expect(JSON.parse(readFileSync(join(root, "cameras.json"), "utf8"))).toMatchObject({ provider: "ring", consentAt: clock.now.toISOString(), connectedAt: clock.now.toISOString() });
+    // The one-time link, the waiting tokens and the browser's mark are all used up.
     expect((await m.app.http(linkPath)).status).toBe(404);
-    expect((await m.app.http(`/cameras/ring/linked?code=good-code&state=${state}`)).status).toBe(400);
+    expect((await m.app.http(`/cameras/ring/link?nonce=${nonce}&time=${time}`, { headers: { cookie } })).status).toBe(400);
+    expect((await m.app.http("/cameras/ring/link", { method: "POST", headers: { ...FORM, cookie }, body: new URLSearchParams({ nonce, time }).toString() })).status).toBe(400);
+    expect(m.app.logs.join("\n")).not.toMatch(/fake-access|fake-refresh|good-code/);
 
     const listed = await m.toolAt(PATH, token, "list_cameras", { property: property.id });
     expect(listed.structured).toMatchObject({ connected: true, cameras: [{ deviceId: "dev-aaa", name: "Front door", usedHere: false }, { deviceId: "dev-bbb" }] });
@@ -130,7 +165,7 @@ describe("cameras on the shared service", () => {
     const clock = { now: new Date("2026-11-21T15:00:00.000Z") };
     const { m, token, property, root } = await account(["cameras"], clock);
     writeStayCheck(root, { rules: [{ text: "No more than 6 guests", check: { kind: "people", max: 6 } }], sightings: {}, allowances: [] });
-    await connect(m, token, property.id);
+    await connect(m, token, property.id, provider);
     await m.toolAt(PATH, token, "pick_cameras", { property: property.id, cameras: [{ deviceId: "dev-aaa", outdoor: true }] });
     const delivery = provider.webhook({ id: "req-9", at: "2026-11-21T02:14:00.000Z", deviceId: "dev-aaa", kind: "motion", label: "human" });
     await m.app.http("/webhooks/ring", { method: "POST", headers: delivery.headers, body: delivery.body.toString() });
@@ -152,7 +187,7 @@ describe("cameras on the shared service", () => {
     const { provider } = withFake();
     const clock = { now: new Date("2026-11-21T19:00:00.000Z") };
     const { m, token, property } = await account(["cameras"], clock);
-    await connect(m, token, property.id);
+    await connect(m, token, property.id, provider);
     await m.toolAt(PATH, token, "pick_cameras", { property: property.id, cameras: [{ deviceId: "dev-aaa", outdoor: true }] });
     const off = provider.webhook({ id: "off-1", at: "2026-11-21T19:10:00.000Z", deviceId: "dev-aaa", kind: "offline" });
     await m.app.http("/webhooks/ring", { method: "POST", headers: off.headers, body: off.body.toString() });
@@ -198,5 +233,140 @@ describe("cameras on the shared service", () => {
     // With no account on, the routes are not found again.
     m.registry.setFeature(other.id, "cameras", false, "admin");
     expect((await m.app.http("/webhooks/ring", { method: "POST", headers: delivery.headers, body: delivery.body.toString() })).status).toBe(404);
+  });
+});
+
+describe("Ring account linking on the shared service (#302)", () => {
+  const start = async () => {
+    const { provider } = withFake();
+    const clock = { now: new Date("2026-11-21T15:00:00.000Z") };
+    return { provider, clock, ...(await account(["cameras"], clock)) };
+  };
+  const linked = async (m: MultiTenantApp, token: string, propertyId: string) => (await m.toolAt(PATH, token, "list_cameras", { property: propertyId })).structured?.connected;
+  const post = (m: MultiTenantApp, fields: Record<string, string>, cookie?: string) =>
+    m.app.http("/cameras/ring/link", { method: "POST", headers: { ...FORM, ...(cookie ? { cookie } : {}) }, body: new URLSearchParams(fields).toString() });
+
+  it("links by pairing word when Ring opens a browser that never saw the consent page", SLOW, async () => {
+    const { m, token, property, provider } = await start();
+    const { word } = await agree(m, token, property.id);
+    expect((await ringPosts(m)).status).toBe(200);
+    const { nonce, time } = provider.redirect();
+    const back = await m.app.http(`/cameras/ring/link?nonce=${nonce}&time=${time}`);
+    expect(back.status).toBe(200);
+    const asked = await back.text();
+    expect(asked).toContain('name="word"');
+    expect(asked).toContain("j***t@example.com");
+    expect(asked).not.toContain("12 Scratch Lane");
+    expect(asked).not.toMatch(/jane\.host|fake-access|fake-refresh/);
+    // Connect with no word saves nothing.
+    expect((await post(m, { nonce, time })).status).toBe(400);
+    expect(await linked(m, token, property.id)).toBe(false);
+    const done = await post(m, { nonce, time, word: word.toLowerCase() });
+    expect(done.status).toBe(200);
+    expect(await linked(m, token, property.id)).toBe(true);
+  });
+
+  it("drops the waiting tokens after five wrong pairing words", SLOW, async () => {
+    const { m, token, property, provider } = await start();
+    const { word } = await agree(m, token, property.id);
+    await ringPosts(m);
+    const { nonce, time } = provider.redirect();
+    for (let i = 0; i < 4; i += 1) {
+      const wrong = await post(m, { nonce, time, word: "BCDF-GHJK" });
+      expect(wrong.status).toBe(400);
+      expect(await wrong.text()).toContain("didn't match");
+    }
+    expect(await (await post(m, { nonce, time, word: "BCDF-GHJK" })).text()).toContain("Ring wasn't connected");
+    expect((await post(m, { nonce, time, word })).status).toBe(400);
+    expect(await linked(m, token, property.id)).toBe(false);
+    expect(provider.calls.some((call) => call.call === "confirmLink")).toBe(false);
+  });
+
+  it("refuses a stale or future time, a nonce for no waiting tokens, and a nonce for another Ring account", SLOW, async () => {
+    const { m, token, property, provider, clock } = await start();
+    const { cookie } = await agree(m, token, property.id);
+    // Before Ring has posted any code, nothing waits.
+    const early = provider.redirect();
+    expect((await m.app.http(`/cameras/ring/link?nonce=${early.nonce}&time=${early.time}`, { headers: { cookie } })).status).toBe(400);
+    await ringPosts(m);
+    const other = provider.redirect("ava1.ring.account.SOMEONE-ELSE");
+    expect((await post(m, other, cookie)).status).toBe(400);
+    const good = provider.redirect();
+    expect((await post(m, { nonce: good.nonce, time: String(Number(good.time) + 1) }, cookie)).status).toBe(400);
+    expect((await m.app.http("/cameras/ring/link", { headers: { cookie } })).status).toBe(400);
+    const ahead = String(clock.now.getTime() + 31_000);
+    expect((await post(m, { nonce: provider.linkNonce(ahead, provider.owner.accountId), time: ahead }, cookie)).status).toBe(400);
+    // The redirect is good for 10 minutes: at 10 minutes and a second, the same nonce is refused.
+    clock.now = new Date(clock.now.getTime() + 601_000);
+    expect((await post(m, good, cookie)).status).toBe(400);
+    expect(await linked(m, token, property.id)).toBe(false);
+    expect(provider.calls.some((call) => call.call === "confirmLink")).toBe(false);
+  });
+
+  it("the Token Exchange address does nothing for another client id, a missing code or JSON, and fails the link when Ring refuses the code", SLOW, async () => {
+    const { m, provider } = await start();
+    expect((await ringPosts(m, { code: "good-code", client_id: "someone-else" })).status).toBe(400);
+    expect((await ringPosts(m, { client_id: FAKE_CLIENT_ID })).status).toBe(400);
+    expect((await m.app.http("/cameras/ring/token", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: "good-code", client_id: FAKE_CLIENT_ID }) })).status).toBe(400);
+    expect(provider.calls).toEqual([]);
+    expect((await m.app.http("/cameras/ring/token")).status).toBe(405);
+    const refused = await ringPosts(m, { code: "used-code", client_id: FAKE_CLIENT_ID });
+    expect(refused.status).toBe(502);
+    expect(await refused.text()).not.toContain("used-code");
+    expect(m.app.logs.join("\n")).not.toContain("used-code");
+    // Nothing waits after any of these.
+    const { nonce, time } = provider.redirect();
+    expect((await m.app.http(`/cameras/ring/link?nonce=${nonce}&time=${time}`)).status).toBe(400);
+  });
+
+  it("saves nothing when Ring refuses the nonce, and the host starts again", SLOW, async () => {
+    const { m, token, property, provider } = await start();
+    const { cookie } = await agree(m, token, property.id);
+    await ringPosts(m);
+    provider.refuseNonce = true;
+    const refused = await post(m, provider.redirect(), cookie);
+    expect(refused.status).toBe(502);
+    expect(await refused.text()).toContain("Ask your assistant to connect Ring again");
+    expect(await linked(m, token, property.id)).toBe(false);
+    provider.refuseNonce = false;
+    expect((await post(m, provider.redirect(), cookie)).status).toBe(400);
+    // A fresh code from Ring and the same agreed link finish it.
+    await ringPosts(m);
+    expect((await post(m, provider.redirect(), cookie)).status).toBe(200);
+    expect(await linked(m, token, property.id)).toBe(true);
+  });
+
+  it("a browser's mark never links another account's property, and a mark from a switched-off account asks for the word", SLOW, async () => {
+    const { m, tenant, token, property, provider } = await start();
+    const { cookie } = await agree(m, token, property.id);
+    const other = m.registry.create({ label: "Court", twilioNumber: "+15555550153" }).tenant;
+    switchOn(m.registry, other.id, "cameras");
+    m.registry.setFeature(tenant.id, "cameras", false, "admin");
+    await ringPosts(m);
+    const { nonce, time } = provider.redirect();
+    const back = await m.app.http(`/cameras/ring/link?nonce=${nonce}&time=${time}`, { headers: { cookie } });
+    expect(await back.text()).toContain('name="word"');
+    expect((await post(m, { nonce, time }, cookie)).status).toBe(400);
+    expect(provider.calls.some((call) => call.call === "confirmLink")).toBe(false);
+  });
+
+  it("has a homepage, and every Ring address is not found without Ring's secrets or the sealing key", SLOW, async () => {
+    const { m } = await start();
+    const home = await m.app.http("/cameras/ring");
+    expect(home.status).toBe(200);
+    expect(await home.text()).toContain("managed from your assistant's chat");
+    open?.close();
+    closeHostedApps();
+    setCameraProviderForTests(undefined);
+    for (const env of [{ CAMERA_TOKEN_KEY: KEY }, credentialsFor(["cameras"])]) {
+      open = await multiTenantApp({ env: { SUPPLY_CORE: "1", ...env } });
+      const { tenant } = open.registry.create({ label: "Lane", twilioNumber: LANE });
+      switchOn(open.registry, tenant.id, "cameras");
+      expect((await open.app.http("/cameras/ring/token", { method: "POST", headers: FORM, body: "code=c&client_id=test-ring-id" })).status).toBe(404);
+      expect((await open.app.http("/cameras/ring/link?nonce=n&time=1")).status).toBe(404);
+      open.close();
+      closeHostedApps();
+    }
+    open = undefined;
   });
 });

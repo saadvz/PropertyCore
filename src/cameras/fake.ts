@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { CameraProviderError, type AccountRef, type CameraDevice, type CameraEvent, type CameraProvider, type CameraWebhook, type ClipRef, type Tokens } from "./adapter";
+import { CameraProviderError, type AccountRef, type CameraDevice, type CameraEvent, type CameraProfile, type CameraProvider, type CameraWebhook, type ClipRef, type Tokens } from "./adapter";
 
 /**
  * The in-memory camera provider every test uses (#239). It never touches the network. Webhooks are signed with a
@@ -17,7 +17,15 @@ export interface FakeCameraProvider extends CameraProvider {
   /** A signed webhook delivery for an event. */
   webhook(event: CameraEvent | { unlinked: string }, accountId?: string): { body: Buffer; headers: Record<string, string> };
   failSnapshots: number;
+  /** The provider's account behind the next code traded, as its Users call would say. */
+  owner: CameraProfile;
+  /** Set to make the provider refuse the nonce at confirmLink. */
+  refuseNonce: boolean;
+  /** What a browser redirect from the provider carries for an account: its nonce and time. */
+  redirect(accountId?: string): { nonce: string; time: string };
 }
+
+export const FAKE_CLIENT_ID = "fake-client";
 
 export function fakeCameraProvider(options: { key?: string; now?: () => Date; name?: string } = {}): FakeCameraProvider {
   const key = options.key ?? "fake-webhook-key";
@@ -35,11 +43,28 @@ export function fakeCameraProvider(options: { key?: string; now?: () => Date; na
     calls: [],
     failSnapshots: 0,
     sign,
-    linkUrl: ({ state, codeChallenge, redirectUri }) => `https://fake-camera.example/authorize?state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallenge)}&redirect_uri=${encodeURIComponent(redirectUri)}`,
-    async finishLink({ code }): Promise<Tokens> {
-      fake.calls.push({ call: "finishLink" });
+    owner: { accountId: "ava1.ring.account.FAKE1", email: "jane.host@example.com" },
+    refuseNonce: false,
+    ownsClient: (clientId) => clientId === FAKE_CLIENT_ID,
+    async exchangeCode(code): Promise<Tokens> {
+      fake.calls.push({ call: "exchangeCode" });
       if (code !== "good-code") throw new CameraProviderError("The sign-in didn't finish.", "failed");
       return { access: "fake-access", refresh: "fake-refresh", expiresAt: now().getTime() + 4 * 3600_000 };
+    },
+    async profile(account) {
+      need(account);
+      fake.calls.push({ call: "profile" });
+      return { ...fake.owner };
+    },
+    linkNonce: (time, accountId) => createHmac("sha256", key).update(`${time}:${accountId}`).digest("base64url"),
+    async confirmLink(account) {
+      need(account);
+      fake.calls.push({ call: "confirmLink" });
+      if (fake.refuseNonce) throw new CameraProviderError("Ring answered 400.", "failed");
+    },
+    redirect(accountId = fake.owner.accountId) {
+      const time = String(now().getTime());
+      return { nonce: fake.linkNonce(time, accountId), time };
     },
     async devices(account) {
       need(account);

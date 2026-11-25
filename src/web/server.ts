@@ -227,8 +227,9 @@ function workerRouteAllowed(method: string, path: string, internal: boolean): bo
 function publicRouteAllowed(method: string, path: string, oauth: boolean, hosted: boolean, uploadPages = false, multiTenant = false): boolean {
   // A multi-tenant Cleaner Core's per-tenant links. The router checks the tenant and the route.
   if (multiTenant && (splitTenantPath(path) || path === "/admin" || path.startsWith("/admin/"))) return true;
-  // The camera connection (#239): Ring's signed webhook, the one-time consent link and Ring's sign-in return. The router answers 404 unless an account has cameras on.
-  if (multiTenant && (path === "/webhooks/ring" || path === "/cameras/ring/linked" || /^\/cameras\/connect\/[A-Za-z0-9_-]{32,100}$/.test(path))) return true;
+  // The camera connection (#239, #302): Ring's signed webhook, the one-time consent link, and the Token Exchange, Account Link and
+  // homepage addresses Ring's portal asks for. The router answers 404 unless Ring's secrets are set and an account has cameras on.
+  if (multiTenant && (path === "/webhooks/ring" || path === "/cameras/ring" || path === "/cameras/ring/token" || path === "/cameras/ring/link" || /^\/cameras\/connect\/[A-Za-z0-9_-]{32,100}$/.test(path))) return true;
   if (path === MCP_PATH || path === MCP_OPS_PATH || path === MCP_QA_PATH || path === CLEANER_MCP_PATH) return true;
   // A core's own bot (#250), on the shared service only. Each account's "bots" switch still decides.
   if (multiTenant && jobOfPath(path)) return true;
