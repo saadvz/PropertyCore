@@ -145,6 +145,21 @@ whose `leadDays` window has opened (`upkeepDue`'s rule):
 3. If none fits, today's flow runs: `upkeepDue` lists it, and the host is
    asked once.
 
+Until then (24 Nov follow-up), `check_fixes` lists a due standing item in
+`routineVisits`, not `upkeepDue`, with a `next` line saying what the proposal
+waits on (the vendor's YES to texts, the bookings, texts on the line), and
+`open_job` refuses an upkeep job for it. The 23 Nov live run showed why: with
+the proposal held up, the agent opened a regular job and asked the host for a
+go and a cost line the standing yes already gave. The item goes back to
+`upkeepDue` only when the vendor can't be texted at all (removed, no phone,
+STOP, the host's own phone), with Visit records off, or after the no-day note.
+
+`save_upkeep` takes an optional `firstDate` (today or later, within a year):
+the first visit falls on it and the schedule runs on from it, until a visit is
+done after it was saved. Without it, nothing changes: an every-N-days or
+monthly schedule's first visit is a full period out, so a visit today couldn't
+be set up before.
+
 The hours log sees a `HostStep` of kind `standing-yes` on the job, so the
 host's approval is still on record.
 

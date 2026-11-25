@@ -237,8 +237,9 @@ describe("proposing a routine visit", () => {
     expect(w.toBugs()).toEqual([]);
     expect(w.job()).toBeUndefined();
     expect(w.news().filter((t) => t.includes("usual hours don't fit"))).toHaveLength(1);
-    const fixes = await w.desk().checkFixes({});
-    expect(JSON.stringify(fixes.structured)).toContain("upkeepDue");
+    const fixes = (await w.desk().checkFixes({})).structured as { upkeepDue: { upkeepId: string }[]; routineVisits: unknown[] };
+    expect(fixes.upkeepDue.map((entry) => entry.upkeepId)).toEqual([readFixer(w.root).upkeep[0]!.id]);
+    expect(fixes.routineVisits).toEqual([]);
   });
 
   it("proposes nothing to a vendor who hasn't said YES to texts, or with visit records off", async () => {
@@ -554,5 +555,121 @@ describe("two routine pest-control visits, end to end on the fake lock", () => {
     expect(fixerRows(readRecords(w.root)).filter((row) => row.actor === "host" && [first, second].some((id) => row.reference.includes(id)))).toEqual([]);
     // No text to anyone but the vendor, and none holds the saved code.
     expect(w.sent.every((s) => s.to === BUGS && !s.body.includes(SAVED))).toBe(true);
+  });
+});
+
+describe("a standing yes is enough (24 Nov live run)", () => {
+  type Fixes = { upkeepDue: { upkeepId: string }[]; routineVisits: { upkeepId: string; nextDate: string; proName: string; next: string }[]; needsGo: unknown[] };
+  const fixes = async (w: Awaited<ReturnType<typeof setup>>) => (await w.desk().checkFixes({})).structured as Fixes;
+  const openFor = (w: Awaited<ReturnType<typeof setup>>) =>
+    w.desk().openJob({ trade: "pest-control", what: "Pest control", urgency: "by-date", byDate: DUE, source: "upkeep", sourceRef: readFixer(w.root).upkeep[0]!.id });
+
+  it("check_fixes lists the due visit under routineVisits, never upkeepDue, and open_job for it is refused", async () => {
+    const w = await setup();
+    await w.savePest();
+    // Due, and the clock pass hasn't proposed it yet: the agent is told the vendor gets it, not to open a job.
+    w.at(LEAD);
+    const before = await fixes(w);
+    expect(before.upkeepDue).toEqual([]);
+    expect(before.routineVisits).toEqual([{ upkeepId: readFixer(w.root).upkeep[0]!.id, what: "Pest control", nextDate: DUE, proName: "Bug Busters", next: "Fixer Core texts Bug Busters this visit's date on its own. Don't open a job or ask the host: the standing yes covers it." }]);
+    const refused = await openFor(w);
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain("standing yes");
+    expect(w.job()).toBeUndefined();
+    // The clock pass then proposes it, with the host's yes and the usual price already on it: no go, no cost line.
+    await w.desk().tick();
+    expect(w.toBugs()).toHaveLength(1);
+    expect(w.job()).toMatchObject({ hostGo: { at: readFixer(w.root).upkeep[0]!.standing!.yesAt }, standingYes: { upkeepId: readFixer(w.root).upkeep[0]!.id } });
+    expect(w.job()!.booking).toMatchObject({ estimateCents: 12000, hostYes: { at: readFixer(w.root).upkeep[0]!.standing!.yesAt } });
+    const after = await fixes(w);
+    expect(after.upkeepDue).toEqual([]);
+    expect(after.routineVisits).toEqual([]);
+    expect(after.needsGo).toEqual([]);
+    expect(w.notes).toEqual([]);
+  });
+
+  it("says what the proposal waits on while the vendor hasn't said YES to texts, and still opens no job", async () => {
+    const w = await setup({ optedIn: false });
+    await w.savePest();
+    w.at(LEAD);
+    await w.desk().tick();
+    const listed = await fixes(w);
+    expect(listed.upkeepDue).toEqual([]);
+    expect(listed.routineVisits.map((entry) => entry.next)).toEqual(["Bug Busters hasn't said YES to texts from the line yet, so the visit is texted once they do. Don't open a job or ask the host: the standing yes covers it."]);
+    expect((await openFor(w)).isError).toBe(true);
+    // Once they say YES, the next pass proposes it.
+    w.people().optIn(BUGS, PROPERTY_ID);
+    await w.desk().tick();
+    expect(w.toBugs()).toHaveLength(1);
+  });
+
+  it("goes back to today's flow when the vendor can't be texted at all, or visit records are off", async () => {
+    const stopped = await setup();
+    await stopped.savePest();
+    stopped.people().stop(BUGS);
+    stopped.at(LEAD);
+    expect((await fixes(stopped)).upkeepDue).toHaveLength(1);
+    expect((await fixes(stopped)).routineVisits).toEqual([]);
+    expect((await openFor(stopped)).isError).toBe(false);
+
+    const off = await setup();
+    await off.savePest();
+    off.env[ACCOUNT_FEATURES] = "locks";
+    off.at(LEAD);
+    expect((await fixes(off)).upkeepDue).toHaveLength(1);
+    expect((await openFor(off)).isError).toBe(false);
+  });
+});
+
+describe("a schedule that starts today", () => {
+  const TODAY = "2026-12-20";
+  const saveFrom = (w: Awaited<ReturnType<typeof setup>>, firstDate: string | undefined, hours = { from: "13:00", until: "15:00" }) =>
+    approved((confirmation) => w.desk().saveUpkeep({ trade: "pest-control", what: "Pest control", schedule: { kind: "every", days: 90 }, leadDays: 7, standing: w.standing(hours), ...(firstDate ? { firstDate } : {}), ...(confirmation ? { confirmation } : {}) } as never));
+
+  it("without a first date, every 90 days lands a full period out", async () => {
+    const w = await setup();
+    const saved = await saveFrom(w, undefined);
+    expect(saved.structured!.nextDates).toEqual(["2027-03-20", "2027-06-18", "2027-09-16"]);
+    await w.desk().tick();
+    expect(w.toBugs()).toEqual([]);
+  });
+
+  it("with today as the first date, the question says so and today's usual hours are proposed at once", async () => {
+    const w = await setup();
+    const first = await w.desk().saveUpkeep({ trade: "pest-control", what: "Pest control", schedule: { kind: "every", days: 90 }, leadDays: 7, standing: w.standing({ from: "13:00", until: "15:00" }), firstDate: TODAY } as never);
+    const question = (first.structured?.confirmation as { question?: string } | undefined)?.question ?? String(first.structured?.question ?? "");
+    expect(question).toContain("every 90 days, starting Sun, Dec 20,");
+    const saved = await saveFrom(w, TODAY);
+    expect(saved.structured!.nextDates).toEqual(["2026-12-20", "2027-03-20", "2027-06-18"]);
+    await w.desk().tick();
+    expect(w.toBugs()).toEqual(["Hi Bug, pest control at 12 Scratch Lane is due. Can you come Sun, Dec 20, 1 to 3 PM? Reply YES, or send another day and time."]);
+    expect(w.job()!.booking).toMatchObject({ from: "2026-12-20T18:00:00.000Z", until: "2026-12-20T20:00:00.000Z" });
+  });
+
+  it("moves to tomorrow when today's usual hours have already started, and runs on from the first date once done", async () => {
+    const w = await setup();
+    await saveFrom(w, TODAY, { from: "09:00", until: "11:00" });
+    await w.desk().tick();
+    expect(w.toBugs()[0]).toContain("Mon, Dec 21, 9 to 11 AM");
+    await w.text("YES", "y1");
+    w.at("2026-12-21T15:30:00.000Z");
+    await w.desk().tick();
+    expect((await w.desk().recordDone({ jobId: w.job()!.id } as never)).isError).toBe(false);
+    const item = readFixer(w.root).upkeep[0]!;
+    expect(item.lastDoneAt).toBeDefined();
+    // Done on Dec 21: the next visit is 90 days after it, and it isn't due yet.
+    w.at("2027-03-01T15:00:00.000Z");
+    await w.desk().tick();
+    expect(w.toBugs().filter((body) => body.includes("is due."))).toHaveLength(1);
+    w.at("2027-03-14T15:00:00.000Z");
+    await w.desk().tick();
+    expect(w.toBugs().filter((body) => body.includes("is due.")).at(-1)).toContain("Mar 21");
+  });
+
+  it("refuses a first date in the past or more than a year out", async () => {
+    const w = await setup();
+    expect((await saveFrom(w, "2026-12-19")).isError).toBe(true);
+    expect((await saveFrom(w, "2027-12-22")).isError).toBe(true);
+    expect(readFixer(w.root).upkeep).toEqual([]);
   });
 });

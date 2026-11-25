@@ -20,7 +20,7 @@ In the Fixer Core bot of an account that runs separate bots, add `bot: "fixer"` 
 2. Call `check_fixes`. If Google Calendar is saved for the property, by Fixer
    Core, Cleaner Core or Supply Core, read only the calendar the host named
    and pass its events as `googleEvents`. If it says Fixer Core isn't active,
-   reply "Nothing new." and stop. For each `upkeepDue` item, call `open_job` with its trade and `what`, urgency `by-date` with its `nextDate` as `byDate`, source `upkeep`, and its `upkeepId` as `sourceRef`. It waits for the host's go: post the question it gives.
+   reply "Nothing new." and stop. For each `upkeepDue` item, call `open_job` with its trade and `what`, urgency `by-date` with its `nextDate` as `byDate`, source `upkeep`, and its `upkeepId` as `sourceRef`. It waits for the host's go: post the question it gives. Never open a job for a `routineVisits` item: the vendor's standing yes covers it, and Fixer Core texts the vendor itself. It isn't news.
 3. For each `unconfirmed` contact, find out what happened (look in your own
    call, email or message history first), then `record_contact` with the
    outcome.

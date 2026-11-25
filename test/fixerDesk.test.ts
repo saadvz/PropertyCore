@@ -674,6 +674,22 @@ describe("upkeep jobs", () => {
     expect((await desk.openJob({ trade: "hvac", what: "Again", urgency: "flexible", source: "upkeep", sourceRef: upkeepId })).isError).toBe(true);
   });
 
+  it("starts on the host's first visit date, today included, and runs on from it; a past date is refused", async () => {
+    const m = await withPlumber();
+    const item = { trade: "hvac" as const, what: "Change the filters", schedule: { kind: "every" as const, days: 90 }, leadDays: 7 };
+    // Saved 2026-11-08: without a first date, "every 90 days" lands a full period out.
+    const later = await m.desk.saveUpkeep({ ...item, confirmation: codeOf(await m.desk.saveUpkeep(item)) });
+    expect(later.structured!.nextDates).toEqual(["2027-02-06", "2027-05-07", "2027-08-05"]);
+    const today = { ...item, what: "Clean the vents", firstDate: "2026-11-08" };
+    const saved = await m.desk.saveUpkeep({ ...today, confirmation: codeOf(await m.desk.saveUpkeep(today)) });
+    expect(saved.structured!.nextDates).toEqual(["2026-11-08", "2027-02-06", "2027-05-07"]);
+    const upkeepId = saved.structured!.upkeepId as string;
+    expect((await check(m.desk)).upkeepDue).toEqual([{ upkeepId, trade: "hvac", what: "Clean the vents", nextDate: "2026-11-08" }]);
+    for (const firstDate of ["2026-11-07", "2027-11-10", "Nov 9"]) {
+      expect((await m.desk.saveUpkeep({ ...item, what: "Bad", firstDate })).isError, firstDate).toBe(true);
+    }
+  });
+
   it("needs an existing upkeep id, and waits for the go like a cleaner job", async () => {
     const { root, desk, upkeepId } = await withUpkeep();
     expect((await desk.openJob({ trade: "hvac", what: "Filters", urgency: "flexible", source: "upkeep" })).isError).toBe(true);
@@ -689,7 +705,7 @@ describe("check_fixes", () => {
   it("returns every list, empty when nothing, and refuses before activation", async () => {
     expect((await made().desk.checkFixes({})).isError).toBe(true);
     const { desk } = await withPlumber();
-    expect((await desk.checkFixes({})).structured).toEqual({ needsGo: [], upkeepDue: [], contactNext: [], quotesReady: [], windows: {}, unconfirmed: [], followUps: [], held: [], delays: [], preferredAsk: [], rotationAsk: [], news: [] });
+    expect((await desk.checkFixes({})).structured).toEqual({ needsGo: [], upkeepDue: [], routineVisits: [], contactNext: [], quotesReady: [], windows: {}, unconfirmed: [], followUps: [], held: [], delays: [], preferredAsk: [], rotationAsk: [], news: [] });
   });
 
   it("windows respect the next check-in and its buffer", async () => {
