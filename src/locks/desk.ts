@@ -107,6 +107,9 @@ function streetOf(address: string | undefined): string {
   return (address ?? "the property").split(",")[0]!.trim();
 }
 
+/** The second problem while the lock account is down: why get_locks shows the doors and codes as unknown. */
+export const ACCOUNT_DOWN_UNKNOWN = "Until the host signs in again, I can't see the doors or tell whether the codes are on them. Once they do, everyone's codes go back on the doors with the same times.";
+
 export class LockDesk {
   private readonly approvals: ConfirmationBook;
 
@@ -145,20 +148,27 @@ export class LockDesk {
     const door = this.door();
     const file = door.locks();
     const problems: string[] = [];
-    for (const device of file.devices) {
-      if (!device.online) problems.push(`${device.name} is offline.`);
-      if (typeof device.battery === "number" && device.battery < 0.2) problems.push(`${device.name}'s battery is low.`);
+    // While the lock account is disconnected or gone, the saved device health and code statuses are from before
+    // the drop (#180 live run, Nov 24: the door read online at 100% and every code set after the partner removed
+    // them). They read as unknown until the host signs in again.
+    const down = Boolean(file.activeAt && file.disconnectedAt);
+    if (!down) {
+      for (const device of file.devices) {
+        if (!device.online) problems.push(`${device.name} is offline.`);
+        if (typeof device.battery === "number" && device.battery < 0.2) problems.push(`${device.name}'s battery is low.`);
+      }
     }
     if (file.blockedBy === "mixed-doors") problems.push("Not every door the cleaner and pros use is a connected lock, so the saved door code is used.");
     if (file.blockedBy === "no-alerts") problems.push("Connected locks wait for a working alerts routine.");
-    if (file.activeAt && file.disconnectedAt) problems.unshift("The host's lock account is disconnected, so codes can't be made or changed. connect_lock gives the host a sign-in link.");
+    if (down) problems.unshift("The host's lock account is disconnected, so codes can't be made or changed. connect_lock gives the host a sign-in link.", ACCOUNT_DOWN_UNKNOWN);
     return ok({
-      connected: door.connected() && !file.disconnectedAt,
-      devices: file.devices.map((device) => ({ id: device.id, name: device.name, kind: device.kind, online: device.online, ...(typeof device.battery === "number" ? { battery: Math.round(device.battery * 100) } : {}), door: file.doors.includes(device.id) })),
+      connected: door.connected() && !down,
+      ...(down ? { disconnected: true } : {}),
+      devices: file.devices.map((device) => ({ id: device.id, name: device.name, kind: device.kind, ...(down ? { online: "unknown" } : { online: device.online, ...(typeof device.battery === "number" ? { battery: Math.round(device.battery * 100) } : {}) }), door: file.doors.includes(device.id) })),
       release: file.release,
       extend: file.extend,
-      standing: this.standing(file).map((person) => ({ id: person.id, name: person.name, role: person.role, status: standingStatus(person, this.deps.now()), ...(person.yesAt ? { lock: standingOnLock(door, person.id) } : {}) })),
-      codes: door.grants().statuses().filter((grant) => !grant.revoked).map((grant) => ({ flow: grant.flow, jobId: grant.jobId, from: grant.window.from, until: grant.window.until, doors: grant.doors })),
+      standing: this.standing(file).map((person) => ({ id: person.id, name: person.name, role: person.role, status: standingStatus(person, this.deps.now()), ...(person.yesAt ? { lock: down ? "unknown" : standingOnLock(door, person.id) } : {}) })),
+      codes: door.grants().statuses().filter((grant) => !grant.revoked).map((grant) => ({ flow: grant.flow, jobId: grant.jobId, from: grant.window.from, until: grant.window.until, doors: down ? grant.doors.map((item) => ({ door: item.door, status: "unknown" as const })) : grant.doors })),
       problems,
       next: problems[0] ?? (door.connected() ? "The locks are connected." : "No lock is connected here. connect_lock gives the host a sign-in link."),
     });
