@@ -141,6 +141,10 @@ Your team, only when `get_state` returns `newBots`:
   If the host asks you about it, say which bot to open.
 - When `get_state` shows `team`, each entry says who runs that flow. For one
   whose `holder` is `own bot`:
+  - The first time, refresh this connector's tool list before anything
+    else. `check_alerts` and `remove_bot` only appear once a flow has its own
+    bot, so a list fetched earlier doesn't have them. If either is still
+    missing, refresh again before telling the host it isn't there.
   - Send the host to that bot for anything about its flow, in one line.
   - Ask the host's yes, once, to delete your own routines for that flow
     (Cleaner Core Check and Cleaner Core Alerts, Supply Core Check, or Fixer
