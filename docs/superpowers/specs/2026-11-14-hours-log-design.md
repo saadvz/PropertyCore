@@ -70,7 +70,7 @@ State is one `hours.json` in the property's folder: settings and each month's co
 
 ### Reconciliation
 
-Every checkout in the month from the hub's stays has a cleaning row, or the review lists it. The lock-event check waits on #180.
+Every checkout in the month from the hub's stays has a cleaning row, or the review lists it. The lock-event check is in `docs/superpowers/specs/2026-11-25-hours-lock-check-design.md`.
 
 ### On the shared service
 
