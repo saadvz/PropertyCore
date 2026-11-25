@@ -1,6 +1,6 @@
 import type { DoorAccess } from "../../hub/doorAccess";
 import { registerSecretSaver } from "../../hub/doorAccess";
-import { handleLockWebhook, isGuestPath, isStandingPath, LOCK_WEBHOOK_PATH, serveGuestPage, serveStandingPage } from "../../hosted/locks";
+import { handleLockWebhook, isGuestPath, isStandingPath, isVisitCodePath, LOCK_WEBHOOK_PATH, serveGuestPage, serveStandingPage, serveVisitCodePage } from "../../hosted/locks";
 import { hubFor, type Hub } from "../../hub/hub";
 import { hubCalendarCode } from "../../hub/paths";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -384,6 +384,12 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
   if (isProCodePath(rest)) {
     if (!fixer.on) return false;
     await serveProCodePage(h, r, tenant, property, rest);
+    return true;
+  }
+  // The host's page with an expected visitor's code (25 Nov), for this path's property only. Its path holds the link's token, so it is never logged.
+  if (isVisitCodePath(rest)) {
+    if (!cleaning.on && !supplies.on && !fixer.on) return false;
+    await serveVisitCodePage(h, r, tenant, property, rest);
     return true;
   }
   // A standing code's page, for this path's property only. Its path holds the link's token, so it is never logged.

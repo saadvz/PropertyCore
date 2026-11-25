@@ -119,3 +119,101 @@ describe("a visit with a phone (#280 17)", () => {
     expect(asked?.structured?.question).toMatch(/with their own door code/);
   });
 });
+
+describe("the host passes on a visitor's yes (25 Nov)", () => {
+  function saved(desk: OversightDesk, extra: Record<string, unknown> = {}): string {
+    const reply = approved((confirmation) => desk.addVisit({ ...MIKE_VISIT, ...extra, ...(confirmation ? { confirmation } : {}) }));
+    return (reply.structured!.visit as { id: string }).id;
+  }
+
+  it("confirm_expected_visit takes the host's two-call yes and records the host and how, for that visit", () => {
+    const { root, desk } = world();
+    const id = saved(desk);
+    const asked = desk.confirmVisit({ id, via: "call" });
+    expect(asked.isError).toBe(false);
+    expect(asked.structured?.question).toBe("Mike Doyle confirmed their visit on Thursday, Nov 19, 12 to 5 PM on a call? Their door code is made for it.");
+    expect(readOversight(root).visits[0]!.confirmed).toBeUndefined();
+    const done = approved((confirmation) => desk.confirmVisit({ id, via: "call", ...(confirmation ? { confirmation } : {}) }));
+    expect(done.structured).toMatchObject({ confirmed: true, by: "host", via: "call" });
+    expect(done.structured?.next).toContain("visit_code_link");
+    expect(readOversight(root).visits[0]!.confirmed).toEqual({ at: NOW.toISOString(), by: "host", via: "call" });
+    expect(done.text).not.toContain("5555550161");
+  });
+
+  it("host-arranged has its own question", () => {
+    const { desk } = world();
+    const id = saved(desk);
+    expect(desk.confirmVisit({ id, via: "host-arranged" }).structured?.question).toBe("You set up Mike Doyle's visit on Thursday, Nov 19, 12 to 5 PM yourself, so it's confirmed? Their door code is made for it.");
+  });
+
+  it("is refused without how, for a visit with no phone, cancelled, over, unknown, or off connected locks", () => {
+    const { desk } = world();
+    const id = saved(desk);
+    expect(desk.confirmVisit({ id }).text).toBe("Say how they confirmed: via email, call, or host-arranged when you set it up with them yourself.");
+    expect(desk.confirmVisit({ id: "v-ffffffff", via: "call" }).isError).toBe(true);
+    const { phone: _phone, ...plain } = MIKE_VISIT;
+    const bare = (desk.addVisit({ ...plain, who: "Ana Ruiz" }).structured!.visit as { id: string }).id;
+    expect(desk.confirmVisit({ id: bare, via: "call" }).text).toBe("That visit has no phone, so there's no door code to make. Cancel it and save it again with their phone.");
+    desk.cancelVisit({ id });
+    expect(desk.confirmVisit({ id, via: "call" }).isError).toBe(true);
+    const later = world({ now: () => new Date("2026-11-19T21:00:00.000Z") });
+    const old = saved(later.desk, { date: "2026-11-19" });
+    const lateDesk = new OversightDesk(later.root, { now: () => new Date("2026-11-19T22:01:00.000Z"), codes: () => true, hostPhone: () => HOST });
+    expect(lateDesk.confirmVisit({ id: old, via: "call" }).text).toBe("That visit has already ended.");
+    const off = new OversightDesk(later.root, { now: () => NOW, codes: () => false, hostPhone: () => HOST });
+    expect(off.confirmVisit({ id: old, via: "call" }).isError).toBe(true);
+  });
+
+  it("answers already for a confirmed visit or a visitor who said YES by text, with nothing new on record", () => {
+    const { root, desk } = world();
+    const id = saved(desk);
+    approved((confirmation) => desk.confirmVisit({ id, via: "email", ...(confirmation ? { confirmation } : {}) }));
+    expect(desk.confirmVisit({ id, via: "call" }).structured).toMatchObject({ already: true, via: "email" });
+    const file = readOversight(root);
+    file.visitors![0]!.yesAt = NOW.toISOString();
+    writeFileSync(join(root, "oversight.json"), JSON.stringify(file));
+    const second = saved(desk, { date: "2026-11-20" });
+    expect(desk.confirmVisit({ id: second, via: "call" }).structured).toMatchObject({ already: true, by: "visitor", via: "text" });
+    expect(readOversight(root).visits.find((visit) => visit.id === second)!.confirmed).toBeUndefined();
+  });
+
+  it("confirmedVia on add_expected_visit puts both in one question and saves the yes", () => {
+    const { root, desk } = world();
+    const asked = desk.addVisit({ ...MIKE_VISIT, confirmedVia: "call" });
+    expect(asked.structured?.question).toBe("Mike Doyle, Thursday, Nov 19, 12 to 5 PM, with their own door code? They confirmed on a call.");
+    const done = approved((confirmation) => desk.addVisit({ ...MIKE_VISIT, confirmedVia: "call", ...(confirmation ? { confirmation } : {}) }));
+    expect(done.structured?.saved).toBe(true);
+    expect(readOversight(root).visits[0]!.confirmed).toEqual({ at: NOW.toISOString(), by: "host", via: "call" });
+    expect(done.structured?.next).toContain("visit_code_link");
+    // A confirmation for the plain question doesn't save it as confirmed.
+    const plain = desk.addVisit({ ...MIKE_VISIT, date: "2026-11-21" });
+    const code = (plain.structured?.confirmation as { code: string }).code;
+    expect(desk.addVisit({ ...MIKE_VISIT, date: "2026-11-21", confirmedVia: "call", confirmation: code }).isError).toBe(true);
+  });
+
+  it("confirmedVia needs a phone and a known way", () => {
+    const { desk } = world();
+    const { phone: _phone, ...plain } = MIKE_VISIT;
+    expect(desk.addVisit({ ...plain, confirmedVia: "call" }).text).toBe("confirmedVia goes with the visitor's phone, for their own door code.");
+    expect(desk.addVisit({ ...MIKE_VISIT, confirmedVia: "fax" }).isError).toBe(true);
+  });
+
+  it("a number that replied STOP is taken only with the host's yes, and is never told it gets a text", () => {
+    const { desk } = world({ stopped: (phone) => phone === MIKE });
+    expect(desk.addVisit(MIKE_VISIT).text).toMatch(/replied STOP/);
+    const asked = desk.addVisit({ ...MIKE_VISIT, confirmedVia: "email" });
+    expect(asked.isError).toBe(false);
+    expect(asked.structured?.question).toBe("Mike Doyle, Thursday, Nov 19, 12 to 5 PM, with their own door code? They confirmed by email.");
+    const done = approved((confirmation) => desk.addVisit({ ...MIKE_VISIT, confirmedVia: "email", ...(confirmation ? { confirmation } : {}) }));
+    expect(done.structured?.saved).toBe(true);
+    expect(done.structured?.next).not.toMatch(/by text/);
+  });
+
+  it("the tools take confirmedVia and confirm_expected_visit", () => {
+    const add = OVERSIGHT_TOOLS.find((item) => item.name === "add_expected_visit")!;
+    expect(Object.keys((add.inputSchema as { properties: Record<string, unknown> }).properties)).toContain("confirmedVia");
+    const { desk } = world();
+    const id = saved(desk);
+    expect(handleOversightTool(desk, "confirm_expected_visit", { id, via: "call" })?.structured?.question).toMatch(/on a call/);
+  });
+});

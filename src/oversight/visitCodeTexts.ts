@@ -32,3 +32,12 @@ export const visitTrimmedNote = (who: string, window: { from: string; until: str
 export const visitHostPhoneNote = (who: string): string => `${who}'s number is your own confirmed number, so no visitor code goes to it. Ask for a standing code for yourself instead.`;
 export const visitDuringStayNote = (who: string): string => `${who}'s visit falls during a guest's stay, so they get no door code. You'll need to let them in.`;
 export const visitInviteFailedNote = (who: string): string => `The text asking ${who} to reply YES for their door code couldn't go out after several tries. Check the number with the host, or let them in another way.`;
+
+/** A visit the host confirmed for a visitor who doesn't get texts: once, when the code starts working. Never the code. */
+export const visitHostPageNote = (who: string): string => `${who}'s door code works from now for today's visit. They don't get texts from this line, so ask me for a private page with their code to read to them.`;
+
+/** The host's single-use page with a visitor's code, under the property's path. */
+export const VISIT_CODE_PREFIX = "/oversight/visit-code/";
+
+/** A visit with a phone and no yes on record: once, 2 hours before the code's window. Never the code. */
+export const visitNoYesNote = (who: string): string => `${who} hasn't said yes to their visit, so no door code is made for it. If they told you yes another way, tell me and I'll make it.`;

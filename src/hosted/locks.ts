@@ -19,6 +19,7 @@ import { featureOn } from "../features/features";
 import { readDoorLocks } from "../locks/settings";
 import { fixerDesk } from "./fixer";
 import { VisitCodeDesk } from "../oversight/visitCodeDesk";
+import { VISIT_CODE_PREFIX } from "../oversight/visitCodeTexts";
 
 /**
  * Connected locks on the shared service (#180): the lock partner's webhook, and the clock pass for
@@ -374,6 +375,34 @@ export async function visitorLineText(h: HostedCleaner, tenant: Tenant, from: st
 /** True when the property path is a guest code's page. */
 export function isGuestPath(rest: string): boolean {
   return rest.startsWith(GUEST_PAGE_PREFIX);
+}
+
+/** True when the property path is the host's page with an expected visitor's code (25 Nov). */
+export function isVisitCodePath(rest: string): boolean {
+  return rest.startsWith(VISIT_CODE_PREFIX);
+}
+
+/**
+ * The host's single-use page with an expected visitor's own code, for a visitor who doesn't get texts (25 Nov): a
+ * button, then the code once, for the host to read to them. The same code page as guest and pro codes. Never logs the
+ * path or the code.
+ */
+export async function serveVisitCodePage(h: HostedCleaner, r: HostedRequest, tenant: Tenant, property: Property, rest: string): Promise<void> {
+  const [token = "", sub = ""] = rest.slice(VISIT_CODE_PREFIX.length).split("/");
+  if (!visitCodesAvailable(h, tenant)) return r.send(404, "text/plain", "Not found");
+  try {
+    const desk = visitCodeDesk(h, tenant, property);
+    const open = r.method === "GET" && sub === "" ? desk.pageOpen(token) : undefined;
+    const page = open ? { heading: `Door code for ${open.who} at ${open.street}`, intro: `Tap to see ${open.who}'s code, to read to them. It shows only once, and it works only in their visit's hours.`, button: "Show the code", shownAs: "Door code: " } : undefined;
+    await serveCodePage(r, sub, page, () => desk.showHostCode(token), {
+      gone: "This link has ended. Ask me for a new one.",
+      pending: "The code is still being added to the lock. Try again in a minute.",
+      failed: "The code couldn't be added to the lock yet. This link still works once it's there.",
+    });
+  } catch {
+    h.log(`The visit code page couldn't answer a request for ${tenant.id}/${property.id}.`);
+    if (!r.res.headersSent) r.send(500, "text/plain", "Something went wrong.");
+  }
 }
 
 /** True when the property path is a standing code's page. */
