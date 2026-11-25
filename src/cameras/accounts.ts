@@ -287,6 +287,11 @@ export interface CamerasFile {
   told?: string[];
   /** Notes nothing could deliver yet, for the host's next chat. */
   waiting?: { id: string; text: string }[];
+  /**
+   * The one-week counting test (#239), when the host agreed to it: from `from` until `until`, every motion event on
+   * the picked cameras is counted, day and night, whether or not a guest is staying.
+   */
+  countingWeek?: { from: string; until: string };
 }
 
 export const CAMERAS_FILE = "cameras.json";

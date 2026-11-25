@@ -17,7 +17,7 @@ const LIST = {
   name: "list_cameras",
   title: "Ring cameras",
   description:
-    "The host's Ring cameras, which ones this property uses, whether each is online, and any camera notes to tell the host once (a camera offline, or back). With no Ring account connected, says so; use connect_cameras.",
+    "The host's Ring cameras, which ones this property uses, whether each is online, the counting week while it runs, and any camera notes to tell the host once (a camera offline, or back). With no Ring account connected, says so; use connect_cameras.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
 };
 
@@ -30,6 +30,19 @@ const PICK = {
     type: "object",
     properties: { cameras: { type: "array", maxItems: 20, items: { type: "object", properties: { deviceId: { type: "string", maxLength: 100 }, outdoor: { type: "boolean" } }, required: ["deviceId", "outdoor"], additionalProperties: false } } },
     required: ["cameras"],
+    additionalProperties: false,
+  },
+};
+
+const COUNTING = {
+  name: "counting_week",
+  title: "Counting week",
+  description:
+    "Only when the host asks for the one-week counting test. Before starting, read this back and wait for their yes: for 7 days, a still from every motion event on this property's picked outdoor cameras is counted on Property Core's server, day and night, even with no guest staying, then deleted; no one is identified. Then call with action \"start\" and hostAgreed: true. Each evening the host notes what they saw in the Ring app, so their review can be scored against our counts. action \"stop\" ends it early.",
+  inputSchema: {
+    type: "object",
+    properties: { action: { type: "string", enum: ["start", "stop"] }, hostAgreed: { type: "boolean", description: "True only after the host said yes to the read-back." } },
+    required: ["action"],
     additionalProperties: false,
   },
 };
@@ -62,5 +75,5 @@ const PIN = {
   inputSchema: { type: "object", properties: { eventId: { type: "string", maxLength: 200 } }, required: ["eventId"], additionalProperties: false },
 };
 
-export const CAMERA_TOOLS: readonly Record<string, unknown>[] = [CONNECT, LIST, PICK, DISCONNECT, NIGHT, TIMELINE, PIN];
+export const CAMERA_TOOLS: readonly Record<string, unknown>[] = [CONNECT, LIST, PICK, COUNTING, DISCONNECT, NIGHT, TIMELINE, PIN];
 export const CAMERA_TOOL_NAMES: ReadonlySet<string> = new Set(CAMERA_TOOLS.map((tool) => tool.name as string));

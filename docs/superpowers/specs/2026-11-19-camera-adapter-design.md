@@ -526,3 +526,24 @@ and fake counter; nothing has talked to Ring.
   in `packages.json` and `check_packages` lists it as `cameraSightings`.
 - **Counting test:** `npm run cameras:count-test -- export|score`, reading the
   shared log read-only.
+
+## Counting week, as built (25 Nov)
+
+- **Every event for 7 days.** Counting was only inside a stay with a camera
+  rule, so a week with no booking counted nothing. Decided 25 Nov: the
+  counting test counts every motion event on the picked outdoor cameras for 7
+  days, day and night, whatever the calendar. `counting_week` starts it only
+  after the host agrees to a read-back in chat, and `stop` ends it early. The
+  window is saved in `cameras.json` as `countingWeek`; a night in it counts up
+  to 200 events instead of 60.
+- **The review sheet** downloads from the account's /admin page
+  (`/admin/tenants/<id>/count-sheet?property=<id>`, the week's days by default,
+  `from`/`to` for others): one row per counted event, camera name and local
+  time, empty host columns. Scored with `cameras:count-test -- score`.
+- **On the service** the model download and the sheet commands are built into
+  `dist/` (`node dist/getDetectorCli.js`, `node dist/countTestCli.js`), since
+  Railway doesn't install `tsx`.
+- **Online state (#302).** `list_cameras` asked Ring only about picked cameras,
+  so right after linking it said nothing. It now reads every camera's state from
+  `GET /v1/devices?include=status`, falls back to the status call, and says
+  `unknown` rather than online when Ring doesn't say.
