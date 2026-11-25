@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildVisits, RULES } from "../src/visits/derive";
+import { buildVisits, RULES, type DeriveContext } from "../src/visits/derive";
 import { cleaningDue, fixerDue } from "../src/visits/due";
 import type { CodeNames, VisitEvent, WindowEvent } from "../src/visits/events";
 
@@ -48,6 +48,113 @@ const lockOut = (id: string, at: string): VisitEvent => ({ type: "lock", id, at,
 const done = (id: string, at: string, visit = "cleaning:j1"): VisitEvent => ({ type: "message", id, at, direction: "in", role: "cleaner", visit, label: "done" });
 const said = (id: string, at: string, visit = "cleaning:j1"): VisitEvent => ({ type: "message", id, at, direction: "in", role: "cleaner", visit, label: "start" });
 
+const seen = (id: string, at: string, opts: { label?: string; kind?: "motion" | "ding"; device?: string } = {}): VisitEvent => ({ type: "camera", id, at, kind: opts.kind ?? "motion", deviceId: "cam-1", provider: "ring", device: opts.device ?? "Front porch", label: opts.label ?? "human" });
+const counted = (event: string, at: string, people: number): VisitEvent => ({ type: "camera-count", id: `count:${event}:vision-v1`, at, event, counter: "vision-v1", people, vehicles: 0, animals: 0 });
+const camCtx = (now: string) => ({ ...ctx(now), cameras: true });
+
+describe("camera departures (#237, #240)", () => {
+  const NOW = "2027-01-04T22:00:00.000Z";
+  const base = [connected, cleaning("j1"), unlock("u1", "2027-01-04T16:10:00.000Z", "Cleaner"), done("d1", "2027-01-04T18:40:00.000Z")];
+  const departure = (events: VisitEvent[], context: DeriveContext = camCtx(NOW)) => buildVisits(events, context).visits[0]!.departure;
+
+  it("takes the camera's time when DONE has no lock from outside near it", () => {
+    const [visit] = buildVisits([...base, seen("c1", "2027-01-04T18:47:00.000Z")], camCtx(NOW)).visits;
+    expect(visit!.departure).toEqual({
+      at: "2027-01-04T18:47:00.000Z",
+      source: "done-text",
+      eventId: "c1",
+      doneAt: "2027-01-04T18:40:00.000Z",
+      lockCheck: "none",
+      timeFrom: "camera",
+      cameraCheck: "seen",
+      camera: { at: "2027-01-04T18:47:00.000Z", device: "Front porch", eventId: "c1" },
+    });
+    expect(visit!.minutes).toBe(157);
+  });
+
+  it("keeps the lock's time and attaches the sighting as support", () => {
+    expect(departure([...base, lockOut("l1", "2027-01-04T18:45:00.000Z"), seen("c1", "2027-01-04T18:47:00.000Z")])).toMatchObject({
+      at: "2027-01-04T18:45:00.000Z",
+      eventId: "l1",
+      lockCheck: "matched",
+      timeFrom: "lock",
+      cameraCheck: "seen",
+      camera: { eventId: "c1" },
+    });
+    expect(departure([...base, lockOut("l1", "2027-01-04T18:45:00.000Z")])).toMatchObject({ timeFrom: "lock", cameraCheck: "none" });
+  });
+
+  it("keeps DONE's time when nobody was seen", () => {
+    const d = departure(base);
+    expect(d).toMatchObject({ at: "2027-01-04T18:40:00.000Z", eventId: "d1", timeFrom: "done", cameraCheck: "none" });
+    expect(d).not.toHaveProperty("camera");
+  });
+
+  it("never makes a departure without a DONE", () => {
+    const events = [connected, cleaning("j1"), unlock("u1", "2027-01-04T16:10:00.000Z", "Cleaner"), seen("c1", "2027-01-04T18:47:00.000Z"), seen("c2", "2027-01-04T20:30:00.000Z")];
+    const [visit] = buildVisits(events, camCtx(NOW)).visits;
+    expect(visit!.departure).toBeUndefined();
+    expect(visit!.minutes).toBeUndefined();
+    expect(visit!.flags.map((flag) => flag.kind)).toContain("no-done");
+  });
+
+  it("reads a sighting only from 15 minutes before DONE to 60 minutes after", () => {
+    expect(departure([...base, seen("c1", "2027-01-04T18:24:00.000Z"), seen("c2", "2027-01-04T19:41:00.000Z")])).toMatchObject({ timeFrom: "done", cameraCheck: "none" });
+    expect(departure([...base, seen("c1", "2027-01-04T18:25:00.000Z")])).toMatchObject({ timeFrom: "camera", at: "2027-01-04T18:25:00.000Z" });
+    expect(departure([...base, seen("c1", "2027-01-04T19:40:00.000Z")])).toMatchObject({ timeFrom: "camera", at: "2027-01-04T19:40:00.000Z" });
+  });
+
+  it("takes the last of several sightings", () => {
+    expect(departure([...base, seen("c1", "2027-01-04T18:42:00.000Z"), seen("c3", "2027-01-04T18:55:00.000Z"), seen("c2", "2027-01-04T18:50:00.000Z")])).toMatchObject({ at: "2027-01-04T18:55:00.000Z", camera: { eventId: "c3" } });
+  });
+
+  it("stops at the next unlock after DONE, and at the next check-in", () => {
+    // A guest lets themselves in at 2:00 PM: the person on the porch at 2:05 is more likely them.
+    expect(departure([...base, seen("c1", "2027-01-04T18:44:00.000Z"), unlock("u2", "2027-01-04T19:00:00.000Z", "Guests"), seen("c2", "2027-01-04T19:05:00.000Z")])).toMatchObject({ at: "2027-01-04T18:44:00.000Z", camera: { eventId: "c1" } });
+    const late = [connected, cleaning("j1"), unlock("u1", "2027-01-04T16:10:00.000Z", "Cleaner"), done("d1", "2027-01-04T20:50:00.000Z"), seen("c1", "2027-01-04T20:55:00.000Z"), seen("c2", "2027-01-04T21:05:00.000Z")];
+    expect(departure(late)).toMatchObject({ at: "2027-01-04T20:55:00.000Z", camera: { eventId: "c1" } });
+  });
+
+  it("doesn't read a sighting before the arrival", () => {
+    const events = [connected, cleaning("j1"), seen("c1", "2027-01-04T18:30:00.000Z"), unlock("u1", "2027-01-04T18:35:00.000Z", "Cleaner"), done("d1", "2027-01-04T18:40:00.000Z")];
+    expect(departure(events)).toMatchObject({ timeFrom: "done", cameraCheck: "none" });
+  });
+
+  it("goes by our own count over the label, and never by a doorbell press", () => {
+    expect(departure([...base, seen("c1", "2027-01-04T18:47:00.000Z"), counted("c1", "2027-01-04T18:47:00.000Z", 0)])).toMatchObject({ cameraCheck: "none" });
+    expect(departure([...base, seen("c1", "2027-01-04T18:47:00.000Z", { label: "other_motion" }), counted("c1", "2027-01-04T18:47:00.000Z", 2)])).toMatchObject({ cameraCheck: "seen", timeFrom: "camera" });
+    expect(departure([...base, seen("c1", "2027-01-04T18:47:00.000Z", { label: "vehicle" })])).toMatchObject({ cameraCheck: "none" });
+    expect(departure([...base, seen("c1", "2027-01-04T18:47:00.000Z", { kind: "ding" })])).toMatchObject({ cameraCheck: "none" });
+  });
+
+  it("ignores camera lines with cameras off", () => {
+    const events = [...base, seen("c1", "2027-01-04T18:47:00.000Z")];
+    for (const context of [ctx(NOW), { ...ctx(NOW), cameras: false }]) {
+      const d = departure(events, context);
+      expect(d).toEqual({ at: "2027-01-04T18:40:00.000Z", source: "done-text", eventId: "d1", doneAt: "2027-01-04T18:40:00.000Z", lockCheck: "none", timeFrom: "done", cameraCheck: "no-camera" });
+    }
+  });
+
+  it("gives the time at a property with cameras and no lock", () => {
+    const events = [cleaning("j1"), said("s1", "2027-01-04T16:10:00.000Z"), done("d1", "2027-01-04T18:40:00.000Z"), seen("c1", "2027-01-04T18:47:00.000Z")];
+    const [visit] = buildVisits(events, camCtx(NOW)).visits;
+    expect(visit!.departure).toMatchObject({ at: "2027-01-04T18:47:00.000Z", lockCheck: "no-lock", timeFrom: "camera", cameraCheck: "seen" });
+    expect(visit!.flags).toEqual([]);
+  });
+
+  it("supports a crew day's lock departure and never makes one", () => {
+    const day: WindowEvent = { ...repair("r1", "2027-01-04T14:00:00.000Z", "2027-01-04T22:00:00.000Z"), visit: "crew:r1:2027-01-04", kind: "crew-day" };
+    const withLock = [connected, day, unlock("u1", "2027-01-04T14:05:00.000Z", "Ace"), lockOut("l1", "2027-01-04T21:30:00.000Z"), seen("c1", "2027-01-04T21:32:00.000Z")];
+    expect(departure(withLock, camCtx("2027-01-05T00:00:00.000Z"))).toEqual({ at: "2027-01-04T21:30:00.000Z", source: "lock", eventId: "l1", lockCheck: "matched", timeFrom: "lock", cameraCheck: "seen", camera: { at: "2027-01-04T21:32:00.000Z", device: "Front porch", eventId: "c1" } });
+    const noLock = [connected, day, unlock("u1", "2027-01-04T14:05:00.000Z", "Ace"), seen("c1", "2027-01-04T21:32:00.000Z")];
+    expect(departure(noLock, camCtx("2027-01-05T00:00:00.000Z"))).toBeUndefined();
+  });
+
+  it("is rule version 2", () => {
+    expect(RULES).toBe(2);
+  });
+});
+
 describe("visit records", () => {
   it("measures a cleaning from the cleaner's code to the lock after DONE", () => {
     const events = [connected, cleaning("j1"), unlock("u1", "2027-01-04T16:10:00.000Z", "Cleaner"), done("d1", "2027-01-04T18:40:00.000Z"), lockOut("l1", "2027-01-04T18:45:00.000Z")];
@@ -66,7 +173,7 @@ describe("visit records", () => {
   it("keeps DONE's time when no lock from outside is near it, and says so", () => {
     const events = [connected, cleaning("j1"), unlock("u1", "2027-01-04T16:10:00.000Z", "Cleaner"), done("d1", "2027-01-04T18:40:00.000Z"), lockOut("l1", "2027-01-04T20:00:00.000Z")];
     const [visit] = buildVisits(events, ctx("2027-01-04T22:00:00.000Z")).visits;
-    expect(visit?.departure).toEqual({ at: "2027-01-04T18:40:00.000Z", source: "done-text", eventId: "d1", doneAt: "2027-01-04T18:40:00.000Z", lockCheck: "none" });
+    expect(visit?.departure).toEqual({ at: "2027-01-04T18:40:00.000Z", source: "done-text", eventId: "d1", doneAt: "2027-01-04T18:40:00.000Z", lockCheck: "none", timeFrom: "done", cameraCheck: "no-camera" });
   });
 
   it("counts a shared or unnamed code only when one visit alone was open", () => {

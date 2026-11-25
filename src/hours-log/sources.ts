@@ -106,7 +106,7 @@ function engineSlice(root: string, tenantId: string | undefined): Record<string,
 const list = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 
 /** Reads the property folder's records. Never throws on a missing or unreadable file: that record is empty. */
-export function readRecords(root: string): PropertyRecords {
+export function readRecords(root: string, options: { cameras?: boolean } = {}): PropertyRecords {
   const hub = (() => {
     try {
       return readHubFile(root);
@@ -133,7 +133,7 @@ export function readRecords(root: string): PropertyRecords {
   const packages = existsSync(join(root, PACKAGES_FILE)) ? safe(() => readPackages(root)) : undefined;
   // Measured times only change a row's start and end, never what's flagged, so "now" here doesn't matter.
   const visitLog = property.timeZone && existsSync(join(root, VISIT_EVENTS_DIR)) ? new VisitLog(root) : undefined;
-  const visits = visitLog ? safe(() => buildVisits(visitLog.read(), { timeZone: property.timeZone!, codeNames: visitLog.codeNames(), now: new Date() }).visits) : undefined;
+  const visits = visitLog ? safe(() => buildVisits(visitLog.read(), { timeZone: property.timeZone!, codeNames: visitLog.codeNames(), now: new Date(), cameras: options.cameras === true }).visits) : undefined;
   return {
     ...(propertyName ? { propertyName } : {}),
     ...(property.timeZone ? { timeZone: property.timeZone } : {}),
@@ -198,7 +198,7 @@ function measuredVisit(records: PropertyRecords, visitId: string, needsLock: boo
 /** How a measured visit's times were found, for the row's reference. */
 function measuredHow(visit: VisitRecord): string {
   const departure = visit.departure!;
-  const check = departure.lockCheck === "matched" ? ", checked against the lock" : "";
+  const check = departure.lockCheck === "matched" ? ", checked against the lock" : departure.timeFrom === "camera" && departure.camera ? `, time from the ${departure.camera.device} camera` : "";
   return `arrival from ${visit.arrival!.source}, departure from ${departure.source}${check}`;
 }
 

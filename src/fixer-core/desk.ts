@@ -3010,7 +3010,8 @@ export class FixerDesk {
         if (log.append({ type: "visit-cancelled", id: `cancel:${visit}:${at}`, at, visit })) this.visitSigs.set(visit, "cancelled");
       }
       if (!this.visitsOn()) return;
-      const derived = buildVisits(log.read(), { timeZone: this.timeZone(), codeNames: log.codeNames(), now: this.deps.now() });
+      const env = this.deps.env?.();
+      const derived = buildVisits(log.read(), { timeZone: this.timeZone(), codeNames: log.codeNames(), now: this.deps.now(), cameras: Boolean(env && deskFeatureOn(env, "cameras")) });
       const proName = (proId: string | undefined) => file.pros.find((pro) => pro.id === proId)?.name ?? "A pro";
       for (const item of fixerDue(derived, { now: this.deps.now(), timeZone: this.timeZone(), proName })) {
         const job = item.jobId ? file.jobs.find((entry) => entry.id === item.jobId) : undefined;

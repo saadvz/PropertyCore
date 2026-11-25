@@ -106,7 +106,7 @@ export type CameraKind = "motion" | "ding" | "online" | "offline";
 
 /**
  * One camera event in a shape no camera provider owns. The camera adapter (#239) writes it under its own flag
- * (the account's cameras switch). Visit records don't read it yet: a camera departure will later replace a DONE one. Media stays with
+ * (the account's cameras switch). Visit records read a person seen close to a DONE as support for the departure, and for its time when the lock gave none. Media stays with
  * the provider: the adapter fetches it from `deviceId` and `at`, and writes no media reference.
  */
 export interface CameraEvent {
@@ -120,7 +120,7 @@ export interface CameraEvent {
   provider: "ring";
   /** The host's name for the camera, like "Front porch". */
   device: string;
-  /** The provider's label as given, like "person" or "vehicle". Kept, read by no rule yet. */
+  /** The provider's label as given, like "human" or "vehicle". A person label counts as a person seen when the event has no count of ours. */
   label?: string;
   /** Optional, and #239 doesn't write them: a provider's media links expire. */
   snapshot?: MediaRef;

@@ -8,7 +8,7 @@ const DATE = { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" };
 const LIST = {
   name: "list_visits",
   title: "Visits",
-  description: `Each cleaning and Fixer Core visit at the property, with when the person arrived and left and their time on site, where each time came from (the lock, the cleaner's texts, the visit page, DONE), and its flags: late, at-risk, no-show, no-done, not-ready. Times come from the lock only when one is connected; otherwise from the cleaner's texts, as before. From and to are local dates, at most ${MAX_LIST_DAYS} days; with neither, the last week and the next day. Read-only: nothing is sent to anyone.`,
+  description: `Each cleaning and Fixer Core visit at the property, with when the person arrived and left and their time on site, where each time came from (the lock, the cleaner's texts, the visit page, DONE), and its flags: late, at-risk, no-show, no-done, not-ready. Times come from the lock only when one is connected; otherwise from the cleaner's texts, as before. A departure always comes from the person's own DONE. Its timeFrom says where the time came from: the lock, else a camera, else the DONE itself. With cameras connected, cameraCheck seen means a person was seen on one of the property's outdoor cameras close to the DONE, named under camera. That supports the DONE; it doesn't say who the person was, so never tell the host a camera saw the cleaner or the pro leave. From and to are local dates, at most ${MAX_LIST_DAYS} days; with neither, the last week and the next day. Read-only: nothing is sent to anyone.`,
   inputSchema: { type: "object", properties: { from: { ...DATE, description: "First day, YYYY-MM-DD." }, to: { ...DATE, description: "Last day, YYYY-MM-DD." } }, additionalProperties: false },
 };
 

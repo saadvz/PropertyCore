@@ -25,6 +25,6 @@ export function listedVisitsFront(h: HostedCleaner, tenant: Tenant): Record<stri
 export function visitsCall(h: HostedCleaner, tenant: Tenant, property: Property, name: string, args: Record<string, unknown>): FrontReply {
   if (!featureOn(tenant, "visits", h.baseEnv())) return { text: "Visit records aren't available yet.", isError: true };
   if (!visitFlowOn(property)) return { text: `Neither cleaning nor repairs run at ${property.label} yet, so it has no visits.`, isError: true };
-  const desk = visitDeskFor(propertyFolder(h.dataRoot, tenant.id, property), { now: () => h.now() });
+  const desk = visitDeskFor(propertyFolder(h.dataRoot, tenant.id, property), { now: () => h.now(), cameras: () => featureOn(h.registry.get(tenant.id), "cameras", h.baseEnv()) });
   return handleVisitTool(desk, name, args) ?? { text: "Visit records couldn't answer that.", isError: true };
 }

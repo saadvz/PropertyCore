@@ -450,7 +450,7 @@ export interface CleanerCoreOptions {
    * Visit records (#237): the property's visit log, written at each text in or out and each window change. With
    * `notify` (the account's "visits" switch), the clock pass also reads it for the late text and the host's visit notes.
    */
-  visits?: { log: VisitLog; cleanerName?: string; notify?: boolean };
+  visits?: { log: VisitLog; cleanerName?: string; notify?: boolean; /** The account has cameras on (#237 camera departures). */ cameras?: boolean };
   /**
    * The host's other instructions, added to the end of the door code text, so the cleaner reads them
    * as the cleaning starts. LiveDesk sets it only when instructions are saved, so the Scratch CLI and
@@ -4389,7 +4389,7 @@ class Engine implements CleanerCore {
     let items;
     try {
       const timeZone = this.options.property.timeZone;
-      const derived = buildVisits(visits.log.read(), { timeZone, codeNames: visits.log.codeNames(), now: this.now() });
+      const derived = buildVisits(visits.log.read(), { timeZone, codeNames: visits.log.codeNames(), now: this.now(), cameras: visits.cameras === true });
       items = cleaningDue(derived, {
         now: this.now(),
         timeZone,
