@@ -4329,7 +4329,7 @@ export class LiveDesk {
       ...this.preferenceOptions(),
       // Visit records (#237): the log is always written, since it only records. The late text and the host's notes
       // need the account's "visits" switch, and without a connected lock nothing new is sent.
-      visits: { log: visitLogFor(this.root), notify: deskFeatureOn(this.env(), "visits"), ...(this.file.cleanerName ? { cleanerName: this.file.cleanerName } : {}) },
+      visits: { log: visitLogFor(this.root), notify: deskFeatureOn(this.env(), "visits"), cameras: deskFeatureOn(this.env(), "cameras"), ...(this.file.cleanerName ? { cleanerName: this.file.cleanerName } : {}) },
       ownerPhone: file.host,
       cleaner: { phone: file.cleaner, approved: true },
       access: this.doorPort(),
