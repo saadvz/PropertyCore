@@ -98,7 +98,7 @@ describe("reconciling to the booking calendar", () => {
     const { reconcile } = october();
     expect(reconcile.checkouts).toEqual(["2026-10-04", "2026-10-12", "2026-10-25"]);
     expect(reconcile.unmatched).toEqual(["2026-10-25"]);
-    expect(reconcile.lockEvents).toBe("waiting");
+    expect(reconcile.lockEvents).toEqual({ status: "no-lock" });
   });
 });
 
