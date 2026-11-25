@@ -235,7 +235,7 @@ export const FIXER_TOOLS: FixerTool[] = [
   {
     name: "approve_booking",
     title: "The host's yes to a booking",
-    description: `The host's yes to a pro's time and how they get in, together. ${TWO_CALL} access is code (the pro gets the door code for the visit) or host (the host lets them in). cleaningOrder is before or after when the visit shares a day with a cleaning. proId picks another pro's held offer on the job. revised: true for a raised price the pro gave after booking. Pass googleEvents when the bookings are in Google Calendar.`,
+    description: `The host's yes to a pro's time and how they get in, together. ${TWO_CALL} access is code (the pro gets the door code for the visit) or host (the host lets them in). confirmedVia (email, call, or host-arranged) only when the host says the pro already confirmed this time with them, or they set it up with the pro themselves: the pro's door code waits for that yes, so passing it here saves a confirm_visit. cleaningOrder is before or after when the visit shares a day with a cleaning. proId picks another pro's held offer on the job. revised: true for a raised price the pro gave after booking. Pass googleEvents when the bookings are in Google Calendar.`,
     input: z
       .object({
         jobId: Id,
@@ -243,10 +243,23 @@ export const FIXER_TOOLS: FixerTool[] = [
         cleaningOrder: z.enum(["before", "after"]).optional(),
         revised: z.literal(true).optional(),
         proId: Id.optional(),
+        confirmedVia: z.enum(["email", "call", "host-arranged"]).optional(),
         googleEvents: GoogleEvents.optional(),
         confirmation: Confirmation,
       })
       .strict(),
+  },
+  {
+    name: "confirm_visit",
+    title: "The pro confirmed the visit",
+    description: `A pro's door code is made only once their yes to the booked visit is on record. A pro who texts on the line confirms by replying YES to the one text they get. Otherwise the host passes it on: via email or call when the pro confirmed that way, or host-arranged when the host set the visit up with the pro themselves. ${TWO_CALL}`,
+    input: z.object({ jobId: Id, via: z.enum(["email", "call", "host-arranged"]), confirmation: Confirmation }).strict(),
+  },
+  {
+    name: "pro_code_link",
+    title: "The host's page with a pro's code",
+    description: `On connected locks, for a confirmed visit whose pro doesn't take texts: a private page for the host alone that shows the pro's own door code once, for the host to read to them on the phone. A pro with an email can use visit_link instead. Never send it to the pro or a group. The code itself is never returned. ${TWO_CALL}`,
+    input: z.object({ jobId: Id, confirmation: Confirmation }).strict(),
   },
   {
     name: "visit_link",
@@ -443,6 +456,10 @@ export async function handleFixerTool(desk: FixerDesk, name: string, args: unkno
       return desk.saveServiceNotice(input);
     case "approve_code":
       return desk.approveCode(input);
+    case "confirm_visit":
+      return desk.confirmVisit(input);
+    case "pro_code_link":
+      return desk.proCodeLink(input);
     case "guests_left":
       return desk.guestsLeft(input);
     case "record_done":

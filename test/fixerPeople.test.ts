@@ -439,7 +439,7 @@ describe("review fixes: one other-role check, opt-in, photos, replays", () => {
       x.hub().doorAccess(() => ENV).save("5821", undefined, undefined);
       const file = readFixer(x.root);
       file.settings.activatedAt = NOW.toISOString();
-      file.jobs.push({ id: "job_abcde12345", trade: "plumbing", what: "Sink", source: "host", photos: [], urgency: "soon", state: "booked", candidates: [], picked: [], contacts: [], news: [], createdAt: NOW.toISOString(), booking: { proId: file.pros[0]!.id, from: new Date(NOW.getTime() + 20 * MIN).toISOString(), until: new Date(NOW.getTime() + 140 * MIN).toISOString(), access: "code", hostYes: { at: NOW.toISOString() }, fingerprint: "fp" } });
+      file.jobs.push({ id: "job_abcde12345", trade: "plumbing", what: "Sink", source: "host", photos: [], urgency: "soon", state: "booked", candidates: [], picked: [], contacts: [], news: [], createdAt: NOW.toISOString(), booking: { proId: file.pros[0]!.id, from: new Date(NOW.getTime() + 20 * MIN).toISOString(), until: new Date(NOW.getTime() + 140 * MIN).toISOString(), access: "code", hostYes: { at: NOW.toISOString() }, confirmed: { at: NOW.toISOString(), by: "host", via: "call" }, fingerprint: "fp" } });
       writeFixer(x.root, file);
       await x.desk.tick();
     };

@@ -34,7 +34,7 @@ import { handleTenantMcp } from "../../hosted/frontMcp";
 import { handleCameraRoutes } from "../../hosted/cameras";
 import { fixerCodeChanged, fixerDesk, fixerPhotoFolders, tickFixer } from "../../hosted/fixer";
 import { FIXER_ALERT_UPLOAD_PREFIX } from "../../fixer-core/desk";
-import { isVisitPath, serveFixerVisit } from "../../hosted/fixerVisit";
+import { isProCodePath, isVisitPath, serveFixerVisit, serveProCodePage } from "../../hosted/fixerVisit";
 import { handleLineText } from "../../hosted/lineRouter";
 import { dropTranscript, handleVoiceCall, handleVoiceTranscript, noCallsTwiml, VOICE_PATH, VOICE_TRANSCRIPT_PATH } from "../../hosted/voice";
 import type { TouringFront } from "../../hosted/serviceTools";
@@ -378,6 +378,12 @@ async function handleTenantPath(h: HostedCleaner, r: HostedRequest, tenant: Tena
   if (isVisitPath(rest)) {
     if (!fixer.on) return false;
     await serveFixerVisit(h, r, tenant, property, rest);
+    return true;
+  }
+  // The host's page with a pro's door code (#243 ruling), for this path's property only. Its path holds the link's token, so it is never logged.
+  if (isProCodePath(rest)) {
+    if (!fixer.on) return false;
+    await serveProCodePage(h, r, tenant, property, rest);
     return true;
   }
   // A standing code's page, for this path's property only. Its path holds the link's token, so it is never logged.

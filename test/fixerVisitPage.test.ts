@@ -139,8 +139,10 @@ async function book(w: World, span = TUE, extra: Record<string, unknown> = {}, n
 /** The pro on this contact gives a time and the host says yes. */
 async function rebook(w: World, contactToken: string, span: { from: string; until: string }, extra: Record<string, unknown> = {}): Promise<void> {
   expect((await w.keep(w.desk().recordContact({ contactToken, outcome: "booked", ...span, estimateCents: 18000 }))).isError).toBe(false);
-  const first = await w.keep(w.desk().approveBooking({ jobId: w.job().id, ...extra }));
-  expect((await w.keep(w.desk().approveBooking({ jobId: w.job().id, ...extra, confirmation: codeOf(first) }))).isError).toBe(false);
+  // The host passes on the pro's yes with the booking, so the code can be made (#243 ruling).
+  const yes = { confirmedVia: "call" as const, ...extra };
+  const first = await w.keep(w.desk().approveBooking({ jobId: w.job().id, ...yes }));
+  expect((await w.keep(w.desk().approveBooking({ jobId: w.job().id, ...yes, confirmation: codeOf(first) }))).isError).toBe(false);
   expect(w.job().state).toBe("booked");
 }
 

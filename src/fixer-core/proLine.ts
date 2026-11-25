@@ -1,7 +1,7 @@
 import type { Property } from "../cleaner-core/hosted/properties";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { People } from "../hub/people";
-import { liveBooking } from "./gate";
+import { liveBooking, visitConfirmed } from "./gate";
 import type { FixerFile, Job } from "./store";
 
 /**
@@ -53,6 +53,8 @@ export function proWaitingJob(file: FixerFile | undefined, phone: string, now: n
       if (!booking || booking.proId !== pro.id || !booking.hostYes || !liveBooking(job) || job.done) return false;
       const end = Date.parse(booking.extendedUntil ?? booking.until);
       if (booking.vendor && now < end) return true;
+      // A booked visit waiting on the pro's YES to the one confirm text (#243 ruling).
+      if (booking.confirmAsk?.sent && !visitConfirmed(booking) && now < end) return true;
       return (job.state === "in-progress" || now >= Date.parse(booking.from)) && now < end + AFTER_VISIT_MS;
     })
     .sort((a, b) => Date.parse(a.booking!.from) - Date.parse(b.booking!.from))[0];

@@ -85,8 +85,9 @@ async function bookedJob(m: MultiTenantApp, token: string, property: Property, a
   await call("check_fixes");
   const contactToken = (await call("contact_pro", { jobId, to: joeId, how: "call" })).structured!.contactToken as string;
   await call("record_contact", { contactToken, outcome: "booked", ...TUE, estimateCents: 18000 });
-  const ask = await call("approve_booking", { jobId, ...(access ? { access } : {}) });
-  await call("approve_booking", { jobId, ...(access ? { access } : {}), confirmation: codeOf(ask) });
+  // The host passes on the pro's yes with the booking, so the code can be made (#243 ruling).
+  const ask = await call("approve_booking", { jobId, ...(access ? { access } : {}), confirmedVia: "call" });
+  await call("approve_booking", { jobId, ...(access ? { access } : {}), confirmedVia: "call", confirmation: codeOf(ask) });
   return { call, jobId, joeId };
 }
 

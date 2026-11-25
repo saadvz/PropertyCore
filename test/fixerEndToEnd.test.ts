@@ -112,8 +112,9 @@ async function bookedVisit(m: MultiTenantApp, tenant: Tenant, property: Property
   await w.call("check_fixes");
   const contactToken = (await w.call("contact_pro", { jobId, to: joeId, how: "call" })).structured!.contactToken as string;
   await w.call("record_contact", { contactToken, outcome: "booked", ...TUE, estimateCents: 18000 });
-  const ask = await w.call("approve_booking", { jobId, access: "code" });
-  await w.call("approve_booking", { jobId, access: "code", confirmation: codeOf(ask) });
+  // The host passes on the pro's yes with the booking, so the code can be made (#243 ruling).
+  const ask = await w.call("approve_booking", { jobId, access: "code", confirmedVia: "call" });
+  await w.call("approve_booking", { jobId, access: "code", confirmedVia: "call", confirmation: codeOf(ask) });
   const url = String((await w.call("visit_link", { jobId })).structured!.url);
   return { jobId, url, path: pathOf(url), token: url.slice(url.lastIndexOf("/") + 1) };
 }
@@ -385,8 +386,8 @@ describe("the pro's texts on the shared line", () => {
     const courtJob = (await call("open_job", { trade: "plumbing", what: "Tub drains slowly", urgency: "soon", source: "host" })).structured!.jobId as string;
     const contactToken = (await call("contact_pro", { jobId: courtJob, to: joe.structured!.proId, how: "call" })).structured!.contactToken as string;
     await call("record_contact", { contactToken, outcome: "booked", from: "2026-11-10T13:00:00.000Z", until: "2026-11-10T14:00:00.000Z" });
-    const ask = await call("approve_booking", { jobId: courtJob });
-    await call("approve_booking", { jobId: courtJob, confirmation: codeOf(ask) });
+    const ask = await call("approve_booking", { jobId: courtJob, confirmedVia: "call" });
+    await call("approve_booking", { jobId: courtJob, confirmedVia: "call", confirmation: codeOf(ask) });
     // Joe is at Court; Lane's later visit is booked and hasn't started.
     clock = new Date("2026-11-10T13:15:00.000Z");
     await tickAllFixers(m.hosted());

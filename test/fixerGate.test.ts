@@ -151,6 +151,7 @@ describe("accessCheck", () => {
     until: "2026-12-01T12:00:00.000Z",
     access: "code",
     hostYes: { at: "2026-11-30T00:00:00Z" },
+    confirmed: { at: "2026-11-30T00:00:00Z", by: "host", via: "call" },
     fingerprint: "f",
     ...patch,
   });
@@ -174,6 +175,10 @@ describe("accessCheck", () => {
   });
   it("refuses without the host's yes", () => {
     expect(run(job({ booking: booking({ hostYes: undefined }) }))).toEqual({ ok: false, reason: "no-yes" });
+  });
+  it("refuses until the pro's yes is on record, the host's yes aside (#243 ruling)", () => {
+    expect(run(job({ booking: booking({ confirmed: undefined }) }))).toEqual({ ok: false, reason: "not-confirmed" });
+    expect(run(job({ booking: booking({ confirmed: { at: "2026-11-30T01:00:00Z", by: "pro", via: "text" } }) })).ok).toBe(true);
   });
   it("refuses host access", () => {
     expect(run(job({ booking: booking({ access: "host" }) }))).toEqual({ ok: false, reason: "host-access" });

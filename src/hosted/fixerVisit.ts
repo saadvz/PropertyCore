@@ -2,7 +2,9 @@ import type { Property } from "../cleaner-core/hosted/properties";
 import type { Tenant } from "../cleaner-core/hosted/registry";
 import type { HostedCleaner, HostedRequest } from "../cleaner-core/hosted/router";
 import { answerVisit, FIXER_VISIT_PREFIX, openVisit, visitBodyCap, visitReadsBody, visitRouteRefusal, type VisitResponse } from "../fixer-core/visitPage";
+import { FIXER_PRO_CODE_PREFIX } from "../fixer-core/desk";
 import { fixerDesk } from "./fixer";
+import { CODE_PENDING, serveCodePage } from "./locks";
 
 /**
  * The pro's visit page on a property's own path, /t/<id>[/p/<pid>]/fixer-core/visit/<token>[/<sub>].
@@ -76,4 +78,30 @@ function write(r: HostedRequest, response: VisitResponse): void {
   const body = typeof response.body === "string" ? Buffer.from(response.body, "utf8") : response.body;
   r.res.writeHead(response.status, { ...response.headers, "Content-Length": String(body.length) });
   r.res.end(body);
+}
+
+/** True when the property path is the host's page with a pro's door code (#243 ruling). */
+export function isProCodePath(rest: string): boolean {
+  return rest.startsWith(FIXER_PRO_CODE_PREFIX);
+}
+
+/**
+ * The host's single-use page with a pro's own door code, for a pro who doesn't take texts (#243 ruling): a button,
+ * then the code once, for the host to read to the pro. The same code page as guest codes. Never logs the path or code.
+ */
+export async function serveProCodePage(h: HostedCleaner, r: HostedRequest, tenant: Tenant, property: Property, rest: string): Promise<void> {
+  const [token = "", sub = ""] = rest.slice(FIXER_PRO_CODE_PREFIX.length).split("/");
+  try {
+    const desk = fixerDesk(h, tenant, property);
+    const open = r.method === "GET" && sub === "" ? desk.proCodeOpen(token) : undefined;
+    const page = open ? { heading: `Door code for ${open.proName} at ${open.street}`, intro: `Tap to see ${open.proName}'s code, to read to them. It shows only once, and it works only in their visit's hours.`, button: "Show the code", shownAs: "Door code: " } : undefined;
+    await serveCodePage(r, sub, page, () => desk.showProCode(token), {
+      gone: "This link has ended. Ask me for a new one.",
+      pending: CODE_PENDING,
+      failed: "The code couldn't be added to the lock yet. This link still works once it's there.",
+    });
+  } catch {
+    h.log(`Fixer Core's door code page couldn't answer a request for ${tenant.id}/${property.id}.`);
+    if (!r.res.headersSent) r.send(500, "text/plain", "Something went wrong.");
+  }
 }

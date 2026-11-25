@@ -94,18 +94,26 @@ async function setup(options: { locks?: boolean; pros?: ReleaseMode; extend?: Re
   await desk().openJob({ trade: "plumbing", what: "Sink leaks", urgency: "soon", source: "host" });
   await desk().checkFixes({});
   const job = () => readFixer(root).jobs.at(-1)!;
-  const book = async () => {
+  /** The pro's yes (#243 ruling): passed on by the host with the booking, or Joe's own YES to the confirm text. */
+  const book = async (yes: "call" | "pro-text" = "call") => {
     const pro = readFixer(root).pros.find((p) => p.name.startsWith("Joe"))!;
     const token = (await desk().contactPro({ jobId: job().id, to: pro.id, how: "call" })).structured!.contactToken as string;
     expect((await desk().recordContact({ contactToken: token, outcome: "booked", ...TUE, estimateCents: 18000 })).isError).toBe(false);
-    expect((await approved((confirmation) => desk().approveBooking({ jobId: job().id, ...(confirmation ? { confirmation } : {}) }))).isError).toBe(false);
+    expect((await approved((confirmation) => desk().approveBooking({ jobId: job().id, ...(yes === "call" ? { confirmedVia: "call" as const } : {}), ...(confirmation ? { confirmation } : {}) }))).isError).toBe(false);
+    if (yes === "pro-text") {
+      await desk().tick();
+      expect(sent.splice(0).map((item) => item.body.endsWith("Reply YES to confirm."))).toEqual([true]);
+      await desk().proInbound({ id: `yes-${job().id}`, from: JOE, text: "YES" });
+      expect(readFixer(root).jobs.at(-1)!.booking!.confirmed).toMatchObject({ by: "pro", via: "text" });
+      sent.splice(0);
+    }
   };
   const news = () => [...(readFixer(root).news ?? []), ...readFixer(root).jobs.flatMap((job) => job.news)].map((item) => item.text ?? "");
   return { root, desk, job, book, fake, sent, notes, news, at: (iso: string | number) => (clock = new Date(iso)) };
 }
 
 describe("Fixer Core on connected locks", () => {
-  it("makes the pro's own code at the host's yes, for 30 minutes before the visit to its end", async () => {
+  it("makes the pro's own code once the visit is confirmed, for 30 minutes before the visit to its end", async () => {
     const w = await setup();
     expect(w.fake.liveCodes("dev-front")).toEqual([]);
     await w.book();
@@ -164,7 +172,7 @@ describe("Fixer Core on connected locks", () => {
 describe("how a pro's code goes out on connected locks", () => {
   it("defaults to ask: the host is asked when the window opens, the pro sees waiting, and the code goes only after the OK", async () => {
     const w = await setup();
-    await w.book();
+    await w.book("pro-text");
     w.at(Date.parse(TUE.from) - 30 * MIN);
     await w.desk().tick();
     expect(w.sent).toEqual([]);
@@ -182,7 +190,7 @@ describe("how a pro's code goes out on connected locks", () => {
 
   it("asks the host's OK with a question and an approval code, never a code", async () => {
     const w = await setup();
-    await w.book();
+    await w.book("pro-text");
     const asked = await w.desk().approveCode({ jobId: w.job().id });
     expect(asked.structured?.question).toBe("OK to send Joe's Plumbing their code for the 10:00 visit?");
     expect(JSON.stringify(asked).includes(w.fake.liveCodes("dev-front")[0]!.code)).toBe(false);

@@ -439,7 +439,7 @@ export const CODE_PAGE_SCRIPT = [
  * (JSON) shows the code once and ends the link. A code still going on the lock answers 409 and keeps
  * the link; a lock that refused it answers 503. The token, the path and the body are never logged.
  */
-async function serveCodePage(r: HostedRequest, sub: string, page: CodePage | undefined, show: () => Promise<CodeShown>, words: Omit<CodePageWords, "offline">): Promise<void> {
+export async function serveCodePage(r: HostedRequest, sub: string, page: CodePage | undefined, show: () => Promise<CodeShown>, words: Omit<CodePageWords, "offline">): Promise<void> {
   if (r.method === "GET" && sub === "") {
     if (!page) return r.send(404, "text/html; charset=utf-8", `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Door code</title><p>${escape(words.gone)}</p>`, PAGE_HEADERS);
     const nonce = randomBytes(16).toString("base64");
