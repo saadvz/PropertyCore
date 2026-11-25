@@ -489,7 +489,7 @@ export function vendorHeldQuestion(f: { proName: string; what: string; when: str
 }
 
 export function vendorNoAnswerNews(f: { proName: string; what: string; when: string }): string {
-  return `${f.proName} hasn't answered about ${f.what.toLowerCase()} on ${f.when}. No code goes out until they confirm.`;
+  return `${f.proName} hasn't answered about ${f.what.toLowerCase()} on ${f.when}. No code goes out until they confirm. If they told you yes another way, tell me and I'll make their code.`;
 }
 
 /** check_fixes' routineVisits (#237): what happens next for a routine vendor's visit under the standing yes. Agent-facing. */
