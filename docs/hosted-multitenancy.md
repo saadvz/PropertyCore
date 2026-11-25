@@ -330,9 +330,12 @@ Behind each account's switch:
 - **Cameras (`cameras`).** Needs `CAMERA_TOKEN_KEY` and the three `RING_*` secrets on the service; counting also
   needs `CAMERA_DETECTOR_MODEL`. `connect_cameras`, `list_cameras`, `pick_cameras`, `disconnect_cameras`,
   `check_night`, `stay_timeline` and `pin_clip`, listed when any property runs a flow. `POST /webhooks/ring`,
-  `/cameras/connect/<link>` and `/cameras/ring/linked` answer once some account has Cameras on, and each event or
-  link is checked against its own account. The host signs in on Ring's own page; only the outdoor cameras they
-  pick are read. `cameras.json` keeps the picks, the consent time and notes waiting for the host. No image is
+  `/cameras/connect/<link>` and Ring's account-linking addresses (`POST /cameras/ring/token`, `/cameras/ring/link`
+  and the homepage `/cameras/ring`, #302) answer once some account has Cameras on, and each event or link is checked
+  against its own account. The host agrees on the one-time link, then connects Property Core in Ring: Ring posts a
+  code to the token address, and sends the host's browser to the link address with a signed nonce. The browser's
+  mark from the consent page, or the pairing word that page shows, says which account the tokens belong to. Only
+  the outdoor cameras they pick are read. `cameras.json` keeps the picks, the consent time and notes waiting for the host. No image is
   kept; a clip is copied to `evidence/` only when the host pins it. Camera offline and back-online notes go out on the
   host-alert clock (#250) through the account's Alerts routine, else wait for `list_cameras`. It texts nobody.
 - **Separate bots (`bots`).** A Grok bot for each of Cleaner Core, Supply Core and Fixer Core, managed by the Property Core bot (see
