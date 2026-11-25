@@ -116,8 +116,8 @@ function dayStart(at: string, timeZone: string): number {
   return ms(zonedInstant(ymd, "00:00", timeZone));
 }
 
-/** True when the property's lock was connected for this window. */
-function lockConnected(events: readonly VisitEvent[], until: number): boolean {
+/** True when the property's lock was connected for this window. The hours log's lock check (#238) uses it too. */
+export function lockConnected(events: readonly VisitEvent[], until: number): boolean {
   let said: boolean | undefined;
   let saidAt = -Infinity;
   for (const event of events) {
