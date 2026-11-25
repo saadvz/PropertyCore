@@ -328,8 +328,10 @@ Behind each account's switch:
   a property on connected locks whose host chose automatic or ask gets guest codes; leases each take the host's
   yes. With it off, nothing changes.
 - **Cameras (`cameras`).** Needs `CAMERA_TOKEN_KEY` and the three `RING_*` secrets on the service; counting also
-  needs `CAMERA_DETECTOR_MODEL`. `connect_cameras`, `list_cameras`, `pick_cameras`, `disconnect_cameras`,
-  `check_night`, `stay_timeline` and `pin_clip`, listed when any property runs a flow. `POST /webhooks/ring`,
+  needs `CAMERA_DETECTOR_MODEL`. `connect_cameras`, `list_cameras`, `pick_cameras`, `counting_week`, `disconnect_cameras`,
+  `check_night`, `stay_timeline` and `pin_clip`, listed when any property runs a flow. Motion stills are counted
+  during a stay with a camera rule, and, once the host agrees to `counting_week`, for 7 days whatever the calendar
+  (#239's counting test). Its review sheet downloads from the account's /admin page (`/admin/tenants/<id>/count-sheet`). `POST /webhooks/ring`,
   `/cameras/connect/<link>` and Ring's account-linking addresses (`POST /cameras/ring/token`, `/cameras/ring/link`
   and the homepage `/cameras/ring`, #302) answer once some account has Cameras on, and each event or link is checked
   against its own account. The host agrees on the one-time link, then connects Property Core in Ring: Ring posts a
