@@ -2340,14 +2340,15 @@ class Engine implements CleanerCore {
 
   private cleanerStep(): CleanerStep {
     if (this.problemHold) return "on-hold";
-    const delivered = this.ordered().find((item) => !item.canceled && !item.declined && this.pinDelivered(item));
-    if (delivered?.done) return "already-done";
-    if (delivered) return "in-progress";
-    const open = this.ordered().find((item) => !item.done && !item.canceled && !item.declined);
-    if (!open) return "already-done";
-    const status = this.derive(open);
+    if (this.progressJob()) return "in-progress";
+    // The next cleaning, not a past one nobody timed or took. An earlier finished cleaning never hides it.
+    const open = this.ordered().filter((item) => !item.done && !item.canceled && !item.declined);
+    const next = open.find((item) => !this.beforeToday(item.checkoutDate)) ?? open[0];
+    const status = next ? this.derive(next) : undefined;
     if (status === "offered") return "needs-yes";
     if (status === "confirmed" || status === "awaiting_departure") return "waiting-for-guests";
+    const finished = this.ordered().some((item) => item.done && !item.canceled && !item.declined && this.pinDelivered(item));
+    if (!next || finished) return "already-done";
     return "waiting-for-code";
   }
 
@@ -3757,11 +3758,17 @@ class Engine implements CleanerCore {
     return { handled: true, reason: "ignored", sent: [] };
   }
 
+  /**
+   * The cleaning a YES, NO, or time answers: the first one still being timed or offered. A cleaning
+   * whose checkout day passed before anyone timed or took it is skipped while a later one is open,
+   * so it never swallows the cleaner's YES to the next offer.
+   */
   private conversationJob(): Job | undefined {
-    return this.ordered().find((job) => {
+    const open = this.ordered().filter((job) => {
       const status = this.derive(job);
       return status === "discovered" || status === "awaiting_checkin" || status === "host_confirmed" || status === "offered";
     });
+    return open.find((job) => !this.beforeToday(job.checkoutDate)) ?? open[0];
   }
 
   private derive(job: Job): JobStatus {
