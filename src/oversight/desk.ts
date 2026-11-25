@@ -9,7 +9,10 @@ import { checkDay, type DayEvidence, type DayResult, type VisitResult } from "./
 import { dayEvidence, entryNamesFrom, standingNames } from "./evidence";
 import { visitFromInvite } from "./invite";
 import { OversightFileError, readOversight, writeOversight, type OversightFile } from "./store";
-import { cleanVisit, isDate, MAX_OPEN_VISITS, newVisitId, sameVisit, visitProblem, type ExpectedVisit, type VisitInput, type Visitor } from "./visits";
+import { cleanVisit, isDate, MAX_OPEN_VISITS, newVisitId, sameVisit, visitProblem, VISIT_CONFIRM_VIAS, type ExpectedVisit, type VisitConfirmVia, type VisitInput, type Visitor } from "./visits";
+import { zonedInstant } from "../hub/calendar";
+import { letterToken, tokenHash } from "../fixer-core/store";
+import { VISIT_CODE_PREFIX } from "./visitCodeTexts";
 
 /**
  * Expected visits for one property (#240): save one from what the host says or a calendar invite, list and cancel
@@ -41,6 +44,8 @@ export interface OversightDeps {
   stopped?: (phone: string) => boolean;
   /** This phone is already a person on the property who said YES (a cleaner, co-host, assistant or pro): no new invite. */
   optedInHere?: (phone: string) => boolean;
+  /** The property's public address on the service, for the host's visit code page. */
+  publicBase?: () => string | undefined;
   /** Where a visit's code is on the locks now (on-lock, programming, failed, none-during-stay), from the lock side. */
   codeStatus?: (visit: ExpectedVisit) => string | undefined;
 }
@@ -73,10 +78,28 @@ function spokenWindow(from: string, to: string): string {
   return a.half === b.half ? `${a.text} to ${b.text} ${b.half}` : `${a.text} ${a.half} to ${b.text} ${b.half}`;
 }
 
+/** "Thursday, Nov 19, 12 to 5 PM": a visit's day and hours, as the host's questions say them. */
+function spokenVisit(visit: Pick<ExpectedVisit, "date" | "from" | "to">): string {
+  const when = visit.from !== undefined && visit.to !== undefined ? spokenWindow(visit.from, visit.to) : "all day";
+  return `${formatDay(new Date(`${visit.date}T12:00:00Z`), "UTC")}, ${when}`;
+}
+
+const viaWords = (via: Exclude<VisitConfirmVia, "host-arranged">): string => (via === "email" ? "by email" : "on a call");
+
+/** The sentence a passed-on yes adds to add_expected_visit's question. */
+function confirmedSentence(via: VisitConfirmVia): string {
+  return via === "host-arranged" ? "You set it up with them yourself." : `They confirmed ${viaWords(via)}.`;
+}
+
+/** What a saved or confirmed visit's code does next, for the agent. */
+function codeWay(who: string, textable: boolean): string {
+  return textable ? `${who} gets their own door code by text 30 minutes before the visit.` : `${who} doesn't get texts from this line, so call visit_code_link for a private page with their code, for the host to read to them.`;
+}
+
 /** The visit with its phone taken out: the phone's last four only. */
 function shownVisit(visit: ExpectedVisit, code?: VisitCodeState): Record<string, unknown> {
-  const { phone, code: _text, ...rest } = visit;
-  return { ...rest, ...(phone ? { phoneLast4: phone.slice(-4) } : {}), ...(code ? { code } : {}) };
+  const { phone, code: _text, confirmed, hostLink: _link, ...rest } = visit;
+  return { ...rest, ...(phone ? { phoneLast4: phone.slice(-4) } : {}), ...(code ? { code } : {}), ...(confirmed ? { confirmedVia: confirmed.via } : {}) };
 }
 
 export class OversightDesk {
@@ -92,6 +115,11 @@ export class OversightDesk {
   /** A visitor's code state for list_expected_visits. */
   private codeState(file: OversightFile, visit: ExpectedVisit): VisitCodeState {
     if (!visit.phone) return "none";
+    if (visit.confirmed && visit.phone !== this.deps.hostPhone?.()) {
+      if (visit.code?.sent) return "texted";
+      if (visit.code?.notSent) return "not-sent";
+      return this.deps.codeStatus?.(visit) ?? "making";
+    }
     const visitor = file.visitors?.find((item) => item.phone === visit.phone);
     if (visitor?.stoppedAt || this.deps.stopped?.(visit.phone)) return "opted-out";
     if (!visitor?.yesAt && !this.deps.optedInHere?.(visit.phone)) return "waiting-for-yes";
@@ -127,13 +155,20 @@ export class OversightDesk {
    * Saves one expected visit: `who`, `date`, `from`/`to` and `note` from what the host says, or `invite` (the
    * invite's text). An invite is read back without saving until `confirm` is true.
    */
-  addVisit(input: { who?: unknown; date?: unknown; from?: unknown; to?: unknown; note?: unknown; invite?: unknown; confirm?: unknown; phone?: unknown; confirmation?: unknown }): OversightReply {
+  addVisit(input: { who?: unknown; date?: unknown; from?: unknown; to?: unknown; note?: unknown; invite?: unknown; confirm?: unknown; phone?: unknown; confirmation?: unknown; confirmedVia?: unknown }): OversightReply {
     return this.guarded(() => {
       // A broken record refuses before anything is read back, so the host never agrees to a visit that can't be saved.
       const file = readOversight(this.root);
       const timeZone = this.timeZone();
       if (!timeZone) return fail("The property has no time zone yet, so its days can't be told apart. Set the property's time zone first.");
       const today = this.today(timeZone);
+      // The visitor's yes the host passes on (25 Nov): it goes with a phone, for their own code.
+      let confirmedVia: VisitConfirmVia | undefined;
+      if (input.confirmedVia !== undefined) {
+        if (input.phone === undefined || (typeof input.phone === "string" && input.phone.trim() === "")) return fail("confirmedVia goes with the visitor's phone, for their own door code.");
+        if (!(VISIT_CONFIRM_VIAS as readonly unknown[]).includes(input.confirmedVia)) return fail("Say how they confirmed: email, call, or host-arranged when you set it up with them yourself.");
+        confirmedVia = input.confirmedVia as VisitConfirmVia;
+      }
       // A phone gives the visitor their own door code (#280 17), with the host's yes to the read-back.
       let phone: string | undefined;
       if (input.phone !== undefined && !(typeof input.phone === "string" && input.phone.trim() === "")) {
@@ -142,7 +177,8 @@ export class OversightDesk {
         if (!phone) return fail("That isn't a mobile number I can use. Ask for it with its country code, like +1 555 555 0142.");
         if (phone === this.deps.hostPhone?.()) return fail("That's your own number. Ask for a standing code with add_standing_code instead.");
         const known = file.visitors?.find((item) => item.phone === phone);
-        if (known?.stoppedAt || this.deps.stopped?.(phone)) return fail("That number opted out of texts from this line (they replied STOP), so it can't get a code. Save the visit without a phone, and it's still checked.");
+        // STOP means no texts, not no entry: with the host passing on their yes, the code reaches them through the host's page.
+        if (!confirmedVia && (known?.stoppedAt || this.deps.stopped?.(phone))) return fail("That number opted out of texts from this line (they replied STOP), so it can't get a code by text. Save the visit without a phone, and it's still checked. If they told you yes another way, give confirmedVia and you'll get a private page with their code.");
       }
       let candidate: Record<string, unknown>;
       let source: ExpectedVisit["source"] = "text";
@@ -169,9 +205,9 @@ export class OversightDesk {
       if (phone) {
         const known = file.visitors?.find((item) => item.phone === phone);
         const yes = Boolean(known?.yesAt) || this.deps.optedInHere?.(phone) === true;
-        const when = visit.from !== undefined && visit.to !== undefined ? spokenWindow(visit.from, visit.to) : "all day";
-        const question = `${visit.who}, ${formatDay(new Date(`${visit.date}T12:00:00Z`), "UTC")}, ${when}, with their own door code?${yes ? "" : " They get one text asking them to reply YES first."}`;
-        const fingerprint = JSON.stringify([visit.who, visit.date, visit.from ?? "", visit.to ?? "", visit.note ?? "", phone]);
+        const tail = confirmedVia ? ` ${confirmedSentence(confirmedVia)}` : yes ? "" : " They get one text asking them to reply YES first.";
+        const question = `${visit.who}, ${spokenVisit(visit)}, with their own door code?${tail}`;
+        const fingerprint = JSON.stringify([visit.who, visit.date, visit.from ?? "", visit.to ?? "", visit.note ?? "", phone, ...(confirmedVia ? [confirmedVia] : [])]);
         const code = typeof input.confirmation === "string" && input.confirmation ? input.confirmation : undefined;
         if (!code) {
           return ok({ saved: false, visit: { ...visit, source, phoneLast4: phone.slice(-4) }, ...leftOut, question, confirmation: this.approvals.issue("visit-code", "oversight", fingerprint, question), next: `Ask the host: "${question}" Call again with the confirmation code only after their yes.${leftOutNote}` });
@@ -189,7 +225,7 @@ export class OversightDesk {
       const open = file.visits.filter((v) => !v.cancelledAt && v.date >= today).length;
       if (open >= MAX_OPEN_VISITS) return fail(`There are already ${MAX_OPEN_VISITS} expected visits ahead. Cancel some before adding more.`);
       const at = this.deps.now().toISOString();
-      const saved: ExpectedVisit = { id: newVisitId(), ...visit, source, savedAt: at, ...(phone ? { phone } : {}) };
+      const saved: ExpectedVisit = { id: newVisitId(), ...visit, source, savedAt: at, ...(phone ? { phone } : {}), ...(confirmedVia ? { confirmed: { at, by: "host" as const, via: confirmedVia } } : {}) };
       let visitors = file.visitors;
       if (phone) {
         const known = visitors?.find((item) => item.phone === phone);
@@ -197,10 +233,103 @@ export class OversightDesk {
         visitors = [...(visitors ?? []).filter((item) => item.phone !== phone), visitor];
       }
       writeOversight(this.root, { ...file, visits: [...file.visits, saved], ...(visitors ? { visitors } : {}) });
-      const codeNext = phone
-        ? ` ${visit.who} gets their own door code by text 30 minutes before the visit${file.visitors?.find((item) => item.phone === phone)?.yesAt || this.deps.optedInHere?.(phone) ? "" : ", once they reply YES to the one text asking them"}.`
-        : "";
+      const codeNext = !phone
+        ? ""
+        : confirmedVia
+          ? ` ${codeWay(visit.who, this.textable({ ...file, ...(visitors ? { visitors } : {}) }, phone))}`
+          : ` ${visit.who} gets their own door code by text 30 minutes before the visit${file.visitors?.find((item) => item.phone === phone)?.yesAt || this.deps.optedInHere?.(phone) ? "" : ", once they reply YES to the one text asking them"}.`;
       return ok({ saved: true, visit: shownVisit(saved, phone ? this.codeState({ ...file, ...(visitors ? { visitors } : {}) }, saved) : undefined), ...leftOut, next: `Saved. If no one comes in, it's flagged the same day.${codeNext}${phone ? "" : ` ${NOTHING_SENT}`}${leftOutNote}` });
+    });
+  }
+
+  /** The visitor said YES by text here or on the property, and nobody said STOP: their code may go by text. */
+  private textable(file: OversightFile, phone: string): boolean {
+    const visitor = file.visitors?.find((item) => item.phone === phone);
+    if (visitor?.stoppedAt || this.deps.stopped?.(phone)) return false;
+    return Boolean(visitor?.yesAt) || this.deps.optedInHere?.(phone) === true;
+  }
+
+  /** When a visit's own hours end (8 PM for an all-day one), as epoch ms. */
+  private visitEnd(visit: ExpectedVisit, timeZone: string): number {
+    return Date.parse(zonedInstant(visit.date, visit.to ?? "20:00", timeZone));
+  }
+
+  /** A saved visit with a phone that's still to come, or the refusal. */
+  private codedVisit(file: OversightFile, id: unknown): ExpectedVisit | OversightReply {
+    if (typeof id !== "string" || !id) return fail("Give the visit's id from list_expected_visits.");
+    if (this.deps.codes?.() !== true) return fail("Door codes for visitors need connected locks here.");
+    const visit = file.visits.find((v) => v.id === id);
+    if (!visit) return fail("There's no expected visit with that id. List the visits to find it.");
+    if (visit.cancelledAt) return fail("That visit was cancelled.");
+    if (!visit.phone) return fail("That visit has no phone, so there's no door code to make. Cancel it and save it again with their phone.");
+    const timeZone = this.timeZone();
+    if (!timeZone) return fail("The property has no time zone yet, so its days can't be told apart. Set the property's time zone first.");
+    if (this.deps.now().getTime() >= this.visitEnd(visit, timeZone)) return fail("That visit has already ended.");
+    return visit;
+  }
+
+  /**
+   * confirm_expected_visit (25 Nov, extending the #243 ruling): the host passes on the visitor's yes to this one
+   * visit, by email or a call, or says they set it up with them. Two calls. Their code is made for this visit only,
+   * through a STOP too (no texts, not no entry). Never returns a code or the phone.
+   */
+  confirmVisit(input: { id?: unknown; via?: unknown; confirmation?: unknown }): OversightReply {
+    return this.guarded(() => {
+      const file = readOversight(this.root);
+      const found = this.codedVisit(file, input.id);
+      if (!("id" in found)) return found;
+      const visit = found;
+      if (visit.confirmed) return ok({ id: visit.id, confirmed: true, already: true, by: "host", via: visit.confirmed.via, next: `${visit.who}'s visit is already confirmed.` });
+      if (this.textable(file, visit.phone!)) return ok({ id: visit.id, confirmed: true, already: true, by: "visitor", via: "text", next: `${visit.who} already said YES by text, so their code is made and texted to them.` });
+      const via = input.via;
+      if (typeof via !== "string" || !(VISIT_CONFIRM_VIAS as readonly string[]).includes(via)) return fail("Say how they confirmed: via email, call, or host-arranged when you set it up with them yourself.");
+      const how = via as VisitConfirmVia;
+      const question = how === "host-arranged" ? `You set up ${visit.who}'s visit on ${spokenVisit(visit)} yourself, so it's confirmed? Their door code is made for it.` : `${visit.who} confirmed their visit on ${spokenVisit(visit)} ${viaWords(how)}? Their door code is made for it.`;
+      const fingerprint = JSON.stringify([visit.id, visit.phone, how]);
+      const code = typeof input.confirmation === "string" && input.confirmation ? input.confirmation : undefined;
+      if (!code) return ok({ id: visit.id, confirmed: false, question, confirmation: this.approvals.issue("visit-confirm", "oversight", fingerprint, question), next: `Ask the host: "${question}" Call again with the confirmation code only after their yes.` });
+      try {
+        this.approvals.redeem(code, "visit-confirm", "oversight", fingerprint);
+      } catch {
+        return fail(APPROVAL_STALE);
+      }
+      const at = this.deps.now().toISOString();
+      const current = readOversight(this.root);
+      writeOversight(this.root, { ...current, visits: current.visits.map((v) => (v.id === visit.id ? { ...v, confirmed: { at, by: "host" as const, via: how } } : v)) });
+      return ok({ id: visit.id, confirmed: true, by: "host", via: how, next: `${visit.who}'s door code is made for this visit, working only in its hours. ${codeWay(visit.who, false)}` });
+    });
+  }
+
+  /**
+   * visit_code_link (25 Nov): for a visit the host confirmed whose visitor doesn't get texts, a single-use page for the
+   * host alone with the visitor's own code, to read to them. Two calls. It opens once and ends with the visit. Only the
+   * link token's hash is kept. Never returns a code.
+   */
+  codeLink(input: { id?: unknown; confirmation?: unknown }): OversightReply {
+    return this.guarded(() => {
+      const file = readOversight(this.root);
+      const found = this.codedVisit(file, input.id);
+      if (!("id" in found)) return found;
+      const visit = found;
+      if (this.textable(file, visit.phone!)) return fail(`${codeWay(visit.who, true).replace(/\.$/, "")}, so no page is needed.`);
+      if (!visit.confirmed) return fail(`${visit.who}'s visit isn't confirmed yet, so there's no code. Call confirm_expected_visit once they've told you yes.`);
+      const base = this.deps.publicBase?.()?.replace(/\/+$/, "");
+      if (!base) return fail("The door code page needs the server's public address.");
+      const question = `Get a private page with ${visit.who}'s door code, to read to them? It opens once.`;
+      const fingerprint = JSON.stringify([visit.id, visit.phone, "code-link", visit.hostLink?.at ?? null]);
+      const code = typeof input.confirmation === "string" && input.confirmation ? input.confirmation : undefined;
+      if (!code) return ok({ id: visit.id, question, confirmation: this.approvals.issue("visit-code-link", "oversight", fingerprint, question), next: `Ask the host: "${question}" Call again with the confirmation code only after their yes.` });
+      try {
+        this.approvals.redeem(code, "visit-code-link", "oversight", fingerprint);
+      } catch {
+        return fail(APPROVAL_STALE);
+      }
+      const token = letterToken(20);
+      const at = this.deps.now().toISOString();
+      const expiresAt = new Date(this.visitEnd(visit, this.timeZone()!)).toISOString();
+      const current = readOversight(this.root);
+      writeOversight(this.root, { ...current, visits: current.visits.map((v) => (v.id === visit.id ? { ...v, hostLink: { hash: tokenHash(token), expiresAt, at } } : v)) });
+      return ok({ id: visit.id, url: `${base}${VISIT_CODE_PREFIX}${token}`, next: `Give the host this private link. It opens once and shows ${visit.who}'s door code, for the host to read to them. Never send it to the visitor or a group.` });
     });
   }
 

@@ -28,6 +28,23 @@ export interface ExpectedVisit {
   phone?: string;
   /** The visit code's text: marked before it's sent, so a restart never sends twice. Never the code. */
   code?: { textAt?: string; sent?: boolean; notSent?: boolean; told?: string[] };
+  /**
+   * The visitor's yes to this one visit, passed on by the host (25 Nov, extending the #243 ruling): by email, on a
+   * call, or the host set it up. Their code is made without a text YES; a text YES still stays on the Visitor.
+   */
+  confirmed?: VisitConfirmed;
+  /** The host's single-use page with this visit's code, for a visitor who doesn't get texts: only the token's hash. */
+  hostLink?: { hash: string; expiresAt: string; at: string; usedAt?: string };
+}
+
+/** How the host heard the visitor's yes. */
+export const VISIT_CONFIRM_VIAS = ["email", "call", "host-arranged"] as const;
+export type VisitConfirmVia = (typeof VISIT_CONFIRM_VIAS)[number];
+
+export interface VisitConfirmed {
+  at: string;
+  by: "host";
+  via: VisitConfirmVia;
 }
 
 /** Someone the host expects, saved with a visit that has a phone (#280 17). Never a code. */
