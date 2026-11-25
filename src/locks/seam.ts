@@ -32,7 +32,15 @@ export interface SeamOptions {
   fetch?: Fetch;
   now?: () => Date;
   base?: string;
+  /** Waits between polls of a simulated keypad entry. Tests pass one that returns at once. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+/** How a simulated keypad entry ended (#303). `refused` means the workspace isn't a sandbox: nothing was sent. */
+export type KeypadEntryResult = { status: "success" | "pending" } | { status: "error"; errorType?: string } | { status: "refused"; reason: "not-sandbox" | "not-on-device" | "no-code" };
+
+/** Polls of a pending keypad entry, a second apart, before it's reported as still pending. */
+const KEYPAD_POLLS = 10;
 
 /** A Seam error, without the request or the response body. */
 export class SeamError extends Error {
@@ -106,11 +114,13 @@ export class SeamLockAdapter implements LockAdapter {
   private readonly fetchImpl: Fetch;
   private readonly now: () => Date;
   private readonly base: string;
+  private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(private readonly options: SeamOptions) {
     this.fetchImpl = options.fetch ?? ((url, init) => fetch(url, init));
     this.now = options.now ?? (() => new Date());
     this.base = options.base ?? SEAM_API;
+    this.sleep = options.sleep ?? ((ms) => new Promise((done) => setTimeout(done, ms)));
   }
 
   private async call<T>(path: string, body: Record<string, unknown>): Promise<T> {
@@ -240,6 +250,40 @@ export class SeamLockAdapter implements LockAdapter {
       if (error instanceof SeamError && error.status < 500) return undefined;
       throw error;
     }
+  }
+
+  /** True only when the partner says this key's workspace is a sandbox. Any other answer is false (#303). */
+  async isSandbox(): Promise<boolean> {
+    try {
+      const reply = await this.call<{ workspace?: { is_sandbox?: unknown } }>("/workspaces/get", {});
+      return reply?.workspace?.is_sandbox === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Sandbox only (#303): types one Property Core code on a sandbox lock's keypad, so a real unlock event
+   * comes back through the webhook. For the operator's command, never an agent tool, and not on the
+   * LockAdapter interface. The workspace is checked first; the code's value is read from the partner and
+   * sent straight back to it, and is never returned, logged or put in an error.
+   */
+  async simulateKeypadEntry(input: { deviceId: string; codeId: string }): Promise<KeypadEntryResult> {
+    if (!(await this.isSandbox())) return { status: "refused", reason: "not-sandbox" };
+    const reply = await this.call<{ access_code?: SeamAccessCode & { device_id?: string } }>("/access_codes/get", { access_code_id: input.codeId });
+    const found = reply?.access_code;
+    if (!found || found.device_id !== input.deviceId) return { status: "refused", reason: "not-on-device" };
+    if (typeof found.code !== "string" || !/^\d{4,8}$/.test(found.code)) return { status: "refused", reason: "no-code" };
+    const started = await this.call<{ action_attempt?: { action_attempt_id?: string; status?: string; error?: { type?: string } | null } }>("/locks/simulate/keypad_code_entry", { device_id: input.deviceId, code: found.code });
+    let attempt = started?.action_attempt;
+    for (let poll = 0; attempt?.status === "pending" && attempt.action_attempt_id && poll < KEYPAD_POLLS; poll++) {
+      await this.sleep(1000);
+      attempt = (await this.call<{ action_attempt?: typeof attempt }>("/action_attempts/get", { action_attempt_id: attempt.action_attempt_id }))?.action_attempt;
+    }
+    if (attempt?.status === "success") return { status: "success" };
+    if (attempt?.status === "pending") return { status: "pending" };
+    const type = attempt?.error?.type;
+    return { status: "error", ...(typeof type === "string" && type ? { errorType: type.slice(0, 80) } : {}) };
   }
 
   /**
