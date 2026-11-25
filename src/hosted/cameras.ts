@@ -223,11 +223,14 @@ const CONSENT = (label: string, counter: string) => `<h1>Connect Ring to Propert
 <p>No one is identified. Indoor cameras are never used. You sign in on Ring's own page; Property Core never sees your password. You can disconnect at any time.</p>
 <form method="post"><button type="submit" name="agree" value="yes">I agree</button></form>`;
 
+// The steps match the live link of 24 Nov (#302): a private Ring app sits under Staging Apps in the Ring Appstore.
+// Once Ring publishes the app, the second step changes.
 const AGREED = (label: string, word: string) => `<h1>Now connect Property Core in Ring</h1>
 <p>Thanks. You agreed to what Property Core reads for <strong>${escapeHtml(label)}</strong>.</p>
 <ol>
-<li>Open Ring and find <strong>Property Core</strong> in its apps.</li>
-<li>Choose to connect it, and pick the cameras to share.</li>
+<li>In this same browser, sign in at the Ring Appstore.</li>
+<li>Under Staging Apps, find <strong>Property Core</strong> and press Connect App.</li>
+<li>Agree on Ring's page, and pick the cameras to share.</li>
 <li>Ring sends you back to a Property Core page to finish.</li>
 </ol>
 <p>If that page asks for a pairing word, yours is <strong class="word">${shownWord(word)}</strong>. It works for 30 minutes.</p>`;
@@ -241,8 +244,8 @@ ${input.label ? "" : `<p><label>Pairing word <input name="word" autocomplete="of
 <button type="submit">Connect</button></form>
 <p>If this isn't your Ring account, close this page. Nothing is connected until you choose Connect.</p>`;
 
-const NOT_CONNECTED = "<h1>Ring wasn't connected</h1><p>This step has expired or didn't come from Ring. Ask your assistant to connect Ring again and start from the link it gives you.</p>";
-const HOME = "<h1>Property Core and Ring</h1><p>Property Core reads only the outdoor cameras a host picked, and only what they agreed to.</p><p>The connection is managed from your assistant's chat. Ask it which cameras are used, to change them, or to disconnect Ring. You can also remove Property Core in the Ring app at any time.</p>";
+const NOT_CONNECTED = "<h1>Ring wasn't connected</h1><p>This page has expired, or it wasn't opened from Ring. Ask your assistant to connect Ring again and start from the link it gives you.</p>";
+const HOME = "<h1>Property Core and Ring</h1><p>Property Core reads only the outdoor cameras you picked, and only what you agreed to.</p><p>You manage the connection from your assistant's chat. Ask it which cameras are used, to change them, or to disconnect Ring. You can also remove Property Core in the Ring app at any time.</p>";
 
 const page = (r: HostedRequest, status: number, title: string, body: string, extra: Record<string, string> = {}) => (r.send(status, "text/html; charset=utf-8", html(title, body), { ...PAGE_HEADERS, ...extra }), true);
 const markCookie = (mark: string, maxAge: number) => `${MARK_COOKIE}=${mark}; Path=${CAMERA_HOME_PATH}; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`;
