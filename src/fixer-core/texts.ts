@@ -451,10 +451,11 @@ export function scheduleWords(schedule: { kind: string; days?: number; monthlyOn
   return "on its schedule";
 }
 
-export function standingQuestion(f: { what: string; proName: string; schedule: string; from: string; until: string; access: "code" | "host"; usualCents?: number }): string {
+export function standingQuestion(f: { what: string; proName: string; schedule: string; firstDate?: string; from: string; until: string; access: "code" | "host"; usualCents?: number }): string {
   const access = f.access === "code" ? "They'll get their own door code for each visit." : "You'll let them in.";
   const price = f.usualCents !== undefined ? ` It's usually about ${shortDollars(f.usualCents)}; anything more waits for your OK.` : "";
-  return `Want me to book ${f.what.toLowerCase()} with ${f.proName} on its own, ${f.schedule}, between ${hoursText(f.from, f.until).replace(" to ", " and ")}? When it's due, I'll text ${f.proName} the date, and they'll confirm or pick another time. ${access} You won't be asked each time.${price}`;
+  const first = f.firstDate ? `, starting ${dayLabel(f.firstDate)}` : "";
+  return `Want me to book ${f.what.toLowerCase()} with ${f.proName} on its own, ${f.schedule}${first}, between ${hoursText(f.from, f.until).replace(" to ", " and ")}? When it's due, I'll text ${f.proName} the date, and they'll confirm or pick another time. ${access} You won't be asked each time.${price}`;
 }
 
 export function standingOffQuestion(f: { what: string; proName: string }): string {
@@ -489,6 +490,28 @@ export function vendorHeldQuestion(f: { proName: string; what: string; when: str
 
 export function vendorNoAnswerNews(f: { proName: string; what: string; when: string }): string {
   return `${f.proName} hasn't answered about ${f.what.toLowerCase()} on ${f.when}. No code goes out until they confirm.`;
+}
+
+/** check_fixes' routineVisits (#237): what happens next for a routine vendor's visit under the standing yes. Agent-facing. */
+export const ROUTINE_NOTHING_TO_DO = "Don't open a job or ask the host: the standing yes covers it.";
+
+export function routineProposedNext(proName: string): string {
+  return `Fixer Core texts ${proName} this visit's date on its own. ${ROUTINE_NOTHING_TO_DO}`;
+}
+
+export function routineWaitYes(proName: string): string {
+  return `${proName} hasn't said YES to texts from the line yet, so the visit is texted once they do.`;
+}
+
+export function routineWaitStays(proName: string): string {
+  return `The bookings haven't been read yet, so ${proName}'s visit is texted once they are.`;
+}
+
+export const ROUTINE_WAIT_TEXTS = "Texts on the line aren't on yet, so the visit is texted once they are.";
+
+/** open_job for upkeep under a standing yes (#237). Agent-facing. */
+export function standingJobRefusal(f: { what: string; proName: string }): string {
+  return `${f.what} has a standing yes: Fixer Core texts ${f.proName} each visit's date, so there's no job to open and nothing to ask the host. For an extra visit the host asks for, open it as the host's own job.`;
 }
 
 export function vendorNoDayNews(f: { what: string; proName: string }): string {

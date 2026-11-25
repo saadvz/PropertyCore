@@ -36,6 +36,7 @@ import { doorFor, repairBlockProblem, repairBlockStatus, staysForCrew } from "./
 import { crewScheduleProblem, crewWindowAt, crewWindows, type CrewSchedule, type CrewWindow } from "./crewDays";
 import { MAX_VENDOR_HOURS, parseVendorTime } from "./vendorTime";
 import { appendServiceNotice, cleanNoticeText, MAX_NOTICE_BODY, noticeDates, noticeHash, readServiceNotices, senderAddress, type ServiceNoticeInput } from "./serviceNotices";
+import { ROUTINE_NOTHING_TO_DO, ROUTINE_WAIT_TEXTS, routineProposedNext, routineWaitStays, routineWaitYes, standingJobRefusal } from "./texts";
 import { scheduleWords, vendorCalledOffNews, vendorTakenNews, vendorTimeTaken, vendorTooManyQuestion, standingOffQuestion, standingQuestion, vendorConfirmed, vendorConfirmedNews, vendorHeldQuestion, vendorMoved, vendorMovedNews, vendorNoAnswerNews, vendorNoDayNews, vendorProposal, visitWhen, VENDOR_ASKING_HOST } from "./texts";
 import { deskFeatureOn } from "../features/features";
 import { buildVisits } from "../visits/derive";
@@ -211,6 +212,8 @@ export interface UpkeepInput {
   proId?: string;
   /** The host's standing yes for a routine vendor (#237), or null to withdraw it. Always two calls. */
   standing?: { proId?: string; from?: string; until?: string; access?: "code" | "host"; usualCents?: number } | null;
+  /** The first visit's date, YYYY-MM-DD, today or later (#237): the schedule runs on from it. Leave out to start a full period from today. */
+  firstDate?: string;
   confirmation?: string;
 }
 
@@ -987,6 +990,11 @@ export class FixerDesk {
       const problem = this.upkeepScheduleProblem(input.schedule);
       if (problem) return fail(problem);
       if (input.proId !== undefined && !file.pros.some((pro) => pro.id === input.proId && pro.status === "saved")) return fail("That pro isn't on your saved list.");
+      if (input.firstDate !== undefined) {
+        const today = this.today();
+        if (typeof input.firstDate !== "string" || !YMD.test(input.firstDate) || input.firstDate < today) return fail("The first visit's date has to be YYYY-MM-DD, today or later.");
+        if (input.firstDate > addCalendarDays(today, 366)) return fail("The first visit has to be within a year.");
+      }
       let standing: Omit<StandingYes, "yesAt"> | null | undefined;
       if (input.standing !== undefined) {
         const checked = this.standingOf(file, input.standing, input.what.trim(), existing);
@@ -996,7 +1004,7 @@ export class FixerDesk {
       // A standing yes, or taking one back, is always the host's two-call yes, even before Activate.
       const gate =
         standing !== undefined
-          ? this.confirm("fixer-upkeep-standing", existing?.id ?? "new", tokenHash(JSON.stringify({ ...input, confirmation: undefined })), input.confirmation, standing ? standingQuestion({ what: input.what.trim(), proName: this.proNameOf(file, standing.proId), schedule: scheduleWords(input.schedule!), from: standing.from, until: standing.until, access: standing.access, ...(standing.usualCents !== undefined ? { usualCents: standing.usualCents } : {}) }) : standingOffQuestion({ what: input.what.trim(), proName: this.proNameOf(file, existing?.standing?.proId) }))
+          ? this.confirm("fixer-upkeep-standing", existing?.id ?? "new", tokenHash(JSON.stringify({ ...input, confirmation: undefined })), input.confirmation, standing ? standingQuestion({ what: input.what.trim(), proName: this.proNameOf(file, standing.proId), schedule: scheduleWords(input.schedule!), ...(input.firstDate !== undefined ? { firstDate: input.firstDate } : {}), from: standing.from, until: standing.until, access: standing.access, ...(standing.usualCents !== undefined ? { usualCents: standing.usualCents } : {}) }) : standingOffQuestion({ what: input.what.trim(), proName: this.proNameOf(file, existing?.standing?.proId) }))
           : this.approved(file, "fixer-upkeep", existing?.id ?? "new", input, `Save upkeep: ${input.what.trim()}?`);
       if (gate !== "go") return gate;
       const item: Upkeep = {
@@ -1010,6 +1018,7 @@ export class FixerDesk {
       };
       if (input.proId) item.proId = input.proId;
       else delete item.proId;
+      if (input.firstDate !== undefined) item.firstVisit = { date: input.firstDate, at: this.deps.now().toISOString() };
       if (standing) {
         item.standing = { ...standing, yesAt: this.deps.now().toISOString() };
         item.proId = standing.proId;
@@ -1021,8 +1030,7 @@ export class FixerDesk {
       else file.upkeep.push(item);
       this.write(file);
       recordHostStep(this.root, { at: this.deps.now().toISOString(), kind: "upkeep-save", about: item.what, ref: item.id });
-      const today = this.today();
-      return ok({ saved: true, upkeepId: item.id, nextDates: nextDates(item.schedule, today, today, 3) });
+      return ok({ saved: true, upkeepId: item.id, nextDates: this.upkeepDates(item, 3) });
     });
   }
 
@@ -1183,8 +1191,12 @@ export class FixerDesk {
       if (!Array.isArray(photoIds) || photoIds.length > 10 || !photoIds.every((id) => isText(id, 120))) return fail("Pass up to 10 message ids for the photos.");
       if (photoIds.length > 0 && input.source !== "cleaner") return fail("Only a cleaner's report carries photos.");
       if (input.source === "upkeep") {
-        if (!input.sourceRef || !file.upkeep.some((item) => item.id === input.sourceRef)) return fail("An upkeep job names an upkeep item. Call get_fixer_state for the list.");
+        const item = input.sourceRef ? file.upkeep.find((entry) => entry.id === input.sourceRef) : undefined;
+        if (!item) return fail("An upkeep job names an upkeep item. Call get_fixer_state for the list.");
         if (file.jobs.some((job) => isOpen(job) && job.sourceRef === input.sourceRef)) return fail("That upkeep item already has a job open.");
+        // Under a standing yes the vendor's visit is texted to them, with no job to open and no question for the host (#237).
+        const route = this.vendorRoute(file, item, this.upkeepNext(file, item, this.timeZone())?.nextDate);
+        if (route.kind !== "today") return fail(standingJobRefusal({ what: item.what, proName: route.pro.name }));
       }
       const what = redactDigits(input.what).trim();
       // Redaction can make the text longer, so the bound applies to what is saved.
@@ -1932,28 +1944,80 @@ export class FixerDesk {
       .map((job) => ({ jobId: job.id, question: rotationQuestion({ proName: this.nameOf(file, job, job.rotationAsked!.proId ?? job.booking!.proId) ?? "The pro" }) }));
   }
 
-  /** Upkeep items whose date is within `leadDays` and that have no job open or already started for that date. */
-  private upkeepDue(file: FixerFile): Record<string, unknown>[] {
+  /**
+   * Upkeep items whose date is within `leadDays` and that have no job open or already started for that date. An item
+   * under a standing yes that the vendor pass handles goes in `routine` instead (#237): its visit is texted to the
+   * vendor, so no job is opened for it and the host isn't asked again.
+   */
+  private async upkeepDue(file: FixerFile): Promise<{ due: Record<string, unknown>[]; routine: Record<string, unknown>[] }> {
     const today = this.today();
     const tz = this.timeZone();
     const due: Record<string, unknown>[] = [];
+    const routine: Record<string, unknown>[] = [];
+    let texts: boolean | undefined;
     for (const item of file.upkeep) {
       const next = this.upkeepNext(file, item, tz);
       if (!next || today < next.leadStart) continue;
+      if (item.standing && texts === undefined) texts = (await this.deps.textsAllowed?.()) === true;
+      const route = this.vendorRoute(file, item, next.nextDate, texts);
+      if (route.kind !== "today") {
+        routine.push({ upkeepId: item.id, what: item.what, nextDate: next.nextDate, proName: route.pro.name, next: route.kind === "wait" ? `${route.why} ${ROUTINE_NOTHING_TO_DO}` : routineProposedNext(route.pro.name) });
+        continue;
+      }
       due.push({ upkeepId: item.id, trade: item.trade, what: item.what, nextDate: next.nextDate, ...(item.proId ? { proId: item.proId } : {}) });
     }
-    return due;
+    return { due, routine };
+  }
+
+  /**
+   * Who handles an upkeep item's due visit (#237). "today": today's upkeep flow (upkeepDue, open_job, the host's go),
+   * with no standing yes, with visit records off, when the vendor can't be texted at all (removed, no phone, STOP,
+   * the host's own phone), or after the host heard that no day in the week fits. "propose": the vendor pass texts the
+   * vendor on its next tick. "wait": the standing yes still covers it, and `why` says what the proposal waits on.
+   * `texts` is the account's consent check when the caller has it.
+   */
+  private vendorRoute(file: FixerFile, item: Upkeep, nextDate: string | undefined, texts?: boolean): { kind: "today" } | { kind: "propose" | "wait"; pro: Pro; phone: string; why: string } {
+    const today = { kind: "today" } as const;
+    const standing = item.standing;
+    if (!standing || !this.visitsOn() || file.offAt) return today;
+    const people = this.deps.people?.();
+    const here = this.deps.propertyId;
+    const pro = file.pros.find((entry) => entry.id === standing.proId && entry.status === "saved");
+    const phone = pro?.reach.phone;
+    if (!people || !here || !pro || !phone || !pro.prefersText || people.stopped(phone) || people.isHost(phone)) return today;
+    if (nextDate && (file.news ?? []).some((entry) => entry.kind === `vendor-no-day:${item.id}:${nextDate}`)) return today;
+    if (this.staysUnknown()) return { kind: "wait", pro, phone, why: routineWaitStays(pro.name) };
+    if (!people.optedIn(phone) || !people.rolesOn(phone, here).includes("pro")) return { kind: "wait", pro, phone, why: routineWaitYes(pro.name) };
+    if (texts === false) return { kind: "wait", pro, phone, why: ROUTINE_WAIT_TEXTS };
+    return { kind: "propose", pro, phone, why: "" };
+  }
+
+  /** An upkeep item's next `count` dates: from the host's first visit date while it holds, else as the schedule gives them from today. */
+  private upkeepDates(item: Upkeep, count: number): string[] {
+    const first = this.firstVisitOf(item);
+    if (first) return [first.date, ...nextDates(item.schedule, first.date, first.date, count - 1)];
+    const today = this.today();
+    return nextDates(item.schedule, today, today, count);
+  }
+
+  /** The host's first visit date, until a visit is done after it was saved (#237). */
+  private firstVisitOf(item: Upkeep): { date: string; at: string } | undefined {
+    const first = item.firstVisit;
+    if (!first) return undefined;
+    return item.lastDoneAt && item.lastDoneAt >= first.at ? undefined : first;
   }
 
   /**
    * An upkeep item's next date and the day its lead time opens, or undefined while a job for it is open or one was
-   * already made for this date (even a cancelled one: the date was dealt with).
+   * already made for this date (even a cancelled one: the date was dealt with). With the host's first visit date,
+   * that date comes first and the schedule runs on from it; only jobs made since it was saved count against it.
    */
   private upkeepNext(file: FixerFile, item: Upkeep, tz: string): { nextDate: string; leadStart: string } | undefined {
-    const jobs = file.jobs.filter((job) => job.sourceRef === item.id);
-    if (jobs.some(isOpen)) return undefined;
-    const start = localYmd(new Date(item.lastDoneAt ?? item.savedAt), tz);
-    let nextDate = nextDates(item.schedule, start, start, 1)[0];
+    const first = this.firstVisitOf(item);
+    const jobs = file.jobs.filter((job) => job.sourceRef === item.id && (!first || job.createdAt >= first.at));
+    if (file.jobs.some((job) => job.sourceRef === item.id && isOpen(job))) return undefined;
+    const start = first?.date ?? localYmd(new Date(item.lastDoneAt ?? item.savedAt), tz);
+    let nextDate = first?.date ?? nextDates(item.schedule, start, start, 1)[0];
     // A date whose job was cancelled was dealt with: the one after it comes due in turn.
     for (let guard = 0; nextDate && guard < 12; guard++) {
       const leadStart = addCalendarDays(nextDate, -item.leadDays);
@@ -2088,10 +2152,12 @@ export class FixerDesk {
       }
       // Told notes with no job are kept 30 days, then dropped.
       if (file.news) file.news = file.news.filter((item) => !item.toldAt || now.getTime() - Date.parse(item.toldAt) < NEWS_KEPT_MS);
+      const upkeep = await this.upkeepDue(file);
       // The whole reply is built before the news is marked told and saved.
       const body = {
         needsGo: file.jobs.filter((job) => isOpen(job) && !job.hostGo && job.state === "requested").map((job) => ({ jobId: job.id, question: this.goQuestion(file, job) })),
-        upkeepDue: this.upkeepDue(file),
+        upkeepDue: upkeep.due,
+        routineVisits: upkeep.routine,
         contactNext: this.contactNext(file),
         quotesReady: this.quotesReady(file),
         windows,
@@ -2763,9 +2829,6 @@ export class FixerDesk {
    */
   private async vendorPass(file: FixerFile, notes: HostNote[]): Promise<void> {
     if (!this.visitsOn() || this.staysUnknown()) return;
-    const people = this.deps.people?.();
-    const here = this.deps.propertyId;
-    if (!people || !here) return;
     const tz = this.timeZone();
     const today = this.today();
     const now = this.deps.now();
@@ -2774,11 +2837,10 @@ export class FixerDesk {
       if (!standing) continue;
       const next = this.upkeepNext(file, item, tz);
       if (!next || today < next.leadStart) continue;
-      const pro = file.pros.find((entry) => entry.id === standing.proId && entry.status === "saved");
-      const phone = pro?.reach.phone;
-      if (!pro || !phone || !pro.prefersText) continue;
-      if (!people.optedIn(phone) || people.stopped(phone) || !people.rolesOn(phone, here).includes("pro") || people.isHost(phone)) continue;
-      if ((await this.deps.textsAllowed?.()) !== true) continue;
+      // The same rule check_fixes uses, so a visit is either proposed here or listed in upkeepDue, never both.
+      const route = this.vendorRoute(file, item, next.nextDate, (await this.deps.textsAllowed?.()) === true);
+      if (route.kind !== "propose") continue;
+      const { pro, phone } = route;
       const lastDay = addCalendarDays(next.nextDate, FixerDesk.VENDOR_DAYS);
       const draft: Job = { id: newId("job_", 10), trade: item.trade, what: item.what, source: "upkeep", sourceRef: item.id, photos: [], urgency: "by-date", byDate: lastDay, state: "booked", candidates: [], picked: [], contacts: [], news: [], createdAt: now.toISOString(), standingYes: { upkeepId: item.id, at: standing.yesAt } };
       let span: { from: string; until: string } | undefined;

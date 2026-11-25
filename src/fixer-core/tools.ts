@@ -119,7 +119,7 @@ export const FIXER_TOOLS: FixerTool[] = [
   {
     name: "save_upkeep",
     title: "Save an upkeep item",
-    description: `Saves a regular upkeep item, or changes one with its id: the trade, what it is (under 120 characters), the schedule (every so many days, a day of the month, or another rule; call preview_schedule and read the next 3 dates back first), leadDays (how many days ahead to start, default 14), and an optional proId. With standing (a pro who texts on the line, their usual local hours from and until as HH:MM, at most 4 hours, access, and the usual price), the host gives a standing yes: each visit is then proposed to that pro by text and they confirm or move it, with no question to the host each time. standing: null takes it back. A standing yes always takes two calls. ${AFTER_ACTIVATE}`,
+    description: `Saves a regular upkeep item, or changes one with its id: the trade, what it is (under 120 characters), the schedule (every so many days, a day of the month, or another rule; call preview_schedule and read the next 3 dates back first), leadDays (how many days ahead to start, default 14), and an optional proId. With standing (a pro who texts on the line, their usual local hours from and until as HH:MM, at most 4 hours, access, and the usual price), the host gives a standing yes: each visit is then proposed to that pro by text and they confirm or move it, with no question to the host each time. standing: null takes it back. A standing yes always takes two calls. firstDate (YYYY-MM-DD, today or later) puts the first visit on that day, and the schedule runs on from it; without it, the first visit is a full period from today. ${AFTER_ACTIVATE}`,
     input: z
       .object({
         id: Id.optional(),
@@ -133,6 +133,7 @@ export const FIXER_TOOLS: FixerTool[] = [
           .strict()
           .nullable()
           .optional(),
+        firstDate: Ymd.optional(),
         confirmation: Confirmation,
       })
       .strict(),
@@ -166,7 +167,7 @@ export const FIXER_TOOLS: FixerTool[] = [
     name: "check_fixes",
     title: "What repairs need",
     description:
-      "The repair pass: jobs waiting for the host's go, upkeep due, the preferred pro to contact, the times a pro can come for each job, contacts with no outcome, follow-ups due, holds, delays, questions for the host, and quotesReady (a quotes-only repair's quotes, once every pro answered). Call it on every routine run and act on what it returns. Pass googleEvents when the bookings are in Google Calendar.",
+      "The repair pass: jobs waiting for the host's go, upkeep due, routineVisits (upkeep a vendor's standing yes covers: never open a job for it or ask the host), the preferred pro to contact, the times a pro can come for each job, contacts with no outcome, follow-ups due, holds, delays, questions for the host, and quotesReady (a quotes-only repair's quotes, once every pro answered). Call it on every routine run and act on what it returns. Pass googleEvents when the bookings are in Google Calendar.",
     input: z.object({ googleEvents: GoogleEvents.optional() }).strict(),
   },
   {
