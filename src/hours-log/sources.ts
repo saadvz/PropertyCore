@@ -298,8 +298,10 @@ export const fixerRows: RowSource = (records) => {
         : step.kind === "approve-booking" ? `Approved ${pro}'s booking for the ${repair}`
         : step.kind === "approve-price" ? `Approved the new price of ${cents} for the ${repair}`
         : step.kind === "record-cost" ? `Recorded the cost of ${cents} for the ${repair}`
+        : step.kind === "confirm-visit" ? `Passed on ${pro}'s yes to the visit for the ${repair}`
         : `Confirmed the ${repair} is done`;
-      host(step.kind, step.at, task);
+      // Passing on a pro's yes (#243) is one of the host's booking steps.
+      host(step.kind === "confirm-visit" ? "approve-booking" : step.kind, step.at, task);
     }
     // A crew's measured days (#237): one row for each workday with an arrival and a departure.
     const crewDays = job.crew ? (records.visits ?? []).filter((visit) => visit.id.startsWith(`crew:${job.id}:`) && measuredVisit(records, visit.id, false)) : [];
