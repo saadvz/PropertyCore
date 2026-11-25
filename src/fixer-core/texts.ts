@@ -467,11 +467,11 @@ export function vendorProposal(f: { proName: string; what: string; street: strin
 }
 
 export function vendorConfirmed(f: { when: string; access: "code" | "host" }): string {
-  return `Thanks, see you ${f.when}. ${f.access === "code" ? "You'll get your door code by text when the visit starts." : "The host will let you in."}`;
+  return `Thanks, see you ${f.when}. ${f.access === "code" ? "You'll get your door code by text shortly before the visit starts." : "The host will let you in."}`;
 }
 
 export function vendorMoved(f: { when: string; access: "code" | "host" }): string {
-  return `Done, you're moved to ${f.when}. ${f.access === "code" ? "You'll get your door code by text when the visit starts." : "The host will let you in."}`;
+  return `Done, you're moved to ${f.when}. ${f.access === "code" ? "You'll get your door code by text shortly before the visit starts." : "The host will let you in."}`;
 }
 
 export const VENDOR_ASKING_HOST = "Thanks, I'll check that time with the host and text you back.";
@@ -558,11 +558,11 @@ export function confirmAskText(f: { proName: string; what: string; street: strin
 }
 
 export function confirmThanks(f: { access: "code" | "host" }): string {
-  return `Thanks, you're confirmed. ${f.access === "code" ? "You'll get your door code when the visit starts." : "The host will let you in."}`;
+  return `Thanks, you're confirmed. ${f.access === "code" ? "You'll get your door code by text shortly before the visit starts." : "The host will let you in."}`;
 }
 
 export function confirmedNews(f: { proName: string; span: string; access: "code" | "host" }): string {
-  return `${f.proName} confirmed by text for ${f.span}.${f.access === "code" ? " Their door code is made now." : ""}`;
+  return `${f.proName} confirmed ${f.span} by text.${f.access === "code" ? " Their door code goes on the lock now, for the visit's hours only." : ""}`;
 }
 
 function viaWords(via: ConfirmVia): string {
@@ -571,7 +571,7 @@ function viaWords(via: ConfirmVia): string {
 
 /** confirm_visit: the host's yes that the pro confirmed. */
 export function confirmQuestion(f: { proName: string; span: string; via: ConfirmVia }): string {
-  return f.via === "host-arranged" ? `You set up ${f.span} with ${f.proName} yourself, so it's confirmed? Their door code is made then.` : `${f.proName} confirmed ${f.span} ${viaWords(f.via)}? Their door code is made then.`;
+  return f.via === "host-arranged" ? `You set up ${f.span} with ${f.proName} yourself, so it counts as confirmed and I'll make their door code now. Okay?` : `${f.proName} confirmed ${f.span} ${viaWords(f.via)}, so I'll make their door code now. Okay?`;
 }
 
 /** The extra sentence on the booking question when the host passes on the pro's yes with it. */
@@ -581,12 +581,12 @@ export function confirmedSentence(f: { proName: string; via: ConfirmVia }): stri
 
 /** The one ask, 48 hours before the start, when no yes is on record. */
 export function confirmHostAsk(f: { proName: string; span: string }): string {
-  return `Has ${f.proName} confirmed ${f.span}? Their door code is made only once they have. Tell me how they confirmed, or if you set it up with them yourself.`;
+  return `Has ${f.proName} confirmed ${f.span}? I'll make their door code only once they have. Tell me if they confirmed by email or on a call, or if you set it up with them yourself.`;
 }
 
 /** The one note at the start when still no yes is on record. */
 export function noConfirmAtStart(f: { proName: string }): string {
-  return `No door code was made for ${f.proName}: the visit isn't confirmed. Confirm it to make the code now, or let them in.`;
+  return `${f.proName}'s visit starts now, but it isn't confirmed, so no door code was made. If ${f.proName} confirmed with you, tell me and I'll make it now. Otherwise you'll need to let them in.`;
 }
 
 /** The booking reply's next step when the visit starts within 48 hours and isn't confirmed. */
@@ -596,5 +596,5 @@ export function confirmSoonNext(f: { proName: string }): string {
 
 /** pro_code_link: the host's yes to a private page with the pro's code, for reading it to them. */
 export function proCodeLinkQuestion(f: { proName: string }): string {
-  return `Make a private link for you to ${f.proName}'s door code, so you can read it to them? It opens once.`;
+  return `Want a private link to ${f.proName}'s door code, so you can read it to them? It opens only once.`;
 }
