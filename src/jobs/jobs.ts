@@ -21,6 +21,34 @@ export const CORE_JOBS: readonly CoreJob[] = ["cleaning", "supplies", "fixer"];
 export const JOB_PATHS: Record<CoreJob, string> = { cleaning: "/mcp/cleaner", supplies: "/mcp/supply", fixer: "/mcp/fixer" };
 export const JOB_NAMES: Record<Job, string> = { property: "Property Core", cleaning: "Cleaner Core", supplies: "Supply Core", fixer: "Fixer Core" };
 
+/**
+ * A core's bot on the account's Property Core connector. Grok Bot shares each connector across every bot on the
+ * account, so a core's bot made by the Property Core bot never signs in on its own: it names its job with `bot` on
+ * each call, and the server keeps it as a connection whose id is the shared grant's id, "#", and the job. It is live
+ * while that grant is, and the rule below treats it as any core connection.
+ */
+export const SEAT_MARK = "#";
+
+export function seatId(grantId: string, job: CoreJob): string {
+  return `${grantId}${SEAT_MARK}${job}`;
+}
+
+export function isSeat(connectionId: string): boolean {
+  return connectionId.includes(SEAT_MARK);
+}
+
+/** The grant a connection id stands on: itself, or the shared grant of a seat. */
+export function grantOfSeat(connectionId: string): string {
+  return connectionId.split(SEAT_MARK)[0]!;
+}
+
+/** The live grants, where a seat is live while its shared grant is. */
+export class LiveGrants extends Set<string> {
+  override has(connectionId: string): boolean {
+    return super.has(grantOfSeat(connectionId));
+  }
+}
+
 /** A core's bot that hasn't called for this long is quiet: the stopped-task threshold (CHATGPT_CHECK_GAP_MS), for a check that runs every hour. */
 export const QUIET_MS = 150 * 60_000;
 /** Supply Core's check runs once a day, so its bot is quiet only after a day and two hours' slack. */

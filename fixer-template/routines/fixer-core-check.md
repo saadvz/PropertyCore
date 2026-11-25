@@ -12,6 +12,8 @@ hours, so an hourly run keeps jobs moving without waking anyone at night.
 
 ## Instructions for the routine
 
+In the Fixer Core bot of an account that runs separate bots, add `bot: "fixer"` to every call below. The Property Core bot never adds it.
+
 1. Call `get_state`. When it lists more than one property, run steps 2 to 9
    once for each property whose flows have fixer on, and name that property in
    every Fixer Core call. If none has Fixer Core on, post nothing and stop.

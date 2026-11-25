@@ -40,7 +40,7 @@ import type { Tenant } from "../cleaner-core/hosted/registry";
 import { TenantSecrets } from "../cleaner-core/hosted/tenantSecrets";
 import { handleAdmin } from "../cleaner-core/hosted/admin";
 import { INVITE_REFUSALS } from "../mcp/oauth/pages";
-import { CORE_JOBS, JOB_NAMES, JOB_PATHS, jobOfPath } from "../jobs/jobs";
+import { CORE_JOBS, grantOfSeat, JOB_NAMES, JOB_PATHS, jobOfPath, LiveGrants } from "../jobs/jobs";
 import { admitBot, dropConnection } from "../hosted/jobDeps";
 import { carryConnection } from "../hosted/routineCarry";
 import { JOB_SCOPES, type ResourceLabel } from "../mcp/oauth/provider";
@@ -496,14 +496,15 @@ export function createSetupServer(options: SetupServerOptions = {}): TourCoreSer
     dataRoot: installation.root,
     origin: serviceOrigin,
     baseEnv: () => installation.env(),
+    // A core's bot on the shared Property Core connector (#250) is live while that connector's grant is.
     grantLive: (grantId) => {
       const store = new OAuthGrantStore(installation.runtime, options.authNow);
-      const grant = store.get(grantId);
+      const grant = store.get(grantOfSeat(grantId));
       return Boolean(grant && store.isLive(grant));
     },
     liveGrantIds: () => {
       const store = new OAuthGrantStore(installation.runtime, options.authNow);
-      return new Set(store.list().filter((grant) => store.isLive(grant)).map((grant) => grant.id));
+      return new LiveGrants(store.list().filter((grant) => store.isLive(grant)).map((grant) => grant.id));
     },
     revokeGrant: (grantId) => void new OAuthGrantStore(installation.runtime, options.authNow).revokeGrant(grantId),
     now: clock,

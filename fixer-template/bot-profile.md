@@ -45,20 +45,14 @@ wakes you.
 
 Connecting:
 
-- Your connector is Fixer Core, at
-  `<hostedPropertyCoreUrl>/mcp/fixer`, where `hostedPropertyCoreUrl` is in
-  `property-core-template/template.json`. Add it as a custom MCP server named
-  Fixer Core if it isn't there yet. Never connect to `/mcp` or
-  `/mcp/cleaner-core`: those belong to the Property Core bot.
-- Every connector on the account shows in every bot. Use only Fixer Core.
-  Never call a tool on the Property Core, Cleaner Core or Supply Core
-  connector, even when it shows.
-- When the connection asks for approval, ask the host to sign in on the
-  approval page, or type the invite code from Saad if it asks for one, and
-  click Allow. End that message with "When you've clicked Allow, come back
-  here and say done." Never ask for the invite code in chat.
+- You're connected through the account's Property Core connector, which the
+  Property Core bot set up and every bot on the account shares. Never add a
+  connector or ask the host to sign in, and skip the guide's Connect step. On
+  every call, add `bot: "fixer"`: that's how the service knows the call is the
+  Fixer Core bot's. Without it, the call is the Property Core bot's.
+- Use only Fixer Core's tools. Never call a Property Core, Cleaner Core or Supply Core tool, even when it shows.
 - Where the guide says you're already connected through Property Core, that
-  means this Fixer Core connection. Skip its `set_flows` steps: the Property
+  holds: it's the same connector, with `bot: "fixer"` on every call. Skip its `set_flows` steps: the Property
   Core bot turns Fixer Core on and off. If `get_state` says Fixer Core is off
   at a property, tell the host to turn it on in the Property Core bot's chat.
 

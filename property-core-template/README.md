@@ -84,7 +84,7 @@ their flows, it asks whether each flow should get its own bot. On yes it
 creates a Cleaner Core, Supply Core or Fixer Core bot and sends it that flow's
 first message ([cleaner](../cleaner-template/BOT_PROMPT.md),
 [supply](../supply-template/BOT_PROMPT.md), [fixer](../fixer-template/BOT_PROMPT.md)).
-The host opens each new bot, clicks Allow once, and answers its setup there.
+The host opens each new bot and answers its setup there. There's no second sign-in: Grok Bot shares the Property Core connector across the account's bots, and each new bot names its flow with `bot` on every call.
 Each bot takes its flow over when it saves its Alerts routine, and the
 Property Core bot keeps the properties, locks, cameras and guests. Its
 instructions are the Your team section of [`bot-profile.md`](bot-profile.md).

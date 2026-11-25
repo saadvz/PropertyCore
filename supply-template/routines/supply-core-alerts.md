@@ -41,6 +41,8 @@ before the routine runs make one wake-up.
 
 ## Instructions for the routine
 
+In the Supply Core bot of an account that runs separate bots, add `bot: "supplies"` to every call below. The Property Core bot never adds it.
+
 1. If `eventType` is `installation.test`, post: "Supply Core alerts are
    connected." and stop.
 2. Call `check_alerts`. Tell the host each item in `alerts` and `notes` once,

@@ -11,6 +11,8 @@ another). A daytime run means an approval card isn't left waiting overnight.
 
 ## Instructions for the routine
 
+In the Supply Core bot of an account that runs separate bots, add `bot: "supplies"` to every call below. The Property Core bot never adds it.
+
 1. When `check_alerts` is among your tools, call it first and tell the host
    each item in `alerts` and `notes` once, in your own words. Then call `check_supplies`. If Google Calendar is saved for the property, by Supply Core or by Cleaner Core,
    read only the calendar the host named and pass its events as `googleEvents`.
