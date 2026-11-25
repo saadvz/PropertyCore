@@ -5,6 +5,7 @@ import type { HostedCleaner, HostedRequest } from "../cleaner-core/hosted/router
 import { CameraLinks, cameraTokenKey, maskEmail, maskLabel, readCameras, sealedTokenStore, shownWord, WaitingTokens, writeCameras, type AgreedLink, type CameraPlace, type WaitingAccount } from "../cameras/accounts";
 import { CameraProviderError, type AccountRef, type CameraProvider, type Tokens } from "../cameras/adapter";
 import { CameraCounting } from "../cameras/count";
+import { exportRows, toCsv } from "../cameras/countTest";
 import type { Counter } from "../cameras/counter";
 import { detectorFromEnv } from "../cameras/detector";
 import { CameraDesk } from "../cameras/desk";
@@ -14,6 +15,9 @@ import { CAMERA_TOOL_NAMES, CAMERA_TOOLS } from "../cameras/tools";
 import { ingestWebhook } from "../cameras/webhook";
 import { PackageDesk } from "../package-arrivals/desk";
 import type { FrontReply } from "./serviceTools";
+import { zonedParts } from "../core/timezone";
+import { addCalendarDays } from "../hub/calendar";
+import { readHubFile } from "../hub/store";
 
 /**
  * The camera connection (#239) on the shared service, behind each account's "cameras" switch and Ring's credentials. The host agrees on a
@@ -148,11 +152,14 @@ export async function camerasCall(h: HostedCleaner, tenant: Tenant, property: Pr
         const cameras = await Promise.all(
           devices.map(async (device) => {
             const used = picked.some((camera) => camera.deviceId === device.id);
-            const status = used ? await provider.status(ref, device.id).catch(() => "unknown") : undefined;
-            return { deviceId: device.id, name: device.name, usedHere: used, ...(status ? { status } : {}) };
+            // Every camera's state, picked or not (#302): from the list when Ring gave it, else asked one by one.
+            const status = device.online === true ? "online" : device.online === false ? "offline" : await provider.status(ref, device.id).catch(() => "unknown");
+            return { deviceId: device.id, name: device.name, usedHere: used, status };
           }),
         );
-        return done({ connected: true, cameras, ...tell, ...(picked.length ? {} : { next: "Ask the host which of these cameras are outdoors at this property, then call pick_cameras." }) });
+        const week = desk.countingWindow();
+        const counting = week && Date.parse(week.until) > h.now().getTime() ? { countingWeek: week } : {};
+        return done({ connected: true, cameras, ...counting, ...tell, ...(picked.length ? {} : { next: "Ask the host which of these cameras are outdoors at this property, then call pick_cameras." }) });
       } catch (error) {
         return done({ connected: false, problem: plain(error), picked: picked.map(({ deviceId, name }) => ({ deviceId, name })), ...tell });
       }
@@ -170,6 +177,8 @@ export async function camerasCall(h: HostedCleaner, tenant: Tenant, property: Pr
       for (const each of tenant.properties) deskFor(h, tenant, each).forget();
       return done({ disconnected: true, next: "Ring is disconnected and no camera is read now. Events already kept stay in each property's record. The host can also remove Property Core from their Ring app." });
     }
+    case "counting_week":
+      return desk.countingWeek({ action: args.action, hostAgreed: args.hostAgreed });
     case "check_night":
       return done({ ...desk.runNight(String(args.date ?? "")) });
     case "stay_timeline":
@@ -420,7 +429,7 @@ function countingFor(h: HostedCleaner, tenant: Tenant, property: Property): Came
   if (!counting) {
     const desk = deskFor(h, tenant, property);
     const root = propertyFolder(h.dataRoot, tenant.id, property);
-    counting = new CameraCounting({ provider, account: ref, counter, log: sharedCameraLog(root, () => h.now()), inStay: (at) => desk.inStay(at), nightOf: (at) => desk.nightOf(at) });
+    counting = new CameraCounting({ provider, account: ref, counter, log: sharedCameraLog(root, () => h.now()), inStay: (at) => desk.counts(at), nightOf: (at) => desk.nightOf(at), capAt: (at) => desk.capAt(at) });
     countings.set(key, counting);
   }
   return counting;
@@ -449,4 +458,52 @@ export async function tickAllCameras(h: HostedCleaner): Promise<void> {
   } finally {
     round = false;
   }
+}
+
+/** A property's counting week (#239), for the admin page's sheet link. */
+export interface CountingWeekRow {
+  propertyId: string;
+  label: string;
+  from: string;
+  until: string;
+}
+
+/** Every property of an account with a counting week saved, running or done. */
+export function countingWeeks(h: HostedCleaner, tenant: Tenant): CountingWeekRow[] {
+  if (!featureOn(tenant, "cameras", h.baseEnv())) return [];
+  return tenant.properties.flatMap((property) => {
+    try {
+      const week = readCameras(propertyFolder(h.dataRoot, tenant.id, property)).countingWeek;
+      return week ? [{ propertyId: property.id, label: property.label, from: week.from, until: week.until }] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+const SHEET_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const localDate = (iso: string, timeZone: string) => {
+  const p = zonedParts(new Date(iso), timeZone);
+  return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+};
+
+/**
+ * The counting week's review sheet (#239) for one property, as CSV: one row per counted motion event between two
+ * local dates (the end date not included), with empty columns for the host's own numbers. Without dates, the
+ * counting week's days. It reads only the property's event log: no image, link or code is in it.
+ */
+export function countSheetFor(h: HostedCleaner, tenant: Tenant, propertyId: string, asked: { from?: string; to?: string } = {}): { csv: string; filename: string; rows: number } | { error: string } {
+  if (!featureOn(tenant, "cameras", h.baseEnv())) return { error: "Cameras aren't on for this account." };
+  const property = tenant.properties.find((each) => each.id === propertyId);
+  if (!property) return { error: "That property isn't on this account." };
+  const root = propertyFolder(h.dataRoot, tenant.id, property);
+  const timeZone = readHubFile(root)?.property.timeZone;
+  if (!timeZone) return { error: "The property has no time zone, so its events can't be put in local time." };
+  const week = readCameras(root).countingWeek;
+  const from = asked.from || (week ? localDate(week.from, timeZone) : undefined);
+  const to = asked.to || (week ? addCalendarDays(localDate(week.until, timeZone), 1) : undefined);
+  if (!from || !to || !SHEET_DATE.test(from) || !SHEET_DATE.test(to) || to <= from) return { error: "Give from and to as YYYY-MM-DD, with to after from." };
+  const counter = counterFor(h)?.name;
+  const rows = exportRows(sharedCameraLog(root, () => h.now()).read(), { timeZone, from, to, ...(counter ? { counter } : {}) });
+  return { csv: toCsv(rows), filename: `counting-sheet-${property.id}-${from}-to-${to}.csv`, rows: rows.length };
 }
