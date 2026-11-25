@@ -22,6 +22,8 @@ export interface HoursReply {
 
 export interface HoursDeps {
   now: () => Date;
+  /** The account has cameras on, so a measured visit's departure time can come from a camera (#237). Off by default. */
+  cameras?: () => boolean;
 }
 
 const CONFIRM_ACTION = "hours-confirm";
@@ -54,7 +56,7 @@ export class HoursDesk {
     const file = readHours(this.root);
     const mark = file.months[month];
     const kinds = mark ? rowKindsFor(mark.kindSet) : undefined;
-    return buildMonth(readRecords(this.root), month, file.settings, { ...(mark?.ownerFacts ? { kept: mark.ownerFacts } : {}), ...(kinds ? { kinds } : {}) });
+    return buildMonth(readRecords(this.root, { cameras: this.deps.cameras?.() === true }), month, file.settings, { ...(mark?.ownerFacts ? { kept: mark.ownerFacts } : {}), ...(kinds ? { kinds } : {}) });
   }
 
   /** A broken hours.json is a plain refusal, and nothing is written over it. */
@@ -69,7 +71,7 @@ export class HoursDesk {
 
   /** True once the month has ended at the property. */
   private over(month: string): boolean {
-    const timeZone = readRecords(this.root).timeZone ?? "America/New_York";
+    const timeZone = readRecords(this.root, { cameras: this.deps.cameras?.() === true }).timeZone ?? "America/New_York";
     const p = zonedParts(this.deps.now(), timeZone);
     return month < `${p.year}-${String(p.month).padStart(2, "0")}`;
   }
