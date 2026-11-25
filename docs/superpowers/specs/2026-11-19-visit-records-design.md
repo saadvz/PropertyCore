@@ -493,6 +493,11 @@ Where the build differs from the draft above, and why:
   adapter writes `lock` and `lock-connection` events here instead of its own
   `lock-events.jsonl`, through `VisitLog.append`. #239's camera adapter writes
   `camera` events here too. The details went to the #180 session.
+- **Camera departures (25 Nov).** Built on `claude/camera-departures-237`:
+  `docs/superpowers/specs/2026-11-25-camera-departures-design.md`. A camera
+  is never a departure's source. A person seen close to a DONE supports it
+  (`cameraCheck`, `camera`) and gives its time when the lock gave none
+  (`timeFrom`). `RULES` is 2.
 - **Vendor visits (20 Nov).** Built on `claude/visit-records-237-vendor` after
   #245's decision: `docs/superpowers/specs/2026-11-20-vendor-visits-design.md`.
   A vendor's visit is a `repair:` visit like any other, whose window line is
