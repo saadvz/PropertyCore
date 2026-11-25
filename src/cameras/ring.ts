@@ -1,17 +1,18 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { CameraProviderError, type AccountRef, type CameraEvent, type CameraProvider, type CameraWebhook, type ClipRef, type Tokens } from "./adapter";
+import { CameraProviderError, type AccountRef, type CameraEvent, type CameraProfile, type CameraProvider, type CameraWebhook, type ClipRef, type Tokens } from "./adapter";
 import type { CameraKind } from "./lines";
 
 /**
  * Ring's developer API (the Ring Appstore / Partner API) behind the camera adapter (#239). Field names follow
- * developer.amazon.com/docs/ring/ as read on 19 Nov 2026. The sign-in page's address and the history fill are checked
- * again when the private developer app is registered. No token, secret or response body is ever put in an error or a log.
+ * developer.amazon.com/docs/ring/ as read on 19 and 25 Nov 2026. Linking is Ring's one-way account linking (#302):
+ * Ring posts a code to us, then sends the host's browser with a signed nonce. Starting from our side with PKCE is by
+ * invitation only at Ring, and an app uses one method. No token, secret or response body is ever put in an error or a log.
  */
 
 export interface RingOptions {
   clientId: string;
   clientSecret: string;
-  /** The HMAC key Ring signs webhooks with. */
+  /** The HMAC key Ring signs webhooks and account-link nonces with. */
   webhookKey: string;
   fetch?: typeof globalThis.fetch;
   now?: () => Date;
@@ -118,13 +119,30 @@ export function ringProvider(options: RingOptions): CameraProvider {
   return {
     name: "ring",
 
-    linkUrl({ state, codeChallenge, redirectUri }) {
-      const url = new URL(`${oauth}/oauth/authorize`);
-      url.search = new URLSearchParams({ client_id: options.clientId, response_type: "code", redirect_uri: redirectUri, scope: "ava.v1:read", state, code_challenge: codeChallenge, code_challenge_method: "S256" }).toString();
-      return url.toString();
+    ownsClient(clientId) {
+      const given = Buffer.from(clientId);
+      const ours = Buffer.from(options.clientId);
+      return given.length === ours.length && timingSafeEqual(given, ours);
     },
 
-    finishLink: ({ code, codeVerifier, redirectUri }) => tokenCall({ grant_type: "authorization_code", code, code_verifier: codeVerifier, redirect_uri: redirectUri }),
+    exchangeCode: (code) => tokenCall({ grant_type: "authorization_code", code }),
+
+    async profile(account): Promise<CameraProfile> {
+      const data = obj(obj(await (await call(account, "/v1/users/me")).json()).data);
+      const accountId = str(data.id);
+      if (!accountId) throw new CameraProviderError("Ring didn't say whose account this is.", "failed");
+      const email = str(obj(data.attributes).email);
+      return { accountId, ...(email ? { email } : {}) };
+    },
+
+    // URL-safe base64 with no padding, over "<time in ms>:<account id>". Webhooks use the same key in hex.
+    linkNonce: (time, accountId) => createHmac("sha256", options.webhookKey).update(`${time}:${accountId}`).digest("base64url"),
+
+    async confirmLink(account, { nonce, accountIdentifier }) {
+      // POST has Ring check the nonce and turn on the cameras the host shared; PATCH marks the link complete. Both are required.
+      await call(account, "/v1/accounts/me/app-integrations", { method: "POST", body: { account_identifier: accountIdentifier, nonce } });
+      await call(account, "/v1/accounts/me/app-integrations", { method: "PATCH", body: { status: "completed" } });
+    },
 
     async devices(account) {
       const body = obj(await (await call(account, "/v1/devices")).json());

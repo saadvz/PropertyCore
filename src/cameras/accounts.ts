@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeJsonAtomic } from "../storage/atomicWrite";
@@ -70,42 +70,202 @@ export function sealedTokenStore(slot: SecretSlot, key: Buffer): TokenStore & { 
 interface PendingLink {
   tenantId: string;
   propertyId: string;
-  codeVerifier: string;
-  codeChallenge: string;
+  /** The pairing word, shown only after the host agrees. */
+  word: string;
+  /** The browser's mark, set when the host agrees on the consent page. */
+  mark?: string;
   expiresAt: number;
 }
 
 const LINK_MS = 30 * 60_000;
 const b64url = (bytes: Buffer) => bytes.toString("base64url");
+/** No vowels, so a word never spells anything, and no letters that look alike. Never digits. */
+const WORD_LETTERS = "BCDFGHJKMNPQRSTVWXYZ";
+const WORD_LENGTH = 8;
 
-/** One-time sign-in links: a state that ties the provider's return to a property, good once for 30 minutes. Kept in memory only. */
+function newWord(): string {
+  let word = "";
+  for (let i = 0; i < WORD_LENGTH; i += 1) word += WORD_LETTERS[randomInt(WORD_LETTERS.length)];
+  return word;
+}
+
+/** The pairing word as the host types it: case, spaces and the dash don't matter. */
+export function normalWord(typed: string): string {
+  return typed.toUpperCase().replace(/[^A-Z]/g, "");
+}
+
+/** The pairing word as the page shows it: two groups of four. */
+export const shownWord = (word: string) => `${word.slice(0, 4)}-${word.slice(4)}`;
+
+function same(a: string, b: string): boolean {
+  const left = createHash("sha256").update(a).digest();
+  const right = createHash("sha256").update(b).digest();
+  return timingSafeEqual(left, right);
+}
+
+export interface AgreedLink {
+  state: string;
+  tenantId: string;
+  propertyId: string;
+}
+
+/**
+ * One-time connect links (#239, #302): a state that ties a host's browser to a property, good once for 30 minutes.
+ * The host's assistant hands the link over, so opening it is the host's sign-in. Agreeing on the consent page marks
+ * the browser and shows a pairing word; either one names the host when the provider sends their browser back. Kept in
+ * memory only.
+ */
 export class CameraLinks {
   private readonly pending = new Map<string, PendingLink>();
   constructor(private readonly now: () => Date) {}
 
-  start(place: { tenantId: string; propertyId: string }): { state: string; codeVerifier: string; codeChallenge: string } {
+  private live(): [string, PendingLink][] {
     const nowMs = this.now().getTime();
     for (const [state, link] of this.pending) if (link.expiresAt <= nowMs) this.pending.delete(state);
-    const state = b64url(randomBytes(32));
-    const codeVerifier = b64url(randomBytes(48));
-    const codeChallenge = b64url(createHash("sha256").update(codeVerifier).digest());
-    this.pending.set(state, { ...place, codeVerifier, codeChallenge, expiresAt: nowMs + LINK_MS });
-    return { state, codeVerifier, codeChallenge };
+    return [...this.pending];
   }
 
-  /** The link's property and challenge without using it up: the consent page reads it before the host signs in. */
-  peek(state: string): { tenantId: string; propertyId: string; codeChallenge: string } | undefined {
+  start(place: { tenantId: string; propertyId: string }): { state: string } {
+    this.live();
+    const state = b64url(randomBytes(32));
+    this.pending.set(state, { ...place, word: newWord(), expiresAt: this.now().getTime() + LINK_MS });
+    return { state };
+  }
+
+  /** The link's property without using it up, and whether the host has agreed yet. */
+  peek(state: string): { tenantId: string; propertyId: string; agreed: boolean } | undefined {
     const link = this.pending.get(state);
     if (!link || link.expiresAt <= this.now().getTime()) return undefined;
-    return { tenantId: link.tenantId, propertyId: link.propertyId, codeChallenge: link.codeChallenge };
+    return { tenantId: link.tenantId, propertyId: link.propertyId, agreed: link.mark !== undefined };
   }
 
-  finish(state: string): { tenantId: string; propertyId: string; codeVerifier: string } | undefined {
+  /** The host agreed: the browser's mark and the pairing word. Agreeing twice gives the same two. */
+  agree(state: string): { mark: string; word: string } | undefined {
+    const link = this.pending.get(state);
+    if (!link || link.expiresAt <= this.now().getTime()) return undefined;
+    link.mark ??= b64url(randomBytes(32));
+    return { mark: link.mark, word: link.word };
+  }
+
+  /** The agreed link a browser's mark belongs to. */
+  byMark(mark: string): AgreedLink | undefined {
+    let found: AgreedLink | undefined;
+    for (const [state, link] of this.live()) if (link.mark !== undefined && same(link.mark, mark)) found = { state, tenantId: link.tenantId, propertyId: link.propertyId };
+    return found;
+  }
+
+  /** The agreed link a typed pairing word belongs to. */
+  byWord(typed: string): AgreedLink | undefined {
+    const word = normalWord(typed);
+    let found: AgreedLink | undefined;
+    if (word.length !== WORD_LENGTH) return undefined;
+    for (const [state, link] of this.live()) if (link.mark !== undefined && same(link.word, word)) found = { state, tenantId: link.tenantId, propertyId: link.propertyId };
+    return found;
+  }
+
+  finish(state: string): { tenantId: string; propertyId: string } | undefined {
     const link = this.pending.get(state);
     this.pending.delete(state);
     if (!link || link.expiresAt <= this.now().getTime()) return undefined;
-    return { tenantId: link.tenantId, propertyId: link.propertyId, codeVerifier: link.codeVerifier };
+    return { tenantId: link.tenantId, propertyId: link.propertyId };
   }
+}
+
+/** How long the provider's signed browser redirect stays good, and how far ahead of our clock its time may be. */
+export const NONCE_MS = 600_000;
+export const NONCE_AHEAD_MS = 30_000;
+const WAITING_MS = 15 * 60_000;
+const WORD_TRIES = 5;
+
+interface Waiting {
+  sealed: Seal;
+  email?: string;
+  expiresAt: number;
+  wrongWords: number;
+}
+
+export interface WaitingAccount {
+  accountId: string;
+  email?: string;
+  tokens: Tokens;
+}
+
+/**
+ * Tokens the provider released before we know whose they are (#302): held sealed, in memory only, for 15 minutes,
+ * by the provider's account id. The provider's signed nonce is what finds them again; only then, and once the host is
+ * matched, are they saved to an account. Unclaimed ones are dropped.
+ */
+export class WaitingTokens {
+  private readonly held = new Map<string, Waiting>();
+  constructor(
+    private readonly key: Buffer,
+    private readonly now: () => Date,
+  ) {}
+
+  private sweep(): void {
+    const nowMs = this.now().getTime();
+    for (const [accountId, waiting] of this.held) if (waiting.expiresAt <= nowMs) this.held.delete(accountId);
+  }
+
+  /** The newest tokens for an account replace any still waiting. */
+  hold(account: WaitingAccount): void {
+    this.sweep();
+    this.held.set(account.accountId, { sealed: seal(JSON.stringify(account.tokens), this.key), ...(account.email ? { email: account.email } : {}), expiresAt: this.now().getTime() + WAITING_MS, wrongWords: 0 });
+  }
+
+  /**
+   * The waiting tokens a redirect's nonce was signed for. Undefined when its time is over 10 minutes old or ahead of
+   * our clock, or no waiting account produces that nonce. Every waiting account is tried, in constant time each.
+   */
+  match(nonce: string, time: string, nonceFor: (time: string, accountId: string) => string): WaitingAccount | undefined {
+    this.sweep();
+    if (!/^\d{10,16}$/.test(time) || !/^[A-Za-z0-9_-]{20,100}$/.test(nonce)) return undefined;
+    const age = this.now().getTime() - Number(time);
+    if (age > NONCE_MS || age < -NONCE_AHEAD_MS) return undefined;
+    let found: WaitingAccount | undefined;
+    for (const [accountId, waiting] of this.held) {
+      if (!same(nonceFor(time, accountId), nonce)) continue;
+      try {
+        found = { accountId, ...(waiting.email ? { email: waiting.email } : {}), tokens: JSON.parse(open(waiting.sealed, this.key)) as Tokens };
+      } catch {
+        this.held.delete(accountId);
+      }
+    }
+    return found;
+  }
+
+  /** A wrong pairing word for these tokens. True once they've had five and are dropped. */
+  wrongWord(accountId: string): boolean {
+    const waiting = this.held.get(accountId);
+    if (!waiting) return true;
+    waiting.wrongWords += 1;
+    if (waiting.wrongWords < WORD_TRIES) return false;
+    this.held.delete(accountId);
+    return true;
+  }
+
+  drop(accountId: string): void {
+    this.held.delete(accountId);
+  }
+
+  get size(): number {
+    this.sweep();
+    return this.held.size;
+  }
+}
+
+/** An email with its middle hidden, for a page: j***e@example.com. Something that isn't an email is hidden whole. */
+export function maskEmail(email: string): string {
+  const at = email.lastIndexOf("@");
+  if (at < 1 || at === email.length - 1) return "***";
+  const local = email.slice(0, at);
+  return `${local[0]}***${local.length > 2 ? local[local.length - 1] : ""}${email.slice(at)}`;
+}
+
+/** A name with its middle hidden, for the provider's own confirmation to the host. */
+export function maskLabel(label: string): string {
+  const text = label.trim();
+  return text.length > 2 ? `${text[0]}***${text[text.length - 1]}` : "***";
 }
 
 export interface PickedCamera {
