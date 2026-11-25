@@ -66,6 +66,11 @@ export interface AccessRequest {
   jobId?: string;
   /** How a note to the host names the person ("Maria"). Never a phone. */
   label?: string;
+  /**
+   * Only the code already on the lock for this job (a host's code page, 25 Nov): no new code is made, and the host's
+   * saved code never answers in its place.
+   */
+  ownOnly?: true;
 }
 
 /** `lock-failed`: on connected locks, the code didn't program, no backup was left, and no code is saved. */
@@ -354,7 +359,7 @@ export class DoorAccess {
     if (this.now().getTime() >= Date.parse(request.window.until)) return { ok: false, reason: "window-over" };
     let saved: string | undefined;
     // A standing or guest code never falls back to the host's saved code: its page shows the person's own code or nothing.
-    if (this.file.pinSeal && request.purpose !== "standing" && request.purpose !== "guest") {
+    if (this.file.pinSeal && request.purpose !== "standing" && request.purpose !== "guest" && !request.ownOnly) {
       const key = this.keyFor(request.key ?? this.openKey);
       try {
         saved = key ? openPin(this.file.pinSeal, key) : undefined;
@@ -364,7 +369,7 @@ export class DoorAccess {
       if (saved && CODE_SHAPE.test(saved)) this.open = saved;
       else saved = undefined;
     }
-    const released = await this.grants().release({ flow: request.purpose, jobId, person: request.person, window: request.window, ...(request.label ? { label: request.label } : {}) }, saved);
+    const released = await this.grants().release({ flow: request.purpose, jobId, person: request.person, window: request.window, ...(request.label ? { label: request.label } : {}) }, saved, request.ownOnly ? { noIssue: true } : undefined);
     if (!released.ok) return { ok: false, reason: released.reason, ...(released.notes.length > 0 ? { notes: released.notes } : {}) };
     const lockLocation = released.source === "saved" ? this.file.lockLocation : undefined;
     return {
