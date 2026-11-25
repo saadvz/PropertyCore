@@ -80,8 +80,8 @@ async function setup(opts: { visits?: boolean } = {}) {
   const proId = readFixer(root).pros[0]!.id;
   const token = (await desk().contactPro({ jobId: job().id, to: proId, how: "call" })).structured!.contactToken as string;
   expect((await desk().recordContact({ contactToken: token, outcome: "booked", ...TUE, estimateCents: 18000 })).isError).toBe(false);
-  const first = await desk().approveBooking({ jobId: job().id });
-  expect((await desk().approveBooking({ jobId: job().id, confirmation: codeOf(first) })).isError).toBe(false);
+  const first = await desk().approveBooking({ jobId: job().id, confirmedVia: "call" });
+  expect((await desk().approveBooking({ jobId: job().id, confirmedVia: "call", confirmation: codeOf(first) })).isError).toBe(false);
   const log = new VisitLog(root, now);
   return { root, desk, job, proId, log, sent, notes, at: (t: string | number) => (clock = new Date(t)) };
 }

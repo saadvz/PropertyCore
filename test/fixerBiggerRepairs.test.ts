@@ -146,7 +146,7 @@ describe("an urgent visit during a stay", () => {
   const urgent = () => setup({ events: [STAY], urgency: "now" });
   const offer = async (w: World, span = TUE) => w.desk().recordContact({ contactToken: await w.contact(), outcome: "booked", ...span, estimateCents: 18000 });
   const guestYes = (w: World, window = AGREED) => w.desk().recordGuestAnswer({ jobId: w.job().id, answer: "yes", ...window, via: "text" });
-  const approve = (w: World) => twice((input) => w.desk().approveBooking(input), { jobId: w.job().id });
+  const approve = (w: World) => twice((input) => w.desk().approveBooking(input), { jobId: w.job().id, confirmedVia: "call" as const });
   async function bookedUrgent() {
     const w = await urgent();
     await offer(w);
@@ -336,7 +336,7 @@ describe("review fixes: urgent visits", () => {
     const w = await setup({ events: [STAY], urgency: "now" });
     await w.desk().recordContact({ contactToken: await w.contact(), outcome: "booked", ...TUE, estimateCents: 18000 });
     await w.desk().recordGuestAnswer({ jobId: w.job().id, answer: "yes", ...AGREED, via: "text" });
-    await twice((input) => w.desk().approveBooking(input), { jobId: w.job().id });
+    await twice((input) => w.desk().approveBooking(input), { jobId: w.job().id, confirmedVia: "call" as const });
     return w;
   }
 
@@ -363,7 +363,7 @@ describe("minor fixes: urgent visits", () => {
   const offerAndApprove = async (w: World, span: { from: string; until: string }, agreed: { from: string; until: string }) => {
     await w.desk().recordContact({ contactToken: await w.contact(), outcome: "booked", ...span, estimateCents: 18000 });
     const yes = await w.desk().recordGuestAnswer({ jobId: w.job().id, answer: "yes", ...agreed, via: "text" });
-    await twice((input) => w.desk().approveBooking(input), { jobId: w.job().id });
+    await twice((input) => w.desk().approveBooking(input), { jobId: w.job().id, confirmedVia: "call" as const });
     return yes;
   };
 

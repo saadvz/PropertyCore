@@ -97,8 +97,16 @@ async function setup(options: { locks?: boolean; pros?: ReleaseMode } = {}) {
     const token = (await desk().contactPro({ jobId: job().id, to: pro.id, how: "call" })).structured!.contactToken as string;
     expect((await desk().recordContact({ contactToken: token, outcome: "booked", ...SPAN, estimateCents: 400000 })).isError).toBe(false);
   };
-  const book = (access?: "code" | "host") => approved((confirmation) => desk().approveBooking({ jobId: job().id, ...(access ? { access } : {}), ...(confirmation ? { confirmation } : {}) }));
-  return { root, env, desk, job, offer, book, fake, sent, at: (iso: string) => (clock = new Date(iso)) };
+  // The host passes on the pro's yes with the booking, so the crew's code can be made (#243 ruling).
+  const book = (access?: "code" | "host", yes: "call" | "none" = "call") => approved((confirmation) => desk().approveBooking({ jobId: job().id, ...(access ? { access } : {}), ...(yes === "call" ? { confirmedVia: "call" as const } : {}), ...(confirmation ? { confirmation } : {}) }));
+  /** Joe's own YES to the one confirm text, after a booking with no yes passed on (#243 ruling). */
+  const proYes = async () => {
+    await desk().tick();
+    expect(sent.splice(0).map((item) => item.body.endsWith("Reply YES to confirm."))).toEqual([true]);
+    await desk().proInbound({ id: `yes-${job().id}`, from: JOE, text: "YES" });
+    sent.splice(0);
+  };
+  return { root, env, desk, job, offer, book, proYes, fake, sent, at: (iso: string) => (clock = new Date(iso)) };
 }
 
 const live = (fake: FakeLockAdapter) => fake.liveCodes("dev-front").filter((code) => !code.backup);
@@ -165,7 +173,8 @@ describe("crew-day codes", () => {
   it("under ask, waits for the host's OK once for the whole job; on automatic, texts the pro once with the crew's hours", async () => {
     const asked = await setup();
     await asked.offer();
-    await asked.book("code");
+    await asked.book("code", "none");
+    await asked.proYes();
     asked.at("2026-11-16T14:00:00.000Z");
     expect(await asked.desk().revealCode(asked.job().id)).toEqual({ ok: false, reason: "waiting-for-host" });
     expect((await approved((confirmation) => asked.desk().approveCode({ jobId: asked.job().id, ...(confirmation ? { confirmation } : {}) }))).isError).toBe(false);

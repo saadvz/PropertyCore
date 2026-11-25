@@ -132,8 +132,10 @@ async function book(w: World, name: "Joe" | "Sam" = "Joe", span = TUE, extra: Re
   }
   const token = (await w.desk().contactPro({ jobId: w.job().id, to: id, how: "call" })).structured!.contactToken as string;
   expect((await w.desk().recordContact({ contactToken: token, outcome: "booked", ...span, estimateCents: 18000 })).isError).toBe(false);
-  const first = await w.desk().approveBooking({ jobId: w.job().id, ...extra });
-  const done = await w.desk().approveBooking({ jobId: w.job().id, ...extra, confirmation: codeOf(first) });
+  // The host passes on the pro's yes with the booking, so the code can be made (#243 ruling).
+  const yes = { confirmedVia: "call" as const, ...extra };
+  const first = await w.desk().approveBooking({ jobId: w.job().id, ...yes });
+  const done = await w.desk().approveBooking({ jobId: w.job().id, ...yes, confirmation: codeOf(first) });
   expect(done.isError).toBe(false);
   expect(w.job().state).toBe("booked");
 }
@@ -641,8 +643,8 @@ describe("final review fixes: new stays, the text path, candidates, photos", () 
     await w.desk().pickPros({ jobId: w.job().id, ids: [id], confirmation: codeOf(pick) });
     const token = (await w.desk().contactPro({ jobId: w.job().id, to: id, how: "call" })).structured!.contactToken as string;
     await w.desk().recordContact({ contactToken: token, outcome: "booked", ...TUE, estimateCents: 18000 });
-    const first = await w.desk().approveBooking({ jobId: w.job().id });
-    expect((await w.desk().approveBooking({ jobId: w.job().id, confirmation: codeOf(first) })).isError).toBe(false);
+    const first = await w.desk().approveBooking({ jobId: w.job().id, confirmedVia: "call" });
+    expect((await w.desk().approveBooking({ jobId: w.job().id, confirmedVia: "call", confirmation: codeOf(first) })).isError).toBe(false);
     return id;
   }
 
