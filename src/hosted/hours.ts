@@ -25,6 +25,6 @@ export function listedHoursFront(h: HostedCleaner, tenant: Tenant): Record<strin
 export async function hoursCall(h: HostedCleaner, tenant: Tenant, property: Property, name: string, args: Record<string, unknown>): Promise<FrontReply> {
   if (!featureOn(tenant, "hours", h.baseEnv())) return { text: "The hours log isn't available yet.", isError: true };
   if (!anyFlowOn(property)) return { text: `Nothing runs at ${property.label} yet, so it has no hours log.`, isError: true };
-  const desk = hoursDeskFor(propertyFolder(h.dataRoot, tenant.id, property), { now: () => h.now() });
+  const desk = hoursDeskFor(propertyFolder(h.dataRoot, tenant.id, property), { now: () => h.now(), cameras: () => featureOn(h.registry.get(tenant.id), "cameras", h.baseEnv()) });
   return (await handleHoursTool(desk, name, args)) ?? { text: "The hours log couldn't answer that.", isError: true };
 }
