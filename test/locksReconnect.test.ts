@@ -76,7 +76,7 @@ describe("the lock account is back (#280 21)", () => {
 
 // ---- Item 22: the host's tools guide a stuck reconnect and put codes back on the doors ----
 
-import { LockDesk, type LockDeskDeps, type LockReply } from "../src/locks/desk";
+import { ACCOUNT_DOWN_UNKNOWN, LockDesk, type LockDeskDeps, type LockReply } from "../src/locks/desk";
 import { handleLockTool, LOCK_TOOLS } from "../src/locks/tools";
 
 function deskWorld(options: { cleaners?: "ask" | "automatic" } = {}) {
@@ -278,6 +278,30 @@ describe("a lock account that vanished (live test, Nov 24)", () => {
     expect(listed.text).toContain("The host's lock account is gone");
     expect(listed.text).not.toContain("The locks are connected.");
     expect(door.locks().disconnectedAt).toBe(NOW.toISOString());
+    // The saved health and code statuses are from before the drop: they read as unknown, not online and set.
+    expect(listed.structured?.disconnected).toBe(true);
+    expect(listed.structured?.problems).toContain(ACCOUNT_DOWN_UNKNOWN);
+    expect(listed.structured?.devices).toEqual([{ id: "dev-front", name: "Front door", kind: "lock", online: "unknown", door: true }]);
+    const codes = listed.structured?.codes as { doors: { door: string; status: string }[] }[];
+    expect(codes).toHaveLength(1);
+    expect(codes[0]!.doors).toEqual([{ door: "Front door", status: "unknown" }]);
+    expect(listed.text).not.toContain("is offline");
+  });
+
+  it("a partner disconnect reads the same way, and signing in again shows the real door and code status", async () => {
+    const { desk, fake, door } = deskWorld();
+    await door.syncGrants("cleaning", [{ jobId: "job-1", person: "+15555550101", window: WINDOW, label: "Maria" }]);
+    await applyLockEvent(door, fake, event("ev-off", "account-disconnected", 0), NOW);
+    const down = desk.status();
+    expect(down.structured?.connected).toBe(false);
+    expect((down.structured?.devices as { online: unknown }[])[0]!.online).toBe("unknown");
+    expect((down.structured?.codes as { doors: { status: string }[] }[])[0]!.doors[0]!.status).toBe("unknown");
+    await applyLockEvent(door, fake, event("ev-on", "account-connected", 30), NOW);
+    const back = desk.status();
+    expect(back.structured?.disconnected).toBeUndefined();
+    expect((back.structured?.devices as { online: unknown }[])[0]!.online).toBe(true);
+    expect((back.structured?.codes as { doors: { status: string }[] }[])[0]!.doors[0]!.status).toBe("set");
+    expect(back.structured?.problems).toEqual([]);
   });
 
   it("pauses the checkout-time code once, and signing in again puts the codes back and turns it back on", async () => {
