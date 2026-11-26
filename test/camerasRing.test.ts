@@ -58,7 +58,8 @@ describe("Ring webhooks", () => {
     expect(read(base("device_offline"))).toMatchObject({ type: "event", event: { kind: "offline" } });
     expect(read(base("device_online"))).toMatchObject({ type: "event", event: { kind: "online" } });
     expect(read({ meta: motion.meta, data: { id: "x", type: "app_integration_removed", attributes: { source: "acct-1", source_type: "users", timestamp: 1 } } })).toEqual({ type: "unlinked", accountId: "acct-1" });
-    expect(read({ meta: motion.meta, data: { id: "x", type: "subscription_activated", attributes: {} } })).toEqual({ type: "ignored" });
+    expect(read({ meta: motion.meta, data: { id: "x", type: "subscription_activated", attributes: {} } })).toEqual({ type: "ignored", eventType: "subscription_activated" });
+    expect(read({ meta: motion.meta, data: { id: "x", type: "Not A Name!", attributes: {} } })).toEqual({ type: "ignored" });
   });
 
   it("keeps plain motion as its label when smart alerts are off", () => {
