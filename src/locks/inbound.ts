@@ -87,8 +87,8 @@ export async function applyLockEvent(door: DoorAccess, adapter: LockAdapter, eve
   const ref = event.codeId ? door.grants().grantOf(event.codeId) : undefined;
   const grant: GrantRef | undefined = ref ? { flow: ref.flow, jobId: ref.jobId, ...(ref.backup ? { backup: true } : {}) } : undefined;
   const recorded = recordLockEvent(door.root, event, { ...(device ? { deviceName: device.name } : {}), ...(ref ? { codeName: ref.codeName } : {}), now: () => now });
-  // A resent event changes nothing twice.
-  if (recorded === "duplicate") return { stored: false, notes: [] };
+  // A resent event, or a second report of the same turn of the lock under another id, changes nothing twice.
+  if (recorded === "duplicate" || recorded === "echo") return { stored: false, notes: [] };
   const stored = recorded === "new";
   const notes: GrantNote[] = [];
   const door_ = device?.name ?? "a door";

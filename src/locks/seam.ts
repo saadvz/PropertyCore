@@ -36,8 +36,16 @@ export interface SeamOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-/** How a simulated keypad entry ended (#303). `refused` means the workspace isn't a sandbox: nothing was sent. */
-export type KeypadEntryResult = { status: "success" | "pending" } | { status: "error"; errorType?: string } | { status: "refused"; reason: "not-sandbox" | "not-on-device" | "no-code" };
+/**
+ * How a simulated keypad entry ended (#303). `refused` means nothing was typed: the workspace isn't a sandbox, the
+ * code isn't there, or the door was left unlocked and wouldn't lock. `rejected` means the partner turned the entry
+ * itself down with an HTTP error. `lockedFirst` says the door was found unlocked and was locked before the entry.
+ */
+export type KeypadEntryResult =
+  | { status: "success" | "pending"; lockedFirst?: true }
+  | { status: "error"; errorType?: string; lockedFirst?: true }
+  | { status: "rejected"; httpStatus: number; errorType?: string; lockedFirst?: true }
+  | { status: "refused"; reason: "not-sandbox" | "not-on-device" | "no-code" | "would-not-lock"; httpStatus?: number };
 
 /** Polls of a pending keypad entry, a second apart, before it's reported as still pending. */
 const KEYPAD_POLLS = 10;
@@ -50,6 +58,12 @@ export class SeamError extends Error {
   ) {
     super(`The lock partner answered ${status}${type ? ` (${type})` : ""}.`);
   }
+}
+
+interface ActionAttempt {
+  action_attempt_id?: string;
+  status?: string;
+  error?: { type?: string } | null;
 }
 
 interface SeamAccessCode {
@@ -262,11 +276,42 @@ export class SeamLockAdapter implements LockAdapter {
     }
   }
 
+  /** Polls an action attempt a second apart until it's no longer pending, at most KEYPAD_POLLS times. */
+  private async settle(attempt: ActionAttempt | undefined): Promise<ActionAttempt | undefined> {
+    for (let poll = 0; attempt?.status === "pending" && attempt.action_attempt_id && poll < KEYPAD_POLLS; poll++) {
+      await this.sleep(1000);
+      attempt = (await this.call<{ action_attempt?: ActionAttempt }>("/action_attempts/get", { action_attempt_id: attempt.action_attempt_id }))?.action_attempt;
+    }
+    return attempt;
+  }
+
+  /**
+   * Sandbox only (#303): a door left unlocked is locked first, because the partner answers a keypad entry on an
+   * unlocked sandbox door with a bare 400 (25 Nov live run). Gives back whether it locked the door. An unreadable
+   * state is left alone: the entry is tried as it is.
+   */
+  private async lockIfUnlocked(deviceId: string): Promise<{ lockedFirst: boolean } | { httpStatus?: number }> {
+    let locked: unknown;
+    try {
+      locked = (await this.call<{ device?: SeamDevice }>("/devices/get", { device_id: deviceId }))?.device?.properties?.locked;
+    } catch {
+      return { lockedFirst: false };
+    }
+    if (locked !== false) return { lockedFirst: false };
+    try {
+      const attempt = await this.settle((await this.call<{ action_attempt?: ActionAttempt }>("/locks/lock_door", { device_id: deviceId }))?.action_attempt);
+      return attempt?.status === "success" ? { lockedFirst: true } : {};
+    } catch (error) {
+      return error instanceof SeamError ? { httpStatus: error.status } : {};
+    }
+  }
+
   /**
    * Sandbox only (#303): types one Property Core code on a sandbox lock's keypad, so a real unlock event
    * comes back through the webhook. For the operator's command, never an agent tool, and not on the
    * LockAdapter interface. The workspace is checked first; the code's value is read from the partner and
-   * sent straight back to it, and is never returned, logged or put in an error.
+   * sent straight back to it, and is never returned, logged or put in an error. A door left unlocked is
+   * locked first.
    */
   async simulateKeypadEntry(input: { deviceId: string; codeId: string }): Promise<KeypadEntryResult> {
     if (!(await this.isSandbox())) return { status: "refused", reason: "not-sandbox" };
@@ -274,16 +319,21 @@ export class SeamLockAdapter implements LockAdapter {
     const found = reply?.access_code;
     if (!found || found.device_id !== input.deviceId) return { status: "refused", reason: "not-on-device" };
     if (typeof found.code !== "string" || !/^\d{4,8}$/.test(found.code)) return { status: "refused", reason: "no-code" };
-    const started = await this.call<{ action_attempt?: { action_attempt_id?: string; status?: string; error?: { type?: string } | null } }>("/locks/simulate/keypad_code_entry", { device_id: input.deviceId, code: found.code });
-    let attempt = started?.action_attempt;
-    for (let poll = 0; attempt?.status === "pending" && attempt.action_attempt_id && poll < KEYPAD_POLLS; poll++) {
-      await this.sleep(1000);
-      attempt = (await this.call<{ action_attempt?: typeof attempt }>("/action_attempts/get", { action_attempt_id: attempt.action_attempt_id }))?.action_attempt;
+    const door = await this.lockIfUnlocked(input.deviceId);
+    if (!("lockedFirst" in door)) return { status: "refused", reason: "would-not-lock", ...(door.httpStatus ? { httpStatus: door.httpStatus } : {}) };
+    const first = door.lockedFirst ? { lockedFirst: true as const } : {};
+    let started: ActionAttempt | undefined;
+    try {
+      started = (await this.call<{ action_attempt?: ActionAttempt }>("/locks/simulate/keypad_code_entry", { device_id: input.deviceId, code: found.code }))?.action_attempt;
+    } catch (error) {
+      if (!(error instanceof SeamError)) throw error;
+      return { status: "rejected", httpStatus: error.status, ...(error.type ? { errorType: error.type } : {}), ...first };
     }
-    if (attempt?.status === "success") return { status: "success" };
-    if (attempt?.status === "pending") return { status: "pending" };
+    const attempt = await this.settle(started);
+    if (attempt?.status === "success") return { status: "success", ...first };
+    if (attempt?.status === "pending") return { status: "pending", ...first };
     const type = attempt?.error?.type;
-    return { status: "error", ...(typeof type === "string" && type ? { errorType: type.slice(0, 80) } : {}) };
+    return { status: "error", ...(typeof type === "string" && type ? { errorType: type.slice(0, 80) } : {}), ...first };
   }
 
   /**
