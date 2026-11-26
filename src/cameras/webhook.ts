@@ -20,15 +20,18 @@ export interface IngestInput {
 
 export type IngestResult =
   | { status: 401 }
-  | { status: 200; stored?: { tenantId: string; propertyId: string; line: CameraEventLine }; unlinked?: string };
+  | { status: 200; stored?: { tenantId: string; propertyId: string; line: CameraEventLine }; unlinked?: string; dropped?: Dropped };
+
+/** Why a signed delivery stored nothing, for one log line without its body (#239). */
+export type Dropped = { reason: "skipped"; eventType?: string } | { reason: "not picked" } | { reason: "repeat" };
 
 export function ingestWebhook(input: IngestInput): IngestResult {
   const parsed = input.provider.parseWebhook(input.rawBody, input.headers);
   if (!parsed) return { status: 401 };
   if (parsed.type === "unlinked") return { status: 200, unlinked: parsed.accountId };
-  if (parsed.type === "ignored") return { status: 200 };
+  if (parsed.type === "ignored") return { status: 200, dropped: { reason: "skipped", ...(parsed.eventType ? { eventType: parsed.eventType } : {}) } };
   const route = routeDevice(typeof input.places === "function" ? input.places() : input.places, parsed.event.deviceId);
-  if (!route) return { status: 200 };
+  if (!route) return { status: 200, dropped: { reason: "not picked" } };
   const line: CameraEventLine = {
     type: "camera",
     id: parsed.event.id,
@@ -39,6 +42,6 @@ export function ingestWebhook(input: IngestInput): IngestResult {
     kind: parsed.event.kind,
     ...(parsed.event.label ? { label: parsed.event.label } : {}),
   };
-  if (!input.logFor(route.tenantId, route.propertyId).append(line)) return { status: 200 };
+  if (!input.logFor(route.tenantId, route.propertyId).append(line)) return { status: 200, dropped: { reason: "repeat" } };
   return { status: 200, stored: { tenantId: route.tenantId, propertyId: route.propertyId, line } };
 }
