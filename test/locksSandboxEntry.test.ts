@@ -78,6 +78,62 @@ describe("the lock partner's sandbox keypad entry", () => {
     expect(await empty.adapter.simulateKeypadEntry({ deviceId: "d1", codeId: "ac1" })).toEqual({ status: "refused", reason: "no-code" });
   });
 
+  it("locks a door left unlocked before typing, since the sandbox answers 400 on an unlocked door", async () => {
+    const { adapter, calls } = stub({
+      ...SANDBOX,
+      "/access_codes/get": { body: { access_code: { access_code_id: "ac1", device_id: "d1", code: CODE, status: "set" } } },
+      "/devices/get": { body: { device: { device_id: "d1", properties: { locked: false } } } },
+      "/locks/lock_door": { body: { action_attempt: { action_attempt_id: "lk1", status: "pending" } } },
+      "/action_attempts/get": { body: { action_attempt: { action_attempt_id: "lk1", status: "success" } } },
+      "/locks/simulate/keypad_code_entry": { body: { action_attempt: { action_attempt_id: "aa1", status: "success" } } },
+    });
+    expect(await adapter.simulateKeypadEntry({ deviceId: "d1", codeId: "ac1" })).toEqual({ status: "success", lockedFirst: true });
+    expect(calls.map((call) => call.path)).toEqual(["/workspaces/get", "/access_codes/get", "/devices/get", "/locks/lock_door", "/action_attempts/get", "/locks/simulate/keypad_code_entry"]);
+    expect(calls.find((call) => call.path === "/locks/lock_door")!.body).toEqual({ device_id: "d1" });
+  });
+
+  it("leaves a locked door alone, and a door whose state it can't read", async () => {
+    const locked = stub({
+      ...SANDBOX,
+      "/access_codes/get": { body: { access_code: { access_code_id: "ac1", device_id: "d1", code: CODE } } },
+      "/devices/get": { body: { device: { device_id: "d1", properties: { locked: true } } } },
+      "/locks/simulate/keypad_code_entry": { body: { action_attempt: { action_attempt_id: "aa1", status: "success" } } },
+    });
+    expect(await locked.adapter.simulateKeypadEntry({ deviceId: "d1", codeId: "ac1" })).toEqual({ status: "success" });
+    expect(locked.calls.some((call) => call.path === "/locks/lock_door")).toBe(false);
+    const unreadable = stub({
+      ...SANDBOX,
+      "/access_codes/get": { body: { access_code: { access_code_id: "ac1", device_id: "d1", code: CODE } } },
+      "/devices/get": { status: 500, body: { error: { type: "internal" } } },
+      "/locks/simulate/keypad_code_entry": { body: { action_attempt: { action_attempt_id: "aa1", status: "success" } } },
+    });
+    expect(await unreadable.adapter.simulateKeypadEntry({ deviceId: "d1", codeId: "ac1" })).toEqual({ status: "success" });
+    expect(unreadable.calls.some((call) => call.path === "/locks/lock_door")).toBe(false);
+  });
+
+  it("types nothing when the unlocked door won't lock", async () => {
+    const { adapter, calls } = stub({
+      ...SANDBOX,
+      "/access_codes/get": { body: { access_code: { access_code_id: "ac1", device_id: "d1", code: CODE } } },
+      "/devices/get": { body: { device: { device_id: "d1", properties: { locked: false } } } },
+      "/locks/lock_door": { status: 400, body: { error: { type: "invalid_input", message: "nope" } } },
+    });
+    expect(await adapter.simulateKeypadEntry({ deviceId: "d1", codeId: "ac1" })).toEqual({ status: "refused", reason: "would-not-lock", httpStatus: 400 });
+    expect(calls.some((call) => call.path === "/locks/simulate/keypad_code_entry")).toBe(false);
+  });
+
+  it("gives back the status and type of an entry the partner turns down, not an exception", async () => {
+    const { adapter } = stub({
+      ...SANDBOX,
+      "/access_codes/get": { body: { access_code: { access_code_id: "ac1", device_id: "d1", code: CODE } } },
+      "/devices/get": { body: { device: { device_id: "d1", properties: { locked: true } } } },
+      "/locks/simulate/keypad_code_entry": { status: 400, body: { error: { type: "invalid_input", message: `bad ${CODE}` } } },
+    });
+    const result = await adapter.simulateKeypadEntry({ deviceId: "d1", codeId: "ac1" });
+    expect(result).toEqual({ status: "rejected", httpStatus: 400, errorType: "invalid_input" });
+    expect(JSON.stringify(result)).not.toContain(CODE);
+  });
+
   it("gives back the partner's error type, never its message", async () => {
     const { adapter } = stub({
       ...SANDBOX,
@@ -230,6 +286,33 @@ describe("the sandbox entry command", () => {
     expect(outcome.exitCode).toBe(1);
     expect(outcome.lines).toEqual(["The lock partner reported an error entering the host's code on the Front door keypad at Nov 28, 11:30 AM EST (UnknownError), but the unlock can still arrive. Check door activity before you try again."]);
     noDigits(outcome.lines);
+  });
+
+  it("says when the door was found unlocked and locked first", async () => {
+    const keypad = new FakeKeypad(true, { status: "success", lockedFirst: true });
+    const outcome = await sandboxEntry({ root: propertyFolder(), who: "host", keypad, now: () => NOW, timeZone: "America/New_York" });
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.lines).toEqual(["The Front door was unlocked, so it was locked first. That lock shows in door activity too.", "Entered the host's code on the Front door keypad at Nov 28, 11:30 AM EST."]);
+    noDigits(outcome.lines);
+  });
+
+  it("explains a bare 400 in plain words: the door is already unlocked, lock it from the console", async () => {
+    const keypad = new FakeKeypad(true, { status: "rejected", httpStatus: 400 });
+    const outcome = await sandboxEntry({ root: propertyFolder(), who: "host", keypad, now: () => NOW, timeZone: "America/New_York" });
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.lines).toEqual([
+      "The lock partner turned down the host's code on the Front door keypad (it answered 400). Nothing was entered. The sandbox answers 400 when the door is already unlocked, and each entry leaves it unlocked. Lock the Front door from the Seam console, then run this again.",
+    ]);
+    const after = await sandboxEntry({ root: propertyFolder(), who: "host", keypad: new FakeKeypad(true, { status: "rejected", httpStatus: 400, errorType: "invalid_input", lockedFirst: true }), now: () => NOW });
+    expect(after.lines.at(-1)).toContain("isn't it");
+    noDigits([...outcome.lines, ...after.lines]);
+  });
+
+  it("says the unlocked door wouldn't lock, and that nothing was entered", async () => {
+    const keypad = new FakeKeypad(true, { status: "refused", reason: "would-not-lock", httpStatus: 400 });
+    const outcome = await sandboxEntry({ root: propertyFolder(), who: "host", keypad, now: () => NOW });
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.lines).toEqual(["The Front door is unlocked, and the lock partner wouldn't lock it (it answered 400). The sandbox turns down a keypad entry on an unlocked door, so nothing was entered. Lock it from the Seam console, then run this again."]);
   });
 
   it("says when nobody of that kind has a code, and skips revoked ones", async () => {

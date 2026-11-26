@@ -174,14 +174,18 @@ export async function sandboxEntry(input: EntryInput): Promise<EntryOutcome> {
   const at = when(input.now(), timeZone);
   const now = input.now().getTime();
   const outside = now < Date.parse(picked.window.from) || now >= Date.parse(picked.window.until) ? ` That was outside its window (${windowWords(picked.window, timeZone)}).` : "";
+  // The lock partner answers an entry on a sandbox door left unlocked with a bare 400 (25 Nov live run), so the adapter locks it first.
+  const lockedFirst = result.status !== "refused" && result.lockedFirst ? [`The ${door.door} was unlocked, so it was locked first. That lock shows in door activity too.`] : [];
   switch (result.status) {
     case "success":
-      return say(0, `Entered ${whose} on the ${door.door} keypad at ${at}.${outside}`);
+      return say(0, ...lockedFirst, `Entered ${whose} on the ${door.door} keypad at ${at}.${outside}`);
     case "pending":
-      return say(0, `Sent ${whose} to the ${door.door} keypad at ${at}. The lock partner still had it pending after ten seconds: check door activity.${outside}`);
+      return say(0, ...lockedFirst, `Sent ${whose} to the ${door.door} keypad at ${at}. The lock partner still had it pending after ten seconds: check door activity.${outside}`);
     case "error":
       // The first live run (24 Nov) ended in an error from the partner, yet the unlock came through the webhook: so it isn't called a failure.
-      return say(1, `The lock partner reported an error entering ${whose} on the ${door.door} keypad at ${at}${result.errorType ? ` (${result.errorType})` : ""}, but the unlock can still arrive. Check door activity before you try again.${outside}`);
+      return say(1, ...lockedFirst, `The lock partner reported an error entering ${whose} on the ${door.door} keypad at ${at}${result.errorType ? ` (${result.errorType})` : ""}, but the unlock can still arrive. Check door activity before you try again.${outside}`);
+    case "rejected":
+      return say(1, ...lockedFirst, rejectedLine(result.httpStatus, result.errorType, door.door, whose, result.lockedFirst === true));
     case "refused":
       return say(
         1,
@@ -189,9 +193,21 @@ export async function sandboxEntry(input: EntryInput): Promise<EntryOutcome> {
           ? "Refused: the lock partner's key isn't for a sandbox workspace. This command only runs against a sandbox."
           : result.reason === "not-on-device"
             ? `The lock partner doesn't list ${whose} on the ${door.door}. Nothing was entered.`
-            : `The lock partner had no code value for ${whose} on the ${door.door}. Nothing was entered.`,
+            : result.reason === "would-not-lock"
+              ? `The ${door.door} is unlocked, and the lock partner wouldn't lock it${result.httpStatus ? ` (it answered ${result.httpStatus})` : ""}. The sandbox turns down a keypad entry on an unlocked door, so nothing was entered. Lock it from the Seam console, then run this again.`
+              : `The lock partner had no code value for ${whose} on the ${door.door}. Nothing was entered.`,
       );
   }
+}
+
+/** The partner turned the entry down with an HTTP error: said in plain words, with what to do next. */
+function rejectedLine(httpStatus: number, errorType: string | undefined, door: string, whose: string, lockedFirst: boolean): string {
+  const head = `The lock partner turned down ${whose} on the ${door} keypad (it answered ${httpStatus}${errorType ? `, ${errorType}` : ""}). Nothing was entered.`;
+  if (httpStatus === 400 && !lockedFirst) return `${head} The sandbox answers 400 when the door is already unlocked, and each entry leaves it unlocked. Lock the ${door} from the Seam console, then run this again.`;
+  if (httpStatus === 400) return `${head} The door had just been locked, so the usual cause (an unlocked door) isn't it. Check the ${door} in the Seam console.`;
+  if (httpStatus === 401 || httpStatus === 403) return `${head} The service's lock partner key was refused. Check SEAM_API_KEY on the service.`;
+  if (httpStatus === 404) return `${head} The lock partner doesn't know that door any more. Check the property's connected locks.`;
+  return `${head} Try again in a minute.`;
 }
 
 function capital(text: string): string {
