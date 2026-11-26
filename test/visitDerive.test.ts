@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildVisits, RULES, type DeriveContext } from "../src/visits/derive";
+import { buildVisits, lockConnected, RULES, type DeriveContext } from "../src/visits/derive";
 import { cleaningDue, fixerDue } from "../src/visits/due";
 import type { CodeNames, VisitEvent, WindowEvent } from "../src/visits/events";
 
@@ -337,5 +337,17 @@ describe("what's due from visit records", () => {
       { kind: "visit-no-arrival", jobId: "r1", text: "Ace Plumbing hasn't arrived for the visit that started at 10 AM." },
     ]);
     expect(items("2027-01-08T04:00:00.000Z")).toEqual([{ kind: "visit-stray:p-1:2027-01-07", text: "Ace Plumbing's code opened the front door at 10 PM, outside their visit." }]);
+  });
+
+  it("still tells a stray code when the lock account said disconnected and its lock events kept coming", () => {
+    const dropped: VisitEvent = { type: "lock-connection", id: "evt-drop", at: "2027-01-06T20:00:00.000Z", connected: false };
+    const events = [connected, dropped, repair("r1", "2027-01-10T15:00:00.000Z", "2027-01-10T17:00:00.000Z"), unlock("u1", "2027-01-08T03:00:00.000Z", "Ace")];
+    const now = "2027-01-08T04:00:00.000Z";
+    expect(buildVisits(events, ctx(now)).strays).toEqual([{ eventId: "u1", at: "2027-01-08T03:00:00.000Z", device: "Front door", who: { role: "pro", proId: "p-1" } }]);
+    // The host's own switch off still means no lock records.
+    const off: VisitEvent = { ...dropped, id: "pc-locks:off:2027-01-06T20:00:00.000Z" };
+    expect(buildVisits([connected, off, ...events.slice(2)], ctx(now)).strays).toEqual([]);
+    // A disconnect with no lock events after it stays disconnected.
+    expect(lockConnected([connected, unlock("u0", "2027-01-06T19:00:00.000Z", "Ace"), dropped], Date.parse(now))).toBe(false);
   });
 });
