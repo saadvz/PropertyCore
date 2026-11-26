@@ -53,8 +53,8 @@ export type CameraWebhook =
   | { type: "event"; accountId?: string; event: CameraEvent }
   /** The host removed the app from their provider account. */
   | { type: "unlinked"; accountId: string }
-  /** A signed delivery this adapter doesn't use, like a plan change. */
-  | { type: "ignored" };
+  /** A signed delivery this adapter doesn't use, like a plan change. eventType is the provider's own name for it, for the log. */
+  | { type: "ignored"; eventType?: string };
 
 /** A clip by reference: what to ask the provider for, never the video. */
 export interface ClipRef {
