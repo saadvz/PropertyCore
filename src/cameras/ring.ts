@@ -184,7 +184,8 @@ export function ringProvider(options: RingOptions): CameraProvider {
       const accountId = str(meta.account_id);
       if (type === "app_integration_removed") return accountId ? { type: "unlinked", accountId } : { type: "ignored" };
       const kind = type ? KINDS[type] : undefined;
-      if (!kind) return { type: "ignored" };
+      // Ring's event names are a short fixed list, so the name is safe for the log; anything else isn't kept.
+      if (!kind) return type && /^[a-z_]{1,40}$/.test(type) ? { type: "ignored", eventType: type } : { type: "ignored" };
       const id = str(meta.request_id) ?? str(data.id);
       const deviceId = str(attributes.source);
       const at = typeof attributes.timestamp === "number" ? new Date(attributes.timestamp).toISOString() : str(meta.time);

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { fakeCameraProvider } from "../src/cameras/fake";
 import { memoryLog, type EventLog } from "../src/cameras/lines";
 import { ingestWebhook } from "../src/cameras/webhook";
+import { droppedLine } from "../src/hosted/cameras";
 
 const places = [{ tenantId: "t1", propertyId: "lake", cameras: [{ deviceId: "dev-aaa", name: "Front door", outdoor: true as const, pickedAt: "x" }] }];
 const event = { id: "req-1", at: "2026-11-20T03:14:00.000Z", deviceId: "dev-aaa", kind: "motion" as const, label: "human" };
@@ -24,7 +25,7 @@ describe("ingesting a webhook", () => {
     const first = ingestWebhook({ provider, places, logFor, rawBody: delivery.body, headers: delivery.headers });
     expect(first).toMatchObject({ status: 200, stored: { tenantId: "t1", propertyId: "lake", line: { type: "camera", id: "req-1", device: "Front door", deviceId: "dev-aaa", provider: "fake", kind: "motion", label: "human" } } });
     const again = ingestWebhook({ provider, places, logFor, rawBody: delivery.body, headers: delivery.headers });
-    expect(again).toEqual({ status: 200 });
+    expect(again).toEqual({ status: 200, dropped: { reason: "repeat" } });
     expect(logs.get("t1/lake")!.read()).toHaveLength(1);
   });
 
@@ -38,7 +39,7 @@ describe("ingesting a webhook", () => {
   it("drops an event from a camera nobody picked, unstored", () => {
     const { provider, logs, logFor } = setup();
     const delivery = provider.webhook({ ...event, deviceId: "dev-indoor" });
-    expect(ingestWebhook({ provider, places, logFor, rawBody: delivery.body, headers: delivery.headers })).toEqual({ status: 200 });
+    expect(ingestWebhook({ provider, places, logFor, rawBody: delivery.body, headers: delivery.headers })).toEqual({ status: 200, dropped: { reason: "not picked" } });
     expect(logs.size).toBe(0);
   });
 
@@ -56,5 +57,14 @@ describe("an unsigned delivery", () => {
     const delivery = provider.webhook(event);
     expect(ingestWebhook({ provider, places: () => (reads++, places), logFor, rawBody: delivery.body, headers: {} })).toEqual({ status: 401 });
     expect(reads).toBe(0);
+  });
+});
+
+describe("a signed delivery that stores nothing", () => {
+  it("gets one log line saying why, without the body, the account or the device", () => {
+    expect(droppedLine({ reason: "not picked" })).toBe("A Ring event came for a camera no property picked. Nothing was stored.");
+    expect(droppedLine({ reason: "repeat" })).toBe("Ring sent an event again that was already stored.");
+    expect(droppedLine({ reason: "skipped", eventType: "subscription_activated" })).toBe("A Ring event Property Core doesn't use came in (subscription_activated). Nothing was stored.");
+    expect(droppedLine({ reason: "skipped" })).toBe("A Ring event Property Core doesn't use came in. Nothing was stored.");
   });
 });

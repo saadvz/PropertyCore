@@ -12,7 +12,7 @@ import { CameraDesk } from "../cameras/desk";
 import { ringProvider } from "../cameras/ring";
 import { sharedCameraLog } from "../cameras/sharedLog";
 import { CAMERA_TOOL_NAMES, CAMERA_TOOLS } from "../cameras/tools";
-import { ingestWebhook } from "../cameras/webhook";
+import { ingestWebhook, type Dropped } from "../cameras/webhook";
 import { PackageDesk } from "../package-arrivals/desk";
 import type { FrontReply } from "./serviceTools";
 import { zonedParts } from "../core/timezone";
@@ -260,6 +260,13 @@ function markOf(r: HostedRequest): string | undefined {
   return undefined;
 }
 
+/** One line for a signed Ring event that stored nothing: why, never the body, the account or the device. */
+export function droppedLine(dropped: Dropped): string {
+  if (dropped.reason === "not picked") return "A Ring event came for a camera no property picked. Nothing was stored.";
+  if (dropped.reason === "repeat") return "Ring sent an event again that was already stored.";
+  return `A Ring event Property Core doesn't use came in${dropped.eventType ? ` (${dropped.eventType})` : ""}. Nothing was stored.`;
+}
+
 /** Ring's webhook, the consent link and Ring's account-linking addresses, on the service's own paths. True when the request was one of them. */
 export async function handleCameraRoutes(h: HostedCleaner, r: HostedRequest): Promise<boolean> {
   const path = r.url.pathname;
@@ -278,6 +285,7 @@ export async function handleCameraRoutes(h: HostedCleaner, r: HostedRequest): Pr
     r.send(result.status, "text/plain", result.status === 200 ? "ok" : "Unauthorized");
     if (result.status === 200 && result.stored) void afterStored(h, result.stored).catch(() => h.log("A camera event was stored but its follow-up didn't run."));
     if (result.status === 200 && result.unlinked) h.log("A Ring account removed Property Core.");
+    if (result.status === 200 && result.dropped) h.log(droppedLine(result.dropped));
     return true;
   }
   if (path === CAMERA_HOME_PATH) {
