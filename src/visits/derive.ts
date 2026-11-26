@@ -141,13 +141,20 @@ function dayStart(at: string, timeZone: string): number {
 export function lockConnected(events: readonly VisitEvent[], until: number): boolean {
   let said: boolean | undefined;
   let saidAt = -Infinity;
+  let saidId = "";
   for (const event of events) {
     if (event.type !== "lock-connection") continue;
     const at = ms(event.at);
     if (at <= until && at >= saidAt) {
       said = event.connected;
       saidAt = at;
+      saidId = event.id;
     }
+  }
+  // A lock account the partner said was disconnected is connected again once its lock events come in, even when no
+  // "connected" webhook followed. The host's own switch off (a `pc-locks:` line) still wins.
+  if (said === false && !saidId.startsWith("pc-locks:")) {
+    return events.some((event) => event.type === "lock" && ms(event.at) > saidAt && ms(event.at) <= until);
   }
   if (said !== undefined) return said;
   return events.some((event) => event.type === "lock" && ms(event.at) <= until + 24 * HOUR && ms(event.at) >= until - LOCK_RECENT_MS);
